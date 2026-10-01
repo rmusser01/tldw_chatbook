@@ -17261,3 +17261,16 @@ its global import during continuation restoration, and stale standalone test
 doubles advertising `_load_index` instead of current `_visible_records`. Remove
 the redundant local import and update the double; never bypass current profile
 admission or restore an obsolete production catalog path to make those tests pass.
+
+
+## TASK-32674: select the runtime profile and close fixture-owned databases
+
+The F7 neighbor probes refused 61 fleet/Console/archive cases before provider
+entry because their profile differed from the runtime participant. Adding the
+existing bootstrap-profile fixture marker preserved the production admission
+guard and made all 125 controls execute. That passing run still grew 238 file
+descriptors: a return-only AgentRunsDB fixture and direct archive test databases
+had no owner teardown. Yield/finally and the existing content-operation scope
+closed their actual handles, including direct manual calls to archive helpers.
+The final 125-case run passed without a descriptor warning. Do not hide profile
+refusals, change leak thresholds, or rely on GC to close strongly owned fixtures.

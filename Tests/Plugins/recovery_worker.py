@@ -88,7 +88,7 @@ def main():
                                     {
                                         "barrier": phase,
                                         "pid": os.getpid(),
-                                        "operation_id": args.operation,
+                                        "operation_id": review.operation_id,
                                     }
                                 ),
                                 flush=True,
@@ -96,7 +96,7 @@ def main():
                             threading.Event().wait()
 
                     coordinator.progress = progress
-                    receipts = (await coordinator.commit(review, args.operation),)
+                    receipts = (await coordinator.commit(review, review.operation_id),)
                 else:
                     receipts = await coordinator.recover()
                 snapshot = authority.verify_current()

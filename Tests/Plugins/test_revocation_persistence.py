@@ -24,15 +24,15 @@ async def revocation_case(tmp_path, native_package):
     review = await service.review_install(
         native_package(), selection=("skill:review",), workspace_id="a"
     )
-    await service.commit(review, "install")
+    await service.commit(review, review.operation_id)
     trust = await service.review_trust(review.installation_id)
-    await service.commit(trust, "trust")
+    await service.commit(trust, trust.operation_id)
 
     async def enable(workspace, operation_id):
         active = await service.review_activation(
             review.installation_id, workspace_id=workspace, intent="enabled"
         )
-        return await service.commit(active, operation_id)
+        return await service.commit(active, active.operation_id)
 
     entries = {}
     for workspace in ("a", "b"):
@@ -80,13 +80,23 @@ async def revocation_case(tmp_path, native_package):
         service._loop.call_soon_threadsafe(block)
         assert blocked.wait(2)
 
+    requests = {}
+
+    async def disable(target, label):
+        if label not in requests:
+            requests[label] = service.begin_disable(target)
+        return await service.finish_revocation(requests[label])
+
+    async def uninstall(installation_id, label):
+        if label not in requests:
+            requests[label] = service.begin_uninstall(installation_id)
+        return await service.finish_revocation(requests[label])
+
     def start_disable_here():
         from tldw_chatbook.Plugins.revocation import RevocationTarget
 
         return asyncio.create_task(
-            service.disable(
-                RevocationTarget(review.installation_id, "a", False), "disable-a"
-            )
+            disable(RevocationTarget(review.installation_id, "a", False), "disable-a")
         )
 
     def admission_allows(workspace):
@@ -98,6 +108,9 @@ async def revocation_case(tmp_path, native_package):
 
     case = SimpleNamespace(
         service=service,
+        requests=requests,
+        disable=disable,
+        uninstall=uninstall,
         installation=review.installation_id,
         entries=entries,
         child=child,
@@ -230,7 +243,7 @@ async def test_uninstall_retains_data_processes_and_defers_files_for_survivor(
 
     await case.service._call(seed_on_next_review)
     await case.enable("b", "root-fixture")
-    receipt = await case.service.uninstall(case.installation, "uninstall")
+    receipt = await case.uninstall(case.installation, "uninstall")
     assert receipt.committed and receipt.cleanup_pending and not receipt.runtime_stopped
     assert case.cancelled_b.is_set()
     package = case.service.profile_root / "plugins/packages" / case.installation
@@ -259,10 +272,10 @@ async def test_uninstall_retains_data_processes_and_defers_files_for_survivor(
     await asyncio.to_thread(case.child.wait, 2)
     await asyncio.to_thread(case.service.complete_run, "root-a")
     await asyncio.to_thread(case.service.complete_run, "root-b")
-    receipt = await case.service.uninstall(case.installation, "uninstall")
+    receipt = await case.uninstall(case.installation, "uninstall")
     assert receipt.runtime_stopped and not receipt.cleanup_pending
     assert not package.exists() and data.exists()
-    assert (await case.service.uninstall(case.installation, "uninstall")).committed
+    assert (await case.uninstall(case.installation, "uninstall")).committed
 
 
 @pytest.mark.asyncio
@@ -283,7 +296,7 @@ async def test_uninstall_keeps_files_for_unregistered_surviving_process(
     token = await case.service._call(reserve_unknown)
     await asyncio.to_thread(case.service.complete_run, "root-a")
     await asyncio.to_thread(case.service.complete_run, "root-b")
-    receipt = await case.service.uninstall(case.installation, "uninstall-orphan")
+    receipt = await case.uninstall(case.installation, "uninstall-orphan")
     assert receipt.committed and receipt.cleanup_pending and not receipt.runtime_stopped
     package = case.service.profile_root / "plugins/packages" / case.installation
     assert package.exists()
@@ -316,7 +329,7 @@ async def test_new_request_after_prepared_abort_can_reconcile_for_fresh_enable(
     with pytest.raises(PermissionError):
         await case.enable("a", "too-early")
     assert (
-        await case.service.disable(
+        await case.disable(
             RevocationTarget(case.installation, "a", False), "fresh-disable"
         )
     ).committed
@@ -348,7 +361,9 @@ async def test_original_storage_failure_survives_cleanup_failure(revocation_case
         caught.value.original_error is original and caught.value.__cause__ is original
     )
     assert caught.value.receipt.cleanup_errors == ("RuntimeError",)
-    assert case.service.fences.operations["disable-a"].cleanup_errors == [cleanup]
+    assert case.service.fences.operations[
+        case.requests["disable-a"].request_id
+    ].cleanup_errors == [cleanup]
     assert not case.admission_allows_a() and case.admission_allows_b()
 
 
@@ -410,13 +425,11 @@ async def test_unobserved_process_inventory_never_claims_stop(revocation_case):
     await asyncio.to_thread(case.service.complete_run, "root-a")
     case.block_persistence()
     operation = asyncio.create_task(
-        case.service.disable(
-            RevocationTarget(case.installation, "a", False), "unobserved"
-        )
+        case.disable(RevocationTarget(case.installation, "a", False), "unobserved")
     )
     try:
         await asyncio.sleep(0)
-        status = case.service.revocation_status("unobserved")
+        status = case.service.revocation_status(case.requests["unobserved"])
         assert status.runtime_stopped is None and status.cleanup_pending
     finally:
         case.release_persistence()
@@ -432,9 +445,9 @@ async def test_superseded_locked_request_cannot_revoke_fresh_run(revocation_case
     target = RevocationTarget(case.installation, "a", False)
     await case.service._call(lambda: case.service._coordinator.authority.lock())
     with pytest.raises(RevocationFailure):
-        await case.service.disable(target, "old-locked")
+        await case.disable(target, "old-locked")
     await case.service.unlock("test passphrase")
-    assert (await case.service.disable(target, "replacement")).committed
+    assert (await case.disable(target, "replacement")).committed
     await case.enable("a", "resume-after-replacement")
     fresh = await case.service.admit(
         case.service.capture_maximum("a"), "fresh-replacement"
@@ -445,7 +458,7 @@ async def test_superseded_locked_request_cannot_revoke_fresh_run(revocation_case
     )
     try:
         with pytest.raises(ValueError, match="superseded"):
-            await case.service.disable(target, "old-locked")
+            await case.disable(target, "old-locked")
         assert not cancelled.is_set()
         await case.service.check_entries(fresh["available_skills"])
     finally:
@@ -470,9 +483,7 @@ async def test_uninstall_does_not_follow_replaced_package_parent(
     await case.service._call(
         lambda: setattr(case.service._coordinator, "progress", replace_parent)
     )
-    receipt = await case.service.uninstall(
-        case.installation, "uninstall-replaced-parent"
-    )
+    receipt = await case.uninstall(case.installation, "uninstall-replaced-parent")
     assert receipt.committed and receipt.cleanup_pending and receipt.cleanup_errors
     assert (outside / case.installation / "plugin.json").exists()
     packages.unlink()
@@ -481,5 +492,5 @@ async def test_uninstall_does_not_follow_replaced_package_parent(
         lambda: setattr(case.service._coordinator, "progress", None)
     )
     assert not (
-        await case.service.uninstall(case.installation, "uninstall-replaced-parent")
+        await case.uninstall(case.installation, "uninstall-replaced-parent")
     ).cleanup_pending

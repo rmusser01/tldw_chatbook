@@ -152,6 +152,7 @@ from .fleet_coordinator import (
     DEFAULT_RETAINED_TRANSCRIPTS,
     FleetCoordinator,
     FleetHandle,
+    RetainedTranscript,
 )
 from .human_input_wait import human_input_wait_active
 from .native_tools import (
@@ -2160,6 +2161,8 @@ class AgentService:
             Callable[[], "contextlib.AbstractContextManager"] | None
         ) = None,
         on_child_settled: Callable[[str | None, str], None] | None = None,
+        managed_child_required: bool = False,
+        managed_child_resume: Callable[[RetainedTranscript], object] | None = None,
         persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
         | None = None,
         expand_provider_continuation: (
@@ -2458,6 +2461,8 @@ class AgentService:
         # else noticing. The Console bridge's fan-out additionally
         # isolates its consumers from EACH OTHER (see `FleetDrainFanout`).
         self._on_child_settled = on_child_settled
+        self.managed_child_required = managed_child_required
+        self.managed_child_resume = managed_child_resume
         self.persist_provider_continuation = persist_provider_continuation
         self.expand_provider_continuation = expand_provider_continuation
         self.prepare_provider_continuation_request = bool(
@@ -5547,6 +5552,8 @@ class AgentService:
             isolation: "str | None" = None,
             *,
             definition_wall_seconds: float | None = None,
+            resumed_managed: RetainedTranscript | None = None,
+            managed_resume_ceiling=None,
         ) -> "tuple[FleetHandle | None, ToolResult | None]":
             """spawn's reserve -> Event -> thread -> handle tail, shared.
 
@@ -5590,6 +5597,17 @@ class AgentService:
                             "finished sub-agent before starting another"
                         ),
                     )
+                fleet.set_managed_custody(
+                    handle.handle_id,
+                    required=self.managed_child_required
+                    or bool(resumed_managed and resumed_managed.managed_required),
+                    resume_ceiling=managed_resume_ceiling,
+                    resume_pin=resumed_managed.managed_pin if resumed_managed else None,
+                    resume_run_id=resumed_managed.run_id if resumed_managed else None,
+                    resume_handle_id=(
+                        resumed_managed.handle_id if resumed_managed else None
+                    ),
+                )
                 child_run_id = uuid.uuid4().hex
                 try:
                     self.db.create_run(
@@ -6826,6 +6844,19 @@ class AgentService:
             the old run.
             """
             nonlocal sub_agent_spawns
+            managed_resume_ceiling = None
+            try:
+                if retained.managed_required and (
+                    retained.managed_pin is None or self.managed_child_resume is None
+                ):
+                    raise PermissionError("managed child pin unavailable")
+                if self.managed_child_resume is not None:
+                    managed_resume_ceiling = self.managed_child_resume(retained)
+            except (ValueError, PermissionError):
+                return ToolResult(
+                    ok=False,
+                    error="send_to_agent: managed continuation authority no longer matches; spawn a new child",
+                )
             resolved = None
             if retained.agent:
                 resolved = next(
@@ -7043,6 +7074,8 @@ class AgentService:
                 definition_wall_seconds=(
                     child_budget.max_wall_seconds if definition_bounds else None
                 ),
+                resumed_managed=retained,
+                managed_resume_ceiling=managed_resume_ceiling,
             )
             if failure is not None:
                 return failure

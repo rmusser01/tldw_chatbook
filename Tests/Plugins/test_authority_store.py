@@ -49,6 +49,13 @@ def transition(store, operation_id="operation-1"):
         "result": "committed",
     }
     old = store.load_marker()
+    import hashlib
+
+    nonce = hashlib.sha256(operation_id.encode()).hexdigest()
+    result = dict(snapshot["operation_result"])
+    result.pop("operation_id")
+    operation_id = store.issue_operation_id(old.generation + 1, nonce, result, nonce)
+    snapshot["operation_result"]["operation_id"] = operation_id
     new = PluginMarker(
         generation=old.generation + 1,
         operation_id=operation_id,
@@ -223,14 +230,14 @@ import tldw_chatbook.Plugins.authority_store as module
 p = Path(sys.argv[1])
 s = module.PluginAuthorityStore(p, module.FilePluginMarkerStore(p), accept_reduced_protection=True)
 s.unlock("pw")
-e = s.verify_transition("operation-1")
+e = s.verify_transition(sys.argv[2])
 assert s.load_marker() == e.old and e.committed
 s.advance_marker(e.old, e.new)
-assert s.verify_current()["operation_result"]["operation_id"] == "operation-1"
+assert s.verify_current()["operation_result"]["operation_id"] == sys.argv[2]
 print(module.__file__)
 """
     completed = subprocess.run(
-        child_argv(script) + [str(path)],
+        child_argv(script) + [str(path), new.operation_id],
         capture_output=True,
         check=False,
         timeout=30,
@@ -438,7 +445,7 @@ def test_store_rejects_symlink_artifact_and_preserves_target(tmp_path):
     assert target.read_bytes() == original
 
 
-def complete_snapshot():
+def complete_snapshot(store=None):
     from tldw_chatbook.Plugins.authority import empty_snapshot
 
     value = empty_snapshot()
@@ -567,6 +574,12 @@ def complete_snapshot():
             },
         }
     )
+    if store is not None:
+        result = dict(value["operation_result"])
+        result.pop("operation_id")
+        value["operation_result"]["operation_id"] = store.issue_operation_id(
+            store.load_marker().generation + 1, "a" * 64, result, "b" * 64
+        )
     return value
 
 
@@ -591,15 +604,15 @@ def test_every_authoritative_field_is_bound_independently(tmp_path, field_path):
 
     store = store_at(tmp_path / "plugins")
     store.bootstrap("pw")
-    snapshot = complete_snapshot()
+    snapshot = complete_snapshot(store)
     old = store.load_marker()
     new = PluginMarker(
         generation=1,
-        operation_id="complete-op",
+        operation_id=snapshot["operation_result"]["operation_id"],
         recovery_snapshot_digest=snapshot_digest(snapshot),
     )
     store.prepare(snapshot, old, new)
-    assert store.verify_transition("complete-op").snapshot == snapshot
+    assert store.verify_transition(new.operation_id).snapshot == snapshot
     changed = copy.deepcopy(snapshot)
     node = changed
     for key in field_path[:-1]:
@@ -623,11 +636,11 @@ def test_same_package_bytes_with_reviewed_workspace_change_need_new_marker(tmp_p
 
     store = store_at(tmp_path / "plugins")
     store.bootstrap("pw")
-    first = complete_snapshot()
+    first = complete_snapshot(store)
     old = store.load_marker()
     current = PluginMarker(
         generation=1,
-        operation_id="complete-op",
+        operation_id=first["operation_result"]["operation_id"],
         recovery_snapshot_digest=snapshot_digest(first),
     )
     store.prepare(first, old, current)
@@ -635,10 +648,14 @@ def test_same_package_bytes_with_reviewed_workspace_change_need_new_marker(tmp_p
     store.advance_marker(old, current)
     changed = copy.deepcopy(first)
     changed["activation"][0]["intent"] = "enabled"
-    changed["operation_result"]["operation_id"] = "workspace-edit"
+    result = dict(changed["operation_result"])
+    result.pop("operation_id")
+    changed["operation_result"]["operation_id"] = store.issue_operation_id(
+        2, "c" * 64, result, "d" * 64
+    )
     next_marker = PluginMarker(
         generation=2,
-        operation_id="workspace-edit",
+        operation_id=changed["operation_result"]["operation_id"],
         recovery_snapshot_digest=snapshot_digest(changed),
     )
     assert next_marker.recovery_snapshot_digest != current.recovery_snapshot_digest
@@ -703,10 +720,10 @@ def test_complete_snapshot_is_encrypted_and_unknown_secret_fields_rejected(tmp_p
 
     store = store_at(tmp_path / "plugins")
     store.bootstrap("pw")
-    snapshot = complete_snapshot()
+    snapshot = complete_snapshot(store)
     marker = PluginMarker(
         generation=1,
-        operation_id="complete-op",
+        operation_id=snapshot["operation_result"]["operation_id"],
         recovery_snapshot_digest=snapshot_digest(snapshot),
     )
     old = store.load_marker()
@@ -1001,7 +1018,7 @@ def test_transition_discovery_authenticates_and_pages_without_registry(tmp_path)
     assert store.list_transitions(limit=1, offset=0)[0].committed is False
     store.certify_commit(old, new)
     evidence = store.list_transitions(limit=1, offset=0)
-    assert evidence[0].new.operation_id == "discover-me"
+    assert evidence[0].new.operation_id == new.operation_id
     assert evidence[0].committed is True
     assert store.list_transitions(limit=1, offset=1) == ()
     with pytest.raises(ValueError):
@@ -1045,3 +1062,53 @@ def test_transition_capacity_refuses_before_new_snapshot_publication(
     snapshot, old, new = transition(store, "two")
     store.prepare(snapshot, old, new)
     assert len(store.list_transitions(limit=50, offset=0)) == 2
+
+
+def test_issued_identity_is_generation_request_and_result_bound(tmp_path):
+    from tldw_chatbook.Plugins.authority import OperationResult
+
+    store = store_at(tmp_path / "plugins")
+    store.bootstrap("pw")
+    result = {
+        "installation_id": "installed",
+        "kind": "update",
+        "revision_digest": "a" * 64,
+        "result": "committed",
+    }
+    identity = store.issue_operation_id(1, "b" * 64, result, "c" * 64)
+    assert len(identity) == 215
+    checked = store.verify_operation_id(identity, dict(result, operation_id=identity))
+    assert checked.generation == 1 and checked.binding_digest == "b" * 64
+    assert checked.nonce == "c" * 64
+    OperationResult.model_validate(dict(result, operation_id=identity))
+    for altered in (
+        dict(result, kind="revoke"),
+        dict(result, installation_id="other"),
+        dict(result, revision_digest="d" * 64),
+    ):
+        with pytest.raises(ValueError):
+            store.verify_operation_id(identity, dict(altered, operation_id=identity))
+    for altered in (
+        identity.upper(),
+        identity.replace("0000000000000001", "0000000000000002"),
+        identity[:-1] + ("0" if identity[-1] != "0" else "1"),
+    ):
+        with pytest.raises(ValueError):
+            store.verify_operation_id(altered, dict(result, operation_id=altered))
+    with pytest.raises(ValueError):
+        store.issue_operation_id(2**63, "b" * 64, result, "c" * 64)
+
+
+def test_bootstrap_v2_requires_fixed_authenticated_cutover(tmp_path):
+    store = store_at(tmp_path / "plugins")
+    store.bootstrap("pw")
+    metadata = json.loads((store.store_dir / "metadata.json").read_text())
+    assert metadata["schema_version"] == 2
+    cutover = store.verify_legacy_cutover()
+    assert cutover.marker == store.load_marker() and cutover.entries == []
+    reopened = store_at(store.store_dir, store.marker_store)
+    reopened.unlock("pw")
+    assert reopened.verify_current() == store.verify_current()
+    (store.store_dir / "legacy-cutover.json").unlink()
+    with pytest.raises((ValueError, OSError)):
+        reopened.unlock("pw")

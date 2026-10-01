@@ -284,7 +284,7 @@ new local packages **disabled and untrusted**. Workspace targeting does not enab
 the install. Explicit activation/trust, replacement drain, catalogs and their
 additional review inputs are later lifecycle integrations.
 
-Retain one operation ID when awaiting `commit(review, operation_id)`. The owned
+Retain the issued `review.operation_id` when awaiting `commit(review, review.operation_id)`. The owned
 package copy is reinspected and its files/directories synchronized before protected
 preparation. Candidate rows exist only inside the guarded uncommitted SQLite
 transaction while `authority_projection` builds the complete snapshot. The snapshot
@@ -430,14 +430,16 @@ Direct-provider custody also retains the existing gateway worker futures through
 `ConsoleProviderStreamSignals.provider_work_callback`; consumer exit settles only
 after every retained worker/closer reports actual terminal completion.
 Permanent app shutdown drains Console and then closes the plugin service;
-navigation keeps its owner alive. F7 supplies update/revision drain and retention;
+navigation keeps its owner alive. Update/revision drain and retention use that owner;
 M4 supplies plugin MCP ownership. These later paths must preserve these identities
 and current-authority checks.
 
 ## Scoped stop and uninstall (F6)
 
-Use the app-owned `PluginService.disable(target, operation_id)` or
-`uninstall(installation_id, operation_id)`. `RevocationTarget` is frozen:
+Use app-owned `PluginService.disable(target)` or `uninstall(installation_id)` for
+one awaited action. For caller cancellation/retry, retain the synchronous handle
+from `begin_disable(target)` / `begin_uninstall(installation_id)` and await
+`finish_revocation(request)`. `RevocationTarget` is frozen:
 
 - `RevocationTarget(id, workspace_id, False)` disables one named workspace.
 - `RevocationTarget(id, None, False, global_default=True)` changes the explicit
@@ -467,16 +469,18 @@ its certificate/publication still needs recovery. `session_only` means disable
 was not saved and gives **no restart guarantee**. Runtime stop uses actual host
 completion events and retained process evidence; a cancelled caller/Future never
 proves completion. An unobserved process inventory cannot prove a clean stop.
-`revocation_status(operation_id)` observes retained outcomes without storage IO.
+`revocation_status(request)` observes retained outcomes without storage IO.
 `RevocationFailure` retains the original exception in `original_error`/`__cause__`
 for the owning adapter; public diagnostics must use the receipt's closed fields.
 
 Caller cancellation leaves retained persistence/cleanup running. Retry the exact
-operation ID and request; conflicting reuse raises `ValueError`. A prepared-only
+request handle; it retains at most one original reviewed issued mutation identity.
+Conflicting reuse raises `ValueError`. A prepared-only
 abort retains its aborted result without replay; reconcile, then make an explicit
 fresh request with a fresh ID. A committed registry without a certificate remains
-recovery-required. Cross-session issued-ID/legacy retry migration and bounded
-retention are F7; do not invent a new ID to retry uncertain remote work.
+recovery-required. Across restart, `lookup_operation(identity)` looks up either the issued operation
+ID or retained request-handle nonce. It never starts a mutation. An unavailable or
+expired identity requires an explicit new action, not inferred replay permission.
 
 Uninstall commits the tombstone and removes only installation-owned trust,
 selection, mappings and registrations before package-file cleanup. Saved data and
@@ -494,3 +498,60 @@ new disable review or cancel fresh work. Completed IDs remain idempotent.
 ownership evidence; UI must show unknown/cleanup pending, never confirmed stop.
 An explicit Inherit review under a true default can resume fresh admissions after
 reconciliation, with the same permanent refusal of old tokens.
+
+
+## Reviewed revisions, retention and archived continuation
+
+`review_revision(installation_id, source_root)` captures the exact current baseline,
+new package bytes and existing selection intersection. Added components remain
+unselected. Review reserves an inactive ticket; `apply_revision(review,
+review.operation_id)` synchronously activates only that exact ticket before worker
+waiting. Existing admitted work completes; new admission and late children refuse.
+`revision_drain.blockers(token)` reports actual run/handle/workspace/lease custody.
+Cancel releases only its proposal fence. `cancel_work(token)` explicitly requests
+cancellation and still waits for actual terminal evidence. Cancelled Apply waiters
+leave the existing worker task owned. `review_rollback(installation_id, digest)`
+creates a fresh review under current selections/policy; it restores package bytes,
+not old permission. Mutable-data compatibility remains unknown.
+
+Initial packages keep `packages/<installation>` identity; replacement roots use
+`packages-revisions/<installation>/<digest>`. Uninstall owns both layouts.
+After update, internal retention keeps current plus at most two inactive revisions
+unless protected, expires eligible inactive material after 30 days, and enforces a
+2 GiB total package/cache/staging quota plus 100 MiB free reserve before allocation.
+`retain_revisions(installation_id)` explicitly reconciles cleanup or maintenance.
+A distinct host-issued `retain` operation commits reference compaction first.
+Its bounded authenticated result freezes exact directory/root/anchor identities;
+restart cleanup refuses replacements and preserves pending evidence. File failure
+reports `cleanup_pending`; commitment never means file cleanup succeeded.
+
+Terminal transition/result history keeps a contiguous authenticated suffix, bounded
+at 1,000 entries/30 days when eligible. Current and unresolved evidence remains
+protected; all-protected capacity refuses a new mutation. A fixed v2 trust-metadata
+cutover authenticates the finite legacy-ID map before pruning; old snapshots and
+salt remain unchanged. Issued identities authenticate the expected generation and
+review/result, not permission or proof of commitment. Newer uncertified SQLite
+hints without their protected intent still require recovery; expired old hints may
+be reconciled after restoring an old SQLite backup.
+
+Managed durable continuations use the existing private field's closed V2 envelope.
+The Console captures actual admitted capabilities at the real run binding and the
+store finalizer signs every resolved checkpoint body with its exact durable owner.
+Resume verifies namespace, body, owner, revision/definitions, scoped authority and
+qualified data coverage before context assembly and again at admission. V1 receives
+an explicit zero-managed ceiling. Valid foreign/remapped V2 remains private history
+but cannot resume as local managed work. No import/fork re-signs it.
+
+Fleet pins remain host-held inside the existing bounded retained transcript.
+`send_to_agent` verifies before definition lookup/slot consumption, intersects the
+current parent ceiling and repeats validation at actual child binding. Missing
+required pins refuse retention/resume; pin bytes count toward transcript limits.
+These pins never restore old approvals and never survive fleet restart.
+
+The staging cleanup adapter accepts explicit reconciled terminal producer custody
+older than 24 hours and an exact physical directory identity. Unknown, active,
+recovery-referenced or replaced staging stays protected and counts toward quota.
+I3/I4 must qualify their future acquisition/cache producers against this seam.
+F8 must qualify root-user joins/attachment/generation changes; package-only native
+skills have qualified-no-data coverage, while unqualified data users refuse exact
+resume. No acquisition, hook or MCP execution owner is created here.

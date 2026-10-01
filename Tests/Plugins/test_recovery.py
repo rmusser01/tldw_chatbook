@@ -1,6 +1,7 @@
 """Recovery requires protected proof and exact retained definitions."""
 
 import shutil
+from pathlib import Path
 
 import pytest
 
@@ -53,12 +54,12 @@ def test_evidence_matrix_at_actual_boundaries(
     review = reviewed(stack, native_package())
     interrupt_at(stack, phase)
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(review, "interrupted"))
+        stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     stack.call(lambda: setattr(stack.coordinator, "progress", None))
     receipt = next(
         item
         for item in stack.call(stack.coordinator.recover)
-        if item.operation_id == "interrupted"
+        if item.operation_id == review.operation_id
     )
     assert (receipt.phase, receipt.committed) == (want, committed)
     if committed:
@@ -78,14 +79,16 @@ def test_database_loss_restores_all_installations_and_blocks_unknown_processes(
 ):
     stack = plugin_stack
     first = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(first, "first"))
+    stack.call(lambda: stack.coordinator.commit(first, first.operation_id))
     second = reviewed(stack, native_package())
     interrupt_at(stack, phase)
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(second, "second"))
+        stack.call(lambda: stack.coordinator.commit(second, second.operation_id))
     lose_registry(stack)
     receipts = stack.call(stack.coordinator.recover)
-    assert any(item.operation_id == "second" and item.committed for item in receipts)
+    assert any(
+        item.operation_id == second.operation_id and item.committed for item in receipts
+    )
     state = stack.call(stack.authority.verify_current)
     assert {item["installation_id"] for item in state["installations"]} == {
         first.installation_id,
@@ -126,7 +129,7 @@ def test_recovery_reinspects_retained_bytes_without_original_link_source(
     (package / "skill-source.md").write_bytes(data)
     original.symlink_to("../../skill-source.md")
     review = reviewed(stack, package)
-    stack.call(lambda: stack.coordinator.commit(review, "linked"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     shutil.rmtree(package)
     lose_registry(stack)
     receipt = stack.call(stack.coordinator.recover)[0]
@@ -147,7 +150,7 @@ def test_changed_retained_material_quarantines_without_default_projection(
 ):
     stack = plugin_stack
     review = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(review, "changed"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     state = stack.call(stack.authority.verify_current)
     from pathlib import Path
 
@@ -169,7 +172,7 @@ def test_invalid_journal_never_promotes_registry(plugin_stack, native_package):
     review = reviewed(stack, native_package())
     interrupt_at(stack, "registry_committed")
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(review, "invalid"))
+        stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     path = next((stack.authority.store_dir / "intents").iterdir())
     path.write_text("{}")
     assert stack.call(stack.coordinator.recover)[0].phase == "recovery_required"
@@ -276,7 +279,9 @@ def test_killed_owner_recovers_in_fresh_process(
 ):
     root = tmp_path / "child"
     package = native_package()
-    run_child(root, "install", "--package", str(package), barrier=barrier)
+    barrier_result = run_child(
+        root, "install", "--package", str(package), barrier=barrier
+    )
     result = run_child(root, "recover")
     if want is None:
         assert result["receipts"] == []
@@ -284,7 +289,7 @@ def test_killed_owner_recovers_in_fresh_process(
         receipt = next(
             item
             for item in result["receipts"]
-            if item["operation_id"] == "child-install"
+            if item["operation_id"] == barrier_result["operation_id"]
         )
         assert receipt["phase"] == want and receipt["committed"] is committed
     assert result["marker_generation"] == int(committed)
@@ -350,15 +355,17 @@ def test_new_registry_without_operation_hint_still_requires_commit_proof(
 ):
     stack = plugin_stack
     first = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(first, "first"))
+    stack.call(lambda: stack.coordinator.commit(first, first.operation_id))
     second = reviewed(stack, native_package())
     interrupt_at(stack, "registry_committed")
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(second, "no-proof"))
+        stack.call(lambda: stack.coordinator.commit(second, second.operation_id))
 
     def remove_hint():
         with stack.registry.transaction() as cursor:
-            cursor.execute("DELETE FROM operations WHERE operation_id='no-proof'")
+            cursor.execute(
+                "DELETE FROM operations WHERE operation_id=?", (second.operation_id,)
+            )
 
     stack.call(remove_hint)
     receipts = stack.call(stack.coordinator.recover)
@@ -375,7 +382,7 @@ def test_secure_marker_snapshot_alone_recovers_and_repeats(
 ):
     stack = plugin_stack
     review = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(review, "marker-only"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     for folder in ("intents", "certificates"):
         for path in (stack.authority.store_dir / folder).iterdir():
             path.unlink()
@@ -395,15 +402,19 @@ def test_ambiguous_certified_successors_never_choose_one(plugin_stack, native_pa
     review = reviewed(stack, native_package())
     interrupt_at(stack, "certified")
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(review, "one"))
+        stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
 
     def add_competing():
-        evidence = stack.authority.verify_transition("one")
+        evidence = stack.authority.verify_transition(review.operation_id)
         snapshot = evidence.snapshot
-        snapshot["operation_result"]["operation_id"] = "two"
+        result = dict(snapshot["operation_result"])
+        result.pop("operation_id")
+        snapshot["operation_result"]["operation_id"] = (
+            stack.authority.issue_operation_id(1, "f" * 64, result, "e" * 64)
+        )
         new = PluginMarker(
             generation=1,
-            operation_id="two",
+            operation_id=snapshot["operation_result"]["operation_id"],
             recovery_snapshot_digest=snapshot_digest(snapshot),
         )
         stack.authority.prepare(snapshot, evidence.old, new)
@@ -422,7 +433,7 @@ def test_current_marker_snapshot_and_previous_evidence_are_retained(
         review = reviewed(stack, native_package())
         stack.call(
             lambda review=review, index=index: stack.coordinator.commit(
-                review, f"install-{index}"
+                review, review.operation_id
             )
         )
     stack.call(stack.coordinator.recover)
@@ -437,7 +448,7 @@ def test_reconstruction_preserves_existing_real_process_evidence(
 ):
     stack = plugin_stack
     review = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(review, "first"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     token = stack.call(
         lambda: stack.owner.reserve_launch(
             "live", review.installation_id, None, review.inspection.effective_digest
@@ -474,7 +485,7 @@ def test_reconstruction_preserves_blocked_component_definitions(
     )
     review = reviewed(stack, package)
     assert review.inspection.inventory["skill:review"].activation_blockers
-    stack.call(lambda: stack.coordinator.commit(review, "blocked"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     before = stack.call(stack.authority.verify_current)
     lose_registry(stack)
     assert stack.call(stack.coordinator.recover)[0].committed
@@ -497,7 +508,7 @@ def test_retained_definition_mismatch_never_partially_reconstructs(
 
     stack = plugin_stack
     review = reviewed(stack, native_package())
-    stack.call(lambda: stack.coordinator.commit(review, "first"))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     original = stack.call(stack.authority.verify_current)
     altered = deepcopy(original)
     altered["components"][0]["definition_digest"] = "0" * 64
@@ -520,13 +531,20 @@ def test_aborted_prepare_does_not_poison_later_reviewed_commit(
     review = reviewed(stack, native_package())
     interrupt_at(stack, "prepared")
     with pytest.raises(OSError):
-        stack.call(lambda: stack.coordinator.commit(review, "aborted"))
+        stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     stack.call(lambda: setattr(stack.coordinator, "progress", None))
-    assert stack.call(lambda: stack.coordinator.commit(review, "new-attempt")).committed
+    assert (
+        stack.call(lambda: stack.coordinator.commit(review, review.operation_id)).phase
+        == "aborted"
+    )
+    replacement = reviewed(stack, Path(review.inspection.source_identity))
+    assert stack.call(
+        lambda: stack.coordinator.commit(replacement, replacement.operation_id)
+    ).committed
     receipts = stack.call(stack.coordinator.recover)
     assert [(item.operation_id, item.phase) for item in receipts] == [
-        ("aborted", "aborted"),
-        ("new-attempt", "complete"),
+        (review.operation_id, "aborted"),
+        (replacement.operation_id, "complete"),
     ]
     assert len(stack.call(stack.coordinator.published_snapshot)["installations"]) == 1
 
@@ -544,7 +562,7 @@ def test_prepared_intent_with_unrelated_old_marker_quarantines_before_abort(
         review = reviewed(stack, native_package())
         stack.call(
             lambda review=review, generation=generation: stack.coordinator.commit(
-                review, f"accepted-{generation}"
+                review, review.operation_id
             )
         )
         markers[generation] = stack.call(stack.authority.load_marker)
@@ -615,7 +633,7 @@ def test_prepared_intent_on_exact_accepted_endpoint_aborts_without_fencing(
         review = reviewed(stack, native_package())
         stack.call(
             lambda review=review, generation=generation: stack.coordinator.commit(
-                review, f"accepted-{generation}"
+                review, review.operation_id
             )
         )
         markers[generation] = stack.call(stack.authority.load_marker)
@@ -643,3 +661,148 @@ def test_prepared_intent_on_exact_accepted_endpoint_aborts_without_fencing(
     assert aborted.phase == "aborted" and aborted.committed is False
     assert sum(item.committed for item in receipts) == 3
     assert stack.call(stack.coordinator.published_snapshot) == accepted
+
+
+def test_retired_issued_hints_reconstruct_current_but_newer_compound_loss_refuses(
+    plugin_stack, native_package
+):
+    from Tests.Plugins.test_coordinator import reviewed
+
+    stack = plugin_stack
+    first = reviewed(stack, native_package())
+    assert stack.call(
+        lambda: stack.coordinator.commit(first, first.operation_id)
+    ).committed
+    second = reviewed(stack, native_package())
+    assert stack.call(
+        lambda: stack.coordinator.commit(second, second.operation_id)
+    ).committed
+    expected = stack.call(stack.coordinator.published_snapshot)
+    # Simulate an old hint restored after an eligible oldest-prefix retirement.
+    for purpose in ("committed", "prepared"):
+        stack.authority._operation_path(purpose, first.operation_id).unlink()
+    receipts = stack.call(stack.coordinator.recover)
+    assert all(item.phase == "complete" for item in receipts)
+    assert stack.call(stack.coordinator.published_snapshot) == expected
+    third = reviewed(stack, native_package())
+
+    def fail(phase):
+        if phase == "registry_committed":
+            raise OSError("compound loss")
+
+    stack.call(lambda: setattr(stack.coordinator, "progress", fail))
+    with pytest.raises(OSError):
+        stack.call(lambda: stack.coordinator.commit(third, third.operation_id))
+    stack.call(lambda: setattr(stack.coordinator, "progress", None))
+    stack.authority._operation_path("prepared", third.operation_id).unlink()
+    assert stack.call(stack.coordinator.recover)[0].phase == "recovery_required"
+    assert stack.call(stack.authority.verify_current) == expected
+
+
+def _legacy_fixture_namespace(stack):
+    """Construct the documented pre-F7 metadata; never a production writer option."""
+    import json
+
+    metadata = stack.authority.store_dir / "metadata.json"
+    value = json.loads(metadata.read_text())
+    assert stack.call(stack.authority.load_marker).generation == 0
+    metadata.write_text(json.dumps({"schema_version": 1, "salt": value["salt"]}))
+    (stack.authority.store_dir / "legacy-cutover.json").unlink()
+
+
+def _legacy_fixture_commit(stack, package, identity):
+    """Execute the frozen F4 v1 protocol to author legacy recovery evidence."""
+    from Tests.Plugins.test_coordinator import reviewed
+    from tldw_chatbook.Plugins.authority import PluginMarker, snapshot_digest
+
+    review = reviewed(stack, package)
+
+    def write():
+        coordinator = stack.coordinator
+        retained = coordinator._materialize(review)
+        old = stack.authority.load_marker()
+        result = {
+            "operation_id": identity,
+            "installation_id": review.installation_id,
+            "kind": "install",
+            "revision_digest": retained.effective_digest,
+            "result": "committed",
+        }
+        with stack.registry.transaction() as cursor:
+            coordinator._apply_review(cursor, review, retained)
+            snapshot = stack.registry.authority_projection(operation_result=result)
+            new = PluginMarker(
+                generation=old.generation + 1,
+                operation_id=identity,
+                recovery_snapshot_digest=snapshot_digest(snapshot),
+            )
+            stack.authority._save_snapshot(snapshot, new)
+            stack.authority._save_evidence(
+                "prepared", stack.authority._transition(old, new)
+            )
+            stack.registry.write_operation(cursor, result, phase="committed")
+        stack.authority.certify_commit(old, new)
+        stack.authority.advance_marker(old, new)
+        coordinator._published = snapshot
+        return stack.authority.verify_transition(identity)
+
+    return stack.call(write)
+
+
+def test_interrupted_cutover_requalifies_valid_legacy_writer_then_old_backup(
+    plugin_stack, native_package, monkeypatch, tmp_path
+):
+    import sqlite3
+
+    from tldw_chatbook.Plugins import authority_store
+
+    stack = plugin_stack
+    _legacy_fixture_namespace(stack)
+    first = _legacy_fixture_commit(stack, native_package(), "legacy-first")
+    backup = tmp_path / "old-registry.sqlite"
+
+    def save_backup():
+        with sqlite3.connect(backup) as destination:
+            stack.registry._connection.backup(destination)
+
+    stack.call(save_backup)
+    old_metadata = stack.authority.metadata()
+    write = authority_store._write
+
+    def interrupt_metadata(path, payload, **kwargs):
+        if path.name == "metadata.json" and payload.get("schema_version") == 2:
+            raise OSError("interrupted before metadata switch")
+        return write(path, payload, **kwargs)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(authority_store, "_write", interrupt_metadata)
+        with pytest.raises(OSError):
+            stack.call(lambda: stack.authority.ensure_issued_metadata((first,)))
+    assert stack.authority.metadata() == old_metadata
+    assert stack.call(stack.authority.verify_legacy_cutover).marker == first.new
+    second = _legacy_fixture_commit(stack, native_package(), "legacy-second")
+    expected = stack.call(stack.authority.verify_current)
+    assert all(
+        receipt.phase == "complete" for receipt in stack.call(stack.coordinator.recover)
+    )
+    final = stack.call(stack.authority.verify_legacy_cutover)
+    assert final.marker == second.new
+    assert {entry.operation_id for entry in final.entries} == {
+        "legacy-first",
+        "legacy-second",
+    }
+    assert stack.authority.metadata()["salt"] == old_metadata["salt"]
+    assert stack.authority.metadata()["schema_version"] == 2
+    stack.call(lambda: stack.registry.forget_operation_hints((first.new.operation_id,)))
+    stack.call(lambda: stack.authority.retire_transition(first))
+
+    def restore_backup():
+        with sqlite3.connect(backup) as source:
+            source.backup(stack.registry._connection)
+
+    stack.call(restore_backup)
+    assert all(
+        receipt.phase == "complete" for receipt in stack.call(stack.coordinator.recover)
+    )
+    assert stack.call(stack.coordinator.published_snapshot) == expected
+    assert stack.call(stack.authority.verify_legacy_cutover) == final

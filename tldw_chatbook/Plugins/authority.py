@@ -3,11 +3,20 @@
 import math
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_serializer, model_validator
 
 from tldw_chatbook.Skills_Interop.skill_trust_crypto import canonical_json, sha256_hex
 
-PURPOSES = frozenset({"snapshot", "prepared", "committed"})
+PURPOSES = frozenset(
+    {
+        "snapshot",
+        "prepared",
+        "committed",
+        "issued_operation",
+        "legacy_cutover",
+        "archive-pin-v1",
+    }
+)
 
 
 def authority_message(purpose: str, payload: dict) -> bytes:
@@ -64,6 +73,32 @@ class PluginMarker(AuthorityModel):
     def bootstrap_identity(self):
         if (self.generation == 0) != (self.operation_id == "bootstrap"):
             raise ValueError("invalid bootstrap marker")
+        return self
+
+
+class IssuedOperationIdentity(AuthorityModel):
+    """Authenticated issuance only; never execution permission or commit proof."""
+
+    generation: Annotated[int, Field(ge=1, le=2**63 - 1)]
+    binding_digest: Digest
+    nonce: Digest
+
+
+class LegacyCutoverEntry(AuthorityModel):
+    operation_id: Identifier
+    result_digest: Digest
+
+
+class LegacyCutover(AuthorityModel):
+    schema_version: Literal[1]
+    marker: PluginMarker
+    entries: Annotated[list[LegacyCutoverEntry], Field(max_length=1001)]
+
+    @model_validator(mode="after")
+    def ordered_unique(self):
+        ids = [entry.operation_id for entry in self.entries]
+        if ids != sorted(set(ids)):
+            raise ValueError("cutover entries must be sorted and unique")
         return self
 
 
@@ -200,6 +235,17 @@ class DataRoot(AuthorityModel):
         return self
 
 
+class RetiredRevision(AuthorityModel):
+    revision_digest: Digest
+    materialized_identity: Text
+    device: Generation
+    inode: Generation
+    root_device: Generation
+    root_inode: Generation
+    anchor_device: Generation
+    anchor_inode: Generation
+
+
 class OperationResult(AuthorityModel):
     operation_id: Identifier
     installation_id: Identifier
@@ -213,10 +259,38 @@ class OperationResult(AuthorityModel):
         "revoke",
         "uninstall",
         "fence_data",
+        "retain",
         "recover",
     ]
     revision_digest: Digest | None
     result: Literal["committed"]
+
+    retired_revisions: (
+        Annotated[list[RetiredRevision], Field(min_length=1, max_length=1000)] | None
+    ) = None
+
+    @model_validator(mode="after")
+    def retention_payload(self):
+        if self.kind != "retain" and "retired_revisions" in self.model_fields_set:
+            raise ValueError("cleanup payload belongs only to retain")
+        if (self.kind == "retain") != (self.retired_revisions is not None):
+            raise ValueError("retain requires its closed cleanup payload")
+        if self.retired_revisions is not None:
+            rows = [row.model_dump(mode="json") for row in self.retired_revisions]
+            identities = [row["revision_digest"] for row in rows]
+            if (
+                identities != sorted(set(identities))
+                or len(canonical_json(rows)) > 1024 * 1024
+            ):
+                raise ValueError("retention payload bounds or duplicate identity")
+        return self
+
+    @model_serializer(mode="wrap")
+    def preserve_absent_retention(self, handler):
+        value = handler(self)
+        if self.retired_revisions is None:
+            value.pop("retired_revisions", None)
+        return value
 
 
 class CompleteAuthority(AuthorityModel):

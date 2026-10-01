@@ -346,3 +346,43 @@ F5 packaging follow-up: the built wheel
 `/private/tmp/hooks-f5-wheel/tldw_chatbook-0.2.2-py3-none-any.whl` was inspected;
 all three packaged registry migration resources exactly match source. No editable
 environment was rebound or reinstalled.
+
+
+## F7 — TASK-32674 revision drains, retention and managed resume
+
+Integrated the reviewed `e0f0327200` increment while retaining current child
+definition limits, hook consent/context carriers, exact worker custody and
+continuation transport. Updates fence fresh admission, retain actual run and
+process blockers, and distinguish proposal cancellation from cancelling work.
+Rollback is a fresh current-policy review; mutable data and external effects
+are not restored. Immutable revisions and authenticated rolling history retain
+live/recovery material. Issued retries keep their original target and phase.
+Managed continuation pins constrain fresh admission through existing Console,
+fleet and archive owners; historical permissions never become new authority.
+
+The first real activation/child and retention tests failed at the missing new
+entries, then both passed. Core revision, retention, managed continuation and
+revocation checks: **105 passed, 601.64s**, no warnings/skips;
+`/private/tmp/hooks-f7-core.xml`. Neighbor authority, admission, coordinator,
+recovery and provider codec: **319 passed** in the first probe; fleet coordinator
+and native Console skills: **78 passed** in the native probe.
+
+Existing fleet/Console/archive fixtures initially refused admission because they
+selected a profile different from the runtime. Selected-profile fixture markers
+resolved these refusals without changing production guards. The first corrected
+125-case run then exposed unclosed real AgentRunsDB and archive-fixture databases.
+Yield/finally and existing content-operation ownership close those actual handles.
+Final fleet/Console/archive controls: **125 passed, 97.21s**, no warnings/skips;
+`/private/tmp/hooks-f7-profile-qualified.xml`. Affected direct archive transport
+controls: **2 passed, 8.23s**, no warnings/skips;
+`/private/tmp/hooks-f7-owned-transport.xml`.
+
+All 43 owned plugin Python files pass Ruff and formatter checks. Changed Python
+parses and whitespace checks pass; shared diagnostics were compared against HEAD
+with no additions. All ACs were reviewed against real service/storage flows.
+ADR-162/163/063 govern these accepted boundaries.
+
+Limits: local macOS/APFS, real SQLite/crypto/native threads and controlled children;
+provider and marker backends are isolated doubles. No full suite, external
+provider/keychain, Windows/Linux, hardware power loss or future MCP/root-cleanup
+qualification. Native Stop continuation qualification remains H5.

@@ -22,16 +22,25 @@ class PluginReview:
     authority_json: str
     token: str
     expires_at: float
+    operation_id: str = ""
     alias: str | None = None
-    kind: Literal["install", "trust", "activate", "revoke", "uninstall"] = "install"
+    kind: Literal[
+        "install", "trust", "activate", "revoke", "uninstall", "update", "retain"
+    ] = "install"
     intent: Literal["inherit", "enabled", "disabled"] | None = None
+    previous_revision: str | None = None
+    drain_token: str | None = None
+    rollback: bool = False
+    data_compatibility: str = "unknown"
+    retired_revisions: tuple[str, ...] = ()
+    retirement_json: str | None = None
 
 
 @dataclass(frozen=True)
 class OperationReceipt:
     """Non-secret outcome; commitment does not assert execution readiness."""
 
-    operation_id: str
+    operation_id: str | None
     phase: str
     committed: bool
     recovery_reason: str | None = None
@@ -39,6 +48,7 @@ class OperationReceipt:
     cleanup_pending: bool = False
     persistence_error: str | None = None
     cleanup_errors: tuple[str, ...] = ()
+    request_id: str | None = None
 
 
 def inspection_identity(inspection: PackageInspection) -> str:

@@ -39,14 +39,14 @@ async def test_native_plugin_reaches_actual_console_provider_payload(
         review = await service.review_install(
             native_package(), selection=("skill:review",), workspace_id=None
         )
-        assert (await service.commit(review, "install")).committed
+        assert (await service.commit(review, review.operation_id)).committed
         assert not service.capture_maximum("global")["available_skills"]
         trust = await service.review_trust(review.installation_id)
-        await service.commit(trust, "trust")
+        await service.commit(trust, trust.operation_id)
         enable = await service.review_activation(
             review.installation_id, workspace_id=None, intent="enabled"
         )
-        await service.commit(enable, "enable")
+        await service.commit(enable, enable.operation_id)
         name = service.capture_maximum("global")["available_skills"][0]["name"]
         local = LocalSkillsService(
             store_dir=tmp_path / "skills", plugin_service=service
@@ -166,7 +166,7 @@ async def test_frozen_console_catalog_rechecks_authority(native_console, change)
         disable = await rig.service.review_activation(
             review.installation_id, workspace_id="workspace-a", intent="disabled"
         )
-        await rig.service.commit(disable, "disable")
+        await rig.service.commit(disable, disable.operation_id)
     elif change == "tamper":
         retained = (
             rig.service.profile_root
@@ -560,7 +560,7 @@ async def test_current_authority_after_dispatch_wait(
             disabled = await rig.service.review_activation(
                 review.installation_id, workspace_id="workspace-a", intent="disabled"
             )
-            await rig.service.commit(disabled, "disable-at-wait")
+            await rig.service.commit(disabled, disabled.operation_id)
         await original_wait()
 
     monkeypatch.setattr(rig.controller, "_wait_for_trace_maintenance_dispatch", wait)
@@ -591,7 +591,7 @@ async def test_current_authority_before_direct_result_acceptance(
             disabled = await rig.service.review_activation(
                 review.installation_id, workspace_id="workspace-a", intent="disabled"
             )
-            await rig.service.commit(disabled, "disable-at-result")
+            await rig.service.commit(disabled, disabled.operation_id)
         yield "LATE_PLUGIN_REPLY"
 
     monkeypatch.setattr(rig.gateway, "stream_chat", stream)
@@ -625,7 +625,7 @@ async def test_sentinel_scope_generation_cannot_revive_old_admission(
         change = await rig.service.review_activation(
             review.installation_id, workspace_id=workspace, intent=intent
         )
-        await rig.service.commit(change, operation)
+        await rig.service.commit(change, change.operation_id)
 
     await activate("enabled", "initial")
     context = await rig.service.admit(
@@ -748,13 +748,13 @@ async def test_real_agent_final_send_bounds_aggregate_plugin_file_results(
     review = await rig.service.review_install(
         package, selection=("skill:review",), workspace_id="workspace-a"
     )
-    await rig.service.commit(review, "install-files")
+    await rig.service.commit(review, review.operation_id)
     trust = await rig.service.review_trust(review.installation_id)
-    await rig.service.commit(trust, "trust-files")
+    await rig.service.commit(trust, trust.operation_id)
     activation = await rig.service.review_activation(
         review.installation_id, workspace_id="workspace-a", intent="enabled"
     )
-    await rig.service.commit(activation, "enable-files")
+    await rig.service.commit(activation, activation.operation_id)
     maximum = rig.service.capture_maximum("workspace-a")
     maximum["plugin_run_id"] = "pending:aggregate"
     entry = maximum["available_skills"][0]
@@ -848,7 +848,7 @@ async def test_activation_rejects_reserved_scope_without_global_fallback(
     explicit = await rig.service.review_activation(
         review.installation_id, workspace_id=None, intent="enabled"
     )
-    await rig.service.commit(explicit, "explicit-global")
+    await rig.service.commit(explicit, explicit.operation_id)
     assert rig.service.capture_maximum(None)["available_skills"]
 
 
@@ -874,13 +874,13 @@ async def native_agent_submit(native_console, native_package, tmp_path, monkeypa
     review = await rig.service.review_install(
         package, selection=("skill:review",), workspace_id="workspace-a"
     )
-    await rig.service.commit(review, "install-submit")
+    await rig.service.commit(review, review.operation_id)
     trust = await rig.service.review_trust(review.installation_id)
-    await rig.service.commit(trust, "trust-submit")
+    await rig.service.commit(trust, trust.operation_id)
     active = await rig.service.review_activation(
         review.installation_id, workspace_id="workspace-a", intent="enabled"
     )
-    await rig.service.commit(active, "enable-submit")
+    await rig.service.commit(active, active.operation_id)
     name = rig.service.capture_maximum("workspace-a")["available_skills"][0]["name"]
 
     class Gateway(_RecordingGateway):

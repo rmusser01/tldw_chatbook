@@ -21040,6 +21040,10 @@ class ConsoleChatStore:
     def persist_provider_continuation_event(
         self,
         event: ProviderContinuationEvent,
+        *,
+        checkpoint_finalizer: (
+            Callable[..., ProviderContinuationCheckpoint] | None
+        ) = None,
     ) -> None:
         """Commit one runtime continuation event before its next side effect.
 
@@ -21072,6 +21076,17 @@ class ConsoleChatStore:
             )
 
         checkpoint, content = self._continuation_event_value(message, event)
+        if checkpoint_finalizer is not None:
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if not conversation_id:
+                raise RuntimeError("Durable managed continuation owner is unavailable.")
+            checkpoint = checkpoint_finalizer(
+                checkpoint,
+                conversation_id,
+                message.persisted_message_id or message.id,
+                context.run_id,
+            )
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")

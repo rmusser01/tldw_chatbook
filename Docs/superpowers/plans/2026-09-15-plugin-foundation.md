@@ -496,7 +496,7 @@ git diff --check
 - Consumes: F4 review/commit and F6 cancellation; real leases from F2/F5.
 - Produces: async PluginCoordinator.apply_revision(review: PluginReview, operation_id: str) -> OperationReceipt. RevisionDrain.begin(installation_id: str, revision_digest: str) -> str; blockers(token: str) -> tuple[dict, ...]; cancel(token: str) -> None; async wait(token: str) -> None. retention_candidates(revisions: tuple[dict, ...], protected: frozenset[str], now: datetime) -> tuple[str, ...] never returns current/leased/recovery IDs.
 
-- [ ] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
+- [x] **1. Create the first behavioral test and its local fixtures.** Use the fixture contract in the implementation increments below; initial import/behavior must fail for the missing feature.
 
 ```python
 def test_retention_never_removes_recovery_material(retention_case):
@@ -507,29 +507,29 @@ def test_retention_never_removes_recovery_material(retention_case):
     assert case.expired_unleased in candidates
 ```
 
-- [ ] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_revision_drain.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
+- [x] **2. Establish RED through the intended entry.** Run `python -m pytest Tests/Plugins/test_revision_drain.py -q`. Expected: the named new behavior fails, while any positive precondition/control succeeds. Resolve test harness/API errors before changing production code.
 
-- [ ] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
+- [x] **3. Implement the smallest invariant, then integrate the real owner.** This kernel states the ordering/data rule; the following increments supply the complete behavior and limits.
 
 ```python
 def preserve_selection(old_selected: frozenset[str], available: frozenset[str]) -> frozenset[str]:
     return old_selected & available
 ```
 
-  - [ ] 3.1. Create retention_case in test_retention.py with dated current, old, leased, recovery and expired unleased records; define revisions/protected/now/expired_unleased directly in the fixture. Test real coordinator update drain with held approvals and running tools.
-  - [ ] 3.2. Fence admission under the lifecycle lock and await existing work without holding that lock. Prevent Stop chains extending the drain; close idle MCP connections only after requests drain once the MCP integration is present.
-  - [ ] 3.3. Implement wait, pre-commit cancel and explicit work cancellation as different requests. Publish a reviewed revision only after confirmed cleanup via F4; cancelled review never retargets another installation.
-  - [ ] 3.4. Preserve exclusions, report unknown mutable-data compatibility, implement rollback as fresh current-policy review, and enforce exact package/cache/staging/receipt retention limits. Add archive-resume refusal when a pinned old revision no longer matches data generation.
+  - [x] 3.1. Create retention_case in test_retention.py with dated current, old, leased, recovery and expired unleased records; define revisions/protected/now/expired_unleased directly in the fixture. Test real coordinator update drain with held approvals and running tools.
+  - [x] 3.2. Fence admission under the lifecycle lock and await existing work without holding that lock. Prevent Stop chains extending the drain; close idle MCP connections only after requests drain once the MCP integration is present.
+  - [x] 3.3. Implement wait, pre-commit cancel and explicit work cancellation as different requests. Publish a reviewed revision only after confirmed cleanup via F4; cancelled review never retargets another installation.
+  - [x] 3.4. Preserve exclusions, report unknown mutable-data compatibility, implement rollback as fresh current-policy review, and enforce exact package/cache/staging/receipt retention limits. Add archive-resume refusal when a pinned old revision no longer matches data generation.
 
 **Failure and successful-control matrix:** Pending approval, stale callback, foreground work, cancelled waiter, failed startup with no automatic rollback, shared data already mutated, lost completion response and quota with only protected material remaining.
 
-- [ ] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
+- [x] **4. Establish GREEN and preserve the neighboring path.** Run the exact files below. Expected: all execute and pass, with no silent coroutine/platform skips used as qualification. Inspect real resources/output, not source-string matches.
 
 ```bash
 python -m pytest Tests/Plugins/test_revision_drain.py Tests/Plugins/test_retention.py -q
 ```
 
-- [ ] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
+- [x] **5. Review, record evidence and commit the task.** Update its ACs/notes and the relevant authoring/operation documentation; record platform limits. Run `git diff --check`, Python syntax checks and the verification-environment formatter/linter on the changed Python files as specified in the delivery plan. Stage the exact task-owned files, including any test fixtures and generated CSS, and commit; never stage unrelated work.
 
 ```bash
 backlog task task-32674 --plain

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import secrets
 import shutil
 import threading
 import time
@@ -19,7 +21,7 @@ from .models import PackageInspection
 from .package_files import canonical_json, capture_package, materialize_package
 from .registry import PluginRegistry
 from .review import OperationReceipt, PluginReview, inspection_identity, reinspect
-from .revocation import RevocationTarget
+from .revocation import RevocationRequest, RevocationTarget
 from .runtime_owner import PluginRuntimeOwner
 
 REVIEW_SECONDS = 15 * 60
@@ -54,10 +56,17 @@ class PluginCoordinator:
         from .admission import LivePluginFences
 
         self.fences = fences or LivePluginFences()
+        from .revisions import RevisionDrain
+
+        self.revision_drain = RevisionDrain(self.fences, self._drain_inventory)
         self._revocation_reviews = {}
         self._reviews: dict[str, PluginReview] = {}
         self._published: dict | None = None
         self.progress: Callable[[str], None] | None = None
+
+    async def _drain_inventory(self, installation_id: str) -> tuple[str, ...]:
+        self._require_worker()
+        return self.owner.unsettled_tokens(installation_id)
 
     def _require_worker(self) -> None:
         if (
@@ -81,6 +90,70 @@ class PluginCoordinator:
         self._published = None
         self._reviews.clear()
         return self.authority.reset(operation_id=operation_id)
+
+    def _issue_review(self, review, *, live_operation=None):
+        from dataclasses import replace
+
+        nonce = secrets.token_hex(32)
+        live = None
+        if live_operation is not None:
+            self.fences.require_current(live_operation)
+            if time.monotonic() >= live_operation.expires_at:
+                raise ValueError("plugin_revocation_request_expired")
+            nonce = "".join(live_operation.operation_id.split(".")[1:])
+            live = {
+                "request_id": live_operation.operation_id,
+                "target": {
+                    "installation_id": live_operation.target.installation_id,
+                    "workspace_id": live_operation.target.workspace_id,
+                    "everywhere": live_operation.target.everywhere,
+                    "global_default": live_operation.target.global_default,
+                },
+                "scope_versions": [
+                    [list(scope), version]
+                    for scope, version in live_operation.scope_versions
+                ],
+            }
+            review = replace(
+                review, expires_at=min(review.expires_at, live_operation.expires_at)
+            )
+        binding = {
+            "marker": review.authority_marker.model_dump(),
+            "authority_digest": hashlib.sha256(
+                review.authority_json.encode()
+            ).hexdigest(),
+            "review_token": review.token,
+            "installation_id": review.installation_id,
+            "alias": review.alias,
+            "inspection_digest": hashlib.sha256(
+                inspection_identity(review.inspection).encode()
+            ).hexdigest(),
+            "selection": list(review.selection),
+            "workspace_id": review.workspace_id,
+            "kind": review.kind,
+            "intent": review.intent,
+            "previous_revision": review.previous_revision,
+            "drain_token": review.drain_token,
+            "rollback": review.rollback,
+            "retired_revisions": list(review.retired_revisions),
+            "retirement_json": review.retirement_json,
+            "live": live,
+        }
+        result = {
+            "installation_id": review.installation_id,
+            "kind": review.kind,
+            "revision_digest": review.inspection.effective_digest,
+            "result": "committed",
+        }
+        if review.kind == "retain":
+            result["retired_revisions"] = json.loads(review.retirement_json)
+        operation_id = self.authority.issue_operation_id(
+            review.authority_marker.generation + 1,
+            hashlib.sha256(canonical_json(binding).encode()).hexdigest(),
+            result,
+            nonce,
+        )
+        return replace(review, operation_id=operation_id)
 
     def review(
         self,
@@ -132,8 +205,129 @@ class PluginCoordinator:
             token=uuid4().hex,
             expires_at=time.monotonic() + REVIEW_SECONDS,
         )
+        review = self._issue_review(review)
         self._reviews[review.token] = review
         return review
+
+    def review_revision(
+        self,
+        installation_id: str,
+        inspection: PackageInspection,
+        *,
+        rollback: bool = False,
+    ) -> PluginReview:
+        """Review a replacement against current policy without closing admission."""
+        from dataclasses import replace
+
+        from .revisions import preserve_selection
+
+        prior = self._review_existing(installation_id, kind="update")
+        if inspection.rejected or inspection.effective_digest is None:
+            raise ValueError("package cannot be installed")
+        if inspection.effective_digest == prior.inspection.effective_digest:
+            raise ValueError("revision is already current")
+        self._verify_reviewed_package(inspection)
+        available = frozenset(
+            key
+            for key, component in inspection.inventory.items()
+            if component.support in {"supported", "adapted"}
+            and key in prior.inspection.inventory
+            and prior.inspection.inventory[key].support in {"supported", "adapted"}
+        )
+        token = self.revision_drain.reserve(
+            installation_id,
+            prior.inspection.effective_digest,
+            review_token=prior.token,
+            expires_at=prior.expires_at,
+        )
+        review = replace(
+            prior,
+            inspection=inspection,
+            selection=tuple(
+                sorted(preserve_selection(frozenset(prior.selection), available))
+            ),
+            previous_revision=prior.inspection.effective_digest,
+            drain_token=token,
+            rollback=rollback,
+        )
+        review = self._issue_review(review)
+        self._reviews[review.token] = review
+        return review
+
+    def review_rollback(
+        self, installation_id: str, revision_digest: str
+    ) -> PluginReview:
+        """Rollback reviews retained bytes against today's authority, never old grants."""
+        from .recovery import retained_inspections
+
+        inspection = retained_inspections(self.published_snapshot()).get(
+            (installation_id, revision_digest)
+        )
+        if inspection is None:
+            raise ValueError("rollback revision unavailable")
+        return self.review_revision(installation_id, inspection, rollback=True)
+
+    async def apply_revision(
+        self, review: PluginReview, operation_id: str
+    ) -> OperationReceipt:
+        """Activate the reviewed fence and retain application after a waiter leaves."""
+        self._require_worker()
+        if review.kind != "update" or self._reviews.get(review.token) != review:
+            raise ValueError("invalid revision review")
+        ticket = self.revision_drain.activate(
+            review.drain_token, review=review, operation_id=operation_id
+        )
+        if (
+            ticket.task is None
+            or ticket.task.done()
+            and ticket.task.exception() is not None
+        ):
+
+            async def apply():
+                while True:
+                    # Storage may block; never hold the admission/cancellation lock.
+                    unsettled = self.owner.unsettled_tokens(review.installation_id)
+                    self.revision_drain.record_inventory(ticket.token, unsettled)
+                    with self.fences.live_lock:
+                        if ticket.phase == "cancelled":
+                            raise ValueError("plugin_drain_cancelled_or_expired")
+                        ready = not self.revision_drain.blockers(ticket.token)
+                        if ready:
+                            ticket.phase = "committing"
+                    if not ready:
+                        await asyncio.sleep(0.01)
+                        continue
+                    try:
+                        receipt = await self.commit(review, operation_id)
+                    except BaseException:
+                        with self.fences.live_lock:
+                            ticket.phase = "waiting"
+                        raise
+                    with self.fences.live_lock:
+                        ticket.phase = "complete"
+                    from dataclasses import replace
+
+                    try:
+                        cleanup = await self.retain_revisions(review.installation_id)
+                        if cleanup.cleanup_pending:
+                            receipt = replace(
+                                receipt,
+                                cleanup_pending=True,
+                                cleanup_errors=cleanup.cleanup_errors,
+                            )
+                    except (OSError, ValueError, PermissionError):
+                        receipt = replace(
+                            receipt,
+                            cleanup_pending=True,
+                            cleanup_errors=("retention_pending",),
+                        )
+                    return receipt
+
+            ticket.task = asyncio.create_task(apply())
+            ticket.task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+        return await asyncio.shield(ticket.task)
 
     def review_trust(self, installation_id: str) -> PluginReview:
         """Review the exact currently installed bytes for explicit trust."""
@@ -169,6 +363,9 @@ class PluginCoordinator:
         kind: str,
         workspace_id: str | None = None,
         intent: str | None = None,
+        live_operation=None,
+        retired_revisions: tuple[str, ...] = (),
+        retirement_json: str | None = None,
     ) -> PluginReview:
         from .recovery import retained_inspections
 
@@ -205,13 +402,98 @@ class PluginCoordinator:
             kind=kind,
             intent=intent,
             alias=installed.get("alias"),
+            retired_revisions=retired_revisions,
+            retirement_json=retirement_json,
         )
+        review = self._issue_review(review, live_operation=live_operation)
         self._reviews[review.token] = review
         return review
+
+    async def retain_revisions(self, installation_id: str) -> OperationReceipt:
+        """Compact references and reconcile retained authenticated cleanup custody."""
+        from dataclasses import replace
+
+        from .recovery import retained_inspections
+        from .retention import (
+            cleanup_retained_operation,
+            eligible_revisions,
+            transition_inventory,
+        )
+
+        if any(item.phase == "recovery_required" for item in await self.recover()):
+            raise PermissionError("plugin recovery required")
+        prior_result = None
+        for evidence in transition_inventory(self.authority):
+            result = evidence.snapshot["operation_result"]
+            if (
+                evidence.committed
+                and result["kind"] == "retain"
+                and result["installation_id"] == installation_id
+            ):
+                errors = cleanup_retained_operation(self, evidence)
+                prior_result = OperationReceipt(
+                    result["operation_id"],
+                    "complete",
+                    True,
+                    cleanup_pending=bool(errors),
+                    cleanup_errors=errors,
+                )
+                if errors:
+                    return prior_result
+        baseline = self.published_snapshot()
+        candidates = eligible_revisions(self, installation_id)[:1000]
+        if not candidates:
+            return prior_result or OperationReceipt(None, "nothing_eligible", False)
+        inspections = retained_inspections(baseline)
+        rows = []
+        root_info = self.owner.root.lstat()
+        for digest in candidates:
+            path = Path(inspections[(installation_id, digest)].materialized_identity)
+            info, anchor = path.lstat(), path.parent.lstat()
+            rows.append(
+                {
+                    "revision_digest": digest,
+                    "materialized_identity": str(path),
+                    "device": info.st_dev,
+                    "inode": info.st_ino,
+                    "root_device": root_info.st_dev,
+                    "root_inode": root_info.st_ino,
+                    "anchor_device": anchor.st_dev,
+                    "anchor_inode": anchor.st_ino,
+                }
+            )
+        review = self._review_existing(
+            installation_id,
+            kind="retain",
+            retired_revisions=candidates,
+            retirement_json=canonical_json(rows),
+        )
+        result = await self.commit(review, review.operation_id)
+        errors = cleanup_retained_operation(
+            self, self.authority.verify_transition(review.operation_id)
+        )
+        return replace(result, cleanup_pending=bool(errors), cleanup_errors=errors)
 
     def _apply_review(
         self, cursor, review: PluginReview, retained: PackageInspection
     ) -> None:
+        if review.kind == "retain":
+            for digest in review.retired_revisions:
+                for table in (
+                    "revision_trust",
+                    "selections",
+                    "components",
+                    "revisions",
+                ):
+                    cursor.execute(
+                        f"DELETE FROM {table} WHERE installation_id=? AND revision_digest=?",
+                        (review.installation_id, digest),
+                    )
+                cursor.execute(
+                    "DELETE FROM receipts WHERE receipt_id=?",
+                    ("revision:" + review.installation_id + ":" + digest,),
+                )
+            return
         if review.kind == "install":
             self.registry.insert_installation(
                 cursor,
@@ -221,16 +503,54 @@ class PluginCoordinator:
                 alias=review.alias,
             )
             return
-        if review.kind in {"revoke", "uninstall"}:
+        if review.kind == "update":
+            revision = retained.effective_digest
+            cursor.execute(
+                "INSERT INTO revisions VALUES (?, ?, ?) ON CONFLICT(installation_id, revision_digest) DO NOTHING",
+                (review.installation_id, revision, retained.model_dump_json()),
+            )
+            for component in retained.inventory.values():
+                cursor.execute(
+                    "INSERT INTO components VALUES (?, ?, ?, ?) ON CONFLICT(installation_id, revision_digest, component_id) DO NOTHING",
+                    (
+                        review.installation_id,
+                        revision,
+                        component.component_id,
+                        component.model_dump_json(),
+                    ),
+                )
+                cursor.execute(
+                    "INSERT INTO selections VALUES (?, ?, ?, ?) ON CONFLICT(installation_id, revision_digest, component_id) DO UPDATE SET selected=excluded.selected",
+                    (
+                        review.installation_id,
+                        revision,
+                        component.component_id,
+                        component.component_id in review.selection,
+                    ),
+                )
+            cursor.execute(
+                "INSERT INTO revision_trust VALUES (?, ?, 1) ON CONFLICT(installation_id, revision_digest) DO UPDATE SET reviewed=1",
+                (review.installation_id, revision),
+            )
+            cursor.execute(
+                "UPDATE installations SET revision_digest=? WHERE installation_id=?",
+                (revision, review.installation_id),
+            )
+            scope, workspace = "installation", ""
+        elif review.kind in {"revoke", "uninstall"}:
             operation = self._revocation_reviews[review.token]
             target = operation.target
             if review.kind == "uninstall":
+                cursor.execute(
+                    "DELETE FROM receipts WHERE operation_id=?",
+                    ("revision:" + review.installation_id,),
+                )
                 cursor.execute(
                     "INSERT INTO tombstones VALUES (?, ?, ?)",
                     (
                         review.installation_id,
                         review.authority_marker.generation + 1,
-                        operation.operation_id,
+                        review.operation_id,
                     ),
                 )
                 for table in (
@@ -329,8 +649,48 @@ class PluginCoordinator:
 
     def _materialize(self, review: PluginReview) -> PackageInspection:
         root = self.owner.root / "packages"
-        root.mkdir(mode=0o700, exist_ok=True)
-        destination = root / review.installation_id
+        if review.kind == "update":
+            baseline = json.loads(review.authority_json)
+            prior = next(
+                (
+                    row
+                    for row in baseline["revisions"]
+                    if row["installation_id"] == review.installation_id
+                    and row["revision_digest"] == review.inspection.effective_digest
+                ),
+                None,
+            )
+            if prior is not None:
+                reinspect(review.inspection, Path(prior["materialized_identity"]))
+                return review.inspection
+            root = self.owner.root / "packages-revisions" / review.installation_id
+        # Create owned containers through descriptors, before any path-based
+        # materialization. A linked replacement parent must not create directories
+        # in an unrelated tree even when the later quota check would refuse it.
+        self.owner.require_owner(self.owner.root)
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        opened = [os.open(self.owner.root, flags)]
+        try:
+            self.owner.require_owner(self.owner.root)
+            named, opened_root = self.owner.root.lstat(), os.fstat(opened[0])
+            if (named.st_dev, named.st_ino) != (opened_root.st_dev, opened_root.st_ino):
+                raise PermissionError("plugin root changed")
+            for part in root.relative_to(self.owner.root).parts:
+                parent_fd = opened[-1]
+                try:
+                    os.mkdir(part, mode=0o700, dir_fd=parent_fd)
+                except FileExistsError:
+                    pass
+                opened.append(os.open(part, flags, dir_fd=parent_fd))
+                os.fsync(parent_fd)
+        finally:
+            for fd in reversed(opened):
+                os.close(fd)
+        destination = root / (
+            review.inspection.effective_digest
+            if review.kind == "update"
+            else review.installation_id
+        )
         source = Path(
             review.inspection.materialized_identity or review.inspection.source_identity
         )
@@ -340,8 +700,9 @@ class PluginCoordinator:
         if capture.errors:
             raise ValueError("stale or unsafe package capture")
         size = sum(len(member.data) for member in capture.files.values())
-        if shutil.disk_usage(root).free < size + FREE_RESERVE_BYTES:
-            raise OSError("insufficient plugin storage reserve")
+        from .retention import require_capacity
+
+        require_capacity(self.owner.root, 0 if os.path.lexists(destination) else size)
         retained = review.inspection.model_copy(
             update={"materialized_identity": str(destination)}
         )
@@ -375,9 +736,21 @@ class PluginCoordinator:
         """Revalidate, prepare, durably commit, certify, mark, then publish."""
         from .revocation import revocation_for_review
 
+        if operation_id != review.operation_id or not operation_id:
+            raise ValueError("operation ID belongs to a different review")
+        if review.kind == "update":
+            ticket = self.revision_drain.ticket(review.drain_token)
+            if (
+                ticket.phase != "committing"
+                or ticket.review_token != review.token
+                or ticket.operation_id != operation_id
+            ):
+                return await self.apply_revision(review, operation_id)
         target = revocation_for_review(review)
         if target is not None and review.token not in self._revocation_reviews:
-            return await self._revoke(target, operation_id, "activate", review=review)
+            return await self.finish_revocation(
+                self._begin_revocation(target, "activate", review=review)
+            )
         self._require_worker()
         if review.kind == "activate" and target is None:
             self.fences.require_enable_reconciled(
@@ -527,12 +900,26 @@ class PluginCoordinator:
             or canonical_json(self.published_snapshot()) != review.authority_json
         ):
             raise ValueError("stale review authority")
+        from .retention import prune_transition_history
+
+        prune_transition_history(self)
         self._verify_reviewed_package(review.inspection)
+        if review.kind == "retain":
+            from .retention import eligible_revisions
+
+            if not set(review.retired_revisions) <= set(
+                eligible_revisions(self, review.installation_id)
+            ):
+                raise ValueError("retention ownership changed")
         self._published = None
         retained = (
-            self._materialize(review) if review.kind == "install" else review.inspection
+            self._materialize(review)
+            if review.kind in {"install", "update"}
+            else review.inspection
         )
         self._milestone("materialized")
+        if review.token in self._revocation_reviews:
+            self.fences.require_current(self._revocation_reviews[review.token])
         result = {
             "operation_id": operation_id,
             "installation_id": review.installation_id,
@@ -540,6 +927,8 @@ class PluginCoordinator:
             "revision_digest": retained.effective_digest,
             "result": "committed",
         }
+        if review.kind == "retain":
+            result["retired_revisions"] = json.loads(review.retirement_json)
         with self.registry.transaction() as cursor:
             self._apply_review(cursor, review, retained)
             snapshot = self.registry.authority_projection(operation_result=result)
@@ -572,17 +961,111 @@ class PluginCoordinator:
         self._milestone("published")
         return OperationReceipt(operation_id, "complete", True)
 
-    async def disable(
-        self, target: RevocationTarget, operation_id: str
-    ) -> OperationReceipt:
-        """Share the facade's immediate live owner before persistence begins."""
-        return await self._revoke(target, operation_id, "revoke")
+    def begin_disable(self, target: RevocationTarget) -> RevocationRequest:
+        return self._begin_revocation(target, "revoke")
 
-    async def uninstall(
-        self, installation_id: str, operation_id: str
-    ) -> OperationReceipt:
-        return await self._revoke(
-            RevocationTarget(installation_id, None, True), operation_id, "uninstall"
+    def begin_uninstall(self, installation_id: str) -> RevocationRequest:
+        return self._begin_revocation(
+            RevocationTarget(installation_id, None, True), "uninstall"
+        )
+
+    def _begin_revocation(self, target, kind, *, review=None):
+        self._require_worker()
+        request = self.fences.request(target, kind, review)
+        operation = self.fences.operations[request.request_id]
+        self._start_revocation(operation)
+        return request
+
+    def _start_revocation(self, operation):
+        self.fences.require_current(operation)
+        if operation.task is None or operation.task.done():
+            operation.task = asyncio.create_task(
+                self._revoke(
+                    operation.target,
+                    operation.operation_id,
+                    operation.kind,
+                    review=operation.review,
+                )
+            )
+            operation.task.add_done_callback(
+                lambda task: None if task.cancelled() else task.exception()
+            )
+        return operation.task
+
+    async def finish_revocation(self, request: RevocationRequest) -> OperationReceipt:
+        self._require_worker()
+        if (
+            not isinstance(request, RevocationRequest)
+            or request.request_id not in self.fences.operations
+        ):
+            raise ValueError("plugin_revocation_request_unavailable")
+        operation = self.fences.operations[request.request_id]
+        await asyncio.shield(self._start_revocation(operation))
+        return operation.status()
+
+    async def disable(self, target: RevocationTarget) -> OperationReceipt:
+        return await self.finish_revocation(self.begin_disable(target))
+
+    async def uninstall(self, installation_id: str) -> OperationReceipt:
+        return await self.finish_revocation(self.begin_uninstall(installation_id))
+
+    async def lookup_operation(self, identity: str) -> OperationReceipt:
+        self._require_worker()
+        import re
+
+        nonce = None
+        if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", identity):
+            nonce = "".join(identity.split(".")[1:])
+        receipts = await self.recover()
+        if any(item.phase == "recovery_required" for item in receipts):
+            return OperationReceipt(
+                None, "recovery_required", False, request_id=identity if nonce else None
+            )
+        matches = []
+        marker = self.authority.load_marker()
+        for receipt in receipts:
+            result = (
+                self.authority.verify_current()["operation_result"]
+                if receipt.operation_id == marker.operation_id
+                else self.authority.verify_transition(receipt.operation_id).snapshot[
+                    "operation_result"
+                ]
+            )
+            if result["kind"] == "retain":
+                from dataclasses import replace
+
+                from .retention import cleanup_retained_operation
+
+                receipt = replace(
+                    receipt,
+                    cleanup_pending=bool(
+                        cleanup_retained_operation(
+                            self,
+                            self.authority.verify_transition(receipt.operation_id),
+                            remove=False,
+                        )
+                    ),
+                )
+            if receipt.operation_id == identity or (
+                nonce
+                and result["operation_id"].startswith("pi1.")
+                and self.authority.verify_operation_id(
+                    result["operation_id"], result
+                ).nonce
+                == nonce
+            ):
+                matches.append(receipt)
+        if len(matches) > 1:
+            raise ValueError("ambiguous retained request identity")
+        if matches:
+            from dataclasses import replace
+
+            return replace(matches[0], request_id=identity if nonce else None)
+        return OperationReceipt(
+            None,
+            "unavailable_or_expired",
+            False,
+            request_id=identity if nonce else None,
         )
 
     async def _revoke(self, target, operation_id, kind, *, review=None):
@@ -592,6 +1075,8 @@ class PluginCoordinator:
 
         operation = self.fences.begin(target, operation_id, kind, review=review)
         self._require_worker()
+        self.fences.require_current(operation)
+        operation_id = operation.durable_id
         if operation.review is not None:
             self._revocation_reviews[operation.review.token] = operation
         try:
@@ -615,6 +1100,7 @@ class PluginCoordinator:
             operation.runtime_observed = True
             if operation.receipt.phase != "complete":
                 receipts = await self.recover()
+                self.fences.require_current(operation)
                 prior = next(
                     (item for item in receipts if item.operation_id == operation_id),
                     None,
@@ -648,8 +1134,13 @@ class PluginCoordinator:
                             target.installation_id,
                             kind=kind,
                             workspace_id=target.workspace_id,
+                            live_operation=operation,
                         )
+                        self.fences.require_current(operation)
+                        operation.durable_id = operation.review.operation_id
+                        operation_id = operation.durable_id
                         self._revocation_reviews[operation.review.token] = operation
+                    self.fences.require_current(operation)
                     operation.receipt = await self.commit(
                         operation.review, operation_id
                     )
@@ -686,18 +1177,19 @@ class PluginCoordinator:
             opened, named = os.fstat(root_fd), self.owner.root.lstat()
             if (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino):
                 raise ValueError("plugin removal root changed")
-            try:
-                packages_fd = os.open("packages", flags, dir_fd=root_fd)
-            except FileNotFoundError:
-                return
-            try:
+            for subtree in ("packages", "packages-revisions"):
                 try:
-                    shutil.rmtree(installation_id, dir_fd=packages_fd)
+                    packages_fd = os.open(subtree, flags, dir_fd=root_fd)
                 except FileNotFoundError:
-                    pass
-                os.fsync(packages_fd)
-            finally:
-                os.close(packages_fd)
+                    continue
+                try:
+                    try:
+                        shutil.rmtree(installation_id, dir_fd=packages_fd)
+                    except FileNotFoundError:
+                        pass
+                    os.fsync(packages_fd)
+                finally:
+                    os.close(packages_fd)
         finally:
             os.close(root_fd)
 

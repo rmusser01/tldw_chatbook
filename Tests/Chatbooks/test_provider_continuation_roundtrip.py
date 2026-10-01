@@ -10,6 +10,13 @@ from pathlib import Path
 
 import pytest
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+from tldw_chatbook.Backup_Recovery.local_content_lifetime import (
+    call as content_call,
+    operation as content_operation,
+    own_database,
+)
 from tldw_chatbook.Chat.provider_continuation import (
     dump_provider_continuation_json,
     parse_provider_continuation_json,
@@ -19,6 +26,13 @@ from tldw_chatbook.Chatbooks.chatbook_importer import ChatbookImporter, ImportSt
 from tldw_chatbook.Chatbooks.conflict_resolver import ConflictResolution
 from tldw_chatbook.Chatbooks.chatbook_models import ContentType
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+
+@pytest.fixture(autouse=True)
+def owned_fixture_databases():
+    """Retire exact fixture-created handles before their selected sources leave."""
+    with content_operation():
+        yield
 
 
 PRIVATE_REASONING = "PRIVATE-REASONING-CANARY"
@@ -160,12 +174,13 @@ def test_imported_continuation_keeps_pre_19170_family_tool_only_shape() -> None:
     assert status.warnings == []
 
 
+@content_call(lambda _: ())
 def _source_graph(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> tuple[dict[str, str], str, dict[str, str]]:
     db_path = tmp_path / "source.db"
     shutil.copyfile(chachanotes_template_db, db_path)
-    db = CharactersRAGDB(str(db_path), "source")
+    db = own_database(CharactersRAGDB(str(db_path), "source"))
     conversation_id = db.add_conversation(
         {
             "id": "conversation-source",
@@ -342,6 +357,7 @@ def test_v2_export_preserves_graph_and_private_owner(
         assert PRIVATE_ARGUMENTS not in serialized
 
 
+@content_call(lambda _: ())
 def test_v2_import_remaps_complete_graph_before_attaching_private_owner(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
@@ -351,7 +367,7 @@ def test_v2_import_remaps_complete_graph_before_attaching_private_owner(
     export_path = _create_export(tmp_path, source_paths, conversation_id)
     destination_path = tmp_path / "destination.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
-    destination = CharactersRAGDB(str(destination_path), "destination")
+    destination = own_database(CharactersRAGDB(str(destination_path), "destination"))
     collision_conversation_id = destination.add_conversation(
         {"id": "collision-conversation", "root_id": "collision-conversation"}
     )
@@ -460,7 +476,7 @@ def test_v2_import_uses_actual_preserved_continuation_state(
     )
 
     assert success, message
-    destination = CharactersRAGDB(str(destination_path), "assertion")
+    destination = own_database(CharactersRAGDB(str(destination_path), "assertion"))
     try:
         imported = destination.execute_query(
             "SELECT assistant_generation_state, provider_continuation_json "
@@ -619,7 +635,7 @@ def test_invalid_private_data_is_dropped_while_visible_graph_imports(
     diagnostic = json.dumps(status.to_dict())
     assert PRIVATE_REASONING not in diagnostic
     assert PRIVATE_ARGUMENTS not in diagnostic
-    destination = CharactersRAGDB(str(destination_path), "verify")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify"))
     imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
     rows = destination.execute_query(
         "SELECT content, provider_continuation_json FROM messages "
@@ -684,7 +700,7 @@ def test_invalid_v2_graph_fails_without_partial_import(
     diagnostic = json.dumps(status.to_dict())
     assert PRIVATE_REASONING not in diagnostic
     assert PRIVATE_ARGUMENTS not in diagnostic
-    destination = CharactersRAGDB(str(destination_path), "verify")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify"))
     assert destination.get_conversation_by_name("Graph") == []
 
 
@@ -733,7 +749,7 @@ def test_v2_manifest_item_identity_mismatch_fails_without_partial_import(
 
     assert success is False
     assert status.successful_items == 0
-    destination = CharactersRAGDB(str(destination_path), "verify")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify"))
     assert destination.get_conversation_by_name("Graph") == []
 
 
@@ -855,7 +871,7 @@ def test_v2_oversize_private_drops_without_rejecting_visible_graph(
 
     assert success, message
     assert status.warnings == ["Exact tool continuation was discarded for message 3."]
-    destination = CharactersRAGDB(str(destination_path), "verify")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify"))
     imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
     rows = destination.execute_query(
         "SELECT provider_continuation_json FROM messages WHERE conversation_id = ?",
@@ -911,7 +927,11 @@ def test_v2_deep_private_reaches_canonical_parser_before_discard(
     def forbidden_raw_private_dump(*_args, **_kwargs):
         raise AssertionError("graph validation must not serialize raw private data")
 
-    monkeypatch.setattr(importer_module.json, "dumps", forbidden_raw_private_dump)
+    from types import SimpleNamespace
+
+    importer_json = SimpleNamespace(**vars(importer_module.json))
+    importer_json.dumps = forbidden_raw_private_dump
+    monkeypatch.setattr(importer_module, "json", importer_json)
     destination_path = tmp_path / "destination-deep-private.db"
     shutil.copyfile(chachanotes_template_db, destination_path)
     status = ImportStatus()
@@ -923,7 +943,7 @@ def test_v2_deep_private_reaches_canonical_parser_before_discard(
 
     assert success, message
     assert status.warnings == ["Exact tool continuation was discarded for message 3."]
-    destination = CharactersRAGDB(str(destination_path), "verify")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify"))
     imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
     assert (
         destination.execute_query(
@@ -967,7 +987,7 @@ def test_v1_flat_import_without_private_data_remains_supported(
 
     assert success, message
     assert status.warnings == []
-    destination = CharactersRAGDB(str(destination_path), "verify-legacy-state")
+    destination = own_database(CharactersRAGDB(str(destination_path), "verify-legacy-state"))
     imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
     rows = destination.execute_query(
         "SELECT assistant_generation_state FROM messages WHERE conversation_id = ?",

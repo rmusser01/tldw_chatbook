@@ -15,7 +15,7 @@ from uuid import uuid4
 
 from .admission import LivePluginFences, PluginAdmission, PluginUnavailable
 from .review import OperationReceipt, PluginReview
-from .revocation import RevocationTarget
+from .revocation import RevocationRequest, RevocationTarget
 
 
 @dataclass(frozen=True)
@@ -34,6 +34,7 @@ class PluginRunOwnership:
     turn_id: str | None = None
     parent_run_id: str | None = None
     generations: tuple[tuple[str, str, int], ...] = ()
+    component_ceiling: tuple[str, ...] | None = None
 
 
 class PluginService:
@@ -52,6 +53,14 @@ class PluginService:
         self._marker_factory = marker_store_factory
         self._reduced = accept_reduced_protection
         self.fences = LivePluginFences()
+        from .revisions import RevisionDrain
+
+        self.revision_drain = RevisionDrain(
+            self.fences,
+            lambda identity: self._call(
+                lambda: self._coordinator._drain_inventory(identity)
+            ),
+        )
         self._lock = self.fences.live_lock
         self._thread = None
         self._closed = False
@@ -67,6 +76,7 @@ class PluginService:
         self._bound_runs = {}
         self._terminal_runs = set()
         self._live_runs = self.fences.runs
+        self._revision_refresh_tasks: set[asyncio.Task] = set()
 
     def _start(self):
         with self._lock:
@@ -182,6 +192,61 @@ class PluginService:
 
         return await self._call(operation)
 
+    async def retain_revisions(self, installation_id: str) -> OperationReceipt:
+        """Run owned bounded retention through the existing commit worker."""
+        try:
+            return await self._call(
+                lambda: self._coordinator.retain_revisions(installation_id)
+            )
+        finally:
+            await self._call(self._refresh)
+
+    async def review_revision(self, installation_id: str, root: Path) -> PluginReview:
+        def operation():
+            from .inspection import inspect_package
+
+            return self._coordinator.review_revision(
+                installation_id, inspect_package(root)
+            )
+
+        return await self._call(operation)
+
+    async def review_rollback(
+        self, installation_id: str, revision_digest: str
+    ) -> PluginReview:
+        return await self._call(
+            lambda: self._coordinator.review_rollback(installation_id, revision_digest)
+        )
+
+    async def apply_revision(
+        self, review: PluginReview, operation_id: str
+    ) -> OperationReceipt:
+        self.revision_drain.activate(
+            review.drain_token, review=review, operation_id=operation_id
+        )
+
+        def refresh_completed(task):
+            self._revision_refresh_tasks.discard(task)
+            self._refresh()
+
+        async def operation():
+            try:
+                return await self._coordinator.apply_revision(review, operation_id)
+            finally:
+                task = self.revision_drain.ticket(review.drain_token).task
+                # The coordinator retains Apply when this caller leaves. Its
+                # terminal publication must refresh the facade independently.
+                if (
+                    task is not None
+                    and not task.done()
+                    and task not in self._revision_refresh_tasks
+                ):
+                    self._revision_refresh_tasks.add(task)
+                    task.add_done_callback(refresh_completed)
+                self._refresh()
+
+        return await self._call(operation)
+
     async def review_trust(self, installation_id: str) -> PluginReview:
         return await self._call(lambda: self._coordinator.review_trust(installation_id))
 
@@ -199,6 +264,8 @@ class PluginService:
     async def commit(self, review: PluginReview, operation_id: str) -> OperationReceipt:
         from .revocation import revocation_for_review
 
+        if review.kind == "update":
+            return await self.apply_revision(review, operation_id)
         target = revocation_for_review(review)
         if target is not None:
             return await self._revoke(target, operation_id, "activate", review=review)
@@ -243,7 +310,7 @@ class PluginService:
                     rows = []
                     try:
                         snapshot = self._admission.capture(
-                            identity, workspace, "catalog"
+                            identity, workspace, "catalog", fresh=False
                         )
                         token = uuid4().hex
                         self._snapshots[token] = snapshot
@@ -310,8 +377,73 @@ class PluginService:
             for row in self.list_skills()
         )
 
+    def fleet_resume_ceiling(self, pin, run_id, handle_id, entries):
+        """Verify host-retained transcript before resolving/launching a new child."""
+        from .continuation import fleet_ceiling
+
+        return self._call_from_agent(
+            lambda: fleet_ceiling(self, pin, run_id, handle_id, entries)
+        )
+
+    def constrain_entries(self, entries, ceiling):
+        """Narrow inherited producer entries without minting any new admission."""
+        if ceiling is None:
+            return tuple(entries)
+        with self._lock:
+            return tuple(
+                row
+                for row in entries
+                if (snapshot := self._admitted.get(row.get("plugin_admission")))
+                is not None
+                and row.get("plugin_component_id")
+                in ceiling.get(snapshot.installation_id, ())
+            )
+
+    def capture_resume_pin(
+        self, entries, run_id: str, conversation_id: str, message_id: str
+    ) -> str:
+        """Capture the original host-bound producer on the existing plugin worker."""
+        from .continuation import capture_pin
+
+        return self._call_from_agent(
+            lambda: capture_pin(self, entries, run_id, conversation_id, message_id)
+        )
+
+    def seal_resume_checkpoint(
+        self, pin: str, checkpoint, conversation_id: str, message_id: str
+    ):
+        """Finalize private checkpoint bytes without consulting current selections."""
+        from .continuation import seal_checkpoint
+
+        return self._call_from_agent(
+            lambda: seal_checkpoint(self, pin, checkpoint, conversation_id, message_id)
+        )
+
+    async def resume_maximum(
+        self, maximum, checkpoint, conversation_id: str, message_id: str
+    ) -> dict:
+        """Verify an archived owner before assembling a new run's context."""
+        from .continuation import ResumeConstraint, constrain_maximum
+
+        constraint = (
+            ResumeConstraint(checkpoint, conversation_id, message_id)
+            if checkpoint.schema_version == 2
+            else "zero"
+        )
+        return await self._call(lambda: constrain_maximum(self, maximum, constraint))
+
     async def admit(self, maximum: Mapping[str, Any], run_id: str) -> dict:
         def operation():
+            from .continuation import constrain_maximum
+
+            # Files, SQLite and package bytes are verified on the worker without
+            # holding the lock needed by immediate live revocation.
+            narrowed = constrain_maximum(
+                self, maximum, maximum.get("plugin_resume_constraint")
+            )
+            return admit_narrowed(narrowed)
+
+        def admit_narrowed(maximum):
             if run_id in self._retired:
                 raise PluginUnavailable("plugin_turn_retired")
             turn_id = maximum.get("plugin_turn_id")
@@ -362,13 +494,36 @@ class PluginService:
                             else prior.live_generations
                         ),
                     )
+                    if maximum.get("plugin_resume_constraint") is not None:
+                        selected = {
+                            item.get("plugin_component_id")
+                            for item in maximum.get("available_skills", ())
+                            if item.get("plugin_ceiling") == row.get("plugin_ceiling")
+                            and item.get("plugin_workspace_id") == workspace
+                        }
+                        snapshot = replace(
+                            snapshot,
+                            selection=tuple(
+                                key for key in snapshot.selection if key in selected
+                            ),
+                        )
+                    self.fences.require_admission(
+                        snapshot.installation_id, snapshot.revision_digest
+                    )
                     self._admission.check(snapshot, row["plugin_component_id"])
                     key = (run_id, row["plugin_ceiling"], workspace)
                     token = self._admission_keys.get(key)
-                    if token is None:
-                        token = uuid4().hex
-                        self._admission_keys[key] = token
-                        self._admitted[token] = snapshot
+                    with self._lock:
+                        self.fences.check_snapshot(snapshot)
+                        self.fences.require_admission(
+                            snapshot.installation_id, snapshot.revision_digest
+                        )
+                        if run_id in self._retired:
+                            raise PluginUnavailable("plugin_turn_retired")
+                        if token is None:
+                            token = uuid4().hex
+                            self._admission_keys[key] = token
+                            self._admitted[token] = snapshot
                     from .skill_provider import skill_summary
 
                     row = dict(
@@ -385,13 +540,26 @@ class PluginService:
                         trust_blocked=False,
                     )
                 rows.append(row)
-            self._pending_custody.setdefault(run_id, (turn_id, ceiling))
-            result["available_skills"] = rows
-            return result
+            with self._lock:
+                if run_id in self._retired:
+                    raise PluginUnavailable("plugin_turn_retired")
+                # Verification of a later installation may have stalled after an
+                # earlier one passed. Publish the whole admitted set atomically
+                # against current live generations and drain state, without I/O.
+                for row in rows:
+                    if row.get("plugin_owned"):
+                        snapshot = self._admitted[row["plugin_admission"]]
+                        self.fences.check_snapshot(snapshot)
+                        self.fences.require_admission(
+                            snapshot.installation_id, snapshot.revision_digest
+                        )
+                self._pending_custody.setdefault(run_id, (turn_id, ceiling))
+                result["available_skills"] = rows
+                return result
 
         return await self._call(operation)
 
-    def _checked(self, name: str, token: str):
+    def _checked(self, name: str, token: str, *, binding: bool = False):
         from .skill_provider import skill_summary
 
         snapshot = self._admitted.get(token)
@@ -414,6 +582,14 @@ class PluginService:
                 snapshot.alias,
             )
             if name in {row["name"], row["tool_name"], row["record_id"]}:
+                if actor_id and not binding:
+                    record = self._live_runs.get((snapshot.installation_id, actor_id))
+                    if (
+                        record is None
+                        or record.component_ceiling is not None
+                        and component_id not in record.component_ceiling
+                    ):
+                        raise PluginUnavailable("plugin_actor_ceiling_unavailable")
                 self._admission.check(snapshot, component_id)
                 return snapshot, component_id, row
         raise PluginUnavailable("plugin_component_not_admitted")
@@ -540,21 +716,25 @@ class PluginService:
                         raise PluginUnavailable("plugin_run_admission_required")
                     self.fences.check_snapshot(snapshot)
 
-    async def disable(
-        self, target: RevocationTarget, operation_id: str
-    ) -> OperationReceipt:
-        """Seal and transfer exact cancellation before touching the worker queue."""
-        return await self._revoke(target, operation_id, "revoke")
+    def begin_disable(self, target: RevocationTarget) -> RevocationRequest:
+        """Retain caller custody and seal/cancel before any storage-worker access."""
+        return self._begin_revocation(target, "revoke")
 
-    async def uninstall(
-        self, installation_id: str, operation_id: str
-    ) -> OperationReceipt:
-        return await self._revoke(
-            RevocationTarget(installation_id, None, True), operation_id, "uninstall"
+    def begin_uninstall(self, installation_id: str) -> RevocationRequest:
+        return self._begin_revocation(
+            RevocationTarget(installation_id, None, True), "uninstall"
         )
 
-    async def _revoke(self, target, operation_id, kind, *, review=None):
-        operation = self.fences.begin(target, operation_id, kind, review=review)
+    def _begin_revocation(self, target, kind, *, review=None):
+        # Reject a missing event loop before sealing rather than losing task custody.
+        asyncio.get_running_loop()
+        request = self.fences.request(target, kind, review)
+        operation = self.fences.operations[request.request_id]
+        self._start_revocation(operation)
+        return request
+
+    def _start_revocation(self, operation):
+        self.fences.require_current(operation)
         with self._lock:
             if operation.task is None or operation.task.done():
 
@@ -562,7 +742,10 @@ class PluginService:
                     async def on_worker():
                         try:
                             return await self._coordinator._revoke(
-                                target, operation_id, kind, review=review
+                                operation.target,
+                                operation.operation_id,
+                                operation.kind,
+                                review=operation.review,
                             )
                         finally:
                             self._refresh()
@@ -582,18 +765,42 @@ class PluginService:
                         raise RevocationFailure(operation.status(), error) from error
 
                 operation.task = asyncio.create_task(persist())
-                # Retained task exceptions are retrieved even when the UI waiter leaves.
                 operation.task.add_done_callback(
                     lambda task: None if task.cancelled() else task.exception()
                 )
-            task = operation.task
-        await asyncio.shield(task)
+        return operation.task
+
+    async def finish_revocation(self, request: RevocationRequest) -> OperationReceipt:
+        if not isinstance(request, RevocationRequest):
+            raise TypeError("retained revocation request required")
+        with self._lock:
+            operation = self.fences.operations.get(request.request_id)
+            if operation is None:
+                raise ValueError("plugin_revocation_request_unavailable")
+        await asyncio.shield(self._start_revocation(operation))
         return operation.status()
 
-    def revocation_status(self, operation_id: str) -> OperationReceipt:
-        """Observe persistence and actual terminal evidence independently of storage."""
+    async def disable(self, target: RevocationTarget) -> OperationReceipt:
+        return await self.finish_revocation(self.begin_disable(target))
+
+    async def uninstall(self, installation_id: str) -> OperationReceipt:
+        return await self.finish_revocation(self.begin_uninstall(installation_id))
+
+    async def _revoke(self, target, operation_id, kind, *, review=None):
+        if review is None or operation_id != review.operation_id:
+            raise ValueError("original issued review required")
+        return await self.finish_revocation(
+            self._begin_revocation(target, kind, review=review)
+        )
+
+    def revocation_status(self, request: RevocationRequest) -> OperationReceipt:
+        """Read current session custody without storage or a replacement mutation."""
         with self._lock:
-            return self.fences.operations[operation_id].status()
+            return self.fences.operations[request.request_id].status()
+
+    async def lookup_operation(self, identity: str) -> OperationReceipt:
+        """Reconcile retained evidence only; unknown identities never start work."""
+        return await self._call(lambda: self._coordinator.lookup_operation(identity))
 
     def live_runs(self) -> tuple[PluginRunOwnership, ...]:
         """Read exact cancellation/completion handles without waiting for storage."""
@@ -608,6 +815,7 @@ class PluginService:
         handle_id: str | None = None,
         *,
         parent_run_id: str | None = None,
+        component_ceiling: Mapping[str, tuple[str, ...]] | None = None,
     ) -> None:
         """Bind a real host run before effects, preserving its originating scope."""
         if not run_id:
@@ -617,7 +825,9 @@ class PluginService:
             for row in entries:
                 if not row.get("plugin_owned"):
                     continue
-                snapshot, _, _ = self._checked(row["name"], row["plugin_admission"])
+                snapshot, _, _ = self._checked(
+                    row["name"], row["plugin_admission"], binding=True
+                )
                 key = (snapshot.installation_id, run_id)
                 with self._lock:
                     if run_id in self._terminal_runs:
@@ -636,6 +846,9 @@ class PluginService:
                     elif parent_run_id not in self._bound_runs.get(snapshot.run_id, ()):
                         raise PluginUnavailable("plugin_parent_identity_unavailable")
                     self.fences.check_snapshot(snapshot)
+                    self.fences.require_admission(
+                        snapshot.installation_id, snapshot.revision_digest
+                    )
                 # Durable reservation can block; never hold the live seal lock
                 # while performing SQLite or filesystem work.
                 owner = self._coordinator.owner
@@ -661,6 +874,9 @@ class PluginService:
                         if snapshot.run_id in self._retired:
                             raise PluginUnavailable("plugin_turn_retired")
                         self.fences.check_snapshot(snapshot)
+                        self.fences.require_admission(
+                            snapshot.installation_id, snapshot.revision_digest
+                        )
                         self._live_runs[key] = PluginRunOwnership(
                             snapshot.installation_id,
                             snapshot.workspace_id,
@@ -674,6 +890,13 @@ class PluginService:
                             self._pending_custody[snapshot.run_id][0],
                             parent_run_id,
                             snapshot.generations,
+                            (
+                                None
+                                if component_ceiling is None
+                                else tuple(
+                                    component_ceiling.get(snapshot.installation_id, ())
+                                )
+                            ),
                         )
                         if parent_run_id is None:
                             self._root_runs[snapshot.run_id] = run_id
@@ -722,6 +945,11 @@ class PluginService:
                 for operation in self.fences.operations.values()
             ):
                 raise PluginUnavailable("plugin_revocation_cleanup_not_drained")
+            if any(
+                ticket.task is not None and not ticket.task.done()
+                for ticket in self.fences.drains.values()
+            ):
+                raise PluginUnavailable("plugin_revision_work_not_drained")
             if self._live_runs:
                 raise PluginUnavailable("plugin_owned_work_not_drained")
             self._closed = True

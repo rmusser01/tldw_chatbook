@@ -7855,10 +7855,45 @@ class ConsoleChatController:
                 "Enable or configure it, or Discard the interrupted run.",
             )
             return False
+        configuration = self.resolve_turn_configuration_snapshot(session_id)
+        maximum = dict(configuration.skill_context_maximum)
+        plugin_service = getattr(
+            getattr(self._skills_service, "local_service", None), "plugin_service", None
+        )
+        try:
+            if plugin_service is not None:
+                maximum = await plugin_service.resume_maximum(
+                    maximum,
+                    checkpoint,
+                    self.store._session_or_raise(session_id).persisted_conversation_id
+                    or "",
+                    message.persisted_message_id or message.id,
+                )
+            elif checkpoint.schema_version == 2:
+                raise PermissionError("Managed continuation service unavailable.")
+            else:
+                maximum["plugin_resume_constraint"] = "zero"
+                maximum["available_skills"] = [
+                    row
+                    for row in maximum.get("available_skills", ())
+                    if not row.get("plugin_owned")
+                ]
+                maximum["context_text"] = "\n".join(
+                    str(row.get("name", "")) for row in maximum["available_skills"]
+                )
+            configuration = replace(configuration, skill_context_maximum=maximum)
+        except (OSError, ValueError, PermissionError, RuntimeError, TypeError):
+            self.store.set_provider_continuation_warning(
+                message.id,
+                "Managed continuation no longer matches its original authority. Start a new run or discard it.",
+            )
+            return False
         (
             resolution,
             turn_context,
-        ) = await self._capture_and_resolve_turn_execution_context(session_id)
+        ) = await self._capture_and_resolve_turn_execution_context(
+            session_id, configuration=configuration
+        )
         if not self._provider_continuation_recovery_target_is_current(
             session_id=session_id,
             message_id=message.id,
@@ -7913,7 +7948,7 @@ class ConsoleChatController:
                     expand_provider_continuation=translator,
                     resume_provider_continuation=True,
                     continuation_sidecar=prior_sidecar,
-                    continuation_history_target=prior_target,
+                    continuation_history_target=prior_target or target,
                     turn_context=turn_context,
                 )
         finally:

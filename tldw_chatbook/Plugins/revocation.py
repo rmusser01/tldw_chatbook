@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import json
+import re
+import time
 from concurrent.futures import Future
 from dataclasses import dataclass, field, replace
 from typing import Literal
@@ -95,6 +97,17 @@ def revocation_for_review(review) -> RevocationTarget | None:
     )
 
 
+@dataclass(frozen=True)
+class RevocationRequest:
+    """Host request identity; only retained current-session custody may mutate."""
+
+    request_id: str
+
+    def __post_init__(self):
+        if re.fullmatch(r"lr1\.[0-9a-f]{32}\.[0-9a-f]{32}", self.request_id) is None:
+            raise ValueError("invalid revocation request identity")
+
+
 class RevocationConflict(ValueError):
     """A retry cannot reuse another mutation's immutable identity."""
 
@@ -125,6 +138,8 @@ class RevocationOperation:
     unresolved_tokens: tuple[str, ...] = ()
     runtime_observed: bool = False
     scope_versions: tuple[tuple[tuple[str, str, str], int], ...] = ()
+    expires_at: float = field(default_factory=lambda: time.monotonic() + 900)
+    durable_id: str | None = None
 
     def status(self) -> OperationReceipt:
         stopped = not self.unresolved_tokens and all(
@@ -134,6 +149,8 @@ class RevocationOperation:
             stopped = None
         return replace(
             self.receipt,
+            request_id=self.operation_id,
+            operation_id=self.durable_id,
             runtime_stopped=stopped,
             cleanup_pending=stopped is not True
             or bool(self.cleanup_tasks)

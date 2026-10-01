@@ -59,7 +59,7 @@ async def test_surviving_child_and_cancelled_waiter_keep_terminal_custody(
         operation.cancel()
         with pytest.raises(asyncio.CancelledError):
             await operation
-        status = case.service.revocation_status("disable-a")
+        status = case.service.revocation_status(case.requests["disable-a"])
         assert (
             not status.committed
             and not status.runtime_stopped
@@ -74,7 +74,7 @@ async def test_surviving_child_and_cancelled_waiter_keep_terminal_custody(
     case.child.terminate()
     await asyncio.to_thread(case.child.wait, 2)
     await asyncio.to_thread(case.service.complete_run, "root-a")
-    status = case.service.revocation_status("disable-a")
+    status = case.service.revocation_status(case.requests["disable-a"])
     assert status.runtime_stopped and not status.cleanup_pending
     assert not case.cancelled_b.is_set()
 
@@ -110,7 +110,7 @@ async def test_global_default_cancels_only_captured_inheritors(revocation_case):
     await asyncio.to_thread(case.service.bind_run, entries, "root-c", cancelled.set)
     case.block_persistence()
     operation = asyncio.create_task(
-        case.service.disable(
+        case.disable(
             RevocationTarget(case.installation, None, False, global_default=True),
             "default-off",
         )
@@ -128,7 +128,7 @@ async def test_global_default_cancels_only_captured_inheritors(revocation_case):
         await asyncio.to_thread(case.service.complete_run, "root-c")
     await case.service.check_entries(case.entries["a"])
     await case.service.check_entries(case.entries["b"])
-    assert case.service.revocation_status("default-off").runtime_stopped
+    assert case.service.revocation_status(case.requests["default-off"]).runtime_stopped
 
 
 @pytest.mark.asyncio
@@ -136,7 +136,7 @@ async def test_everywhere_cancels_all_and_fresh_enable_is_scoped(revocation_case
     from tldw_chatbook.Plugins.revocation import RevocationTarget
 
     case = revocation_case
-    receipt = await case.service.disable(
+    receipt = await case.disable(
         RevocationTarget(case.installation, None, True), "everywhere"
     )
     assert receipt.committed and case.cancelled_b.is_set()
@@ -158,7 +158,7 @@ async def test_reviewed_disabled_commit_also_seals_before_worker(
         case.installation, workspace_id="a", intent=intent
     )
     case.block_persistence()
-    operation = asyncio.create_task(case.service.commit(review, "reviewed-disable"))
+    operation = asyncio.create_task(case.service.commit(review, review.operation_id))
     try:
         await asyncio.wait_for(case.cleanup_started.wait(), 2)
         assert not case.admission_allows_a() and case.admission_allows_b()
@@ -212,10 +212,10 @@ async def test_direct_console_revocation_retains_real_provider_until_terminal(
         assert await asyncio.to_thread(entered.wait, 5)
         records = rig.service.live_runs()
         assert len(records) == 1
-        receipt = await rig.service.disable(
-            RevocationTarget(installed.installation_id, "workspace-a", False),
-            "disable-live-console",
+        request = rig.service.begin_disable(
+            RevocationTarget(installed.installation_id, "workspace-a", False)
         )
+        receipt = await rig.service.finish_revocation(request)
         assert (
             receipt.committed
             and receipt.cleanup_pending
@@ -231,7 +231,7 @@ async def test_direct_console_revocation_retains_real_provider_until_terminal(
             await asyncio.sleep(0.01)
         assert not rig.service.live_runs()
         assert records[0].completed.is_set()
-        assert rig.service.revocation_status("disable-live-console").runtime_stopped
+        assert rig.service.revocation_status(request).runtime_stopped
         assert all(
             "LATE_REVOKED_REPLY" not in str(message.content)
             for message in rig.store.messages_for_session(rig.session.id)
@@ -281,14 +281,14 @@ async def test_late_direct_cancel_preserves_callers_next_work_and_reports_all_cl
     try:
         await asyncio.wait_for(consumer_finished.wait(), 3)
         assert rig.service.live_runs()
-        await rig.service.disable(
-            RevocationTarget(installed.installation_id, "workspace-a", False),
-            "late-disable",
+        request = rig.service.begin_disable(
+            RevocationTarget(installed.installation_id, "workspace-a", False)
         )
+        await rig.service.finish_revocation(request)
         await asyncio.sleep(0.02)
         assert closes == ["first", "second"]
         assert not task.done() and task.cancelling() == 0
-        receipt = rig.service.revocation_status("late-disable")
+        receipt = rig.service.revocation_status(request)
         assert receipt.cleanup_errors and not receipt.runtime_stopped
     finally:
         completed.set_result(None)
@@ -350,7 +350,7 @@ def test_direct_coordinator_uses_the_admissions_live_owner(
     assert gate.fences is stack.coordinator.fences
     assert stack.call(
         lambda: stack.coordinator.disable(
-            RevocationTarget(installation, "workspace-a", False), "direct-disable"
+            RevocationTarget(installation, "workspace-a", False)
         )
     ).committed
     with pytest.raises(PermissionError):
@@ -365,7 +365,7 @@ async def test_explicit_inherit_resumes_fresh_work_under_true_default(revocation
     review = await case.service.review_activation(
         case.installation, workspace_id="a", intent="inherit"
     )
-    assert (await case.service.commit(review, "resume-inherit")).committed
+    assert (await case.service.commit(review, review.operation_id)).committed
     fresh = await case.service.admit(case.service.capture_maximum("a"), "fresh-inherit")
     assert fresh["available_skills"]
     await case.service.check_entries(fresh["available_skills"])
@@ -399,7 +399,7 @@ async def test_recovered_resume_reopens_only_its_current_authority(
         lambda: setattr(case.service._coordinator, "progress", fail)
     )
     with pytest.raises(OSError) as caught:
-        await case.service.commit(review, "recover-resume")
+        await case.service.commit(review, review.operation_id)
     assert caught.value is fault
     assert not case.admission_allows_a()
     await case.service._call(
@@ -409,7 +409,7 @@ async def test_recovered_resume_reopens_only_its_current_authority(
         # An unrelated B marker change after recovery must not prevent A's resume.
         await case.service.unlock("test passphrase")
         await case.enable("b", "unrelated-b-after-recovery")
-    recovered = await case.service.commit(review, "recover-resume")
+    recovered = await case.service.commit(review, review.operation_id)
     assert recovered.committed and recovered.phase == "complete"
     fresh = await case.service.admit(
         case.service.capture_maximum("a"), "recovered-fresh"
@@ -423,9 +423,9 @@ async def test_recovered_resume_reopens_only_its_current_authority(
     newer = RevocationTarget(
         case.installation, None if disable_everywhere else "a", disable_everywhere
     )
-    assert (await case.service.disable(newer, "newer-disable")).committed
+    assert (await case.disable(newer, "newer-disable")).committed
     # Replaying history is not a new enable and cannot clear this later fence.
-    historical = await case.service.commit(review, "recover-resume")
+    historical = await case.service.commit(review, review.operation_id)
     assert historical.committed and historical.phase == "complete"
     assert not case.service.capture_maximum("a")["available_skills"]
     with pytest.raises(PermissionError):

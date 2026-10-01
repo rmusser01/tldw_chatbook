@@ -6,6 +6,7 @@ import json
 import sqlite3
 from collections.abc import Iterator
 from contextlib import contextmanager
+from datetime import UTC
 from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Self
@@ -520,6 +521,83 @@ class PluginRegistry:
                 json.dumps(result),
             ),
         )
+        if phase == "complete":
+            from datetime import datetime
+
+            if (
+                result["revision_digest"]
+                and result["kind"] in {"install", "update"}
+                and cursor.execute(
+                    "SELECT 1 FROM revisions WHERE installation_id=? AND revision_digest=?",
+                    (result["installation_id"], result["revision_digest"]),
+                ).fetchone()
+                is not None
+            ):
+                cursor.execute(
+                    "INSERT INTO receipts VALUES (?, ?, ?) ON CONFLICT(receipt_id) DO NOTHING",
+                    (
+                        "revision:"
+                        + result["installation_id"]
+                        + ":"
+                        + result["revision_digest"],
+                        "revision:" + result["installation_id"],
+                        json.dumps({"observed_at": datetime.now(UTC).isoformat()}),
+                    ),
+                )
+            cursor.execute(
+                "INSERT INTO receipts VALUES (?, ?, ?) ON CONFLICT(receipt_id) DO NOTHING",
+                (
+                    "observed:" + result["operation_id"],
+                    result["operation_id"],
+                    json.dumps({"observed_at": datetime.now(UTC).isoformat()}),
+                ),
+            )
+
+    def operation_observed_at(self, operation_id: str):
+        """Advisory terminal age; only authenticated lineage proves eligibility."""
+        from datetime import datetime
+
+        row = self._connection.execute(
+            "SELECT receipt_json FROM receipts WHERE receipt_id=?",
+            ("observed:" + operation_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        try:
+            value = json.loads(row[0])
+            if set(value) != {"observed_at"}:
+                return None
+            result = datetime.fromisoformat(value["observed_at"])
+            return result if result.tzinfo is not None else None
+        except (ValueError, TypeError):
+            return None
+
+    def revision_observed_at(self, installation_id: str, digest: str):
+        """Read advisory first-observed metadata; missing or invalid dates defer."""
+        from datetime import datetime
+
+        row = self._connection.execute(
+            "SELECT receipt_json FROM receipts WHERE receipt_id=?",
+            ("revision:" + installation_id + ":" + digest,),
+        ).fetchone()
+        try:
+            value = json.loads(row[0]) if row else {}
+            result = datetime.fromisoformat(value["observed_at"])
+            return result if set(value) == {"observed_at"} and result.tzinfo else None
+        except (ValueError, TypeError, KeyError):
+            return None
+
+    def forget_operation_hints(self, operation_ids: tuple[str, ...]) -> None:
+        """Drop only reconciled metadata hints; caller supplies authenticated expiry."""
+        self._require_write()
+        with self.transaction() as cursor:
+            for operation_id in operation_ids:
+                cursor.execute(
+                    "DELETE FROM receipts WHERE operation_id=?", (operation_id,)
+                )
+                cursor.execute(
+                    "DELETE FROM operations WHERE operation_id=?", (operation_id,)
+                )
 
     def restore_authority(
         self, snapshot: dict, inspections: dict[tuple[str, str], PackageInspection]

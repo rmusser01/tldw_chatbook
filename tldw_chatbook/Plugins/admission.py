@@ -3,6 +3,7 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from threading import RLock
+from uuid import uuid4
 
 from .coordinator import PluginCoordinator
 from .models import PackageInspection
@@ -55,6 +56,18 @@ class LivePluginFences:
         self.blocked = set()
         self.runs = {}
         self.operations = {}
+        self.drains = {}
+        self.session_nonce = uuid4().hex
+
+    def require_admission(self, installation_id, revision_digest):
+        with self.live_lock:
+            if any(
+                ticket.installation_id == installation_id
+                and ticket.revision_digest == revision_digest
+                and ticket.phase in {"waiting", "committing"}
+                for ticket in self.drains.values()
+            ):
+                raise PluginUnavailable("plugin_revision_draining")
 
     def current(self, installation_id, generations):
         with self.live_lock:
@@ -90,6 +103,33 @@ class LivePluginFences:
                 if target.matches(record)
             )
 
+    def request(self, target, kind="revoke", review=None):
+        from .revocation import RevocationRequest
+
+        if review is None:
+            request_id = f"lr1.{self.session_nonce}.{uuid4().hex}"
+        else:
+            parts = review.operation_id.split(".")
+            if len(parts) != 5 or parts[0] != "pi1":
+                raise ValueError("review has no issued identity")
+            nonce = parts[3]
+            request_id = f"lr1.{nonce[:32]}.{nonce[32:]}"
+        self.begin(target, request_id, kind, review=review)
+        return RevocationRequest(request_id)
+
+    def require_current(self, operation):
+        from dataclasses import replace
+
+        from .revocation import RevocationConflict
+
+        with self.live_lock:
+            if operation.receipt.phase != "complete" and any(
+                self.epochs.get(scope, 0) != generation
+                for scope, generation in operation.scope_versions
+            ):
+                operation.receipt = replace(operation.receipt, phase="superseded")
+                raise RevocationConflict("plugin revocation request superseded")
+
     def begin(self, target, operation_id, kind="revoke", review=None):
         from .authority import PluginMarker
         from .review import OperationReceipt
@@ -105,16 +145,7 @@ class LivePluginFences:
                     review is not None and prior.review != review
                 ):
                     raise ValueError("plugin operation identity conflict")
-                if prior.receipt.phase != "complete" and any(
-                    self.epochs.get(scope, 0) != generation
-                    for scope, generation in prior.scope_versions
-                ):
-                    from dataclasses import replace
-
-                    from .revocation import RevocationConflict
-
-                    prior.receipt = replace(prior.receipt, phase="superseded")
-                    raise RevocationConflict("plugin revocation request superseded")
+                self.require_current(prior)
                 return prior
             tokens = self.seal_target(target)
             records = tuple(
@@ -125,8 +156,9 @@ class LivePluginFences:
                 kind,
                 operation_id,
                 records,
-                OperationReceipt(operation_id, "session_only", False),
+                OperationReceipt(None, "session_only", False, request_id=operation_id),
                 review=review,
+                durable_id=review.operation_id if review is not None else None,
                 scope_versions=tuple(
                     (scope, self.epochs.get(scope, 0))
                     for scope in sorted(
@@ -215,7 +247,12 @@ class PluginAdmission:
             raise PluginUnavailable("plugin_workspace_unavailable")
 
     def capture(
-        self, installation_id: str, workspace_id: str | None, run_id: str
+        self,
+        installation_id: str,
+        workspace_id: str | None,
+        run_id: str,
+        *,
+        fresh: bool = True,
     ) -> RunPluginSnapshot:
         """Capture a trusted, enabled revision and dependency-complete skills."""
         self.fences.check(installation_id, workspace_id)
@@ -230,6 +267,8 @@ class PluginAdmission:
                 if row["installation_id"] == installation_id
             )
             revision = installed["revision_digest"]
+            if fresh:
+                self.fences.require_admission(installation_id, revision)
             alias = installed.get("alias")
             if not alias:
                 raise PluginUnavailable("plugin_alias_review_required")
@@ -373,21 +412,24 @@ class PluginAdmission:
         if component_id not in snapshot.selection:
             raise PluginUnavailable("plugin_component_not_admitted")
         current = self.capture(
-            snapshot.installation_id, snapshot.workspace_id, snapshot.run_id
+            snapshot.installation_id,
+            snapshot.workspace_id,
+            snapshot.run_id,
+            fresh=False,
         )
         if (
             current.revision_digest,
             current.generations,
             current.mappings_json,
             current.dependencies,
-            current.selection,
             current.alias,
         ) != (
             snapshot.revision_digest,
             snapshot.generations,
             snapshot.mappings_json,
             snapshot.dependencies,
-            snapshot.selection,
             snapshot.alias,
-        ):
+        ) or not set(snapshot.selection) <= set(current.selection):
+            # An archived ceiling may deliberately narrow the current selection.
+            # Exact generations still detect every intervening authority edit.
             raise PluginUnavailable("plugin_admission_changed")

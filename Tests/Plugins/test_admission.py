@@ -16,13 +16,13 @@ def install(stack, package):
         return review
 
     review = stack.call(operation)
-    stack.call(lambda: stack.coordinator.commit(review, "install-" + review.token))
+    stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
     return review.installation_id
 
 
 def trust(stack, installation):
     review = stack.call(lambda: stack.coordinator.review_trust(installation))
-    return stack.call(lambda: stack.coordinator.commit(review, "trust-" + review.token))
+    return stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
 
 
 def activate(stack, installation, workspace, intent):
@@ -31,9 +31,7 @@ def activate(stack, installation, workspace, intent):
             installation, workspace_id=workspace, intent=intent
         )
     )
-    return stack.call(
-        lambda: stack.coordinator.commit(review, "enable-" + review.token)
-    )
+    return stack.call(lambda: stack.coordinator.commit(review, review.operation_id))
 
 
 def admission(stack, workspaces=None):
@@ -162,13 +160,13 @@ def test_activation_operation_id_cannot_retarget_review(
         )
     )
     assert stack.call(
-        lambda: stack.coordinator.commit(first, "activation-once")
+        lambda: stack.coordinator.commit(first, first.operation_id)
     ).committed
     assert stack.call(
-        lambda: stack.coordinator.commit(first, "activation-once")
+        lambda: stack.coordinator.commit(first, first.operation_id)
     ).committed
     with pytest.raises(ValueError, match="different review"):
-        stack.call(lambda: stack.coordinator.commit(other, "activation-once"))
+        stack.call(lambda: stack.coordinator.commit(other, first.operation_id))
 
 
 @pytest.mark.parametrize("workspace", ["global", "workspace-default", ""])
@@ -208,6 +206,17 @@ def test_historical_authenticated_sentinel_generations_still_fence_old_runs(
             ]["revision_digest"],
             "result": "committed",
         }
+        # Historical scope spelling is the fixture subject. Its mutation uses
+        # the current issued-ID namespace; legacy-ID wire fixtures live in recovery.
+        import hashlib
+
+        operation = stack.authority.issue_operation_id(
+            old.generation + 1,
+            hashlib.sha256(operation.encode()).hexdigest(),
+            {key: value for key, value in result.items() if key != "operation_id"},
+            hashlib.sha256((operation + "-nonce").encode()).hexdigest(),
+        )
+        result["operation_id"] = operation
         with stack.registry.transaction() as cursor:
             cursor.execute(
                 "INSERT INTO activation VALUES (?, ?, ?) ON CONFLICT(installation_id, workspace_id) DO UPDATE SET intent=excluded.intent",

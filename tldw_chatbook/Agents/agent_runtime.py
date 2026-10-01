@@ -733,13 +733,11 @@ def _same_continuation_target(
     candidate: ProviderContinuationCheckpoint,
 ) -> bool:
     return (
-        current.schema_version,
         current.provider,
         current.protocol,
         current.model,
         current.api_base_url,
     ) == (
-        candidate.schema_version,
         candidate.provider,
         candidate.protocol,
         candidate.model,
