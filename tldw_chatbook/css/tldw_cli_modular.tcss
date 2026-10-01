@@ -11403,11 +11403,6 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 }
 
 
-#chat-prompts-collapsible Input,
-#chat-prompts-collapsible ListView,
-#chat-prompts-collapsible Button {
-    margin-bottom: $ds-space-stack;
-}
 #chat-prompt-list-view {
     height: $ds-size-8;
     border: round $ds-surface-raised;
@@ -12514,17 +12509,6 @@ VerticalScroll.media-content-right-pane > Markdown {
     margin-bottom: $ds-space-1;
     border: round $primary-lighten-2;
     background: $primary-background;
-}
-
-#rename-buttons, #merge-buttons {
-    layout: horizontal;
-    height: $ds-size-3;
-    align: center middle;
-}
-
-#rename-buttons Button, #merge-buttons Button {
-    margin: $ds-space-0 $ds-space-1;
-    min-width: $ds-size-12;
 }
 
 
