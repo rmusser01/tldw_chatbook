@@ -434,10 +434,10 @@ of the next prompt, and **Manage** plus a state-specific action such as
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
-  "Queue opens once this turn is accepted". A regenerate or continue never
-  opens the queue, so once one is streaming the strip reads "Wait for the
-  current run to finish" instead. With an empty draft after acceptance it
-  reads "Type to queue".
+  "Queue opens once this turn is accepted". Once the turn is accepted, an
+  empty draft reads "Type to queue". A regenerate or continue never opens the
+  queue, so once one is streaming the strip reads "Wait for the current run
+  to finish" instead.
 - **Queue full** preserves the draft and asks you to manage the existing 10;
   the strip reads "Queue full — manage it to make room".
 - Neither is a provider problem: these queue messages never say "finish
@@ -677,3 +677,12 @@ landing in the Library editor with the captured note's Info showing its
 `console` / `conversation:<id>` / `message:<id>` keywords; **Save as…** ▸
 Note still titles after the conversation; Alt+C and Alt+I open the rails at
 235x52.)*
+
+*Verified against fix/task-33620.4-healthy-run-not-blocked — 2026-10-01
+(task-33620.4: a healthy run reads Running / Waiting for approval instead of
+"Blocked / Provider setup needed", and the Inspect handle reads **running**
+while a turn is in flight; the Prompt queue bullets now say which
+strip copy a Preparing turn, an accepted empty draft, a regenerate or
+continue, and a full queue show, and that queue messages never route to
+provider setup. Checked against the composer, send-authority summary and
+prompt-queue presentation and rail-state code and their tests; no live walk.)*

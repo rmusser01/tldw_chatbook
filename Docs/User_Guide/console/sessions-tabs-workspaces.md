@@ -548,6 +548,12 @@ rest of this page's content unchanged from the prior stamp).*
 *Reconciled against the TASK-20937 native Workspace Tree and exclusive
 Default/unassigned ownership implementation — 2026-08-23. Additional
 same-cell terminal-client verification remains tracked by TASK-20937.6.*
+*Verified against fix/task-33620.4-healthy-run-not-blocked — 2026-10-01
+(task-33620.4: the pinned Inspect summary's **Run** row reads **Running** or
+**Waiting for approval** while a turn is in flight, and the Run section's
+**Provider** row stays ready; **Blocked** is reserved for a genuine provider
+or source problem. Checked against console_send_authority_summary.py and
+Tests/UI/test_console_active_run_readiness_surfaces.py; no live walk).*
 
 ## Archive, find, review and resume a saved chat
 
