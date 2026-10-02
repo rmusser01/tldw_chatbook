@@ -17836,3 +17836,12 @@ actual mounted paint checks at 120/70 columns retained their original assertions
 and added fallback content. Run the existing aggregate byte guard alongside
 bundle/token checks when touching boot stylesheet sources; do not raise its pin
 to conceal a small but real contribution.
+
+
+## A coalesced UI sync is not a publication receipt (PR #2918 final rebase)
+
+**What happened.** The final readiness-rebase selection passed 138 checks but reported seven mounted failures before being stopped for diagnosis. The off-viewed wake test alternately failed its initial Running glyph and its terminal glyph: awaiting `_sync_native_console_chat_ui()` can return after requesting a coalesced pass, and a fixed 1.2s sleep does not acknowledge that publication. Observing the actual glyph with the existing bounded settle helper passes; freezing only terminal tab publication fails at the settled-glyph assertion after real streaming and ledger completion. Disabling the delivery hook alone passed because a coalesced tail could still repaint, so that experiment does not prove the hook itself necessary.
+
+The held Stop fixture separately expired its 5s first-chunk precondition during provider validation. An observation-only private-profile plugin recorded actual dispatch at 9.578s and first yield 4.6ms later, with normal durable commit and cleanup. Giving only preparation a 15s bound preserves all subsequent 5s action checks; wake entry uses the same preparation bound while its paint, ledger and timer checks retain 8s.
+
+**What to do.** Wait for the actual asynchronous state a test needs, and distinguish preparation from the action being measured. A negative control must reach valid admission and streaming before its intended publication assertion fails; an earlier setup failure is not evidence that the oracle catches the bug. Keep production deadlines, profile admission, caps and authority unchanged.
