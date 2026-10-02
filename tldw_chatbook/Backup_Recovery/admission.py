@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
+from . import bootstrap
 from .native_files import create_private_directory, flush_directory, pinned_directory
 from .native_platform import flush_file
 from .qualification import _qualified_identity, native_identity, qualified_for
@@ -288,6 +289,7 @@ class Admission:
             os.close(fd)
 
     @staticmethod
+    @bootstrap.advances_admission_epoch
     def _write_new_record(parent: int, name: str, data: bytes) -> None:
         fd = os.open(
             name,
@@ -303,6 +305,7 @@ class Admission:
         finally:
             os.close(fd)
 
+    @bootstrap.advances_admission_epoch
     def _write(
         self, parent: int, registry: _Registry, *, initial: bool = False
     ) -> None:
