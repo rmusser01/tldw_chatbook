@@ -1,8 +1,8 @@
 # Task 2 — stronger live Hold evidence and short coordinator sections
 
-Status: implementation and verification in progress. TASK-33560 remains In Progress. Task 3 is not implemented. No numerical or Windows/Linux qualification is claimed.
+Status: safety candidate implemented; performance acceptance FAILED. Independent specification/concurrency/security and quality reviews remain pending. TASK-33560 remains In Progress. Task 3 is not implemented. No numerical-goal or Windows/Linux qualification is claimed.
 
-Dispatch BASE: `b4980bc58782ec1f5ba8b142c504773fad00d0e1`; branch `codex/backup-admission-perf-20261001`; worktree `/private/tmp/chatbook-native-credentials-20260929`. The implementation commit and final fixed-probe receipts will be recorded after verification. The accepted reconciliation reports remain `/private/tmp/task33560-reconciliation-report.md` and `/private/tmp/task33560-expanded-dev-reconciliation.md`.
+Dispatch BASE: `b4980bc58782ec1f5ba8b142c504773fad00d0e1`; branch `codex/backup-admission-perf-20261001`; worktree `/private/tmp/chatbook-native-credentials-20260929`. Implementation/code commit: `65b8f7e4f90fa1e13704fc77e7ce6666f9c35796`, tree `a5ae009e3a9025222635b78c8c30e5dc55a594f2`. The final evidence-only follow-up is identified by this report’s Git history and the controller handoff; it does not change measured application code. The accepted reconciliation reports remain `/private/tmp/task33560-reconciliation-report.md` and `/private/tmp/task33560-expanded-dev-reconciliation.md`.
 
 ## Implementation and boundaries
 
@@ -92,7 +92,7 @@ Task 3 must reuse the upstream 1 Hz cadence and these existing retirement/counti
 
 Native execution here is macOS only. Windows full derivation is preserved, but no Windows ACL/reparse/native qualification was executed. Linux is unmeasured. No idle reduction is measured (Task 3). The unchanged complete-boundary <0.5 ms, boot-open reduction >=80%, and idle reduction >=50% remain binding. Stronger current full-byte/native validation is mandatory even if the candidate misses performance goals.
 
-The accepted prior baseline remains the independently checked historical840/currentf337 pair with probe SHA `34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428`; currentf337 complete boundary 1.159021 ms and boot reduction 84.44381079%. It is not relabeled as BASE b498, and later upstream boot/source changes are not inferred from it. The retained probe has no raw per-iteration samples; its seed/warm boot child overwrite and bounded source-stat/native-retirement receipt limitations remain. Fixed-probe timing has not yet started for this implementation.
+The accepted prior baseline remains the independently checked historical840/currentf337 pair with probe SHA `34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428`; currentf337 complete boundary 1.159021 ms and boot reduction 84.44381079%. It is not relabeled as BASE b498, and later upstream boot/source changes are not inferred from it. The retained probe has no raw per-iteration samples; its seed/warm boot child overwrite and bounded source-stat/native-retirement receipt limitations remain. The coordinated fixed-probe results below measure this implementation and preserve those prior measurement identities.
 
 ### Final source-stable batch and process-order limitation
 
@@ -107,3 +107,48 @@ Separate-process core verification: `/private/tmp/backup-followup-check-__bguwof
 Separate-process participant verification: `/private/tmp/backup-followup-check-zkndcltt` collected 32, 24 passed and the same 8 exact-BASE failures remained, with zero errors/skips/network attempts. `/private/tmp/task33560-participant-isolated-imports.json` records unchanged before/after production hashes and actual imports. The final evidence module contributed 48 passes/1 intentional skip, including all 11 added cases, and the other eight affected safety/startup modules all passed as enumerated above. The remaining 9 isolated failures are explicit acceptance limitations, not suppressed tests.
 
 Final scoped Bandit scanned 3,884 BASE and 4,280 current production lines, with no scan errors and no findings on either side. Final Ruff has the same 26 combined existing production/test findings as BASE. Source compilation and whitespace validation passed; whole-file format checks retain pre-existing formatting differences, while changed function ranges were formatted.
+
+
+## Fixed-probe result: numerical acceptance failed
+
+The controller explicitly reserved a quiet window. Four controls ran sequentially using the unchanged retained probe SHA `34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428`: BASE and candidate, each with 100 transaction iterations and 3 measured warm boots, plus the unchanged seed/warm-up children. No concurrent apps, tests, source edits or unrelated tools ran during timing. All original child/native limits remained unchanged. No control was retried.
+
+Immutable package: `/private/tmp/task33560-task2-paired-t7iddr01`.
+
+| Source | Commit | Tree | Full source content SHA256 |
+| --- | --- | --- | --- |
+| BASE | `b4980bc58782ec1f5ba8b142c504773fad00d0e1` | `047781af74cb23f061f5c8d8aa36564c829215a6` | `f82a131876cdb809e6ce32d3c1ff8415acb294c43119f83dddf2e2473bd50d1a` |
+| Candidate | `65b8f7e4f90fa1e13704fc77e7ce6666f9c35796` | `a5ae009e3a9025222635b78c8c30e5dc55a594f2` | `cc3163a22bfe95f1bbf6d2a4b61ccdc49418756bebdd73b535fbb19d4ccf3506` |
+
+Sources are separate git-archive extractions frozen read-only. `sources.json` records their identities; `source-stat-before.json` and `source-stat-after.json` retain full file byte/stat ledgers. `command-summary.json` confirms all four controls completed, both source byte/stat ledgers stayed equal, executable/containment byte/stat identities stayed equal, and source digests still match their manifests. Frozen permission modes are distinct from writable checkout modes and are applied equally to the pair.
+
+| Metric | BASE b498 | Candidate 65b8 |
+| --- | ---: | ---: |
+| Complete transaction boundary median, including entry and retirement, excluding measured SQL body | 1.6881875 ms | **3.7872705 ms** |
+| Narrow admission median (not the acceptance metric) | 0.3499165 ms | 2.072104 ms |
+| Transaction opens / 100 iterations | 0 | 1,400 |
+| Three boot open counts | 19,934 / 19,730 / 19,702 | 25,336 / 25,375 / 25,401 |
+| Boot-open median | 19,730 | **25,375** |
+| Three boot seconds | 8.241719375 / 8.843579583 / 8.418132208 | 9.261091 / 8.988196209 / 8.976043041 |
+
+The complete boundary misses the unchanged <0.5 ms target and regresses against this BASE. Boot opens increase **28.6112519007%** against this BASE. The Stage 4 >=80% boot-open reduction target uses retained historical840’s **126,252** opens, not BASE b498. Candidate 25,375 is an arithmetic **79.9013084941%** reduction against that retained historical result, also short of 80%. This is not a new matched historical840 run, does not relabel the accepted historical840/currentf337 controls, and does not confer cross-source or native-platform qualification.
+
+Raw control receipts are `receipts/base-transaction.json`, `draft-transaction.json`, `base-boot.json`, `draft-boot.json`; bounded analysis is `metrics-summary.json`. All **14 child/supervisor phases** report exit 0, retired true, supervisor retired true, no outstanding Hold/lease/operation/acquisition/raw/retiring ownership, zero network attempts and zero foreign-source modules, with the exact expected source digest. Quiet-window completion was reported only after these checks. All app and supervisor work had settled before the controller resumed other work.
+
+The stronger current barrier accounts for material observed work: the candidate opens 14 objects per measured warm transaction (current independently locked native authority/gate/lease observations plus complete control-file/directory observations), whereas BASE’s metadata-only warm result opens none. Pin retention removes repeated directory opens in the eligible native walks but does not yet amortize the complete safe boundary enough. The retained probe does not provide a finer per-check breakdown, so no unsupported attribution or speculative timing improvement is claimed. No mandatory current-byte/native/foreign/alias/security validation was removed to improve these results.
+
+Further limits: boot entries are 47/45/45 for BASE and 45/45/46 for the candidate; retirements are 47/45/45 and 45/45/45 respectively, despite final zero ownership in every child. Preserve these observable scheduling/counter differences. There are no raw per-iteration timing samples. Earlier boot child-path overwriting in the fixed probe remains unchanged. Execution is macOS only; native ACL/Windows handle counters do not establish Windows coverage. Idle reduction was not measured. No repeat, deadline change, goal waiver or speculative performance patch followed the failed measurements.
+
+Controller will review this exact safety candidate through independent SPEC/concurrency/security and QUALITY gates. The requested performance outcome is unfinished; Task 3 and overall TASK-33560 completion are not authorized by this report.
+
+## Exact implementation scope
+
+Application/test files in the measured code commit:
+
+- `tldw_chatbook/Backup_Recovery/storage_admission.py`
+- `tldw_chatbook/Backup_Recovery/admission.py`
+- `tldw_chatbook/Backup_Recovery/native_files.py`
+- `tldw_chatbook/Backup_Recovery/participants.py`
+- `Tests/Backup_Recovery/test_admission_evidence_reuse.py`
+
+Associated metadata: this report and `backlog/tasks/task-33560 - PERF-08-part-2-event-driven-maintenance-probe-warm-MCP-store-reads-raw-participant-stamp-caches.md`. No Task 3 source, dependency, deadline, old probe, TASK-33267 status or unrelated pooling assertion was changed.
