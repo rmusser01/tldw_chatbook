@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 19:38'
+updated_date: '2026-10-02 20:09'
 labels:
   - console
   - approvals
@@ -59,6 +59,14 @@ Reason: Enforce the existing committed Close fence at confirmation finalization 
 9. Reproduce remembered-grant resurrection after real Close and both confirmed new_chat/fork_chat executions while a committed Close retains its source session.
 10. Keep final confirmation decision/grant updates and resolver writes under the existing round lock; refuse shared executor entry on the exact committed Close generation, excluding failed-provisional markers.
 11. Run affected consent/execution and mounted Close/projection tests, ordinary census/preflight/lint, independent review and native replay on frozen sources; require fresh final-head Qodo and all four GitHub gates before normal merge.
+
+Qodo in-flight creation follow-up (PR2953 finding59151d44-d74b-48d8-9844-aeeb441d6079):
+ADR required: no
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/150-agent-chat-fork-and-spawn.md.
+Reason: Suppress late cancellation output at the existing synchronous UI handoff and reuse the existing orphan soft-delete contract; no new admission owner, transaction policy or runtime boundary.
+12. Reproduce both new_chat/fork_chat with real SQLite creation paused after entry and with completion queued across actual Close. Assert refused outcome, no UI completion and no live orphan, explicitly distinguishing soft-delete from physical rollback.
+13. Recheck source currentness after worker I/O and at the UI-thread completion gate; on refusal discard the just-created conversation using the existing worker-side orphan helper. Keep UI callbacks/DB work outside pending-round locks and do not wait on a worker from the UI. Resolve the current view sink at handoff, preserving live-source durable results across view detachment. Distinguish pre-admission dispatch failure from an already-admitted completion exception, so cleanup never deletes a chat already placed in the store.
+14. Add the test helper Returns docs, run affected regressions/consent/Close/UI and ordinary performance/preflight/lint guards, peer review and fresh native replay; require fresh final-head Qodo/all four CI gates before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -83,4 +91,6 @@ Standalone chat creation now registers its own confirmation kind, contributes ze
 Reopened for fresh final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262: Close can race the remembered-grant finalization and an already-approved executor while its source remains during drain. Existing AC5 covers the no-created-chat outcome.
 
 Final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262 is fixed at the existing shared boundary: final verdict/grant and resolver updates use the standalone round lock, and both new_chat/fork_chat executors refuse the exact committed Close generation before DB/UI work. Failed-provisional markers remain excluded. Three regressions reproduced grant resurrection and both durable late creates on the published source, then passed. Latest-dev f80d3e0090 qualification passes64 unique affected consent/execution/Close/projection and ordinary storage-census cases with no failures/errors/skips; final-byte artifact preflight passes(census123),25 changed Python files add zero Ruff diagnostics, and changed ranges format cleanly. Native approval23 passes9 journeys; Close26 passes6 real worker closes and short-terminal geometry, with process/socket exit0, no egress and real profiles unchanged. Native/affected replay byte pins are preserved; a subsequent whitespace-only return-dict format is separately proven whole-module AST-identical, and all3 race regressions pass on final bytes. User guide and incident lesson updated. Existing ADR-067/094/150 apply; no new owner/admission policy. Fresh exact-published-head Qodo/all4 GitHub gates and verified normal merge remain required in PR2953.
+
+Reopened for fresh exact-head Qodo59151d44-d74b-48d8-9844-aeeb441d6079: an executor already past entry can outlive bounded Close and queue a late created-chat completion. Existing orphan cleanup is best-effort soft-delete, not physical rollback; acceptance remains no live created chat/no late UI handoff. Helper Returns rulee7e76a0b-b7b4-476b-9ea5-665267b9629c will be corrected.
 <!-- SECTION:NOTES:END -->

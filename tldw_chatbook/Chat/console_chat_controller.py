@@ -19236,8 +19236,10 @@ class ConsoleChatController:
 
         TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
         returned an allow (the bridge closure enforces that ordering), so
-        every failure below is fail-closed: nothing is created, and the
-        outcome's ``kind`` tells the model (and the run log) why.
+        refusal before creation makes no chat; the outcome's ``kind``
+        tells the model (and the run log) why. A source retired during I/O
+        refuses UI placement and discards its newly committed row through
+        the existing best-effort orphan soft-delete helper.
 
         For ``fork_chat`` the new conversation copies the source's active
         path verbatim (``ChatConversationService.copy_conversation_active_
@@ -19577,20 +19579,57 @@ class ConsoleChatController:
                 if session.local_character_id() is not None
                 else None,
             }
-        if self.app is not None and self.complete_agent_chat_create is not None:
-            self.app.call_from_thread(
-                self.complete_agent_chat_create,
-                session_id=session_id,
-                conversation_id=new_conv,
-                title=title,
-                tool=tool,
-                opening_prompt=opening_prompt,
-                workspace_id=completion_workspace_id,
-                nodes=nodes,
-                active_leaf_persisted_id=new_leaf,
-                settings=routed_settings,
-                **identity,
-            )
+
+        completion_admitted = False
+
+        def complete_if_source_open(**kwargs: Any) -> bool:
+            """UI THREAD: qualify the source before using the current view sink.
+
+            Args:
+                kwargs: Created-chat placement inputs resolved by this worker.
+
+            Returns:
+                False if Close/disposal retired the source; True otherwise,
+                including a live source whose view is currently detached.
+            """
+            nonlocal completion_admitted
+            if not self._chat_create_source_is_open(session_id):
+                return False
+            completion_admitted = True
+            complete = self.complete_agent_chat_create
+            if complete is not None:
+                complete(session_id=session_id, **kwargs)
+            return True
+
+        completion_allowed = self._chat_create_source_is_open(session_id)
+        app = self.app
+        if completion_allowed and app is not None:
+            try:
+                completion_allowed = app.call_from_thread(
+                    complete_if_source_open,
+                    conversation_id=new_conv,
+                    title=title,
+                    tool=tool,
+                    opening_prompt=opening_prompt,
+                    workspace_id=completion_workspace_id,
+                    nodes=nodes,
+                    active_leaf_persisted_id=new_leaf,
+                    settings=routed_settings,
+                    **identity,
+                )
+            except Exception:
+                # A retiring app can refuse the UI hop before running its gate.
+                # Keep unrelated completion failures on their existing path.
+                if completion_admitted or self._chat_create_source_is_open(session_id):
+                    raise
+                completion_allowed = False
+        if not completion_allowed:
+            self._discard_chat_create_orphan(db, new_conv)
+            return {
+                "ok": False,
+                "kind": "session_gone",
+                "error": "source session closed before chat completion",
+            }
         return {
             "ok": True,
             "title": title,
@@ -19599,6 +19638,21 @@ class ConsoleChatController:
             "copied_messages": copied,
             "draft_set": bool(opening_prompt),
         }
+
+    def _chat_create_source_is_open(self, session_id: str) -> bool:
+        """Check the existing lifetime fence and live source ownership.
+
+        Args:
+            session_id: Exact source session of the confirmed chat creation.
+
+        Returns:
+            True while the source exists without committed Close or disposal.
+        """
+        return (
+            not self._disposed
+            and session_id not in self._session_close_generations
+            and any(session.id == session_id for session in self.store.sessions())
+        )
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.

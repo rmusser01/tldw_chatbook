@@ -421,6 +421,9 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
             Args:
                 key: Owning session's grant key.
                 default: Grant set created by the confirmation.
+
+            Returns:
+                The existing or newly inserted grant set for the session.
             """
             protected = controller._pending_chat_create_lock.locked()
             results["protected_write"] = protected
