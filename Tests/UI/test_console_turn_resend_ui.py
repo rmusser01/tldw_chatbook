@@ -2,10 +2,13 @@
 
 The transcript tests mount a bare ``ConsoleTranscript``; the pilot tests drive
 the real ``ChatScreen`` through a failed stream and a refused send, then click
-(or press ``r`` on) Resend.
+(or press ``r`` on) Resend. One pilot pins the transcript poll those sends rely
+on, which once stopped before a slow runner's turn had started.
 """
 
 from __future__ import annotations
+
+import asyncio
 
 import pytest
 from textual.app import ComposeResult
@@ -284,6 +287,39 @@ async def test_console_resend_click_re_runs_a_failed_turn_in_place():
         (ASSISTANT, "complete", "recovered"),
     ]
     assert [row.id for row in rows] == [user.id, failed.id]
+
+
+@pytest.mark.asyncio
+async def test_console_poll_outlives_a_turn_the_controller_has_not_started(
+    monkeypatch,
+):
+    """The fast-lane failure, made deterministic: on a slow runner the 0.2s
+    transcript poll ticked while the runtime held the accepted turn but the
+    controller had not started it, saw an idle run, stopped, and never
+    rendered the turn."""
+    host = _console_app(FailThenRecoverGateway())
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        controller = console._ensure_console_chat_controller()
+        started = asyncio.Event()
+        submit_draft = controller.submit_draft
+
+        async def slow_start(*args, **kwargs):
+            await started.wait()
+            return await submit_draft(*args, **kwargs)
+
+        monkeypatch.setattr(controller, "submit_draft", slow_start)
+        console.query_one("#console-native-composer", ConsoleComposerBar).load_draft(
+            "hello"
+        )
+        console.query_one("#console-send-message", Button).press()
+        await pilot.pause(0.6)  # several poll ticks before the turn starts
+        assert console._console_transcript_sync_timer is not None
+        started.set()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
 
 
 class _BlockThenStreamGateway(_ReadyResolutionGateway):

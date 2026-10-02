@@ -138,6 +138,34 @@ shared failure's message as well as its name, at least for tests in the code the
 change touched. A test that already fails at base shields every new reason it
 could fail for.
 
+## A CI-only pilot failure can be a product race that only a slow runner hits
+
+**TASK-33661, PR #2956, 2026-10-02.** Two real-send Console pilots failed in the
+UI fast lane with "No messages yet." on screen. Locally they passed alone, with
+neighbours, and in a full CI-equivalent census run in a fast-lane venv (920
+passed). In CI they took 16 s; locally, 5 s.
+
+Running pytest under `taskpolicy -b` (macOS background QoS, so efficiency cores
+only) brought them to about 15 s and reproduced the failure. A temporary
+start/stop log on the transcript poll then showed the cause. The poll stopped
+while the runtime held the accepted turn but the controller had not started it,
+so the poll counted the run as idle. Nothing synced the screen afterwards. It was
+a product race, not test flakiness, so a longer wait would not fix it: a
+600-attempt wait failed too.
+
+A false lead cost a step on the way. Three sibling pilots in
+`test_console_native_chat_flow.py` also "failed under slow QoS". They fail the
+same way at normal speed in that venv, with a `RecoveryRequired` raised at
+setup. Their failure said nothing about slowness.
+
+**What to do:**
+- When a mounted test fails only in CI and the CI duration is several times
+  the local one, rerun it locally under `taskpolicy -b` before blaming
+  pollution or fixtures.
+- Read each corroborating failure's message before counting it as evidence.
+- To pin the fix, stall the gap deterministically (here, hold `submit_draft`
+  across several poll ticks). Do not rely on the slow runner.
+
 ## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
 
 `_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)

@@ -224,4 +224,16 @@ Resend re-runs a broken LAST user turn in place from the user message. It never 
 **New Rulings**
 - **Backup pause mid-resend.** Holding the admission covers everything in the resend's own task. For a refused echo, the send path hands the turn to a runtime custody task, and that task is admitted separately by `submit_draft`. Remaining race: a backup that pauses admission between the resend's admission and the custody task's own refuses that custody submit. The text is not lost: the runtime records it as an unsent turn on the shelf.
 - **Staged-attachment check compares bytes.** It compares the staged files' bytes with the echo's attachment bytes. Cost: a staged inline (text) attachment always refuses the resend, which is conservative.
+
+**UI fast-lane failure (PR #2956, run 36975977069): a product race, not a test defect**
+- **Symptom.** Both real-send pilots timed out on the Linux runner with "No messages yet." on screen. The controller logs showed each turn reached its expected terminal state (stream failed or refused). Locally they passed alone, with neighbours, and in a full-census run.
+- **Root cause.** The 0.2 s transcript poll stops when `_console_transcript_poll_needed()` sees no live work. That check ignored runtime custody. A turn the runtime has accepted, but whose controller run has not started yet, counted as idle. On a slow runner the first poll tick landed in that gap (RAG capture and provider resolution). The poll stopped, and nothing synced the turn afterwards. Evidence:
+  - Under `taskpolicy -b` (macOS background QoS), the pilots took about 15 s, like CI's 16 s, and failed the same way. A 600-attempt wait did not help either.
+  - An instrumented run logged the stop with run state IDLE, `in_flight_run_count() == 0`, one custodied turn and zero store rows. The store later held all three rows; the screen never rendered them.
+- **Fix.** `ConsoleRuntime.has_custodied_turns()` is now one more live-poll reason in `_console_transcript_poll_needed()`. This also re-arms polling when a view reattaches mid-custody. `chat_screen.py` stays at net 0 lines.
+- **Tests.**
+  - `test_console_poll_outlives_a_turn_the_controller_has_not_started` holds `submit_draft` across several poll ticks. It fails without the fix at normal speed.
+  - `test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[custody]` extends the existing poll-reason pin; its runtime double gains `has_custodied_turns`.
+  - The original assertions are unchanged, and the file stays in the census.
+- **Ruling.** No TASK-33663 was filed. The defect is a real product race, and fixing it is in this PR's path, so this is not a CI-environment defect.
 <!-- SECTION:NOTES:END -->
