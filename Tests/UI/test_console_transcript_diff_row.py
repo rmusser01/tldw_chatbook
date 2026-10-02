@@ -53,7 +53,11 @@ def _tool_message(**overrides) -> ConsoleChatMessage:
         "content": "write_file → /tmp/a.py",
         "id": "m1",
         "tool_output_full": "action: overwritten\nlines_written: 1",
-        "tool_diff": ("/tmp/a.py", "def f():\n    return 1\n", "def f():\n    return 2\n"),
+        "tool_diff": (
+            "/tmp/a.py",
+            "def f():\n    return 1\n",
+            "def f():\n    return 2\n",
+        ),
     }
     kwargs.update(overrides)
     return ConsoleChatMessage(**kwargs)
@@ -92,8 +96,10 @@ async def test_expanded_write_marker_mounts_prepared_diff(monkeypatch):
 
         transcript.toggle_tool_output("m1")
         found = await wait_for_condition(
-            lambda: bool(transcript.query(ConsoleToolDiffRow))
-            and bool(transcript.query(DiffView))
+            lambda: (
+                bool(transcript.query(ConsoleToolDiffRow))
+                and bool(transcript.query(DiffView))
+            )
         )
         assert found, "DiffView was not mounted within the timeout"
         await pilot.pause()
@@ -145,9 +151,7 @@ async def test_diff_only_marker_expands_via_action_button():
             lambda: bool(transcript.query("#console-message-action-tool-output-m1"))
         )
         assert found, "diff-only marker must offer the expansion action"
-        button = transcript.query_one(
-            "#console-message-action-tool-output-m1", Button
-        )
+        button = transcript.query_one("#console-message-action-tool-output-m1", Button)
         assert str(button.label) == "Diff"
 
         # Pressing it (the real Button.Pressed -> _intercept_tool_output_press
