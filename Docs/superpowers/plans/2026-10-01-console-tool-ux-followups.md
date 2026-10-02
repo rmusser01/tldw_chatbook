@@ -101,3 +101,16 @@ Reason: Repair overflow using the canonical confirmation primitive and existing 
 - [x] Record evidence/limits in Docs/superpowers/qa/2026-10-01-console-tool-ux-followups.md, update guides and task notes, check acceptance criteria and set Done via CLI only after all DoD requirements.
 - [x] Rebase onto devab4df9995954 with all six patches unchanged; verify three mounted pending projections, thirteen warm-config safety cases and fresh native approval11/Close12 against current source hashes and private-profile isolation. Record the sanitized integration receipt.
 - [ ] Create/attach PR against dev, address verified Qodo findings, rebase when needed and qualify final head, merge normally and verify MERGED.
+
+
+### Latest-dev logging integration (2026-10-02)
+
+- Rebased onto dev92a95170a540 with feature Python/CSS bytes unchanged; retained
+  both independent lesson entries and verified the merged diagnostic inventory.
+- Passed19 targeted combined-tree cases, native approval run13 (nine journeys),
+  native Close run14 (four worker closes plus80x18 keyboard geometry), and fresh
+  preflight. No full sweep, dependency, runtime boundary or CI-setting change.
+- ADR required: no. Existing ADR-150/161 and lifetime decisions still govern;
+  this integrates already-approved dev logging without adding feature behavior.
+- Final published-head CI/Qodo resolution and a verified normal merge remain the
+  integration checkpoint. See the linked QA report and receipts.

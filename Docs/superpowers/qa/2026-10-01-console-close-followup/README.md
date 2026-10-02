@@ -47,7 +47,7 @@ base confirmation now uses a native scrolling body capped to the viewport,
 with a docked action row and explicit safe-default focus. Its body selector
 preserves the original 60-cell width, automatic height, border and padding;
 specialized confirmations that compose their own body retain their layout.
-Final run13 resized that same long-title, all-kinds dialog from 80×24 to
+Final run14 resized that same long-title, all-kinds dialog from 80×24 to
 **80×18**. The full title and both actions were painted at the top, Stay kept
 default focus, and both action centers hit-tested to their actual buttons.
 [Initial terminal](native/dark-80x18-all-consequences-long-title-top.txt),
@@ -75,8 +75,8 @@ profile below `/tmp` with private `home`, `config`, `data` directories and a
 runner with `ROOT TMUX_SOCKET SESSION` in an existing 235×52 tmux pane with the
 status line disabled, from the profile directory. HOME, USERPROFILE, XDG config
 and data paths, and TLDW_CONFIG_PATH must select that profile before imports;
-keep stderr attached to the terminal. The runner resizes to 80×24, then 80×18 for the crowded geometry case,
-and restores 80×24 before teardown.
+keep stderr attached to the terminal. The runner resizes to 80×24, then 80×18
+for the crowded geometry case, and restores 80×24 before teardown.
 
 This is an actual app/driver/controller/runtime journey with real blocking
 human-decision rounds and a deterministic owning asyncio task. It does **not**
@@ -89,8 +89,9 @@ geometry only.
 [Isolation](isolation.json) confirms that the real config hash and mtimes of
 515 files under the real default-user data directory were unchanged. The runner's
 production, model-copy, shared-dialog/style, config/participant and helper
-hashes matched before and after final run13 and the exported source bytes.
-All 12 source pins stayed unchanged during the native run. This refresh changed
+hashes, plus the app/logging/worker-handler/metrics/DB source pins, matched
+before and after final run14 and the exported source bytes. All 17 source
+pins stayed unchanged during the native run. This refresh changed
 only the QA README and evidence exports; temporary profiles remain under
 `/tmp/console-tool-ux-close-native`.
 
@@ -107,14 +108,17 @@ the final CSS budget paydown. It added target fence-release postconditions and
 the fifth pending kind to the crowded snapshot. Run9 repeated the unchanged
 matrix after the healthy-run/readiness rebase onto dev84247cb843. Run10
 repeated the matrix on the corrected close-recovery tree after rebasing onto
-dev27e718f01d and is retained before the CSS budget correction. Final
-run11 repeated the matrix after that correction on the same dev27e718f01d base.
+dev27e718f01d and is retained before the CSS budget correction. Run11 repeated the matrix after that correction on the same dev27e718f01d base.
 Run12 refreshed that unchanged matrix after the config warm-path rebase onto
-devab4df999595; its receipts remain under `/tmp`. Final run13 qualified the
+devab4df999595; its receipts remain under `/tmp`. Run13 qualified the
 shared short-height scrolling correction, retaining all four real closes and
-adding the 80×18 native geometry/keyboard journey. The exported captures and
-source hashes are from run13; current production, model-copy, config and
-runner bytes matched the recorded hashes. The qualified fixture
+adding the 80×18 native geometry/keyboard journey. Final run14 repeated these
+unchanged journeys after the logging PERF-03 rebase onto
+`92a95170a5406b3ebdc9be6dc26a12f2741d756f`, with local head `ba46a5c7d5`.
+The exported captures and source hashes are from run14; current production,
+model-copy, config, app/logging and unchanged runner bytes matched the pins.
+This refresh qualifies the combined app startup and Close/decision-worker
+journeys; logging throughput and sanitizer checks remain separate. The qualified fixture
 creates/switches tabs before arming the viewed question, uses distinct round
 owners, and waits for notices to clear before checking paint and sending
 terminal mouse input. All started app

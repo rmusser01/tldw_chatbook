@@ -1,7 +1,8 @@
 {
-  "qualified_profile": "run13",
-  "parent_reported_head": "a663415450",
-  "qualification_scope": "Fresh combined-tree native qualification of shared short-height confirmation correction; source hashes pin uncommitted fix.",
+  "qualified_profile": "run14",
+  "parent_reported_head": "ba46a5c7d5",
+  "root_provided_upstream": "92a95170a5406b3ebdc9be6dc26a12f2741d756f",
+  "qualification_scope": "Fresh combined-tree native Close qualification after logging PERF-03 rebase; unchanged Close/dialog/CSS/helper plus app, logging, worker-handler, metrics and DB source pins.",
   "real_config_unchanged": true,
   "real_config_sha256_before": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
   "real_config_sha256_after": "15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da",
@@ -19,7 +20,12 @@
     "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
     "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
     "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
-    "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4"
+    "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4",
+    "tldw_chatbook/app.py": "38813319b1bea8c9209ddece1dbca24288272891210ef427683c619d754eb959",
+    "tldw_chatbook/Logging_Config.py": "1f2b7d86684a58b9829eab940b089aacfa1526de588c16972f39c672f90a068a",
+    "tldw_chatbook/Event_Handlers/worker_handlers/base_handler.py": "d902ce49af720e43345aa1318071e0f43c4d0f8c8fa040f654c518efc7b68c27",
+    "tldw_chatbook/Metrics/metrics_logger.py": "1fb77851fe885105cc787b389d1bd6eb3643a15a63ae61948225fc566c03fc74",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": "edd4ec0dde98376a28a70a6683df9cf4a8863577bdba7bdbdc0962c73138d259"
   },
   "source_hashes_after": {
     "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
@@ -33,8 +39,14 @@
     "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
     "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
     "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
-    "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4"
+    "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4",
+    "tldw_chatbook/app.py": "38813319b1bea8c9209ddece1dbca24288272891210ef427683c619d754eb959",
+    "tldw_chatbook/Logging_Config.py": "1f2b7d86684a58b9829eab940b089aacfa1526de588c16972f39c672f90a068a",
+    "tldw_chatbook/Event_Handlers/worker_handlers/base_handler.py": "d902ce49af720e43345aa1318071e0f43c4d0f8c8fa040f654c518efc7b68c27",
+    "tldw_chatbook/Metrics/metrics_logger.py": "1fb77851fe885105cc787b389d1bd6eb3643a15a63ae61948225fc566c03fc74",
+    "tldw_chatbook/DB/ChaChaNotes_DB.py": "edd4ec0dde98376a28a70a6683df9cf4a8863577bdba7bdbdc0962c73138d259"
   },
   "runner_sources_before_after_current_match": true,
+  "prior_close_sources_unchanged": true,
   "network_attempts": []
 }

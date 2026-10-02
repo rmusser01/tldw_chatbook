@@ -20,5 +20,5 @@
  │                                                                            │
 ────────────────────────────────────────────────────────────────────────────────
  Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model:
-█  Composer ▾  Menu  ▌Ask, command, or paste       Send         Dictate
+█  Composer ▾  Menu   Ask, command, or paste       Send         Dictate
   Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

@@ -287,3 +287,32 @@ or suppressed; affected token/budget checks pass. No full-suite sweep.
 ADR required: no. Existing ADR-043/150/161 layout, ADR-067/094 lifetime and
 ADR-195 live-tool boundaries apply; task plans link them. Final PR checks
 and merge verification are tracked in the PR.
+
+
+## Latest-dev logging integration — 2026-10-02
+
+Rebased onto dev92a95170a540 (PR2904 logging changes). All68 unaffected
+feature blobs, including every Python/CSS feature file, stayed byte-identical.
+The overlapping diagnostic inventory merged automatically and passed fresh
+preflight; the append-only lesson conflict retained both entries. No feature
+behavior, architecture boundary, dependency or CI setting changed.
+
+Fresh combined-tree verification passed19 targeted cases with no skips:
+nine Console layout/projection/Close cases, eight logging contracts and two
+worker-event cases. The two original unwrapped worker probes first hit the
+documented profile-rebind admission before their worker assertions; fresh
+per-case reruns used the existing `bootstrap_profile` opt-in, preserving the
+original assertions and config guards. The
+[receipt](2026-10-01-console-tool-ux-config-integration.json) keeps both the
+initial probe logs and passing reruns. The prior17-file Ruff result remains
+applicable because all modified Python feature bytes are unchanged.
+
+Approval native run13 passed all nine journeys, including three actual local
+reads and six denials, with22 current source pins. Close native run14 passed
+four real worker closes and the crowded80x18 keyboard/resize journey, with17
+current pins; its existing exports and [report](2026-10-01-console-close-followup/README.md)
+are refreshed. Both apps exited0, attempted no network, released their exact
+owned processes/sockets, and left real config/data unchanged. This qualifies
+combined app behavior, not logging performance. Earlier receipts remain
+historical; final published-head CI/Qodo and a verified normal merge remain
+required.
