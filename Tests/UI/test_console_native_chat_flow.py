@@ -12679,6 +12679,10 @@ def _bare_console_screen(store: ConsoleChatStore) -> ChatScreen:
         current_chat_controller_accessor=lambda: getattr(
             screen, "_console_chat_controller", None
         ),
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+            or screen._console_provider_blocker_copy()
+        ),
         sync_native_console_chat_ui=lambda: screen._sync_native_console_chat_ui(),
         active_session_is_ephemeral=(
             lambda: screen._session._console_active_session_is_ephemeral()

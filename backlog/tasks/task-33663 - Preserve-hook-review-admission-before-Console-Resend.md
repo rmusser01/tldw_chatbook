@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 20:53'
+updated_date: '2026-10-02 21:15'
 labels:
   - agents
   - console
@@ -31,6 +31,7 @@ Independent PR2918 integration review reproduced persisted Resend dispatch while
 - [ ] #5 Resend preserves validated hook context and existing configuration/session currentness; a permitted attempt runs once with exact in-place lineage and normal lifecycle retirement.
 - [ ] #6 Public Retry and Continue use the same admission, preparation and retirement boundary as Resend; queued Retry keeps its existing queue authority and scheduled input semantics.
 - [ ] #7 Transcript polling survives the initial awaited hook admission read for an existing replay worker and publishes incremental replies before completion.
+- [ ] #8 Transcript text-generation actions honor the existing shared provider-readiness refusal before worker launch or destructive replay; restored readiness permits one explicit replay, while image/video actions retain their existing authority.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,4 +44,5 @@ Reason: restore accepted hook lifecycle, queue reservation ownership and existin
 2. Preserve the existing real hook/context/currentness/cancellation regressions. Add the independently reproduced runtime-bound queued Retry and mounted initial-hook-read polling regressions before further implementation.
 3. Reuse normal submission admission, initialization/input/currentness and finally retirement before row clearing. Extend the existing coordinator-owned slot predicate only for explicitly requested authorized recovery with no claimed entry; retain HELD, terminal, no accepted live turn, currentness and global-cap checks. Keep transcript publication alive for existing unfinished console-run workers, covering sibling replay actions without another owner.
 4. Qualify affected Send/Resend/queue/wake/close and mounted polling consumers, static and unchanged performance guards. Obtain immutable independent runtime and UI review, record every non-green limit and close through CLI.
+5. Retain the corrected real mounted readiness RED on candidateb887 and exact incoming185c; route Retry/Resend/Continue/text Regenerate/edit-resend worker admission through the existing screen provider refusal and controller activity gate using the established message-controller callable wiring. Keep image/video routes unchanged; qualify real refusal, unchanged rows and one permitted replay. Existing ADR012/033 apply; no new evidence owner or ADR.
 <!-- SECTION:PLAN:END -->

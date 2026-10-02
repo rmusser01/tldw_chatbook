@@ -236,6 +236,7 @@ class ConsoleMessageController:
         current_chat_store_accessor: Callable[[], ConsoleChatStore | None],
         ensure_console_chat_controller: Callable[[], Any],
         current_chat_controller_accessor: Callable[[], Any | None],
+        generation_refusal_copy: Callable[[Any, str | None], str | None],
         sync_native_console_chat_ui: Callable[[], Any],
         active_session_is_ephemeral: Callable[[], bool],
         active_native_console_session: Callable[[], Any],
@@ -311,6 +312,8 @@ class ConsoleMessageController:
                 `ensure_console_chat_controller` for the same reason
                 `chat_store_accessor`/`current_chat_store_accessor` are
                 kept separate.
+            generation_refusal_copy: Existing controller activity and screen
+                provider-readiness refusal, checked before text replay workers.
             sync_native_console_chat_ui: `ChatScreen._sync_native_console_
                 chat_ui`, the big render/inspector re-sync bridge -- stays
                 screen-owned (DOM), reached here as an async callable.
@@ -382,6 +385,7 @@ class ConsoleMessageController:
         self._current_chat_store_accessor = current_chat_store_accessor
         self._ensure_console_chat_controller_fn = ensure_console_chat_controller
         self._current_chat_controller_accessor = current_chat_controller_accessor
+        self._generation_refusal_copy = generation_refusal_copy
         self._sync_native_console_chat_ui_fn = sync_native_console_chat_ui
         self._active_session_is_ephemeral_fn = active_session_is_ephemeral
         self._active_native_console_session_fn = active_native_console_session
@@ -1708,7 +1712,7 @@ class ConsoleMessageController:
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1778,7 +1782,7 @@ class ConsoleMessageController:
                 return True
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -1851,7 +1855,7 @@ class ConsoleMessageController:
         if action_id == "continue" and result.status == "continue_requested":
             controller = self._ensure_console_chat_controller()
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
@@ -2722,7 +2726,7 @@ class ConsoleMessageController:
             # in-flight run at creation time, before the controller's own
             # rejection can run -- the screen must refuse, like the submit path.
             target_session_id = controller.store.active_session_id
-            refusal = controller.send_refusal_copy(target_session_id)
+            refusal = self._generation_refusal_copy(controller, target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return
