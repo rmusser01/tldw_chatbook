@@ -50,6 +50,8 @@ PROBED = [
 NEVER = [
     # A keyed cloud provider is never contacted, even on loopback (D2).
     ("qwencloud", {"api_key": "sk-cloud", "api_base_url": "http://127.0.0.1:8000"}),
+    # ... nor with no key yet: qwencloud is never keyless (final review T5).
+    ("qwencloud", {"api_base_url": "http://127.0.0.1:8000"}),
     ("openai", {"api_key": "sk-cloud"}),
     ("anthropic", {"api_key": "sk-cloud"}),
     # Keyless, but on a public host, a name (never resolved) or link-local.

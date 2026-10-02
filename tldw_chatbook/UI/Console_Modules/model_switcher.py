@@ -290,6 +290,21 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     providers_models = screen._providers_models()
     app_config = screen._provider_readiness_app_config()
 
+    probe = switcher_connection_prober(screen.app, app_config)
+
+    async def connection_prober(targets, settled):  # type: ignore[no-untyped-def]
+        def settled_here_and_under(provider: str) -> None:
+            settled(provider)
+            if not screen.is_attached:  # A probe outlives a closed switcher.
+                return
+            # TASK-30011 AC#6: the Console under the switcher reads the same
+            # word now; its idle poll skips a covered screen.
+            with screen._console_derivation_scope():
+                screen._sync_console_settings_summary()
+                screen._sync_console_control_bar()
+
+        await probe(targets, settled_here_and_under)
+
     def commit(submission):  # type: ignore[no-untyped-def]
         live_commit = screen._commit_console_settings_submission_live(submission)
         after = (submission.draft.settings.provider, submission.draft.settings.model)
@@ -332,7 +347,7 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
                 screen, provider, model
             ),
             query=query.strip(),
-            connection_prober=switcher_connection_prober(screen.app, app_config),
+            connection_prober=connection_prober,
         ),
         callback=screen._apply_console_model_popover_result,
     )

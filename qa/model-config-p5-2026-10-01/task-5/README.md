@@ -39,6 +39,12 @@ Captures:
    vLLM stays "Ready · not tested": another process on this machine answers
    404 at its default `localhost:8000`, which is "model listing unavailable",
    not "reachable". The cloud rows still read "no key"; none was contacted.
+   **Superseded for the header (final review I-5):** this frame's header,
+   beside these rows, still read "Ready · not tested", because the Console
+   under the switcher was refreshed only after Esc. The final fix wave
+   refreshes it on each probe result; see `../final-fix/` captures 2 and 5.
+   The NEEDS SETUP heading has since become "Enter opens the fix or explains
+   it".
 4. `4-console-status-refused-after-switcher`: Esc. The Console header (this
    chat's status) reads "Not ready · refused :9199" and the composer "Send
    blocked — retry the connection to continue".

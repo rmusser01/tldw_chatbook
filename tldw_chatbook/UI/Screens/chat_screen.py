@@ -9352,7 +9352,7 @@ class ChatScreen(BaseAppScreen):
             if recovery.content != word:  # Unchanged copy costs no layout pass.
                 recovery.update(word)
             recovery.styles.display = "block" if word else "none"
-            recovery.set_class(blocked, "-blocked")
+            recovery.set_class(blocked, "conversation-attention-error")
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()

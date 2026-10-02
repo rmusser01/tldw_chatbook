@@ -1175,7 +1175,7 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
             lambda: (
                 rail._active_section_id == "model"
                 and not rail.query_one("#console-model-section-recovery").has_class(
-                    "-blocked"
+                    "conversation-attention-error"
                 )
                 and _context_allocation_idle(rail)
             ),
@@ -1200,7 +1200,8 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         console._sync_console_settings_summary()
         await _wait_for_context_condition(
             pilot,
-            lambda: recovery.has_class("-blocked") and _context_allocation_idle(rail),
+            lambda: recovery.has_class("conversation-attention-error")
+            and _context_allocation_idle(rail),
         )
 
         assert recovery.display is True

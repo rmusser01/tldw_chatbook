@@ -16357,7 +16357,8 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_test_result = "Configuration check cancelled; run again."
                 self._update_provider_test_result()
             raise
-        except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+        except Exception as exc:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+            logger.debug("Provider test probe failed: %s", type(exc).__name__)
             # The discovery client turns every transport failure into a
             # result, so a key check that raised (e.g. a runtime-policy
             # denial in server mode) learned nothing -- never a send blocker.

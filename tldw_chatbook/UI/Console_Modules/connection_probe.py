@@ -157,13 +157,14 @@ async def retry_console_connection(screen: Any) -> None:
     the user fixes outside the app; opening Chat settings made it three
     steps. The probe runs in a worker and settles into the shared owner,
     whose version the Console's idle poll watches, so readiness refreshes
-    once. A connection with no models route (nothing to re-test) still
-    opens Chat settings.
+    once. A cloud key check (no models route, not URL-based) is re-run only
+    by Settings 't' (D2), so it opens Providers & Models there; any other
+    connection with no models route still opens Chat settings.
 
     Args:
         screen: The Console ``ChatScreen``.
     """
-    _settings, readiness = screen._active_console_settings_readiness()
+    settings, readiness = screen._active_console_settings_readiness()
     identity = readiness.connection
     if identity is None or (
         connection_probe_availability(
@@ -171,6 +172,18 @@ async def retry_console_connection(screen: Any) -> None:
         )
         is not ConnectionProbeAvailability.MODELS_ROUTE
     ):
+        if (
+            identity is not None
+            and identity.custom_endpoint_id is None
+            and identity.provider_key not in URL_BASED_PROVIDER_KEYS
+        ):
+            from .model_switcher import open_provider_setup
+
+            open_provider_setup(screen, identity.provider_key, settings.model)
+            screen.app.notify(
+                f"Press t to test {readiness.provider_display_name or 'it'} again."
+            )
+            return
         await screen._open_console_settings(focus_model=False)
         return
     screen.run_worker(
@@ -280,8 +293,10 @@ def switcher_probe_plan(
 
 def _recently_tested(evidence: ProviderTestEvidence | None) -> bool:
     observed = evidence.observed_at if evidence is not None else None
+    # A clock stepped back must not make old evidence look fresh forever.
     return observed is not None and (
-        (datetime.now().astimezone() - observed).total_seconds()
+        0
+        <= (datetime.now().astimezone() - observed).total_seconds()
         < SWITCHER_PROBE_CACHE_SECONDS
     )
 
@@ -332,10 +347,18 @@ def switcher_connection_prober(
 
         async def one(identity: ProviderDraftIdentity, providers: list[str]) -> None:
             async with gate:
-                await asyncio.to_thread(
-                    asyncio.run,
-                    settle_connection_probe(app, identity, app_config=app_config),
-                )
+                try:
+                    await asyncio.to_thread(
+                        asyncio.run,
+                        settle_connection_probe(app, identity, app_config=app_config),
+                    )
+                except Exception as exc:  # noqa: BLE001 - the row keeps its word
+                    logger.debug(
+                        "Switcher probe of {} failed: {}",
+                        identity.provider_key,
+                        type(exc).__name__,
+                    )
+                    return
             for provider in providers:
                 settled(provider)
 

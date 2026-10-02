@@ -256,8 +256,9 @@ def key_check_probe_result(
     TASK-33005.4 (ADR-012 amendment 2026-09-26): Settings 't' lists a cloud
     provider's models with the draft key. A listing that answered accepted
     the key it was sent; a 401/403 rejected it. A server that answered but
-    gave no usable list (404, an unreadable body) checked nothing and blocks
-    nothing.
+    gave no usable list (any other HTTP status -- 404, 429, 5xx -- or an
+    unreadable body) checked nothing and blocks nothing: a 429 says nothing
+    about whether a send would work (TASK-33005 final review I-4).
 
     Args:
         result: The ``ModelDiscoveryResult`` of the listing.
@@ -290,7 +291,6 @@ def key_check_probe_result(
         "timeout",
         "connection_refused",
         "connection_error",
-        "http_status",
     }:
         return ProviderProbeResult("unreachable", (), category)
     if kind == "invalid_response" or category == "http_status":

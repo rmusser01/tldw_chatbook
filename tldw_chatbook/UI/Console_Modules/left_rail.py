@@ -2400,13 +2400,12 @@ class ConsoleLeftRail(Vertical):
             recovery = Static(
                 readiness,
                 id="console-model-section-recovery",
-                classes="console-model-section-recovery",
                 markup=False,
             )
             recovery.styles.display = "block" if readiness else "none"
             recovery.set_class(
                 getattr(summary_state.readiness, "operability", "") == "not_ready",
-                "-blocked",
+                "conversation-attention-error",
             )
             generation_recovery = Vertical(
                 Static(

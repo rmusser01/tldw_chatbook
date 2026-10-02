@@ -69,6 +69,7 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     provider_display_name,
 )
+from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -130,6 +131,23 @@ _SETUP_HINTS = {
     # app, so Enter explains in place instead of opening Settings.
     "retry_connection": "start it; rechecked on open",
 }
+
+
+def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
+    """A refused or timed-out server the user starts: Enter explains in place.
+
+    A built-in cloud's failed key check is re-run only by Settings 't' (D2),
+    so its row opens Settings instead (TASK-33005 final review I-4), as the
+    Console's Retry connection does.
+    """
+    connection = readiness.connection
+    return readiness.recovery_action == "retry_connection" and (
+        connection is None
+        or connection.custom_endpoint_id is not None
+        or connection.provider_key in URL_BASED_PROVIDER_KEYS
+    )
+
+
 #: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
 #: row cap never hides a stopped local server behind keyless cloud rows.
 _TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
@@ -1168,7 +1186,7 @@ class ConsoleModelPopover(
         group(
             "NEEDS SETUP · set up in Settings first"
             if self._pick_only
-            else "NEEDS SETUP · Enter opens the fix",
+            else "NEEDS SETUP · Enter opens the fix or explains it",
             setup_rows,
         )
         rows.extend(self._typed_rows(tokens))
@@ -1200,13 +1218,10 @@ class ConsoleModelPopover(
         current_shown: bool,
     ) -> list[SwitcherRow]:
         # Pick-only Enter cannot open the fix, so no row promises it.
-        hint = (
-            ""
-            if self._pick_only
-            else _SETUP_HINTS.get(
-                str(readiness.recovery_action or ""), "Enter: open Settings"
-            )
-        )
+        action = str(readiness.recovery_action or "")
+        if action == "retry_connection" and not _retries_in_place(readiness):
+            action = ""  # Settings 't' re-tests it: "Enter: open Settings".
+        hint = "" if self._pick_only else _SETUP_HINTS.get(action, "Enter: open Settings")
         current_provider, current_model = self._current
         is_current_provider = key == provider_key(current_provider)
         if not tokens:
@@ -1493,7 +1508,7 @@ class ConsoleModelPopover(
         if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
             key = provider_key(row.provider)
             readiness = self._readiness.get(key)
-            if readiness is not None and readiness.recovery_action == "retry_connection":
+            if readiness is not None and _retries_in_place(readiness):
                 self._set_error(
                     f"{self._display(key)} did not answer: start it; rechecked on open."
                 )

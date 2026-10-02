@@ -47,8 +47,8 @@ _EXPECTED_DECLARATIONS = {
     ),
     ".console-workspace-conversation-row-selected": ("color", "$ds-active-fg"),
     # TASK-33005.3: the line always shows the readiness word; only a
-    # blocked (Not ready) word takes the error colour.
-    "#console-model-section-recovery.-blocked": ("color", "$ds-status-error-readable"),
+    # blocked (Not ready) word takes this class (no rule of its own: boot CSS).
+    ".conversation-attention-error": ("color", "$ds-status-error-readable"),
     ".console-agent-section-status-running": ("color", "$ds-status-running"),
     ".console-agent-section-status-done": ("color", "$ds-status-ready"),
     ".console-agent-section-status-stuck": ("color", "$ds-status-warning"),

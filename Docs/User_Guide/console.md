@@ -296,7 +296,11 @@ section, the Conversation settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the
 connection to continue". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
-unlocks; if not, a "still unreachable" notice says so. Every test sends the
+unlocks; if not, a "still unreachable" notice says so. A cloud provider's
+key check (Settings **t**) that timed out or could not connect is the
+exception: the Console never contacts a cloud provider itself, so **Retry
+connection** opens **Settings ▸ Providers & Models** at that provider and
+says "Press t to test \<provider\> again". Every test sends the
 API key a message would use, so a local server started with a key (vLLM's
 `--api-key`, for example) is tested with it, and "key rejected" means that
 key was refused. Test results last for this session only, and a test of a
@@ -550,7 +554,10 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   Providers & Models** at that provider, with its key or endpoint field in
   focus. Keys are only ever entered in Settings. A local server that refused
   or timed out is listed first and reads "start it; rechecked on open": the
-  fix is outside the app, so **Enter** on it only repeats that hint.
+  fix is outside the app, so **Enter** on it only repeats that hint (the
+  group's heading says "Enter opens the fix or explains it"). A cloud
+  provider whose key check timed out reads "Enter: open Settings" instead,
+  since only **t** there checks it again.
 
 Each row shows the model, the provider's name, its context size (`~` marks
 an estimate), readiness and last use. Readiness comes from your
@@ -565,7 +572,8 @@ that needs no key and runs on this computer or a private-network address
 the same short timeout as **Test connection**, and a result under 10 seconds
 old is reused. The list opens and takes keys at once; the words change as
 the answers come in, and a stopped server's "refused" reaches this chat's
-status too. Cloud providers, a server on a public address or host name, and
+status at once, under the open list. A server on a carrier-grade NAT address
+(100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and
 any endpoint that would send a key are never contacted automatically.
 Typing filters every provider's saved and cached models in memory and
 highlights the best match; it never starts a model listing or a network

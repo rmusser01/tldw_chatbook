@@ -743,7 +743,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         # and the switcher rows; only Not ready paints the rail line red.
         recovery = console.query_one("#console-model-section-recovery")
         assert _rail_text(console, "#console-model-section-recovery") == refused
-        assert recovery.has_class("-blocked")
+        assert recovery.has_class("conversation-attention-error")
         assert _rail_text(console, "#console-settings-readiness-row") == refused
         assert refused in _rail_text(console, "#console-setup-step-1")
         assert switcher_readiness_words(
@@ -798,7 +798,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
             "#workbench-header-status",
         ):
             assert _rail_text(console, selector) == reachable, selector
-        assert not recovery.has_class("-blocked")
+        assert not recovery.has_class("conversation-attention-error")
         assert switcher_readiness_words(
             console._console_default_readiness("llama_cpp", "model-a")
         ) == reachable
@@ -1055,3 +1055,70 @@ async def test_retry_says_still_unreachable_only_for_a_server_still_down(
     assert notes == (
         ["vLLM is still unreachable. Start it, then retry."] if notified else []
     )
+
+
+def _timed_out_openai(app):
+    """OpenAI whose explicit Settings 't' key check timed out, as the Console reads it."""
+    from tldw_chatbook.Chat import console_session_settings as session_settings
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidenceStore,
+        shared_connection_evidence,
+    )
+
+    config = {"api_settings": {"openai": {"api_key": "sk-cloud"}}}
+    settings = session_settings.build_target_default_console_session_settings(
+        config, "openai", "gpt-5.1"
+    )
+    identity = session_settings.console_send_connection(settings, app_config=config)
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(store.begin(identity), ProviderProbeResult("unreachable", (), "timeout"))
+
+    def readiness(_provider=None, _model=None):
+        return session_settings.build_console_settings_readiness(
+            settings,
+            app_config=config,
+            connection_evidence=shared_connection_evidence(lambda: app),
+        )
+
+    return settings, readiness
+
+
+@pytest.mark.asyncio
+async def test_a_cloud_key_check_failure_retries_in_settings_not_chat_settings():
+    """TASK-33005 final review I-4: a timed-out OpenAI key check has no Console
+    probe (D2), so Retry connection opens Providers & Models at OpenAI and says
+    to press t -- never Chat settings, which cannot test a cloud provider."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules.connection_probe import (
+        retry_console_connection,
+    )
+    from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
+
+    notes: list[str] = []
+    app = SimpleNamespace(notify=lambda message, **_kwargs: notes.append(message))
+    settings, readiness = _timed_out_openai(app)
+    assert readiness().recovery_action == "retry_connection"
+    posted: list[object] = []
+    chat_settings: list[object] = []
+
+    async def open_chat_settings(**kwargs):
+        chat_settings.append(kwargs)
+
+    screen = SimpleNamespace(
+        app=app,
+        _active_console_settings_readiness=lambda: (settings, readiness()),
+        _console_default_readiness=readiness,
+        _open_console_settings=open_chat_settings,
+        post_message=posted.append,
+    )
+
+    await retry_console_connection(screen)
+
+    assert chat_settings == []
+    [message] = posted
+    assert isinstance(message, NavigateToScreen)
+    assert message.screen_context["category"] == "providers-models"
+    assert message.screen_context["provider"] == "openai"
+    assert message.screen_context["model"] == "gpt-5.1"
+    assert notes == ["Press t to test OpenAI again."]

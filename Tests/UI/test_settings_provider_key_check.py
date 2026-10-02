@@ -752,7 +752,12 @@ async def test_no_cloud_request_while_opening_console_and_the_switcher(
     request, monkeypatch
 ):
     """AC#15: opening the Console and Switch model reads readiness from
-    config and evidence only; no cloud provider is contacted."""
+    config and evidence only; no cloud provider is contacted.
+
+    Tests/conftest.py stubs the switcher's local probe here, so this covers
+    readiness reads only; the real prober's no-cloud rule is pinned by
+    ``test_console_switcher_local_probe.py`` and ``test_switcher_probe_targets.py``.
+    """
     from Tests.UI.test_console_provider_apply_defaults_flow import (
         _ConsoleFlowHarness,
         _open_provider_popover,

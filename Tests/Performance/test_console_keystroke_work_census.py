@@ -355,11 +355,14 @@ async def _census(
     # TASK-24301: the derivation legs. Patched on the modules the Console
     # session controller resolves them through, so a call that routes around
     # the memo is still seen.
-    _count_calls(
-        settings_module,
-        "build_console_settings_readiness",
-        "settings_readiness_builds",
-    )
+    # TASK-33005 final review I-6: ChatScreen and the defaults module bind the
+    # builder at import, so patching only its home module counted 0 forever.
+    from tldw_chatbook.Chat import console_settings_defaults as defaults_module
+
+    for module in (settings_module, screen_module, defaults_module):
+        _count_calls(
+            module, "build_console_settings_readiness", "settings_readiness_builds"
+        )
     _count_calls(
         session_module,
         "default_console_session_settings",
@@ -428,14 +431,16 @@ async def _census(
             f"{type(pilot.app.focused).__name__}"
         )
 
+        # Hold the wall-clock timers still for the burst, as trace maintenance
+        # is above. The 0.25 s credential poll builds readiness each tick
+        # (billed per tick by the ``idle`` phase): left running, the slower
+        # 400-message run billed more ticks to typing (34 vs 39 builds).
+        screen._stop_console_credential_poll_timer()
         if storage_units:
-            # Hold the wall-clock timers still for the burst, as trace
-            # maintenance is above: the 0.25 s credential poll (billed per
-            # tick by the ``idle`` phase) and the 0.2 s trailing draft-spend
-            # refresh, which a loaded machine that leaves a >0.2 s gap
-            # between two presses fires mid-burst (measured: 49 config
-            # admissions, not 27); the ``pause`` phase fires it exactly once.
-            screen._stop_console_credential_poll_timer()
+            # The 0.2 s trailing draft-spend refresh, which a loaded machine
+            # that leaves a >0.2 s gap between two presses fires mid-burst
+            # (measured: 49 config admissions, not 27); the ``pause`` phase
+            # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
         counting["on"] = True
@@ -716,16 +721,23 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
     # the EMPTY transcript and 0 for 400 messages, the opposite of scaling.
     # The O(N) signal is that count reaching the transcript size, which the
     # <= 1 bounds below catch; every other key must match exactly.
-    timing_bound_key = "context_estimate_max_rows"
-    exact_empty = {k: v for k, v in empty.items() if k != timing_bound_key}
-    exact_loaded = {k: v for k, v in loaded.items() if k != timing_bound_key}
+    # TASK-33005 final review I-6: readiness builds (0 until every binding was
+    # counted) ride the same trailing draft repaint: 25 and 25 on a quiet run,
+    # 25 and 31-34 with six runs in parallel. Readiness never reads the
+    # transcript, so they are bounded per key below instead.
+    timing_bound = {"context_estimate_max_rows", "settings_readiness_builds"}
+    exact_empty = {k: v for k, v in empty.items() if k not in timing_bound}
+    exact_loaded = {k: v for k, v in loaded.items() if k not in timing_bound}
     assert exact_empty == exact_loaded, (
         f"per-keystroke work differs with transcript length: empty={empty}, "
         f"400 messages={loaded}. Something on the keystroke path is O(N) in "
         "the number of messages, which is what makes long conversations feel "
         "slower to type in than new ones."
     )
-    assert empty[timing_bound_key] <= 1
+    assert empty["context_estimate_max_rows"] <= 1
+    for census in (empty, loaded):
+        builds = census["settings_readiness_builds"] / KEYSTROKES
+        assert 0 < builds <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, census
 
     for key in (
         "snapshot_rows",
@@ -779,6 +791,8 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
         "a pure function of (app_config, provider, model) and is memoised "
         "across passes; a non-zero count means something bypassed the memo."
     )
+    # Anti-vacuity (TASK-33005 final review I-6): measured 25 per 24 keys.
+    assert readiness_per_key > 0, "no readiness build counted: an unpatched binding"
     assert readiness_per_key <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, (
         f"{readiness_per_key:.2f} readiness builds per keystroke (budget "
         f"{MAX_SETTINGS_READINESS_BUILDS_PER_KEY}). Readiness is deliberately "

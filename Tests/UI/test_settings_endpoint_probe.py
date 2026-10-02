@@ -1209,13 +1209,14 @@ def _discovery(status, *, kind=None, category=None, models=()):
             True,
             ("unreachable", 0, "connection_error", False),
         ),
+        # The server answered 404 (or 429, 5xx: rewritten on purpose, TASK-33005
+        # final review I-4), or answered something that is not a list: the
+        # key was not checked, and nothing blocks a send.
         (
             _discovery("error", kind="request_failed", category="http_status"),
             True,
-            ("unreachable", 0, "http_status", False),
+            ("model_listing_unavailable", 0, "http_status", False),
         ),
-        # The server answered 404, or answered something that is not a list:
-        # the key was not checked, and nothing blocks a send.
         (
             _discovery("unsupported", kind="unsupported_endpoint", category="http_status"),
             True,

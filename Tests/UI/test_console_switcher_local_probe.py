@@ -218,7 +218,7 @@ async def test_opening_probes_local_servers_without_waiting_for_them(servers):
         assert f"Ready · reachable {reached.observed_at.astimezone():%H:%M}" in ollama
         # Mockup (a): the refused server leads NEEDS SETUP, ahead of the
         # keyless cloud rows the row cap would otherwise hide it behind.
-        setup = lines.index("NEEDS SETUP · Enter opens the fix")
+        setup = lines.index("NEEDS SETUP · Enter opens the fix or explains it")
         llama = lines[setup + 1]
         assert "(any model)" in llama and "llama.cpp" in llama
         assert "Not ready · refused :9099" in llama
@@ -404,6 +404,10 @@ async def test_a_refused_active_llama_cpp_reaches_the_console_status_row(
         await _settle(harness, pilot)
         refused = "Not ready · refused :9099"
         assert refused in line_with(list_lines(harness, switcher), "model-a")
+        # TASK-33005 final review I-5 (TASK-30011 AC#6): the header under the
+        # open switcher says so too, not "Ready · not tested" until Esc.
+        assert harness.screen is switcher
+        assert _rail_text(console, "#workbench-header-status") == refused
         await switcher.action_dismiss_popover()
         await _console_settled(console, pilot, lambda r: r.blocker is not None)
         assert _rail_text(console, "#workbench-header-status") == refused
@@ -456,3 +460,34 @@ async def test_a_probe_settling_mid_poll_still_reaches_the_console(request):
         assert _rail_text(console, "#workbench-header-status") == (
             "Not ready · refused :9099"
         )
+
+
+async def test_a_cloud_row_whose_key_check_timed_out_opens_settings(servers):
+    """TASK-33005 final review I-4: OpenAI cannot be "started" or rechecked
+    on open (D2), so its row neither says so nor dead-ends: Enter opens its
+    Settings, where 't' tests it again."""
+    from tldw_chatbook.Chat.console_session_settings import console_send_connection
+
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        identity = console_send_connection(
+            build_target_default_console_session_settings(CONFIG, "openai", None),
+            app_config=CONFIG,
+        )
+        store = ProviderTestEvidenceStore(lambda: app)
+        store.settle(store.begin(identity), ProviderProbeResult("unreachable", (), "timeout"))
+        switcher = build(app)
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        openai = line_with(list_lines(app, switcher), "OpenAI")
+        assert "Not ready · timed out" in openai
+        assert "Enter: open Settings" in openai and "start it" not in openai
+        await pilot.press(*"gpt-5.1")
+        await pilot.pause()
+        row = switcher.highlighted_row()
+        assert (row.kind, row.provider) == ("setup", "openai")
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert app.setup == [("openai", "gpt-5.1")]
+    assert "api.openai.com" not in {host for host, *_rest in servers.requests}
