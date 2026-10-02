@@ -197,3 +197,17 @@ The final two mounted consumers produce one saved-reopen pass and one raw_source
 
 
 Qualification complete at3d14b4a: independent schema41 cases and runtime19 cases approve; actual v2 wake refusal/refund4 cases pass. Root10 repair,24 runtime, final4 originalstartup/storage,7 modal-quit and corrected actual mounted checks pass. All affected tasks are Done through CLI. Minimal child admission and no-inbox import corrections preserve existing owners; supplemental private-profile wrapper is test-only and independently approved. Detailed positive/non-green evidence and separateToDoTASK33648 are recorded in the final review. Doc-only publication cut must retain every reviewed production byte, then require fresh exact-head Qodo and all four CI jobs before protected merge.
+
+
+## Required Resend merge-base integration
+
+Published `003a7bc940458661654547d59e9adab514da6461` has all four required CI jobs passing and exact-head Qodo clear. GitHub reports BEHIND and live dev protection requires strict up-to-date checks. The actual fetched base is `bb865f5cfe` (PR #2956 / TASK-33661), including the earlier documentation-only PR #2952; no current-head job remains running. Preserve this necessary update once.
+
+ADR required: no
+ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing ADR-126/163/197 and ADR-031/097 apply.
+Reason: integrate accepted Resend and custody-poll behavior without changing schema, permission, scheduler, storage or lifecycle owners. Preserve schema76, both current stamp gates, frozen AgentRuns history, exact maintenance-wake refund and physical worker custody.
+
+- [ ] Rebase onto the observed dev commit, preserving all upstream source and complete append-only lesson tails; compare `/private/tmp/pr2918-pre-resend-manifest.json` to isolate actual overlap.
+- [ ] Qualify Resend maintenance refusal, required-hook refusal, in-place retry/Continue, cancelled refused-echo recovery, original wake refund/accepted nonreplay and saved-close consumers using real runtime/store tests. Run the original startup/storage/CSS guards and focused mounted custody/Resend checks; do not change pins, ceilings or measured work.
+- [ ] Obtain independent read-only reviews of the runtime/authority and mounted dispatch/polling overlaps on an immutable candidate. Keep incoming TASK-33662 real-relaunch recovery and earlier TASK-33648 SessionEnd suppression as separate disclosed limitations. Do not change other programs' task status.
+- [ ] Verify static/artifact guards and preserved reviewed bytes, record exact green/non-green evidence, then publish once with the exact observed `003a7bc940458661654547d59e9adab514da6461` lease. Require fresh exact-head Qodo and all four jobs before normal protected head-pinned merge.
