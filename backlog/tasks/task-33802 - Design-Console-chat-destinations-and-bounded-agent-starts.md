@@ -1,11 +1,11 @@
 ---
 id: TASK-33802
 title: Design Console chat destinations and bounded agent starts
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 17:54'
-updated_date: '2026-10-02 18:03'
+updated_date: '2026-10-02 23:18'
 labels:
   - console
   - agents
@@ -24,7 +24,7 @@ Define how a primary Console agent creates a chat in its own workspace or casual
 - [x] #1 The written spec covers both destinations and both modes, destination defaults, explicit instructions overrides, and scoped session approvals.
 - [x] #2 A canonical ADR defines conversation ownership, shared automatic budgets, machine-origin start authority, persistence, and recovery boundaries.
 - [x] #3 Spec self-review confirms complete requirements, consistent lifecycle rules, valid local links, and a focused verification strategy.
-- [ ] #4 The user reviews the written spec before implementation planning begins.
+- [x] #4 The user reviews the written spec before implementation planning begins.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -43,13 +43,13 @@ Reason: Extends the agent-facing chat-creation contract and adds shared automati
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Recorded the approved Console new_chat extension in Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md and proposed ADR-211 in backlog/decisions/211-console-chat-destinations-and-bounded-starts.md; added the ADR index entry.
+Recorded the approved Console new_chat extension in Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md and accepted ADR-211 in backlog/decisions/211-console-chat-destinations-and-bounded-starts.md; updated the ADR index.
 
-The design covers workspace/casual destinations, draft/start modes, destination defaults with explicit instructions overrides, destination-and-mode session grants, shared allowance roots with per-conversation run ownership, trusted machine-origin admission, and revision-fenced draft/restart recovery. Application implementation is pending written-spec review and subsequent planning.
+The design covers workspace/casual destinations, draft/start modes, destination defaults with explicit instructions overrides, destination-and-mode session grants, shared allowance roots with per-conversation run ownership, trusted machine-origin admission, and durable draft/restart recovery. Application implementation remains outside this design task.
 
-Self-review clarified null/direct budget-root references, machine-origin request provenance, and the two separate acceptance commits. Validation passed for 19 local links, required contract fields, placeholders, whitespace, and live worktree task/ADR identity checks. No application test run was needed for these documentation changes.
+The user approved the written spec and requested another review before proceeding. Source-backed review clarified manual-send priority before busy guards, the exact acceptance/cancellation cutoff, root-wide pause/clock/uncertainty mutations, explicit version-2 handoffs with legacy decoding, paused preflight refusal without a second dialog, and exact-attempt receipts across the two databases. These preserve the approved behavior.
+
+Validation passed for 19 local links, required contract/lifecycle/recovery fields, placeholders, and git diff whitespace checks. No application test run was needed for documentation-only changes. All four acceptance criteria are complete; implementation planning follows the approved spec and ADR-211.
 
 Renumbering provenance: Backlog CLI assigned TASK-33167. A scan of all locally available Git refs and 107 worktrees found task IDs through 33801, so this design task moved to TASK-33802 before any inbound references were written.
-
-Acceptance criteria 1-3 are complete. Criterion 4 and task closure await the user's written-spec review.
 <!-- SECTION:NOTES:END -->

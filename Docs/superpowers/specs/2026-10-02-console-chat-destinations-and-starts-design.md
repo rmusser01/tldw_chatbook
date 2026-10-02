@@ -1,7 +1,7 @@
 # Console chat destinations and bounded agent starts
 
 Date: 2026-10-02
-Status: Behavior approved in chat; awaiting written-spec review
+Status: Approved after written-spec review on 2026-10-02
 Task: [TASK-33802](../../../backlog/tasks/task-33802%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
 Decision: [ADR-211](../../../backlog/decisions/211-console-chat-destinations-and-bounded-starts.md)
 
@@ -129,15 +129,22 @@ For new `new_chat` handoffs, first activation does not clear the saved draft.
 Persist the current handoff draft while it remains pending, including user edits
 and explicit clearing, with revision checks so an old write cannot resurrect
 earlier text. Consume it on successful submission acceptance or explicit discard.
-An empty draft must not rehydrate the original prompt. Keep old `fork_chat`
-handoffs under their existing contract; version or distinguish the new handoff
-record when decoding older metadata.
+An empty draft must not rehydrate the original prompt. Write new `new_chat`
+handoffs with metadata version 2 and an explicit pending/consumed state and draft
+revision. Existing unversioned handoffs, including old `new_chat` and `fork_chat`
+records, retain their version-1 activation-clearing contract. Unknown versions
+require review and never authorize a launch.
 
 An immediate start submits the exact approved opening prompt against the new
 session's captured draft/context revision. User edits, manual submission, closure,
 or another accepted turn before acceptance invalidate that start. Preserve the
 user's current draft and return a useful reason. Clear only the consumed revision;
-an edit made later must survive completion callbacks.
+an edit made later must survive completion callbacks. Manual Send must be
+available while only an unaccepted chat start is preparing: arbitrate that intent
+before the screen, queue dispatcher, and controller busy guards, withdraw the
+prepared attempt, and let the manual send proceed through its normal validation.
+After the durable acceptance cutoff, ordinary busy/stop controls apply. Losing
+preparation callbacks cannot overwrite the manual send's draft or run state.
 
 Conversation storage and AgentRunsDB are separate commits. Do not claim one
 transaction across them. Save the chat before preparing a launch. If preparation
@@ -156,7 +163,17 @@ Treat slash-command and `@` prefixes as literal request text, and borrow no
 foreground staged inputs. Apply the destination's normal readiness, trace,
 instruction preflight, hook consent, permission, and configured retrieval checks.
 If the destination agent runtime is disabled or unsupported, keep the draft and
-report that an agent start was unavailable.
+report that an agent start was unavailable. Before acceptance, any preflight
+requiring a new human decision or entering a paused preparation returns
+`not_started` with the required action and retains the draft. Do not leave the
+source tool waiting for a second target-chat dialog or schedule a continuation.
+Tool approvals arising after acceptance use the target's ordinary approval flow.
+
+Audit every origin-dependent submission branch explicitly. This origin has a
+durable request row and destination-configured capture/retrieval, while it skips
+composer command parsing, reference expansion, staged inputs, prompt history,
+and trusted user-profile authority. Neither the manual-origin defaults nor all
+of the wake-origin shortcuts implement that combination.
 
 Retain the current one-conversation ownership of each work chain and each run.
 Add an immutable `allowance_root_chain_id` reference for automatic descendant
@@ -170,8 +187,14 @@ change its reference, or mint an allowance. Run parent links remain within their
 conversation; the launch attempt records the source run separately.
 
 Keep reservations attributed to their own chain and aggregate allowance counters
-across the root and its registered descendants. All members observe the root's
-snapshotted limits, pause/review status, elapsed deadline, and uncertain accounting.
+across the root and its registered descendants. All allowance mutations resolve
+the canonical root, including admission, start/deadline stamps, refusal rollback,
+pause, token settlement, and startup recovery. Keep reservation and run ownership
+on their local chains. Unknown usage or an overage in any member updates the root
+so sibling admissions cannot continue through a healthy-looking local chain.
+All members observe the root's snapshotted limits, pause/review status, elapsed
+deadline, and uncertain accounting. Root time checks remain monotonic across
+members and retain the existing protection against backward clock changes.
 Generation, provider-call, token, child-launch, and subsequent wake charges share
 that balance. Each accepted chat start consumes one automatic generation;
 draft-only creation consumes none. No approval, navigation, setting change, or
@@ -202,7 +225,10 @@ Use this launch lifecycle:
    reserve a generation from the shared allowance.
 2. Complete preflight, then recheck source ownership, target incarnation/revision,
    current policies, budget, and shared capacity at the acceptance boundary.
-3. Commit acceptance of the prepared attempt once in AgentRunsDB. Separately
+3. Commit acceptance of the prepared attempt once in AgentRunsDB. This atomic
+   transition is the ownership cutoff: source cancellation and a competing
+   manual send can withdraw only a still-prepared attempt. Once the transition
+   wins, source stopping cannot revoke the target's ownership. Separately
    persist the machine request and dispatch checkpoint in conversation storage,
    consuming only its draft revision. Dispatch and notify the source tool of
    confirmed Console acceptance only after the required durable fences succeed;
@@ -214,9 +240,26 @@ Duplicate callbacks cannot consume an attempt or submit its opening request twic
 A proven pre-acceptance refusal releases only its uncommitted reservation.
 Accepted or uncertain work retains its charge. If a durable fence or transcript
 write fails during acceptance, dispatch nothing further and require review;
-neither database implies the other commit succeeded. Restart recovery fences old
+neither database implies the other commit succeeded. Target Stop or closure after
+the ownership cutoff uses ordinary target cancellation and retains the accepted
+charge. `started` is reported only after both durable stores confirm acceptance,
+not merely after the AgentRunsDB transition. Restart recovery fences old
 owners and never automatically resends an interrupted opening request. Existing
 Retry/recovery controls require an explicit user action for another dispatch.
+
+Recovery distinguishes these persisted states without guessing across stores:
+
+| AgentRunsDB / conversation checkpoint | Recovery |
+| --- | --- |
+| No attempt; saved draft | Keep the draft; perform no automatic start |
+| Prepared under an old owner | Fence the owner, retain unresolved charges for review, and preserve the current draft |
+| Accepted; request/checkpoint missing | Require review, retain the charge and available draft, and dispatch nothing |
+| Accepted; saved request/checkpoint present | Use ordinary interrupted-turn recovery; do not resend automatically or rehydrate consumed text |
+
+The saved request and checkpoint carry the exact attempt ID. Their durable commit
+consumes the matching draft revision atomically in conversation storage. Repeated
+acceptance callbacks read that receipt rather than append another request. A
+missing or mismatched receipt never authorizes dispatch.
 
 On known durable creation, return a successful creation result containing the
 conversation ID, destination, mode, and one truthful `launch_status`:
@@ -259,11 +302,14 @@ Focused automated evidence must cover:
 - Both approval caches, mode/destination separation, stale clicks, denial ceilings,
   remembered invocations, true run provenance, close, and restart.
 - Shared counters/deadlines across recursive chat starts, children, and wakes;
-  concurrent reservation bounds, no new allowance, migration, and old-root behavior.
+  concurrent reservation bounds, no new allowance, migration, and old-root behavior;
+  late descendant uncertainty/overage pauses sibling admission through the root.
 - Exact-target submissions during navigation, target edits/manual sends/closure,
-  source cancellation, combined background capacity, and ownership replacement.
+  source cancellation on each side of the cutoff, manual-send priority while
+  preparing, combined background capacity, and ownership replacement.
 - Draft edit/clear durability, blocked starts, duplicate callbacks, write failures
-  between the two databases, and crash/restart at each acceptance boundary.
+  between the two databases, paused preflight without a second dialog, and
+  crash/restart at each acceptance boundary.
 - Mounted approval-card and runtime-hook wiring; the runtime ownership slot-set
   check catches hooks that otherwise appear wired but do nothing.
 

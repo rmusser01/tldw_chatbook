@@ -1,7 +1,7 @@
 # ADR-211: Console chat destinations and bounded agent starts
 
 Date: 2026-10-02
-Status: Proposed; behavior approved in chat, awaiting written-spec review
+Status: Accepted after written-spec review on 2026-10-02
 Task: [TASK-33802](../tasks/task-33802%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
 Spec: [Console chat destinations and bounded agent starts](../../Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md)
 Extends: [ADR-150 for agent chat creation](150-agent-chat-fork-and-spawn.md)
@@ -45,21 +45,30 @@ destination-default and recovery behavior by themselves.
    Reservations stay attributable to their own chain, while admission counts
    aggregate across the canonical root and its registered descendants. All
    members share finite counters, pause/review state, and the original deadline.
+   Admission, settlement, clock/refusal updates, and recovery mutate the root;
+   descendant uncertainty or overage must block sibling admission.
    Only explicit manual work establishes a new allowance. Source run lineage
    belongs to a launch record, not a cross-conversation run-parent link.
 5. Introduce a typed durable chat-start attempt and guarded machine-origin
    submission. The attempt owns the exact source run/chain, target conversation,
    session incarnation, request revision, runtime owner, and generation reservation.
    Accept it once after normal preflight; keep its input visibly agent-authored.
+   A pre-acceptance human decision or paused preparation leaves a draft and a
+   reason rather than a pending automatic continuation.
    Opening text cannot execute composer slash commands or expand `@` references.
    Chat starts and fleet wakes share automatic-primary capacity and manual reserve.
 6. Save the conversation and draft before launch preparation. New handoff drafts
    survive activation and persist edits/clears until accepted consumption or
-   explicit discard. Use revision fencing for target interaction and cleanup.
+   explicit discard. Version-2 handoffs distinguish this lifecycle from all old
+   unversioned handoffs. Use revision fencing for target interaction and cleanup.
+   Manual Send withdraws a still-prepared start before ordinary busy guards.
    After acceptance, target execution is independent of source navigation,
    stopping, and closure, within the shared allowance and ordinary stop controls.
 7. Treat conversation storage and AgentRunsDB as separate commits. A durable
    attempt fence and saved request/checkpoint must succeed before dispatch.
+   The AgentRunsDB acceptance transition is the source-ownership cutoff; report
+   `started` only after both durable fences. Bind the conversation receipt and
+   atomic draft consumption to the exact attempt ID so callbacks cannot resend.
    Proven pre-acceptance refusal refunds only its uncommitted reservation;
    accepted/uncertain work remains charged. Restart recovery revokes stale owners
    and requires review without automatically resending the opening request.
@@ -94,5 +103,5 @@ hook, project-instruction, capture, and physical-worker gates remain required.
 The implementation has two bounded slices: budget/attempt groundwork followed by
 tool and Console integration. No dependency or general chat-management framework
 is introduced. This record changes the relevant policies through a new ADR;
-accepted historical ADR bodies remain intact. Application implementation awaits
-written-spec review and the subsequent implementation plan.
+accepted historical ADR bodies remain intact. Written-spec review is complete;
+application implementation follows the subsequent implementation plan.
