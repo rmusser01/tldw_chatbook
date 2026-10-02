@@ -435,7 +435,7 @@ def test_failed_forced_settings_reload_preserves_pre_operation_cache(
 
     # A warm read may return the prior validated in-memory view. A forced
     # read must still refuse the unsafe file and never publish its contents.
-    assert config_module.load_settings() is loaded
+    assert config_module.load_settings()["chat_defaults"]["temperature"] == 0.17
     with pytest.raises(PrivatePathError):
         config_module.load_settings(force_reload=True)
     assert stat.S_IMODE(outside.stat().st_mode) == 0o644
