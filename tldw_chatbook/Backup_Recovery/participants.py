@@ -401,6 +401,9 @@ def _core_access(repository):
         if type(repository) in _repository_types()
         else None
     )
+    operation = getattr(storage._operation_local, "operation", None)
+    if operation is not None and participant is not None:
+        storage._check_operation(operation, participant.path)
     with storage._lock:
         if participant is not None:
             _check_core_retirement(participant)
@@ -408,7 +411,7 @@ def _core_access(repository):
         if operation is not None:
             if participant is None:
                 raise RecoveryRequired("repository_participant_not_installed")
-            storage._check_operation(operation, participant.path)
+            storage._Operation.check(operation, participant.path)
             if operation.participant is not participant:
                 raise RecoveryRequired("operation_provenance_invalid")
         elif (
@@ -576,8 +579,9 @@ def _core_getter(function):
 
         previous = getattr(storage._operation_local, "operation", None)
         if previous is not None and not repository.is_memory_db:
+            storage._check_operation(previous, previous.path)
             with storage._lock:
-                storage._check_operation(previous, previous.path)
+                storage._Operation.check(previous, previous.path)
                 participant = _repository_participant(repository)
                 independent = previous.participant is not participant
             if independent:

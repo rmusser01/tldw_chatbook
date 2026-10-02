@@ -272,6 +272,106 @@ def test_a_warm_acquisition_reuses_evidence_without_rederiving(
     assert calls == {"permission": 0, "scope": 0}, calls
 
 
+@pytest.mark.parametrize("change", ["pause", "selector"])
+def test_warm_observation_rechecks_selection_and_cancellation_before_io(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+    change,
+):
+    """A change during out-of-lock validation must fence the counted borrower."""
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "not-written"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    pauses = []
+    try:
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        original = storage._Evidence.observe
+
+        def changed(evidence):
+            result = original(evidence)
+            monkeypatch.setattr(storage._Evidence, "observe", original)
+            if change == "pause":
+                pauses.append(storage._begin_local_pause())
+            else:
+                monkeypatch.setenv("TLDW_CONFIG_PATH", str(config.with_name("other")))
+            return result
+
+        monkeypatch.setattr(storage._Evidence, "observe", changed)
+        with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
+            target.write_text("unexpected")
+        assert not target.exists()
+    finally:
+        for pause in pauses:
+            pause.resume()
+        startup.close()
+
+
+def test_blocked_scope_validation_allows_unrelated_transaction(
+    local_scope,  # noqa: F811
+    monkeypatch,
+):
+    """An owner's filesystem validation must not own the global mutex."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+
+    from tldw_chatbook.Notifications.event_state_repository import EventStateRepository
+
+    _, _, data, _ = local_scope
+    repository = EventStateRepository(data / "other.sqlite")
+    blocked, release, committed = (
+        threading.Event(),
+        threading.Event(),
+        threading.Event(),
+    )
+    selected = data / "blocked.sqlite"
+    original = storage._scope
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
+
+    def scoped(root, selector, path, **kwargs):
+        if path == selected and not release.is_set():
+            blocked.set()
+            assert release.wait(5), "test did not release scope validation"
+        return original(root, selector, path, **kwargs)
+
+    def acquire():
+        with storage.acquire_storage(selected):
+            pass
+
+    def transact():
+        with repository.transaction() as connection:
+            connection.execute("CREATE TABLE admission_progress (value INTEGER)")
+            connection.execute("INSERT INTO admission_progress VALUES (42)")
+        committed.set()
+
+    monkeypatch.setattr(storage, "_scope", scoped)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(acquire)
+            assert blocked.wait(5)
+            second = pool.submit(transact)
+            try:
+                assert committed.wait(1), (
+                    "unrelated transaction blocked behind validation"
+                )
+            finally:
+                release.set()
+            first.result(timeout=5)
+            second.result(timeout=5)
+        with repository.transaction() as connection:
+            assert (
+                connection.execute("SELECT value FROM admission_progress").fetchone()[0]
+                == 42
+            )
+    finally:
+        release.set()
+        repository.close()
+
+
 def test_evidence_newer_than_the_settle_margin_is_not_reused(
     local_scope, monkeypatch  # noqa: F811
 ):
@@ -636,3 +736,233 @@ def test_concurrent_derivations_keep_confirmed_evidence(
         startup.close()
 
     assert calls == {"permission": 0, "scope": 0}, calls
+
+
+def test_warm_admission_reads_current_complete_control_bytes(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "bytes.db"
+    reuse_switch(True)
+    with storage.acquire_storage():
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        required = [
+            config,
+            root / "admission" / "registry.json",
+            *root.glob("profile-*.json"),
+        ]
+        identities = {
+            (p.stat().st_dev, p.stat().st_ino): p.read_bytes() for p in required
+        }
+        read = {key: bytearray() for key in identities}
+        original = os.read
+
+        def observed(fd, size):
+            chunk = original(fd, size)
+            info = os.fstat(fd)
+            key = info.st_dev, info.st_ino
+            if key in read:
+                read[key].extend(chunk)
+            return chunk
+
+        monkeypatch.setattr(os, "read", observed)
+        with storage.acquire_storage(target):
+            target.write_text("checked")
+        assert all(
+            read[key] and bytes(read[key]) == raw * (len(read[key]) // len(raw))
+            for key, raw in identities.items()
+        )
+
+
+@pytest.mark.parametrize("kind", ("gate", "lease", "registry"))
+def test_warm_admission_refuses_replaced_native_lock_before_write(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    kind,
+):
+    root, config, data, authority = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "foreign.db"
+    target.write_bytes(b"foreign")
+    reuse_switch(True)
+    with storage.acquire_storage():
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        gate = (
+            root
+            / "admission"
+            / (
+                "registry.lock"
+                if kind == "registry"
+                else authority._key("profile", kind)
+            )
+        )
+        gate.rename(gate.with_suffix(".retained"))
+        gate.write_bytes(b"")
+        gate.chmod(0o600)
+        with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
+            target.write_bytes(b"unexpected")
+        assert target.read_bytes() == b"foreign"
+
+
+def test_counted_borrower_retains_predecessors_until_positive_close(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "retained.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    blocked, release = Event(), Event()
+    try:
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        hold = storage._holds[startup._key]
+        descriptors = [
+            fd for chain in hold.predecessors.values() for fd in chain.descriptors
+        ]
+        assert descriptors
+        original = storage._Evidence.observe
+
+        def observe(evidence):
+            blocked.set()
+            assert release.wait(5)
+            return original(evidence)
+
+        monkeypatch.setattr(storage._Evidence, "observe", observe)
+
+        def write():
+            with storage.acquire_storage(target):
+                target.write_text("accepted")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(write)
+            try:
+                assert blocked.wait(5)
+                startup.close()
+                assert all(stat.S_ISDIR(os.fstat(fd).st_mode) for fd in descriptors)
+            finally:
+                release.set()
+            pending.result(timeout=5)
+        assert target.read_text() == "accepted"
+        for fd in descriptors:
+            with pytest.raises(OSError):
+                os.fstat(fd)
+    finally:
+        release.set()
+        startup.close()
+
+
+def test_uncertain_predecessor_close_retains_native_exclusion(local_scope):  # noqa: F811
+    root, _config, _data, _ = local_scope
+    _in_subprocess(
+        "from pathlib import Path\n"
+        "import os, time\n"
+        "from tldw_chatbook.Backup_Recovery import storage_admission as s, bootstrap\n"
+        "from tldw_chatbook.Backup_Recovery.admission import Admission, AdmissionTimeout\n"
+        "bootstrap.default_bootstrap_root = lambda: Path(values['root'])\n"
+        "s._EVIDENCE_SETTLE_NS = 0\n"
+        "lease = s.acquire_storage()\n"
+        "hold = s._holds[lease._key]\n"
+        "fd = next(iter(hold.predecessors.values())).descriptors[-1]\n"
+        "close = os.close\n"
+        "def uncertain(value):\n"
+        "    if value == fd:\n"
+        "        close(value)\n"
+        "        raise OSError('injected_unknown_close')\n"
+        "    close(value)\n"
+        "os.close = uncertain\n"
+        "lease.close()\n"
+        "os.close = close\n"
+        "assert hold in s._retiring_holds and hold.error is not None\n"
+        "assert hold.native_context is not None\n"
+        "pause = s._begin_local_pause()\n"
+        "assert not pause.drain(time.monotonic())\n"
+        "try:\n"
+        "    with Admission.open_existing(Path(values['root']) / 'admission').maintenance(hold.names, .05):\n"
+        "        raise AssertionError('released_native_exclusion')\n"
+        "except AdmissionTimeout:\n"
+        "    pass\n"
+        "pause.resume()\n",
+        root=str(root),
+    )
+
+
+def test_same_inode_bytes_cannot_hide_behind_equal_change_stamps(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "unchanged.db"
+    target.write_bytes(b"foreign")
+    reuse_switch(True)
+    with storage.acquire_storage():
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        record = next(root.glob("profile-*.json"))
+        original = storage._content
+        before = original(record)
+        identity = before[:2]
+
+        def equal_stamps(path, *args):
+            current = original(path, *args)
+            return (*before[:5], *current[5:]) if path == record else current
+
+        monkeypatch.setattr(storage, "_content", equal_stamps)
+        stamp = getattr(storage, "_content_stamp", None)
+        if stamp is not None:
+
+            def equal_stat(info):
+                current = stamp(info)
+                return (
+                    (*before[:5], *current[5:]) if current[:2] == identity else current
+                )
+
+            monkeypatch.setattr(storage, "_content_stamp", equal_stat)
+        raw = record.read_bytes()
+        with record.open("r+b") as stream:
+            stream.write(b"[" + raw[1:])
+        with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
+            target.write_bytes(b"unexpected")
+        assert target.read_bytes() == b"foreign"
+
+
+def test_cold_scope_cannot_continue_a_retired_incumbent(
+    local_scope, monkeypatch  # noqa: F811
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    startup = storage.acquire_storage()
+    target = data / "not-created.db"
+    config.write_text("changed selector in incumbent scope")
+    monkeypatch.setattr(storage, "_EVIDENCE_REUSE", False)
+    original = storage._scope
+
+    def retired(*args, **kwargs):
+        names = original(*args, **kwargs)
+        monkeypatch.setattr(storage, "_scope", original)
+        startup.close()
+        return names
+
+    monkeypatch.setattr(storage, "_scope", retired)
+    try:
+        with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
+            target.write_text("unexpected")
+        assert not target.exists()
+    finally:
+        startup.close()

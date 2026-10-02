@@ -13,6 +13,74 @@ from .native_platform import flush_directory, flush_file, rename_noreplace
 from .qualification import _qualified_identity, native_identity, qualified_for
 
 
+class _DirectoryChain:
+    """Hold-owned, link-free predecessors; every borrow checks current edges.
+
+    These handles carry no admission authority. The ordinary Hold retains them
+    until its last borrower retires. Cold recovery/publication never uses them.
+    """
+
+    def __init__(self, root: Path):
+        if not root.is_absolute() or ".." in root.parts:
+            raise OSError("absolute_directory_required")
+        self.root = root
+        self.descriptors: list[int] = []
+        self.close_error: BaseException | None = None
+
+    def open(self) -> None:
+        """Populate after the live Hold has taken custody, including failures."""
+        flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        self.descriptors.append(os.open(self.root.anchor, flags))
+        for component in self.root.parts[1:]:
+            self._trusted(os.fstat(self.descriptors[-1]))
+            self.descriptors.append(
+                os.open(component, flags, dir_fd=self.descriptors[-1])
+            )
+        self.check()
+
+    @staticmethod
+    def _trusted(info):
+        if (
+            not stat.S_ISDIR(info.st_mode)
+            or info.st_uid not in (0, os.geteuid())
+            or (info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX)
+        ):
+            raise OSError("unsafe_directory")
+
+    def check(self) -> int:
+        """Fresh native posture plus each current parent/name-to-held edge."""
+        if self.close_error is not None or not self.descriptors:
+            raise OSError("directory_chain_retired")
+        for index, fd in enumerate(self.descriptors):
+            held = os.fstat(fd)
+            self._trusted(held)
+            current = (
+                os.stat(self.root.anchor, follow_symlinks=False)
+                if index == 0
+                else os.stat(
+                    self.root.parts[index],
+                    dir_fd=self.descriptors[index - 1],
+                    follow_symlinks=False,
+                )
+            )
+            self._trusted(current)
+            if (held.st_dev, held.st_ino) != (current.st_dev, current.st_ino):
+                raise OSError("directory_predecessor_changed")
+        return self.descriptors[-1]
+
+    def close(self) -> None:
+        """Never retry an ambiguous close against a possibly recycled fd."""
+        if self.close_error is not None:
+            raise OSError("directory_retirement_uncertain") from self.close_error
+        while self.descriptors:
+            fd = self.descriptors.pop()
+            try:
+                os.close(fd)
+            except BaseException as error:
+                self.close_error = error
+                raise
+
+
 @contextmanager
 def pinned_directory(root: Path) -> Iterator[int]:
     """Pin a trusted absolute directory with no symlink components."""

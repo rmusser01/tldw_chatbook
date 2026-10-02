@@ -79,11 +79,8 @@ class _Operation:
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
         if path is not None:
             selected = lexical_path(path)
-            parent = os.stat(self.path.parent)
             if (
                 selected != self.path
-                or selected.resolve() != self.resolved_path
-                or (parent.st_dev, parent.st_ino) != self.parent_identity
                 or self.participant.repository().db_path != self.path
             ):
                 raise bootstrap.RecoveryRequired("operation_path_outside_scope")
@@ -105,7 +102,18 @@ def _check_operation(operation, path=None):
     # validation callback or an instance-shadowed method.
     if type(operation) is not _Operation:
         raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-    _Operation.check(operation, path)
+    with _lock:
+        _Operation.check(operation, path)
+    if path is not None:
+        parent = os.stat(operation.path.parent)
+        resolved = lexical_path(path).resolve()
+        with _lock:
+            _Operation.check(operation, path)
+            if (
+                resolved != operation.resolved_path
+                or (parent.st_dev, parent.st_ino) != operation.parent_identity
+            ):
+                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
 
 
 @contextmanager
@@ -113,12 +121,14 @@ def _repository_operation(participant):
     from .participants import _check_core_retirement, _installed_repositories
 
     previous = getattr(_operation_local, "operation", None)
+    if previous is not None:
+        _check_operation(previous, previous.path)
     with _changed:
         if previous is not None:
-            _check_operation(previous, previous.path)
+            _Operation.check(previous, previous.path)
         reuse = previous is not None and previous.participant is participant
         if reuse:
-            _check_operation(previous, participant.path)
+            _Operation.check(previous, participant.path)
         else:
             if (
                 participant not in _installed_repositories
@@ -182,9 +192,11 @@ def _repository_operation(participant):
                 _operations.discard(operation)
                 _changed.notify_all()
         finally:
+            if previous is not None:
+                _check_operation(previous, previous.path)
             with _changed:
                 if previous is not None:
-                    _check_operation(previous, previous.path)
+                    _Operation.check(previous, previous.path)
                 _operation_local.operation = previous
 
 
@@ -195,6 +207,7 @@ class _Acquisition:
         self.task = _task_identity()
         self.initializing_root = None
         self.scope_roots = None
+        self.scope_incumbent = None
         self.cancel = threading.Event()
         self.operation = getattr(_operation_local, "operation", None)
         with _lock:
@@ -210,7 +223,7 @@ class _Acquisition:
         if self.operation is not None:
             if path is None:
                 raise bootstrap.RecoveryRequired("operation_path_outside_scope")
-            _check_operation(self.operation, path)
+            _Operation.check(self.operation, path)
         elif _pause is not None:
             raise bootstrap.RecoveryRequired("storage_locally_paused")
 
@@ -319,22 +332,34 @@ class _LocalPause:
             hold = _holds.get(lease._key)
             if hold is None or hold.count != 1 or hold.key != key:
                 raise bootstrap.RecoveryRequired("runtime_native_resources_not_settled")
-            self._startup_source = (
+            source = (
                 key,
                 effective_config_path(),
                 hold.names,
                 hold.authority._identity,
             )
-            _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
-            previous = next(
-                (r for r in profiles if r["selector"] == str(effective_config_path())),
-                None,
-            )
-            self._startup_roots = (
-                tuple(previous["roots"])
-                if previous is not None and tuple(previous["namespaces"]) == hold.names
-                else None
-            )
+        _, profiles = bootstrap._records(bootstrap.default_bootstrap_root())
+        previous = next((r for r in profiles if r["selector"] == str(source[1])), None)
+        roots = (
+            tuple(previous["roots"])
+            if previous is not None and tuple(previous["namespaces"]) == hold.names
+            else None
+        )
+        selection = (os.getpid(), str(bootstrap.default_bootstrap_root()))
+        selector = effective_config_path()
+        with _changed:
+            _LocalPause._check(self)
+            if (
+                selection != key
+                or selector != source[1]
+                or _startups.get(key) is not lease
+                or _holds.get(lease._key) is not hold
+                or hold.count != 1
+                or not _hold_serving(hold)
+            ):
+                raise bootstrap.RecoveryRequired("runtime_native_resources_not_settled")
+            self._startup_source = source
+            self._startup_roots = roots
             self._startup_retired = True
             self._startup_thread = None
             self._startup_error = None
@@ -422,6 +447,7 @@ class _StartupReacquisition(_Acquisition):
         self.initializing_root = None
         self.cancel = threading.Event()
         self.operation = None
+        self.scope_incumbent = None
         with _changed:
             self.check()
             _pending_acquisitions.add(self)
@@ -501,6 +527,10 @@ class _Hold:
         # evidence, discarded with this hold. Guarded by _lock.
         self.evidence: dict[str, _Evidence] = {}
         self.path_evidence: OrderedDict[tuple[str, str], _Evidence] = OrderedDict()
+        self.predecessors = {}
+        self.resources = set()
+        self.native_context = None
+        self.registry_evidence = None
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -513,12 +543,49 @@ class _Hold:
         try:
             # A last pending token may cancel before native admission succeeds.
             # Waiting happens on this thread, never under the coordinator lock.
-            with authority._admit(self.names, False, None, self.stop):
-                self.ready.set()
-                self.stop.wait()
+            self.native_context = authority._admit(self.names, False, None, self.stop)
+            self.native_context.__enter__()
+            self.ready.set()
+            self.stop.wait()
+            # No accepted borrower remains. A failed close retains both this
+            # Hold's custody and its native lease; drain must keep seeing it.
+            for resource in self.resources:
+                resource.close()
+            self.native_context.__exit__(None, None, None)
+            self.native_context = None
         except BaseException as error:
             self.error = error
             self.ready.set()
+
+    def predecessor(self, path):
+        """Get a bounded retained chain; creation and checks run outside _lock."""
+        from .native_files import _DirectoryChain
+
+        with _lock:
+            existing = self.predecessors.get(path)
+            if existing is not None:
+                return existing
+            if len(self.resources) >= _EVIDENCE_PATHS_MAX:
+                return None
+            chain = _DirectoryChain(path)
+            self.resources.add(chain)
+        try:
+            chain.open()
+            with _lock:
+                existing = self.predecessors.setdefault(path, chain)
+            if existing is chain:
+                return chain
+        except OSError:
+            existing = None  # trusted-link paths retain the complete cold route
+        try:
+            chain.close()
+        except BaseException as error:
+            with _lock:
+                self.error = error
+            raise
+        with _lock:
+            self.resources.remove(chain)
+        return existing
 
 
 def _execution_selection_for(path):
@@ -775,13 +842,14 @@ def _config_capture_file(sources, selected, owner_id, info):
 # ---------------------------------------------------------------------------
 # Reusable admission evidence (PERF-07/08; ADR-126 amendment, 2026-09-29).
 #
-# An ordinary acquisition may reuse the *allowed* result of an unmodified
-# derivation while every stamp below is identical when re-observed on the same
-# call. Posture stamps cover every path component the derivation walks; content
-# stamps cover the records, registry, marker, selector and qualification file.
+# An ordinary acquisition may reuse a derivation only after current bounded
+# bytes compare equal, native authority/group/locks validate, and retained
+# predecessor edges and security posture are checked on that same call.
+# Metadata is only a cheap rejection filter; it never grants admission.
 # Evidence becomes reusable only after two consecutive full derivations bracket
 # identical stamps with content change times at least _EVIDENCE_SETTLE_NS old.
-# Any mismatch runs the unmodified derivation, the only source of refusals.
+# A candidate mismatch runs the complete current derivation. Mandatory native
+# validation failures refuse; an old Hold never authorizes detached authority.
 # All evidence state is read and written under _lock; nothing relies on the
 # GIL for atomicity (free-threaded builds, PEP 779).
 # ---------------------------------------------------------------------------
@@ -811,13 +879,58 @@ def _posture(path: Path) -> tuple | None:
     )
 
 
-def _content(path: Path) -> tuple | None:
-    """Identity plus change stamps, or None when the path is absent."""
+def _content(path: Path, parent: int | None = None) -> tuple | None:
+    """Current bounded bytes (or directory names), never metadata authority."""
+    name = path if parent is None else path.name
+    options = {} if parent is None else {"dir_fd": parent}
     try:
-        info = os.stat(path, follow_symlinks=False)
+        info = os.stat(name, follow_symlinks=False, **options)
     except FileNotFoundError:
         return None
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    flags = os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+    if stat.S_ISDIR(info.st_mode):
+        flags |= os.O_DIRECTORY
+    elif not stat.S_ISREG(info.st_mode) or info.st_size > bootstrap.MAX_RECORD:
+        raise OSError("evidence_content_ineligible")
+    fd = os.open(name, flags, **options)
+    try:
+        held = os.fstat(fd)
+        if stat.S_ISDIR(held.st_mode):
+            data = tuple(sorted(os.listdir(fd)))
+        else:
+            chunks = bytearray()
+            while chunk := os.read(
+                fd, min(65536, bootstrap.MAX_RECORD + 1 - len(chunks))
+            ):
+                chunks.extend(chunk)
+                if len(chunks) > bootstrap.MAX_RECORD:
+                    raise OSError("evidence_content_ineligible")
+            data = bytes(chunks)
+        current = os.stat(name, follow_symlinks=False, **options)
+        after = os.fstat(fd)
+        if (
+            not _content_stamp(info)
+            == _content_stamp(held)
+            == _content_stamp(after)
+            == _content_stamp(current)
+        ):
+            raise OSError("evidence_content_changed")
+        return (*_content_stamp(after), data)
+    finally:
+        os.close(fd)
+
+
+def _content_stamp(info):
+    return (
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+        info.st_mode,
+        info.st_uid,
+        info.st_nlink,
+    )
 
 
 def _chain(path: Path) -> tuple[Path, ...]:
@@ -826,13 +939,29 @@ def _chain(path: Path) -> tuple[Path, ...]:
 
 
 class _Evidence:
-    """Stamps over one derivation's inputs; immutable once published on a hold."""
+    """Checked bytes and posture, immutable after publication on a live Hold."""
 
-    __slots__ = ("names", "posture", "content", "epoch", "confirmed")
+    __slots__ = ("names", "posture", "content", "epoch", "confirmed", "pins")
 
-    def __init__(self, names, posture_paths, content_paths):
+    def __init__(self, names, posture_paths, content_paths, hold=None):
         self.names = names
         self.posture = tuple((p, _posture(p)) for p in posture_paths)
+        self.pins = {}
+        if hold is not None:
+            directories = {
+                p if s is not None and stat.S_ISDIR(s[2]) else p.parent
+                for p, s in self.posture
+            } | {p.parent for p in content_paths}
+            directories = {
+                p
+                for p in directories
+                if not any(p in other.parents for other in directories)
+            }
+            for directory in directories:
+                pin = hold.predecessor(directory)
+                if pin is None:
+                    raise OSError("evidence_predecessor_ineligible")
+                self.pins[directory] = pin
         self.content = tuple((p, _content(p)) for p in content_paths)
         self.epoch = bootstrap._admission_epoch
         self.confirmed = False
@@ -850,10 +979,30 @@ class _Evidence:
         )
 
     def observe(self) -> tuple:
+        try:
+            parents = {}
+            for path, chain in self.pins.items():
+                chain.check()
+                parents.update(zip(_chain(path), chain.descriptors))
+        except OSError:
+            return None  # stale pins never authorize; run the complete derivation
         return (
             tuple(_posture(p) for p, _ in self.posture),
-            tuple(_content(p) for p, _ in self.content),
+            tuple(_content(p, parents.get(p.parent)) for p, _ in self.content),
         )
+
+    def candidate(self) -> bool:
+        """Cheap rejection only; success still requires locked full-byte reads."""
+        if tuple(_posture(p) for p, _ in self.posture) != self.stamps()[0]:
+            return False
+        for path, previous in self.content:
+            try:
+                current = _content_stamp(os.stat(path, follow_symlinks=False))
+            except FileNotFoundError:
+                current = None
+            if current != (None if previous is None else previous[:8]):
+                return False
+        return True
 
     def settled_before(self, when_ns: int) -> bool:
         return all(
@@ -870,7 +1019,7 @@ def _no_links(evidence: _Evidence) -> bool:
     )
 
 
-def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
+def _selector_evidence(root, selector, names, roots, hold=None) -> _Evidence | None:
     """Stamp every input the selector-level derivation read, or None if unsafe."""
     try:
         entries = os.listdir(root)
@@ -888,6 +1037,12 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
         _QUALIFICATION_FILE,
         *sorted(root / n for n in entries if n not in _NOT_BOOTSTRAP_RECORDS),
     ]
+    if hold is not None:
+        content.extend(
+            admission / hold.authority._key(name, kind)
+            for name in hold.authority._observed_groups.get(names, names)
+            for kind in ("gate", "lease")
+        )
     # The selector is an input even when unbound: a profile whose fingerprint
     # stopped matching binds again once the selector is restored.
     walked = [root, admission, selector.parent]
@@ -896,7 +1051,10 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
             return None  # absence-proved roots are never reused
         walked.extend(roots)
     posture = sorted({p for target in walked for p in _chain(Path(target))})
-    evidence = _Evidence(names, posture, (*content, selector))
+    try:
+        evidence = _Evidence(names, posture, (*content, selector), hold)
+    except OSError:
+        return None
     posture_ok = all(
         s is not None and not stat.S_ISLNK(s[2]) for _, s in evidence.posture
     )
@@ -905,9 +1063,12 @@ def _selector_evidence(root, selector, names, roots) -> _Evidence | None:
     return evidence if posture_ok and content_ok else None
 
 
-def _path_evidence(names, selected: Path) -> _Evidence | None:
+def _path_evidence(names, selected: Path, hold=None) -> _Evidence | None:
     """Stamp the admitted path's chain (the containment check's only input)."""
-    evidence = _Evidence(names, _chain(selected), ())
+    try:
+        evidence = _Evidence(names, _chain(selected), (), hold)
+    except OSError:
+        return None
     return evidence if _no_links(evidence) else None
 
 
@@ -939,7 +1100,9 @@ def _selected_paths(path, related_paths) -> tuple[Path, ...]:
     )
 
 
-def _reuse_evidence(root, selector, path, related_paths, check, execution_selection):
+def _reuse_evidence(
+    root, selector, path, related_paths, check, execution_selection, attempt
+):
     """Return a lease from confirmed evidence, or None to run the derivation.
 
     Like the derivation, the lease is counted before the final revalidation, so a
@@ -990,13 +1153,43 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
         hold.count += 1
         token = StorageLease(key)
         token._execution_selection = execution_selection
+        previous_registry = hold.registry_evidence
     # Native filesystem observation never runs under the coordinator lock.
     try:
-        unchanged = (
-            evidence.observe() == evidence.stamps()
-            and all(entry.observe() == entry.stamps() for entry in per_path)
-            and evidence.epoch == bootstrap._admission_epoch
-        )
+        # A stale candidate is discarded before consulting its old native
+        # authority. The cold path determines the current allowed/refused result.
+        if not evidence.candidate() or any(not entry.candidate() for entry in per_path):
+            token.close()
+            return None
+        with hold.authority._current_hold(
+            hold.names,
+            previous=previous_registry,
+            cancel=attempt.cancel,
+            descendant=attempt.operation is not None,
+            predecessor=hold.predecessor,
+        ) as registry:
+            unchanged = (
+                evidence.observe() == evidence.stamps()
+                and all(entry.observe() == entry.stamps() for entry in per_path)
+                and evidence.epoch == bootstrap._admission_epoch
+            )
+        if attempt.operation is not None:
+            for selected_path in (path, *related_paths):
+                _check_operation(attempt.operation, selected_path)
+        selection = _execution_selection_for(path)
+        with _lock:
+            check()
+            if selection != execution_selection:
+                raise bootstrap.RecoveryRequired("execution_selection_changed")
+            unchanged = (
+                unchanged
+                and _holds.get(key) is hold
+                and _hold_serving(hold)
+                and hold.evidence.get(str(selector)) is evidence
+                and evidence.epoch == bootstrap._admission_epoch
+            )
+            if unchanged:
+                hold.registry_evidence = registry
     except BaseException:
         token.close()  # as the derivation does: a counted lease never leaks
         raise
@@ -1030,10 +1223,10 @@ def _observe_candidates(root, selector, path, related_paths):
 def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
     """Publish post-derivation stamps; confirm them if they bracket the derivation."""
     epoch_before, observations = before
-    fresh = {str(selector): _selector_evidence(root, selector, names, roots)}
+    fresh = {str(selector): _selector_evidence(root, selector, names, roots, hold)}
     if names != (UNBOUND_NAMESPACE,):
         for item in _selected_paths(path, related_paths):
-            fresh[(str(selector), str(item))] = _path_evidence(names, item)
+            fresh[(str(selector), str(item))] = _path_evidence(names, item, hold)
     with _lock:
         if _holds.get(hold.key) is not hold or hold.names != names:
             return
@@ -1083,6 +1276,8 @@ def _scope(
     authority=None,
     related_paths: tuple[Path, ...] = (),
 ) -> tuple[str, ...]:
+    if startup_attempt is not None:
+        startup_attempt.scope_incumbent = None
     pending, profiles = bootstrap._records(root)
     registry = bootstrap._registry(root)
     binding = bootstrap._binding(selector, profiles, registry) if profiles else None
@@ -1111,7 +1306,8 @@ def _scope(
                 snapshot = dict(previous, fingerprint=bootstrap._fingerprint(selector))
                 binding = bootstrap._binding(selector, [snapshot], registry)
     if binding is None and not pending:
-        live = _holds.get((os.getpid(), str(root)))
+        with _lock:
+            live = _holds.get((os.getpid(), str(root)))
         previous = next((r for r in profiles if r["selector"] == str(selector)), None)
         if (
             live is not None
@@ -1122,6 +1318,8 @@ def _scope(
             # New process enrollment still requires the saved config fingerprint.
             snapshot = dict(previous, fingerprint=bootstrap._fingerprint(selector))
             binding = bootstrap._binding(selector, [snapshot], registry)
+            if binding is not None and startup_attempt is not None:
+                startup_attempt.scope_incumbent = live
     if binding is None:
         if pending:
             raise bootstrap.RecoveryRequired("recovery_scope_uncertain")
@@ -1185,6 +1383,9 @@ def _acquire_storage(
         for selected in (path, *related_paths):
             attempt.check(selected)
 
+    if attempt.operation is not None:
+        for selected in (path, *related_paths):
+            _check_operation(attempt.operation, selected)
     execution_selection = _execution_selection_for(path)
     if execution_selection[1:3] != (root, selector):
         raise bootstrap.RecoveryRequired("execution_selection_changed")
@@ -1199,7 +1400,7 @@ def _acquire_storage(
     before = None
     if _EVIDENCE_REUSE and type(attempt) is _Acquisition and os.name != "nt":
         reused = _reuse_evidence(
-            root, selector, path, related_paths, check, execution_selection
+            root, selector, path, related_paths, check, execution_selection, attempt
         )
         if reused is not None:
             return reused
@@ -1220,32 +1421,39 @@ def _acquire_storage(
             # each owner path to its verified scope. Native unavailability is not a
             # conflict with an unrelated operation and never qualifies maintenance.
             _scope(
-                root, selector, lexical_path(path) if path is not None else None,
+                root,
+                selector,
+                lexical_path(path) if path is not None else None,
                 related_paths=related_paths,
             )
             allowed, reason = bootstrap.startup_permission(selector, root)
             if not allowed:
                 raise bootstrap.RecoveryRequired(reason)
+            selection = _execution_selection_for(path)
             with _lock:
                 check()
+                if selection != execution_selection:
+                    raise bootstrap.RecoveryRequired("execution_selection_changed")
                 token = StorageLease(None)
                 token._execution_selection = execution_selection
                 return token
         # Opening existing authority can wait on the registry. Retiring unrelated
         # owners must remain possible while that or a native gate is contended.
         authority = admission_authority(root)
+    names = _scope(
+        root,
+        selector,
+        lexical_path(path) if path is not None else None,
+        startup_attempt=attempt,
+        authority=authority,
+        related_paths=related_paths,
+    )
     with _lock:
         check()
-        names = _scope(
-            root,
-            selector,
-            lexical_path(path) if path is not None else None,
-            startup_attempt=attempt,
-            authority=authority,
-            related_paths=related_paths,
-        )
         key = (os.getpid(), str(root))
         hold = _holds.get(key)
+        if attempt.scope_incumbent is not None and hold is not attempt.scope_incumbent:
+            raise bootstrap.RecoveryRequired("storage_scope_changed")
         if hold is not None and names != hold.names:
             raise bootstrap.RecoveryRequired("close_owners_before_scope_change")
         if hold is None:
@@ -1264,28 +1472,59 @@ def _acquire_storage(
             raise bootstrap.RecoveryRequired("storage_admission_unavailable")
         # Enrollment races an unbound selection. Revalidate after acquiring its
         # lease; never enter on a stale pre-enrollment decision.
+        allowed, reason = bootstrap.startup_permission(selector, root)
+        if not allowed:
+            raise bootstrap.RecoveryRequired(reason)
+        current_names = _scope(
+            root,
+            selector,
+            lexical_path(path) if path is not None else None,
+            startup_attempt=attempt,
+            authority=authority,
+            related_paths=related_paths,
+        )
+        with hold.authority._current_hold(
+            hold.names,
+            cancel=attempt.cancel,
+            descendant=attempt.operation is not None,
+        ):
+            pass
+        selection = _execution_selection_for(path)
         with _lock:
             check()
-            allowed, reason = bootstrap.startup_permission(selector, root)
-            if not allowed:
-                raise bootstrap.RecoveryRequired(reason)
             if (
-                _scope(
-                    root,
-                    selector,
-                    lexical_path(path) if path is not None else None,
-                    startup_attempt=attempt,
-                    authority=authority,
-                    related_paths=related_paths,
+                current_names != names
+                or _holds.get(key) is not hold
+                or not _hold_serving(hold)
+                or (
+                    attempt.scope_incumbent is not None
+                    and attempt.scope_incumbent is not hold
                 )
-                != names
             ):
                 raise bootstrap.RecoveryRequired("storage_scope_changed")
+            if selection != execution_selection:
+                raise bootstrap.RecoveryRequired("execution_selection_changed")
         if before is not None:
             _note_evidence(
-                hold, root, selector, path, related_paths, names,
-                attempt.scope_roots, before,
+                hold,
+                root,
+                selector,
+                path,
+                related_paths,
+                names,
+                attempt.scope_roots,
+                before,
             )
+        if attempt.operation is not None:
+            for selected_path in (path, *related_paths):
+                _check_operation(attempt.operation, selected_path)
+        selection = _execution_selection_for(path)
+        with _lock:
+            check()
+            if selection != execution_selection:
+                raise bootstrap.RecoveryRequired("execution_selection_changed")
+            if _holds.get(key) is not hold or not _hold_serving(hold):
+                raise bootstrap.RecoveryRequired("storage_scope_changed")
         return token
     except BaseException:
         token.close()
