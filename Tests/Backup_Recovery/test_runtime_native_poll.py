@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -207,25 +208,31 @@ async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
 async def test_the_unpatched_monitor_probes_about_once_a_second(monkeypatch):
     """Integration: the real monitor, real sleeps and the real native probe.
 
-    Only a counter wraps the probe. At the old 10 Hz, this ~3 s window saw
-    about 30 probes (Qodo, #2920).
+    Only a timestamp wraps the probe. The assertion is on the spacing of
+    three probes, not a count in a fixed window, so a slow runner (which only
+    widens the gaps) cannot fail it; the old 10 Hz loop spaced them ~0.1 s
+    apart (Qodo, #2920).
 
     Args:
-        monkeypatch: Wraps the native pause probe with a call counter.
+        monkeypatch: Wraps the native pause probe with a timestamp recorder.
     """
-    calls = []
+    started: list[float] = []
     real_probe = storage._local_pause_requested
 
-    def counted():
-        calls.append(None)
+    def stamped():
+        started.append(time.monotonic())
         return real_probe()
 
-    monkeypatch.setattr(storage, "_local_pause_requested", counted)
+    monkeypatch.setattr(storage, "_local_pause_requested", stamped)
     monitoring = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
     try:
-        await asyncio.sleep(3.2)
+        deadline = time.monotonic() + 30
+        while len(started) < 3 and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
     finally:
         monitoring.cancel()
         await asyncio.gather(monitoring, return_exceptions=True)
 
-    assert 2 <= len(calls) <= 4, f"{len(calls)} probes in 3.2 s"
+    assert len(started) >= 3, f"only {len(started)} probes in 30 s"
+    gaps = [later - earlier for earlier, later in zip(started, started[1:])]
+    assert min(gaps) >= 0.5, f"probes {gaps} s apart: faster than once a second"
