@@ -923,8 +923,7 @@ def _library_note_editor_exit_veto_message(kind: NoteFlushOutcomeKind) -> str:
         return "Can't leave yet — the save failed; press Save to retry or Discard."
     if kind is NoteFlushOutcomeKind.CONFLICTED:
         return (
-            "Can't leave yet — this note changed elsewhere; "
-            "choose Overwrite or Reload."
+            "Can't leave yet — this note changed elsewhere; choose Overwrite or Reload."
         )
     if kind is NoteFlushOutcomeKind.BLOCKED:
         return "Can't leave yet — another action is already in progress; wait for it to finish."
@@ -1037,9 +1036,7 @@ class LibraryScreen(BaseAppScreen):
         # binding sees it, so they still type normally in the filter and in
         # the rail's search box.
         Binding("g", "library_notes_focus_folders", "Go to folder", show=False),
-        Binding(
-            "e", "library_notes_export_selected", "Export selected", show=False
-        ),
+        Binding("e", "library_notes_export_selected", "Export selected", show=False),
         ("escape", "library_notes_escape", "Back"),
         # task-424: skill-editor accelerators. ``check_action`` gates both
         # to the open skill editor, so the keys pass through untouched
@@ -2380,6 +2377,7 @@ class LibraryScreen(BaseAppScreen):
         # cluster folds is a static literal or a pure no-argument factory call.
         self._notes_state = LibraryNotesState()
         if file_notes_workspace_factory is None:
+
             def build_file_notes_workspace() -> LibraryFileNotesWorkspace:
                 return LibraryFileNotesWorkspace(
                     session_owner=app_instance.file_notes_session_owner,
@@ -2387,7 +2385,9 @@ class LibraryScreen(BaseAppScreen):
 
             self._notes_state.file_notes_workspace_factory = build_file_notes_workspace
         else:
-            self._notes_state.file_notes_workspace_factory = file_notes_workspace_factory
+            self._notes_state.file_notes_workspace_factory = (
+                file_notes_workspace_factory
+            )
         self._local_source_records: dict[str, tuple[Mapping[str, Any], ...]] = {
             "notes": (),
             "media": (),
@@ -2528,9 +2528,7 @@ class LibraryScreen(BaseAppScreen):
                 )
             ),
             run_library_service_call=(
-                lambda *args, **kwargs: self._run_library_service_call(
-                    *args, **kwargs
-                )
+                lambda *args, **kwargs: self._run_library_service_call(*args, **kwargs)
             ),
             conversation_records=lambda: self._conversation_records(),
             conversation_record_id=(
@@ -2546,21 +2544,29 @@ class LibraryScreen(BaseAppScreen):
             library_conversation_workspace_block=(
                 lambda: self._library_conversation_workspace_block()
             ),
-            visible_link_receipt=lambda: self._library_conversation_visible_link_receipt(),
+            visible_link_receipt=lambda: (
+                self._library_conversation_visible_link_receipt()
+            ),
         )
         self._conversations_controller = LibraryConversationsController(
             self,
             conversations_state_accessor=lambda: self._conversations_state,
             ensure_reader_selection=(
-                lambda: self._conversation_reader_controller._ensure_library_conversation_reader_selection()
+                lambda: (
+                    self._conversation_reader_controller._ensure_library_conversation_reader_selection()
+                )
             ),
             start_reader_selection=(
-                lambda *a, **k: self._conversation_reader_controller._start_library_conversation_reader_selection(
-                    *a, **k
+                lambda *a, **k: (
+                    self._conversation_reader_controller._start_library_conversation_reader_selection(
+                        *a, **k
+                    )
                 )
             ),
             sync_reader=(
-                lambda: self._conversation_reader_controller._sync_library_conversation_reader()
+                lambda: (
+                    self._conversation_reader_controller._sync_library_conversation_reader()
+                )
             ),
             selected_conversation_id_accessor=lambda: self._selected_conversation_id,
             set_selected_conversation_id=(
@@ -2601,9 +2607,7 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._open_library_item_by_id(*a, **k)
             ),
             run_library_service_call=(
-                lambda *args, **kwargs: self._run_library_service_call(
-                    *args, **kwargs
-                )
+                lambda *args, **kwargs: self._run_library_service_call(*args, **kwargs)
             ),
             source_record_id=lambda record: self._source_record_id(record),
             source_title=(
@@ -2758,9 +2762,7 @@ class LibraryScreen(BaseAppScreen):
                 lambda value: setattr(self, "_library_skills_browse_controller", value)
             ),
             run_library_service_call=(
-                lambda *args, **kwargs: self._run_library_service_call(
-                    *args, **kwargs
-                )
+                lambda *args, **kwargs: self._run_library_service_call(*args, **kwargs)
             ),
             sanitize_media_field=lambda *a, **k: self._sanitize_media_field(*a, **k),
             sanitize_note_content=(
@@ -2780,7 +2782,9 @@ class LibraryScreen(BaseAppScreen):
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
             ),
-            select_library_rail_row=lambda row_id: self._select_library_rail_row(row_id),
+            select_library_rail_row=lambda row_id: self._select_library_rail_row(
+                row_id
+            ),
             library_selected_row_id_accessor=lambda: self._library_selected_row_id,
             set_library_selected_row_id=(
                 lambda value: setattr(self, "_library_selected_row_id", value)
@@ -2851,9 +2855,7 @@ class LibraryScreen(BaseAppScreen):
             reset_library_skill_editor_state=(
                 lambda *a, **k: self._reset_library_skill_editor_state(*a, **k)
             ),
-            start_library_skills_import=(
-                lambda: self._start_library_skills_import()
-            ),
+            start_library_skills_import=(lambda: self._start_library_skills_import()),
         )
         self._ingest_controller = LibraryIngestController(
             self,
@@ -2886,9 +2888,7 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._server_binding_is_shipped_placeholder(*a, **k)
             ),
             sync_library_emergency_guard_presentation=(
-                lambda *a, **k: self._sync_library_emergency_guard_presentation(
-                    *a, **k
-                )
+                lambda *a, **k: self._sync_library_emergency_guard_presentation(*a, **k)
             ),
             sync_library_landing_lifecycle_presentation=(
                 lambda *a, **k: self._sync_library_landing_lifecycle_presentation(
@@ -2923,9 +2923,7 @@ class LibraryScreen(BaseAppScreen):
             set_library_canvas_resync_pending=(
                 lambda value: setattr(self, "_library_canvas_resync_pending", value)
             ),
-            library_screen_suspended_accessor=(
-                lambda: self._library_screen_suspended
-            ),
+            library_screen_suspended_accessor=(lambda: self._library_screen_suspended),
             library_ingest_analyze_outcomes_accessor=(
                 lambda: self._library_ingest_analyze_outcomes
             ),
@@ -2933,16 +2931,12 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._library_ingest_suspended_activity
             ),
             set_library_ingest_suspended_activity=(
-                lambda value: setattr(
-                    self, "_library_ingest_suspended_activity", value
-                )
+                lambda value: setattr(self, "_library_ingest_suspended_activity", value)
             ),
             build_ingest_options_snapshot=(
                 lambda *a, **k: self._build_ingest_options_snapshot(*a, **k)
             ),
-            build_library_ingest_state=(
-                lambda: self._build_library_ingest_state()
-            ),
+            build_library_ingest_state=(lambda: self._build_library_ingest_state()),
             do_submit_ingest=lambda *a, **k: self._do_submit_ingest(*a, **k),
             library_ingest_browse_location=(
                 lambda *a, **k: self._library_ingest_browse_location(*a, **k)
@@ -3009,9 +3003,7 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
             safe_text=lambda *a, **k: self._safe_text(*a, **k),
-            sanitize_media_field=(
-                lambda *a, **k: self._sanitize_media_field(*a, **k)
-            ),
+            sanitize_media_field=(lambda *a, **k: self._sanitize_media_field(*a, **k)),
             sanitize_note_content=(
                 lambda *a, **k: self._sanitize_note_content(*a, **k)
             ),
@@ -3117,7 +3109,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._library_notes_programmatic_focus_target
             ),
             set_library_notes_programmatic_focus_target=(
-                lambda value: setattr(self, "_library_notes_programmatic_focus_target", value)
+                lambda value: setattr(
+                    self, "_library_notes_programmatic_focus_target", value
+                )
             ),
             library_notes_restoring_focus_accessor=(
                 lambda: self._library_notes_restoring_focus
@@ -3125,9 +3119,7 @@ class LibraryScreen(BaseAppScreen):
             set_library_notes_restoring_focus=(
                 lambda value: setattr(self, "_library_notes_restoring_focus", value)
             ),
-            library_selected_row_id_accessor=(
-                lambda: self._library_selected_row_id
-            ),
+            library_selected_row_id_accessor=(lambda: self._library_selected_row_id),
             set_library_selected_row_id=(
                 lambda value: setattr(self, "_library_selected_row_id", value)
             ),
@@ -3181,25 +3173,31 @@ class LibraryScreen(BaseAppScreen):
             review_set_picker_worker=(
                 lambda *a, **k: self._review_set_picker_worker(*a, **k)
             ),
-            review_these_worker=(
-                lambda *a, **k: self._review_these_worker(*a, **k)
-            ),
+            review_these_worker=(lambda *a, **k: self._review_these_worker(*a, **k)),
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
             safe_text=lambda *a, **k: self._safe_text(*a, **k),
             source_record_id=lambda *a, **k: self._source_record_id(*a, **k),
             sync_library_conversation_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_conversation_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: (
+                    self._sync_library_conversation_reader_layout_from_shell(*a, **k)
+                )
             ),
             sync_library_notes_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(
+                    *a, **k
+                )
             ),
             sync_library_prompts_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_prompts_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: self._sync_library_prompts_reader_layout_from_shell(
+                    *a, **k
+                )
             ),
             sync_library_skills_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_skills_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: self._sync_library_skills_reader_layout_from_shell(
+                    *a, **k
+                )
             ),
             walk_active_review_set=(
                 lambda *a, **k: self._walk_active_review_set(*a, **k)
@@ -3225,7 +3223,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._capture_library_media_loaded_progress(*a, **k)
             ),
             clear_library_media_selection_for_scope_change=(
-                lambda *a, **k: self._clear_library_media_selection_for_scope_change(*a, **k)
+                lambda *a, **k: self._clear_library_media_selection_for_scope_change(
+                    *a, **k
+                )
             ),
             close_library_media_find=(
                 lambda *a, **k: self._close_library_media_find(*a, **k)
@@ -3258,7 +3258,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._library_media_content_signature(*a, **k)
             ),
             library_media_focus_target_matches_receipt=(
-                lambda *a, **k: self._library_media_focus_target_matches_receipt(*a, **k)
+                lambda *a, **k: self._library_media_focus_target_matches_receipt(
+                    *a, **k
+                )
             ),
             library_media_layout_signature=(
                 lambda *a, **k: self._library_media_layout_signature(*a, **k)
@@ -3279,7 +3281,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._library_media_settlement_tree(*a, **k)
             ),
             library_media_trash_action_disabled_reason=(
-                lambda *a, **k: self._library_media_trash_action_disabled_reason(*a, **k)
+                lambda *a, **k: self._library_media_trash_action_disabled_reason(
+                    *a, **k
+                )
             ),
             library_media_trash_focus_selectors=(
                 lambda *a, **k: self._library_media_trash_focus_selectors(*a, **k)
@@ -3297,10 +3301,14 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._open_selected_media_handoff(*a, **k)
             ),
             queue_after_library_media_viewer_recompose=(
-                lambda *a, **k: self._queue_after_library_media_viewer_recompose(*a, **k)
+                lambda *a, **k: self._queue_after_library_media_viewer_recompose(
+                    *a, **k
+                )
             ),
             reconcile_library_media_stage_presentation=(
-                lambda *a, **k: self._reconcile_library_media_stage_presentation(*a, **k)
+                lambda *a, **k: self._reconcile_library_media_stage_presentation(
+                    *a, **k
+                )
             ),
             refresh_library_media_detail=(
                 lambda *a, **k: self._refresh_library_media_detail(*a, **k)
@@ -3315,11 +3323,11 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._restore_library_media_loaded_progress(*a, **k)
             ),
             restore_library_media_reader_width_on_open=(
-                lambda *a, **k: self._restore_library_media_reader_width_on_open(*a, **k)
+                lambda *a, **k: self._restore_library_media_reader_width_on_open(
+                    *a, **k
+                )
             ),
-            sanitize_media_field=(
-                lambda *a, **k: self._sanitize_media_field(*a, **k)
-            ),
+            sanitize_media_field=(lambda *a, **k: self._sanitize_media_field(*a, **k)),
             save_library_media_analysis=(
                 lambda *a, **k: self._save_library_media_analysis(*a, **k)
             ),
@@ -3330,7 +3338,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._sync_library_media_browse_state(*a, **k)
             ),
             sync_library_media_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_media_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: self._sync_library_media_reader_layout_from_shell(
+                    *a, **k
+                )
             ),
             sync_library_media_surfaces_or_recompose=(
                 lambda *a, **k: self._sync_library_media_surfaces_or_recompose(*a, **k)
@@ -3352,39 +3362,21 @@ class LibraryScreen(BaseAppScreen):
             library_canvas_projection_depth_accessor=(
                 lambda: self._library_canvas_projection_depth
             ),
-            library_lifecycle_accessor=(
-                lambda: self._library_lifecycle
-            ),
-            library_note_dirty_accessor=(
-                lambda: self._library_note_dirty
-            ),
-            library_note_version_accessor=(
-                lambda: self._library_note_version
-            ),
+            library_lifecycle_accessor=(lambda: self._library_lifecycle),
+            library_note_dirty_accessor=(lambda: self._library_note_dirty),
+            library_note_version_accessor=(lambda: self._library_note_version),
             library_onboarding_all_empty_accessor=(
                 lambda: self._library_onboarding_all_empty
             ),
-            library_rail_collapsed_accessor=(
-                lambda: self._library_rail_collapsed
-            ),
+            library_rail_collapsed_accessor=(lambda: self._library_rail_collapsed),
             library_snapshot_state_generation_accessor=(
                 lambda: self._library_snapshot_state_generation
             ),
-            local_source_counts_accessor=(
-                lambda: self._local_source_counts
-            ),
-            local_source_records_accessor=(
-                lambda: self._local_source_records
-            ),
-            media_state_accessor=(
-                lambda: self._media_state
-            ),
-            prompts_state_accessor=(
-                lambda: self._prompts_state
-            ),
-            rag_search_state_accessor=(
-                lambda: self._rag_search_state
-            ),
+            local_source_counts_accessor=(lambda: self._local_source_counts),
+            local_source_records_accessor=(lambda: self._local_source_records),
+            media_state_accessor=(lambda: self._media_state),
+            prompts_state_accessor=(lambda: self._prompts_state),
+            rag_search_state_accessor=(lambda: self._rag_search_state),
             # -- shared shell state this cluster also WRITES.
             library_canvas_resync_pending_accessor=(
                 lambda: self._library_canvas_resync_pending
@@ -3396,13 +3388,17 @@ class LibraryScreen(BaseAppScreen):
                 lambda: self._library_navigation_context_generation
             ),
             set_library_navigation_context_generation=(
-                lambda value: setattr(self, "_library_navigation_context_generation", value)
+                lambda value: setattr(
+                    self, "_library_navigation_context_generation", value
+                )
             ),
             library_notes_programmatic_focus_target_accessor=(
                 lambda: self._library_notes_programmatic_focus_target
             ),
             set_library_notes_programmatic_focus_target=(
-                lambda value: setattr(self, "_library_notes_programmatic_focus_target", value)
+                lambda value: setattr(
+                    self, "_library_notes_programmatic_focus_target", value
+                )
             ),
             library_notes_restoring_focus_accessor=(
                 lambda: self._library_notes_restoring_focus
@@ -3410,9 +3406,7 @@ class LibraryScreen(BaseAppScreen):
             set_library_notes_restoring_focus=(
                 lambda value: setattr(self, "_library_notes_restoring_focus", value)
             ),
-            library_selected_row_id_accessor=(
-                lambda: self._library_selected_row_id
-            ),
+            library_selected_row_id_accessor=(lambda: self._library_selected_row_id),
             set_library_selected_row_id=(
                 lambda value: setattr(self, "_library_selected_row_id", value)
             ),
@@ -3426,9 +3420,7 @@ class LibraryScreen(BaseAppScreen):
             library_note_import_controller_accessor=(
                 lambda: self._library_note_import_controller
             ),
-            library_note_session_accessor=(
-                lambda: self._library_note_session
-            ),
+            library_note_session_accessor=(lambda: self._library_note_session),
             library_notes_sync_controller_accessor=(
                 lambda: self._library_notes_sync_controller
             ),
@@ -3438,9 +3430,7 @@ class LibraryScreen(BaseAppScreen):
             acknowledge_library_destination_change=(
                 lambda *a, **k: self._acknowledge_library_destination_change(*a, **k)
             ),
-            active_library_rail=(
-                lambda *a, **k: self._active_library_rail(*a, **k)
-            ),
+            active_library_rail=(lambda *a, **k: self._active_library_rail(*a, **k)),
             advance_library_stage_interaction=(
                 lambda *a, **k: self._advance_library_stage_interaction(*a, **k)
             ),
@@ -3451,7 +3441,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._apply_library_notes_stage_visibility(*a, **k)
             ),
             apply_library_notes_stage_visibility_for_resize=(
-                lambda *a, **k: self._apply_library_notes_stage_visibility_for_resize(*a, **k)
+                lambda *a, **k: self._apply_library_notes_stage_visibility_for_resize(
+                    *a, **k
+                )
             ),
             arm_library_list_entry_focus=(
                 lambda *a, **k: self._arm_library_list_entry_focus(*a, **k)
@@ -3472,7 +3464,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._build_library_shell_input(*a, **k)
             ),
             capture_library_notes_browse_return_receipt=(
-                lambda *a, **k: self._capture_library_notes_browse_return_receipt(*a, **k)
+                lambda *a, **k: self._capture_library_notes_browse_return_receipt(
+                    *a, **k
+                )
             ),
             capture_library_notes_focus_identity=(
                 lambda *a, **k: self._capture_library_notes_focus_identity(*a, **k)
@@ -3483,9 +3477,7 @@ class LibraryScreen(BaseAppScreen):
             compose_workspaces_rail_body=(
                 lambda *a, **k: self._compose_workspaces_rail_body(*a, **k)
             ),
-            create_library_note=(
-                lambda *a, **k: self._create_library_note(*a, **k)
-            ),
+            create_library_note=(lambda *a, **k: self._create_library_note(*a, **k)),
             delete_library_note_claimed=(
                 lambda *a, **k: self._delete_library_note_claimed(*a, **k)
             ),
@@ -3495,9 +3487,7 @@ class LibraryScreen(BaseAppScreen):
             exit_library_note_editor_guarded=(
                 lambda *a, **k: self._exit_library_note_editor_guarded(*a, **k)
             ),
-            file_notes_active=(
-                lambda *a, **k: self._file_notes_active(*a, **k)
-            ),
+            file_notes_active=(lambda *a, **k: self._file_notes_active(*a, **k)),
             flush_library_note_save=(
                 lambda *a, **k: self._flush_library_note_save(*a, **k)
             ),
@@ -3505,7 +3495,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._focus_library_control(*a, **k)
             ),
             hide_library_adaptive_reader_rail_collapse=(
-                lambda *a, **k: self._hide_library_adaptive_reader_rail_collapse(*a, **k)
+                lambda *a, **k: self._hide_library_adaptive_reader_rail_collapse(
+                    *a, **k
+                )
             ),
             invalidate_library_workspace_depth_state=(
                 lambda *a, **k: self._invalidate_library_workspace_depth_state(*a, **k)
@@ -3516,12 +3508,8 @@ class LibraryScreen(BaseAppScreen):
             library_entry_route_key=(
                 lambda *a, **k: self._library_entry_route_key(*a, **k)
             ),
-            library_header_line=(
-                lambda *a, **k: self._library_header_line(*a, **k)
-            ),
-            library_layout_ref=(
-                lambda *a, **k: self._library_layout_ref(*a, **k)
-            ),
+            library_header_line=(lambda *a, **k: self._library_header_line(*a, **k)),
+            library_layout_ref=(lambda *a, **k: self._library_layout_ref(*a, **k)),
             library_note_keywords_from_input=(
                 lambda *a, **k: self._library_note_keywords_from_input(*a, **k)
             ),
@@ -3607,9 +3595,7 @@ class LibraryScreen(BaseAppScreen):
             run_library_service_call=(
                 lambda *a, **k: self._run_library_service_call(*a, **k)
             ),
-            save_library_note=(
-                lambda *a, **k: self._save_library_note(*a, **k)
-            ),
+            save_library_note=(lambda *a, **k: self._save_library_note(*a, **k)),
             schedule_library_note_autosave=(
                 lambda *a, **k: self._schedule_library_note_autosave(*a, **k)
             ),
@@ -3617,11 +3603,11 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._select_library_rail_row(*a, **k)
             ),
             set_library_destination_with_conversation_fence=(
-                lambda *a, **k: self._set_library_destination_with_conversation_fence(*a, **k)
+                lambda *a, **k: self._set_library_destination_with_conversation_fence(
+                    *a, **k
+                )
             ),
-            source_record_id=(
-                lambda *a, **k: self._source_record_id(*a, **k)
-            ),
+            source_record_id=(lambda *a, **k: self._source_record_id(*a, **k)),
             supersede_library_notes_navigation=(
                 lambda *a, **k: self._supersede_library_notes_navigation(*a, **k)
             ),
@@ -3629,7 +3615,9 @@ class LibraryScreen(BaseAppScreen):
                 lambda *a, **k: self._sync_library_ingest_rail_for_width(*a, **k)
             ),
             sync_library_notes_reader_layout_from_shell=(
-                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(*a, **k)
+                lambda *a, **k: self._sync_library_notes_reader_layout_from_shell(
+                    *a, **k
+                )
             ),
             sync_library_ordinary_rail_width_contract=(
                 lambda *a, **k: self._sync_library_ordinary_rail_width_contract(*a, **k)
@@ -4805,9 +4793,7 @@ class LibraryScreen(BaseAppScreen):
             # AC#2: "F6 next pane" goes LAST so AppFooterStatus's
             # retain-the-prefix degradation drops it before any canvas verb.
             f6_pairs = tuple(pair for pair in kept if pair[0] == "F6")
-            rest = tuple(
-                pair for pair in kept if pair[0] not in ("F6", "esc")
-            )
+            rest = tuple(pair for pair in kept if pair[0] not in ("F6", "esc"))
             # ...and on a surface the narrow-stage stand-down above does NOT
             # cover -- ``_library_narrow_stage_return_active`` yields whenever
             # an earlier Escape action owns the key, and its docstring names
@@ -4935,10 +4921,14 @@ class LibraryScreen(BaseAppScreen):
     def _library_note_presentation_state(self) -> LibraryNotePresentationState:
         return self._notes_controller._library_note_presentation_state()
 
-    def _library_notes_active_region(self) -> Literal['navigator', 'editor', 'context', '']:
+    def _library_notes_active_region(
+        self,
+    ) -> Literal["navigator", "editor", "context", ""]:
         return self._notes_controller._library_notes_active_region()
 
-    def _library_notes_operation_for_active_region(self) -> LibraryNotesOperationState | None:
+    def _library_notes_operation_for_active_region(
+        self,
+    ) -> LibraryNotesOperationState | None:
         return self._notes_controller._library_notes_operation_for_active_region()
 
     def _library_note_import_execution_active(self) -> bool:
@@ -4947,11 +4937,27 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_mutation_fenced(self) -> bool:
         return self._notes_controller._library_notes_mutation_fenced()
 
-    def _begin_library_notes_operation(self, kind: Literal['import', 'export', 'copy', 'console']) -> LibraryNotesOperationState | None:
+    def _begin_library_notes_operation(
+        self, kind: Literal["import", "export", "copy", "console"]
+    ) -> LibraryNotesOperationState | None:
         return self._notes_controller._begin_library_notes_operation(kind)
 
-    def _finish_library_notes_operation(self, operation: LibraryNotesOperationState, *, success: bool, completion_next_action: str='', failure_next_action: str='try again', failure_line: str='') -> bool:
-        return self._notes_controller._finish_library_notes_operation(operation, success=success, completion_next_action=completion_next_action, failure_next_action=failure_next_action, failure_line=failure_line)
+    def _finish_library_notes_operation(
+        self,
+        operation: LibraryNotesOperationState,
+        *,
+        success: bool,
+        completion_next_action: str = "",
+        failure_next_action: str = "try again",
+        failure_line: str = "",
+    ) -> bool:
+        return self._notes_controller._finish_library_notes_operation(
+            operation,
+            success=success,
+            completion_next_action=completion_next_action,
+            failure_next_action=failure_next_action,
+            failure_line=failure_line,
+        )
 
     def _apply_library_note_presentation_state(self) -> None:
         return self._notes_controller._apply_library_note_presentation_state()
@@ -4975,12 +4981,25 @@ class LibraryScreen(BaseAppScreen):
             and self._notes_state.view == "editor"
         )
 
-    def _library_notes_focus_region(self) -> Literal['', 'navigator', 'editor', 'preview', 'context', 'create', 'lasting_add', 'lasting_roots', 'import']:
+    def _library_notes_focus_region(
+        self,
+    ) -> Literal[
+        "",
+        "navigator",
+        "editor",
+        "preview",
+        "context",
+        "create",
+        "lasting_add",
+        "lasting_roots",
+        "import",
+    ]:
         return self._notes_controller._library_notes_focus_region()
 
     @staticmethod
     def _library_notes_widget_is_within(widget: Widget, ancestor: Widget) -> bool:
         from ..Library_Modules.library_notes_controller import LibraryNotesController
+
         return LibraryNotesController._library_notes_widget_is_within(widget, ancestor)
 
     def _active_library_rail(self) -> LibraryRail | None:
@@ -4997,13 +5016,19 @@ class LibraryScreen(BaseAppScreen):
     def _remember_library_notes_authority_focus(self, focused: Widget | None) -> None:
         return self._notes_controller._remember_library_notes_authority_focus(focused)
 
-    def _evacuate_library_notes_authority_focus(self, authority: Literal['database', 'files']) -> None:
+    def _evacuate_library_notes_authority_focus(
+        self, authority: Literal["database", "files"]
+    ) -> None:
         return self._notes_controller._evacuate_library_notes_authority_focus(authority)
 
-    def _restore_library_notes_authority_focus(self, authority: Literal['database', 'files']) -> bool:
+    def _restore_library_notes_authority_focus(
+        self, authority: Literal["database", "files"]
+    ) -> bool:
         return self._notes_controller._restore_library_notes_authority_focus(authority)
 
-    def _library_notes_focus_stage(self, focused: Widget | None) -> Literal['rail', 'notes']:
+    def _library_notes_focus_stage(
+        self, focused: Widget | None
+    ) -> Literal["rail", "notes"]:
         return self._notes_controller._library_notes_focus_stage(focused)
 
     def _library_notes_semantic_role(self, focused: Widget | None) -> str:
@@ -5210,7 +5235,9 @@ class LibraryScreen(BaseAppScreen):
             scroll_offset=scroll_offset,
         )
 
-    def _capture_library_notes_recompose_state(self) -> _LibraryNotesRecomposeCapture | None:
+    def _capture_library_notes_recompose_state(
+        self,
+    ) -> _LibraryNotesRecomposeCapture | None:
         return self._notes_controller._capture_library_notes_recompose_state()
 
     def _capture_library_notes_browse_return_receipt(
@@ -5316,8 +5343,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Restore live semantic state or reload the receipt's exact ranges."""
         if (
-            receipt.lifecycle_generation
-            != self._notes_state.tree_lifecycle_generation
+            receipt.lifecycle_generation != self._notes_state.tree_lifecycle_generation
             or receipt.topology_epoch != self._notes_state.tree_topology_epoch
         ):
             self.run_worker(
@@ -5491,14 +5517,26 @@ class LibraryScreen(BaseAppScreen):
     def _commit_library_note_widgets_before_recompose(self) -> None:
         return self._notes_controller._commit_library_note_widgets_before_recompose()
 
-    def _library_notes_role_target(self, identity: LibraryNotesFocusIdentity) -> Widget | None:
+    def _library_notes_role_target(
+        self, identity: LibraryNotesFocusIdentity
+    ) -> Widget | None:
         return self._notes_controller._library_notes_role_target(identity)
 
-    def _restore_library_notes_focus_identity(self, identity: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> bool:
-        return self._notes_controller._restore_library_notes_focus_identity(identity, guard)
+    def _restore_library_notes_focus_identity(
+        self,
+        identity: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> bool:
+        return self._notes_controller._restore_library_notes_focus_identity(
+            identity, guard
+        )
 
-    def _restore_library_notes_after_targeted_sync(self, identity: LibraryNotesFocusIdentity) -> None:
-        return self._notes_controller._restore_library_notes_after_targeted_sync(identity)
+    def _restore_library_notes_after_targeted_sync(
+        self, identity: LibraryNotesFocusIdentity
+    ) -> None:
+        return self._notes_controller._restore_library_notes_after_targeted_sync(
+            identity
+        )
 
     def _library_notes_restore_guard_is_current(
         self, guard: _LibraryNotesRestoreGuard | None
@@ -5509,13 +5547,11 @@ class LibraryScreen(BaseAppScreen):
         return bool(
             (
                 guard.recompose_generation is None
-                or guard.recompose_generation
-                == self._notes_state.recompose_generation
+                or guard.recompose_generation == self._notes_state.recompose_generation
             )
             and (
                 guard.scroll_generation is None
-                or guard.scroll_generation
-                == self._notes_state.scroll_intent_generation
+                or guard.scroll_generation == self._notes_state.scroll_intent_generation
             )
             and (
                 guard.focus_generation is None
@@ -5535,9 +5571,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.navigation_focus_intent = False
         branches = getattr(self._notes_state, "tree_branches", {})
         generations = getattr(self._notes_state, "tree_request_generations", {})
-        navigation_requests = getattr(
-            self._notes_state, "tree_navigation_requests", {}
-        )
+        navigation_requests = getattr(self._notes_state, "tree_navigation_requests", {})
         for key in tuple(navigation_requests):
             state = branches.get(key)
             if state is None:
@@ -5558,10 +5592,7 @@ class LibraryScreen(BaseAppScreen):
                 error="",
             )
         navigation_requests.clear()
-        if (
-            getattr(self._notes_state, "filter_navigation_generation", None)
-            is not None
-        ):
+        if getattr(self._notes_state, "filter_navigation_generation", None) is not None:
             state = getattr(self._notes_state, "tree_filter_state", None)
             if state is not None and state.loading:
                 self._notes_state.filter_generation = (
@@ -5592,7 +5623,9 @@ class LibraryScreen(BaseAppScreen):
     def _release_library_notes_focus_after_snapshot(self) -> None:
         return self._notes_controller._release_library_notes_focus_after_snapshot()
 
-    def _compact_library_notes_stage(self, identity: LibraryNotesFocusIdentity) -> Literal['rail', 'notes']:
+    def _compact_library_notes_stage(
+        self, identity: LibraryNotesFocusIdentity
+    ) -> Literal["rail", "notes"]:
         return self._notes_controller._compact_library_notes_stage(identity)
 
     def _library_notes_compact_stage_applies(self) -> bool:
@@ -5601,7 +5634,9 @@ class LibraryScreen(BaseAppScreen):
 
     def _library_ordinary_route_active(self) -> bool:
         """Return whether the retained two-pane ordinary shell owns the route."""
-        return not self._library_selected_row_id.startswith("artifacts-") and self._library_selected_row_id not in {
+        return not self._library_selected_row_id.startswith(
+            "artifacts-"
+        ) and self._library_selected_row_id not in {
             LIBRARY_ROW_BROWSE_MEDIA,
             LIBRARY_ROW_BROWSE_CONVERSATIONS,
             LIBRARY_ROW_BROWSE_NOTES,
@@ -6010,8 +6045,12 @@ class LibraryScreen(BaseAppScreen):
     def _adopt_library_media_row_owner(self, owner: LibraryMediaRowScroll) -> bool:
         return self._media_controller._adopt_library_media_row_owner(owner)
 
-    def _advance_library_media_presentation_epoch(self, owner: LibraryMediaRowScroll | None, *, rearm: bool=True) -> None:
-        return self._media_controller._advance_library_media_presentation_epoch(owner, rearm=rearm)
+    def _advance_library_media_presentation_epoch(
+        self, owner: LibraryMediaRowScroll | None, *, rearm: bool = True
+    ) -> None:
+        return self._media_controller._advance_library_media_presentation_epoch(
+            owner, rearm=rearm
+        )
 
     def _library_media_return_candidate(
         self,
@@ -6026,20 +6065,41 @@ class LibraryScreen(BaseAppScreen):
             and receipt.scroll_offset[1] >= 0
         )
 
-    def _library_media_exact_return_candidate(self, receipt: _LibraryMediaReturnReceipt | None) -> bool:
+    def _library_media_exact_return_candidate(
+        self, receipt: _LibraryMediaReturnReceipt | None
+    ) -> bool:
         return self._media_controller._library_media_exact_return_candidate(receipt)
 
-    def _library_media_semantic_row_is_current(self, receipt: _LibraryMediaReturnReceipt, items_host: Vertical) -> bool:
-        return self._media_controller._library_media_semantic_row_is_current(receipt, items_host)
+    def _library_media_semantic_row_is_current(
+        self, receipt: _LibraryMediaReturnReceipt, items_host: Vertical
+    ) -> bool:
+        return self._media_controller._library_media_semantic_row_is_current(
+            receipt, items_host
+        )
 
-    def _library_media_request_matches_current_authority(self, request: _LibraryMediaReturnSettlement, receipt: _LibraryMediaReturnReceipt, tree: tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll]) -> bool:
-        return self._media_controller._library_media_request_matches_current_authority(request, receipt, tree)
+    def _library_media_request_matches_current_authority(
+        self,
+        request: _LibraryMediaReturnSettlement,
+        receipt: _LibraryMediaReturnReceipt,
+        tree: tuple[LibraryBrowseReaderShell, Vertical, LibraryMediaRowScroll],
+    ) -> bool:
+        return self._media_controller._library_media_request_matches_current_authority(
+            request, receipt, tree
+        )
 
-    def _library_media_live_focus_is_allowed(self, focus_anchor: Widget | None, stable_id: str, target: Widget | None=None) -> bool:
-        return self._media_controller._library_media_live_focus_is_allowed(focus_anchor, stable_id, target)
+    def _library_media_live_focus_is_allowed(
+        self, focus_anchor: Widget | None, stable_id: str, target: Widget | None = None
+    ) -> bool:
+        return self._media_controller._library_media_live_focus_is_allowed(
+            focus_anchor, stable_id, target
+        )
 
-    def _library_media_successful_focus_is_allowed(self, receipt: _LibraryMediaReturnReceipt, stable_id: str) -> bool:
-        return self._media_controller._library_media_successful_focus_is_allowed(receipt, stable_id)
+    def _library_media_successful_focus_is_allowed(
+        self, receipt: _LibraryMediaReturnReceipt, stable_id: str
+    ) -> bool:
+        return self._media_controller._library_media_successful_focus_is_allowed(
+            receipt, stable_id
+        )
 
     def _library_media_focus_target_matches_receipt(
         self,
@@ -6194,19 +6254,24 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.last_settlement_outcome = None
         self._bind_library_media_settlement_deadline(request.request_id)
         latest = owner.latest_geometry
-        if (
-            consume_latest_geometry
-            and latest is not None
-            and latest.revision > floor
-        ):
+        if consume_latest_geometry and latest is not None and latest.revision > floor:
             self._settle_library_media_return_from_geometry(request, owner, latest)
         return self._media_state.return_settlement
 
     def _bind_library_media_settlement_deadline(self, request_id: int) -> None:
-        return self._media_controller._bind_library_media_settlement_deadline(request_id)
+        return self._media_controller._bind_library_media_settlement_deadline(
+            request_id
+        )
 
-    def _settle_library_media_return_from_geometry(self, request: _LibraryMediaReturnSettlement, owner: LibraryMediaRowScroll, geometry: LibraryMediaRowGeometry) -> bool:
-        return self._media_controller._settle_library_media_return_from_geometry(request, owner, geometry)
+    def _settle_library_media_return_from_geometry(
+        self,
+        request: _LibraryMediaReturnSettlement,
+        owner: LibraryMediaRowScroll,
+        geometry: LibraryMediaRowGeometry,
+    ) -> bool:
+        return self._media_controller._settle_library_media_return_from_geometry(
+            request, owner, geometry
+        )
 
     def _resolve_library_media_settlement_target(
         self,
@@ -6226,8 +6291,7 @@ class LibraryScreen(BaseAppScreen):
             (
                 row
                 for row in rows
-                if str(getattr(row, "media_id", "") or "")
-                == request.receipt.stable_id
+                if str(getattr(row, "media_id", "") or "") == request.receipt.stable_id
             ),
             None,
         )
@@ -6438,8 +6502,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_notes_programmatic_focus_target = target
         return committed
 
-    def _expire_library_media_return_settlement(self, request_id: int, outer_generation: int) -> None:
-        return self._media_controller._expire_library_media_return_settlement(request_id, outer_generation)
+    def _expire_library_media_return_settlement(
+        self, request_id: int, outer_generation: int
+    ) -> None:
+        return self._media_controller._expire_library_media_return_settlement(
+            request_id, outer_generation
+        )
 
     @on(LibraryMediaViewer.SpeakerRenamed)
     def _handle_library_media_speaker_renamed(
@@ -6611,13 +6679,23 @@ class LibraryScreen(BaseAppScreen):
     def _library_notes_work_session_reader_width(self) -> int | None:
         return self._notes_controller._library_notes_work_session_reader_width()
 
-    def _dispatch_library_notes_work_session(self, event: NotesWorkSessionEvent, *, reader_width: int | None=None, sync_layout: bool=True) -> bool:
-        return self._notes_controller._dispatch_library_notes_work_session(event, reader_width=reader_width, sync_layout=sync_layout)
+    def _dispatch_library_notes_work_session(
+        self,
+        event: NotesWorkSessionEvent,
+        *,
+        reader_width: int | None = None,
+        sync_layout: bool = True,
+    ) -> bool:
+        return self._notes_controller._dispatch_library_notes_work_session(
+            event, reader_width=reader_width, sync_layout=sync_layout
+        )
 
-    def _library_notes_work_first_preferences(self, preferences: AdaptiveReaderLayoutPreferences) -> AdaptiveReaderLayoutPreferences:
+    def _library_notes_work_first_preferences(
+        self, preferences: AdaptiveReaderLayoutPreferences
+    ) -> AdaptiveReaderLayoutPreferences:
         return self._notes_controller._library_notes_work_first_preferences(preferences)
 
-    def _set_library_notes_source(self, source: Literal['database', 'files']) -> bool:
+    def _set_library_notes_source(self, source: Literal["database", "files"]) -> bool:
         return self._notes_controller._set_library_notes_source(source)
 
     def _dispatch_database_note_identity_cleared(self) -> bool:
@@ -6635,9 +6713,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Resolve the settled Notes shell and patch it in place."""
         try:
-            shell = self.query_one(
-                ".library-notes-route", LibraryAdaptiveReaderShell
-            )
+            shell = self.query_one(".library-notes-route", LibraryAdaptiveReaderShell)
         except (NoMatches, QueryError):
             return
         width = shell.region.width
@@ -6711,14 +6787,30 @@ class LibraryScreen(BaseAppScreen):
         for canvas in self.query("#library-notes-canvas"):
             canvas.apply_pane_width(layout.items_width)
 
-    def _sync_library_file_notes_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None, *, manual_reopen: PaneName | None=None, automatic_priority: bool=True) -> None:
-        return self._notes_controller._sync_library_file_notes_reader_layout_from_shell(priority, manual_reopen=manual_reopen, automatic_priority=automatic_priority)
+    def _sync_library_file_notes_reader_layout_from_shell(
+        self,
+        priority: Literal["library", "items"] | None = None,
+        *,
+        manual_reopen: PaneName | None = None,
+        automatic_priority: bool = True,
+    ) -> None:
+        return self._notes_controller._sync_library_file_notes_reader_layout_from_shell(
+            priority, manual_reopen=manual_reopen, automatic_priority=automatic_priority
+        )
 
-    def _sync_library_prompts_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None=None) -> None:
-        return self._prompts_controller._sync_library_prompts_reader_layout_from_shell(priority)
+    def _sync_library_prompts_reader_layout_from_shell(
+        self, priority: Literal["library", "items"] | None = None
+    ) -> None:
+        return self._prompts_controller._sync_library_prompts_reader_layout_from_shell(
+            priority
+        )
 
-    def _sync_library_skills_reader_layout_from_shell(self, priority: Literal['library', 'items'] | None = None) -> None:
-        return self._skills_controller._sync_library_skills_reader_layout_from_shell(priority)
+    def _sync_library_skills_reader_layout_from_shell(
+        self, priority: Literal["library", "items"] | None = None
+    ) -> None:
+        return self._skills_controller._sync_library_skills_reader_layout_from_shell(
+            priority
+        )
 
     def _sync_library_conversation_reader_layout_from_shell(
         self,
@@ -6734,7 +6826,9 @@ class LibraryScreen(BaseAppScreen):
         self,
         priority: Literal["library", "items"] | None = None,
     ) -> None:
-        return self._collections_controller._sync_library_collections_reader_layout_from_shell(priority)
+        return self._collections_controller._sync_library_collections_reader_layout_from_shell(
+            priority
+        )
 
     def _mirror_library_conversation_reader_preference(
         self,
@@ -6750,19 +6844,39 @@ class LibraryScreen(BaseAppScreen):
         key: Literal["library_open", "items_open"],
         value: bool,
     ) -> None:
-        return self._collections_controller._mirror_library_collections_reader_preference(key, value)
+        return (
+            self._collections_controller._mirror_library_collections_reader_preference(
+                key, value
+            )
+        )
 
-    def _mirror_library_notes_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
-        return self._notes_controller._mirror_library_notes_reader_preference(key, value)
+    def _mirror_library_notes_reader_preference(
+        self, key: Literal["library_open", "items_open"], value: bool
+    ) -> None:
+        return self._notes_controller._mirror_library_notes_reader_preference(
+            key, value
+        )
 
-    def _mirror_library_file_notes_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
-        return self._notes_controller._mirror_library_file_notes_reader_preference(key, value)
+    def _mirror_library_file_notes_reader_preference(
+        self, key: Literal["library_open", "items_open"], value: bool
+    ) -> None:
+        return self._notes_controller._mirror_library_file_notes_reader_preference(
+            key, value
+        )
 
-    def _mirror_library_prompts_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
-        return self._prompts_controller._mirror_library_prompts_reader_preference(key, value)
+    def _mirror_library_prompts_reader_preference(
+        self, key: Literal["library_open", "items_open"], value: bool
+    ) -> None:
+        return self._prompts_controller._mirror_library_prompts_reader_preference(
+            key, value
+        )
 
-    def _mirror_library_skills_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
-        return self._skills_controller._mirror_library_skills_reader_preference(key, value)
+    def _mirror_library_skills_reader_preference(
+        self, key: Literal["library_open", "items_open"], value: bool
+    ) -> None:
+        return self._skills_controller._mirror_library_skills_reader_preference(
+            key, value
+        )
 
     def _replace_library_reader_preference(
         self,
@@ -6968,7 +7082,8 @@ class LibraryScreen(BaseAppScreen):
                 not self._library_reader_persistence_is_current(
                     destination, pane, attempted_generation
                 )
-                or getattr(operator.attrgetter(preferences_attribute)(self), key) != attempted_value
+                or getattr(operator.attrgetter(preferences_attribute)(self), key)
+                != attempted_value
             ):
                 return
             while True:
@@ -6999,7 +7114,9 @@ class LibraryScreen(BaseAppScreen):
                 current_generation = self._library_reader_persistence_generations[
                     authority
                 ]
-                current_value = getattr(operator.attrgetter(preferences_attribute)(self), key)
+                current_value = getattr(
+                    operator.attrgetter(preferences_attribute)(self), key
+                )
                 if persisted is True:
                     if (
                         attempted_generation == current_generation
@@ -7043,7 +7160,9 @@ class LibraryScreen(BaseAppScreen):
                     current_generation = self._library_reader_persistence_generations[
                         authority
                     ]
-                    current_value = getattr(operator.attrgetter(preferences_attribute)(self), key)
+                    current_value = getattr(
+                        operator.attrgetter(preferences_attribute)(self), key
+                    )
                     if (
                         attempted_generation != current_generation
                         or attempted_value != current_value
@@ -7103,9 +7222,7 @@ class LibraryScreen(BaseAppScreen):
         doing either mid-open corrupts the media-return settlement fence.
         """
         try:
-            shell = self.query_one(
-                ".library-media-route", LibraryBrowseReaderShell
-            )
+            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
         except (NoMatches, QueryError):
             return
         if not self._library_adaptive_reader_allocation_is_current(shell):
@@ -7244,9 +7361,7 @@ class LibraryScreen(BaseAppScreen):
             if not self._library_focusable(selector):
                 rail = self._active_library_rail()
                 selector = (
-                    "#library-search-input"
-                    if rail is not None and rail.display
-                    else ""
+                    "#library-search-input" if rail is not None and rail.display else ""
                 )
         return self._library_focusable(selector)
 
@@ -7366,9 +7481,7 @@ class LibraryScreen(BaseAppScreen):
     ) -> None:
         """Resolve the settled Media shell width and patch geometry in place."""
         try:
-            shell = self.query_one(
-                ".library-media-route", LibraryBrowseReaderShell
-            )
+            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
         except (NoMatches, QueryError):
             return
         width = shell.region.width
@@ -7493,8 +7606,12 @@ class LibraryScreen(BaseAppScreen):
                 self._library_list_entry_focus_generation,
             )
 
-    def _mirror_library_media_reader_preference(self, key: Literal['library_open', 'items_open'], value: bool) -> None:
-        return self._media_controller._mirror_library_media_reader_preference(key, value)
+    def _mirror_library_media_reader_preference(
+        self, key: Literal["library_open", "items_open"], value: bool
+    ) -> None:
+        return self._media_controller._mirror_library_media_reader_preference(
+            key, value
+        )
 
     def request_library_reader_layout_refresh(self, generation: int) -> None:
         """Apply newer Library reader settings without reloading destination data."""
@@ -7678,8 +7795,7 @@ class LibraryScreen(BaseAppScreen):
             if (
                 event.pane == "library"
                 and opening
-                and self._notes_state.work_session_phase
-                is NotesWorkSessionPhase.ACTIVE
+                and self._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ):
                 self._dispatch_library_notes_work_session(
                     NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
@@ -7726,8 +7842,7 @@ class LibraryScreen(BaseAppScreen):
             if (
                 event.pane == "library"
                 and opening
-                and self._notes_state.work_session_phase
-                is NotesWorkSessionPhase.ACTIVE
+                and self._notes_state.work_session_phase is NotesWorkSessionPhase.ACTIVE
             ):
                 self._dispatch_library_notes_work_session(
                     NotesWorkSessionEvent.MANUAL_LIBRARY_EXPAND,
@@ -7861,7 +7976,9 @@ class LibraryScreen(BaseAppScreen):
         elif self._library_selected_row_id in LIBRARY_NOTES_RAIL_ROWS:
             self._sync_library_notes_reader_layout_from_shell()
             if self._notes_state.work_session_activation_pending:
-                self._activate_database_note_work_session(self._notes_state.selected_note_id)
+                self._activate_database_note_work_session(
+                    self._notes_state.selected_note_id
+                )
 
     @on(MediaShellResized)
     def _resize_library_media_reader_shell(self, event: MediaShellResized) -> None:
@@ -7951,14 +8068,30 @@ class LibraryScreen(BaseAppScreen):
             guard,
         )
 
-    def _queue_library_notes_settled_focus_restore(self, expected: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> None:
-        return self._notes_controller._queue_library_notes_settled_focus_restore(expected, guard)
+    def _queue_library_notes_settled_focus_restore(
+        self,
+        expected: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        return self._notes_controller._queue_library_notes_settled_focus_restore(
+            expected, guard
+        )
 
-    def _restore_library_notes_settled_focus(self, expected: LibraryNotesFocusIdentity, guard: _LibraryNotesRestoreGuard | None=None) -> None:
-        return self._notes_controller._restore_library_notes_settled_focus(expected, guard)
+    def _restore_library_notes_settled_focus(
+        self,
+        expected: LibraryNotesFocusIdentity,
+        guard: _LibraryNotesRestoreGuard | None = None,
+    ) -> None:
+        return self._notes_controller._restore_library_notes_settled_focus(
+            expected, guard
+        )
 
-    def _record_library_notes_focus_interaction(self, expected: Widget, user_intent: bool) -> None:
-        return self._notes_controller._record_library_notes_focus_interaction(expected, user_intent)
+    def _record_library_notes_focus_interaction(
+        self, expected: Widget, user_intent: bool
+    ) -> None:
+        return self._notes_controller._record_library_notes_focus_interaction(
+            expected, user_intent
+        )
 
     def _update_library_notes_responsive_state(self) -> None:
         return self._notes_controller._update_library_notes_responsive_state()
@@ -8318,9 +8451,7 @@ class LibraryScreen(BaseAppScreen):
                     if self.check_action("library_notes_export_selected", ())
                     else ()
                 )
-                export_compact = (
-                    () if not export else (("e", "export"),)
-                )
+                export_compact = () if not export else (("e", "export"),)
                 return self._notes_footer_tier(
                     (("enter", "select note"),) + export + (("esc", "done"),),
                     (("enter", "select"),) + export_compact + (("esc", "done"),),
@@ -8389,8 +8520,7 @@ class LibraryScreen(BaseAppScreen):
             if not enter_label:
                 return tuple(pair for pair in tier if pair[0] != "enter")
             return tuple(
-                (key, enter_label if key == "enter" else label)
-                for key, label in tier
+                (key, enter_label if key == "enter" else label) for key, label in tier
             )
         if region == "editor":
             # task-32246 AC#2: Tab out of the body lands on a toolbar Button,
@@ -8447,8 +8577,7 @@ class LibraryScreen(BaseAppScreen):
             if not enter_label:
                 return tier
             return tuple(
-                (key, enter_label if key == "enter" else label)
-                for key, label in tier
+                (key, enter_label if key == "enter" else label) for key, label in tier
             )
         if region == "trash":
             # Only what this view answers: no Enter chip, because entry focus
@@ -8471,7 +8600,9 @@ class LibraryScreen(BaseAppScreen):
     def _apply_library_notes_footer_context(self) -> None:
         return self._notes_controller._apply_library_notes_footer_context()
 
-    def _rehydrate_library_notes_after_recompose(self, restore: _LibraryNotesRecomposeCapture) -> None:
+    def _rehydrate_library_notes_after_recompose(
+        self, restore: _LibraryNotesRecomposeCapture
+    ) -> None:
         return self._notes_controller._rehydrate_library_notes_after_recompose(restore)
 
     def refresh(
@@ -8610,9 +8741,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         if self._library_emergency_stage == "rail-only":
             return False
-        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(
-            self._library_selected_row_id
-        )
+        row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return False
         if (
@@ -8832,9 +8961,10 @@ class LibraryScreen(BaseAppScreen):
         # walk straight out into the Info pane's other Danger-section
         # buttons (Copy/Export/the Delete button itself) and beyond, into a
         # pane grip, with the prompt still open and no visible cue why.
-        if (
-            self._notes_state.confirming_delete
-            and event.key in ("tab", "shift+tab", "backtab")
+        if self._notes_state.confirming_delete and event.key in (
+            "tab",
+            "shift+tab",
+            "backtab",
         ):
             try:
                 cancel_button = self.query_one("#library-note-delete-cancel", Button)
@@ -9055,8 +9185,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             return False
         return any(
-            node.id == "library-note-work-pane"
-            for node in focused.ancestors_with_self
+            node.id == "library-note-work-pane" for node in focused.ancestors_with_self
         )
 
     #: task-32613 AC#3: the reading panes' scroll owners, and where a
@@ -9110,18 +9239,14 @@ class LibraryScreen(BaseAppScreen):
             for widget in self.focus_chain
             if self._library_note_work_pane_owns_tab(widget)
         ]
-        index = next(
-            (i for i, widget in enumerate(chain) if widget is focused), None
-        )
+        index = next((i for i, widget in enumerate(chain) if widget is focused), None)
         if index is None:
             return None
         natural = chain[(index + 1) % len(chain)]
         if natural.id not in self._LIBRARY_READING_REGION_WRAP_IDS:
             return None
         try:
-            target = self.query_one(
-                self._LIBRARY_READING_REGION_TAB_TARGET, Button
-            )
+            target = self.query_one(self._LIBRARY_READING_REGION_TAB_TARGET, Button)
         except (NoMatches, QueryError):
             return None
         return target if target in self.focus_chain else None
@@ -9601,7 +9726,9 @@ class LibraryScreen(BaseAppScreen):
             )
         if self._pending_library_character_navigation is not None:
             self.run_worker(
-                self._unavailable_navigation._open_pending_library_character_navigation(self, ),
+                self._unavailable_navigation._open_pending_library_character_navigation(
+                    self,
+                ),
                 exclusive=True,
                 group="library_nav_character",
             )
@@ -9705,9 +9832,7 @@ class LibraryScreen(BaseAppScreen):
             try:
                 await lifecycle_worker.wait()
             except Exception:
-                logger.warning(
-                    "Pending Library lifecycle write failed during unmount."
-                )
+                logger.warning("Pending Library lifecycle write failed during unmount.")
         if self._library_lifecycle_pending_persist is not None:
             await self._drain_library_lifecycle_persistence()
         # TASK-22210: the last captured reading position must survive
@@ -10262,17 +10387,15 @@ class LibraryScreen(BaseAppScreen):
             notes_sort if isinstance(notes_sort, str) and notes_sort else "newest"
         )
         notes_filter = state.get("library_notes_filter")
-        self._notes_state.filter = (
-            notes_filter if isinstance(notes_filter, str) else ""
-        )
+        self._notes_state.filter = notes_filter if isinstance(notes_filter, str) else ""
         restored_prompts_scope = self._restore_library_prompts_scope(state)
         self._library_prompt_browse_controller.invalidate(restored_prompts_scope)
         restored_skills_scope = self._restore_library_skills_scope(state)
         self._library_skills_browse_controller.invalidate(restored_skills_scope)
         self._skills_state.sort = restored_skills_scope.sort
         self._skills_state.filter = restored_skills_scope.query
-        self._collections_state.requested_page = (
-            self._restore_library_collections_page(state)
+        self._collections_state.requested_page = self._restore_library_collections_page(
+            state
         )
         selected_prompt_id = state.get("selected_prompt_id")
         self._prompts_state.selected_prompt_id = (
@@ -10353,9 +10476,7 @@ class LibraryScreen(BaseAppScreen):
             elif row_id == LIBRARY_ROW_BROWSE_SEARCH:
                 self._rag_search_state.query = scope["query"]
                 self._rag_search_state.mode = scope["mode"]
-                self._rag_search_state.scope_deselected = set(
-                    scope["scope_deselected"]
-                )
+                self._rag_search_state.scope_deselected = set(scope["scope_deselected"])
         # task-2858 AC#3 (LIB-12): restore the durable export receipt
         # (see the field's ``__init__`` comment) -- a foreign/corrupted
         # dict degrades to "no receipt yet" rather than raising.
@@ -10458,10 +10579,8 @@ class LibraryScreen(BaseAppScreen):
     def _library_conversation_focus_region(self) -> str:
         return self._conversations_controller._library_conversation_focus_region()
 
-
     def _library_conversation_escape_label(self) -> str:
         return self._conversations_controller._library_conversation_escape_label()
-
 
     def _arm_library_list_entry_focus(
         self,
@@ -10690,10 +10809,7 @@ class LibraryScreen(BaseAppScreen):
             or self._library_notes_restoring_focus
             or self._notes_state.resize_settling
         )
-        if (
-            self._library_pending_list_entry_focus
-            and pending_receipt is not None
-        ):
+        if self._library_pending_list_entry_focus and pending_receipt is not None:
             guarded_return_focus = bool(
                 (target_restore or successful_return_focus)
                 and focused is not None
@@ -10887,14 +11003,11 @@ class LibraryScreen(BaseAppScreen):
         row_class = _LIBRARY_LIST_ROW_CLASS_BY_ROW_ID.get(self._library_selected_row_id)
         if row_class is None:
             return
-        if (
-            row_class == "library-skill-row"
-            and (
-                self._library_skills_browse_controller.result.status == "loading"
-                or any(
-                    canvas.has_pending_recompose_callback
-                    for canvas in self.query("#library-skills-canvas")
-                )
+        if row_class == "library-skill-row" and (
+            self._library_skills_browse_controller.result.status == "loading"
+            or any(
+                canvas.has_pending_recompose_callback
+                for canvas in self.query("#library-skills-canvas")
             )
         ):
             # Loading and ready results can both precede replacement of old rows.
@@ -10965,8 +11078,7 @@ class LibraryScreen(BaseAppScreen):
                 (
                     row
                     for row in rows
-                    if str(getattr(row, "media_id", "") or "")
-                    == media_return.stable_id
+                    if str(getattr(row, "media_id", "") or "") == media_return.stable_id
                 ),
                 target,
             )
@@ -11143,7 +11255,6 @@ class LibraryScreen(BaseAppScreen):
             and skill_flush_allowed
         )
 
-
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
         self._navigation_controller.apply_navigation_context(
@@ -11166,9 +11277,7 @@ class LibraryScreen(BaseAppScreen):
             prepare_character_inspection,
         )
 
-        return await prepare_character_inspection(
-            self, context, is_current=is_current
-        )
+        return await prepare_character_inspection(self, context, is_current=is_current)
 
     def commit_character_inspection(self, prepared: PreparedLibraryInspection) -> bool:
         """Consume the Library-owned preparation synchronously.
@@ -11233,7 +11342,6 @@ class LibraryScreen(BaseAppScreen):
                 }[source_type]
         return target_row_id
 
-
     async def _apply_navigation_context_after_flush(
         self,
         context: Mapping[str, Any],
@@ -11257,11 +11365,17 @@ class LibraryScreen(BaseAppScreen):
             generation = self._library_navigation_context_generation
         if generation != self._library_navigation_context_generation:
             return
-        if not await self._unavailable_navigation._validate_library_character_admission(self, character_admission):
+        if not await self._unavailable_navigation._validate_library_character_admission(
+            self, character_admission
+        ):
             return
         file_notes_flush_allowed = await self._flush_active_file_notes()
-        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
-            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+        if not self._unavailable_navigation._library_character_admission_is_current(
+            self, character_admission
+        ):
+            self._unavailable_navigation._discard_library_character_admission(
+                self, character_admission
+            )
             return
         if generation != self._library_navigation_context_generation:
             return
@@ -11297,6 +11411,7 @@ class LibraryScreen(BaseAppScreen):
             return
         if generation != self._library_navigation_context_generation:
             return
+
         def source_is_current() -> bool:
             return (
                 generation == self._library_navigation_context_generation
@@ -11308,7 +11423,9 @@ class LibraryScreen(BaseAppScreen):
         if not await _flush_library_navigation_sources(
             self, is_current=source_is_current
         ):
-            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            self._unavailable_navigation._discard_library_character_admission(
+                self, character_admission
+            )
             return
         if target_row_id != LIBRARY_ROW_BROWSE_PROMPTS:
             self._clear_library_prompt_selection(announce=True)
@@ -11317,19 +11434,31 @@ class LibraryScreen(BaseAppScreen):
             recompose=False,
             character_admission=character_admission,
         )
-        if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
-            self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+        if not self._unavailable_navigation._library_character_admission_is_current(
+            self, character_admission
+        ):
+            self._unavailable_navigation._discard_library_character_admission(
+                self, character_admission
+            )
             return
         if self.is_mounted and self._pending_library_source_open is None:
             await self.recompose()
-            if not self._unavailable_navigation._library_character_admission_is_current(self, character_admission):
-                self._unavailable_navigation._discard_library_character_admission(self, character_admission)
+            if not self._unavailable_navigation._library_character_admission_is_current(
+                self, character_admission
+            ):
+                self._unavailable_navigation._discard_library_character_admission(
+                    self, character_admission
+                )
                 return
         # task-32245: a deep link owes its destination the same entry focus a
         # rail-row press does.
         self._arm_library_row_entry_focus(target_row_id)
         if character_admission is not None:
-            await self._unavailable_navigation._open_pending_library_character_navigation(self, )
+            await (
+                self._unavailable_navigation._open_pending_library_character_navigation(
+                    self,
+                )
+            )
 
     def _apply_navigation_context_state(
         self,
@@ -11398,8 +11527,11 @@ class LibraryScreen(BaseAppScreen):
         )
 
     def _adopt_library_conversation_state_selection(self, selected_id: str) -> None:
-        return self._conversations_controller._adopt_library_conversation_state_selection(selected_id)
-
+        return (
+            self._conversations_controller._adopt_library_conversation_state_selection(
+                selected_id
+            )
+        )
 
     # Own group, deliberately separate from the "default" group the plain
     # `self.run_worker(self._sync_collections_panel(...))` calls above use
@@ -11514,9 +11646,7 @@ class LibraryScreen(BaseAppScreen):
         """
         collections = self._collections_controller
         controller = collections._ensure_library_collections_capture_controller()
-        scope_service = (
-            controller.scope_service if controller is not None else None
-        )
+        scope_service = controller.scope_service if controller is not None else None
         authority = getattr(scope_service, "active_authority", None)
         if authority is None:
             self._library_collections_prefetched_total = None
@@ -11567,9 +11697,14 @@ class LibraryScreen(BaseAppScreen):
         self._library_collections_count_authority = authority.key
         self._library_collections_count_failure = ""
 
-    def _carry_selected_conversation_into_snapshot(self, records: dict[str, tuple[Mapping[str, Any], ...]]) -> dict[str, tuple[Mapping[str, Any], ...]]:
-        return self._conversations_controller._carry_selected_conversation_into_snapshot(records)
-
+    def _carry_selected_conversation_into_snapshot(
+        self, records: dict[str, tuple[Mapping[str, Any], ...]]
+    ) -> dict[str, tuple[Mapping[str, Any], ...]]:
+        return (
+            self._conversations_controller._carry_selected_conversation_into_snapshot(
+                records
+            )
+        )
 
     @staticmethod
     def _structural_records_for_comparison(
@@ -12499,8 +12634,12 @@ class LibraryScreen(BaseAppScreen):
             return
         canvas.apply_reader_state(self._build_library_media_state())
 
-    async def _apply_library_media_list_return(self, media_return: _LibraryMediaReturnReceipt | None) -> None:
-        return await self._media_controller._apply_library_media_list_return(media_return)
+    async def _apply_library_media_list_return(
+        self, media_return: _LibraryMediaReturnReceipt | None
+    ) -> None:
+        return await self._media_controller._apply_library_media_list_return(
+            media_return
+        )
 
     async def _reconcile_library_entry_state(
         self, generation: int, route_key: tuple[object, ...]
@@ -12704,14 +12843,20 @@ class LibraryScreen(BaseAppScreen):
                     await canvas_host.remove_children(outgoing)
                 if generation != self._library_snapshot_state_generation:
                     await self._repair_library_entry_canvas_owner()
-                    return self._supersede_library_entry_reconcile(generation, route_key)
+                    return self._supersede_library_entry_reconcile(
+                        generation, route_key
+                    )
                 if route_key != self._library_entry_route_key():
                     await self._repair_library_entry_canvas_owner()
-                    return self._supersede_library_entry_reconcile(generation, route_key)
+                    return self._supersede_library_entry_reconcile(
+                        generation, route_key
+                    )
                 await canvas_host.mount(replacement)
             except Exception:
                 logger.debug("Library snapshot canvas replacement failed.")
-                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
+                return self._retry_or_fail_library_entry_reconcile(
+                    generation, route_key
+                )
             if generation != self._library_snapshot_state_generation:
                 await self._repair_library_entry_canvas_owner()
                 return self._supersede_library_entry_reconcile(generation, route_key)
@@ -12770,7 +12915,9 @@ class LibraryScreen(BaseAppScreen):
             if viewer is None or not self._sync_library_media_viewer_state(viewer):
                 if restore_focus is not None:
                     restore_focus()
-                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
+                return self._retry_or_fail_library_entry_reconcile(
+                    generation, route_key
+                )
 
         if self._library_selected_row_id == LIBRARY_ROW_BROWSE_SEARCH:
             try:
@@ -12779,7 +12926,9 @@ class LibraryScreen(BaseAppScreen):
                 logger.debug("Library Search/RAG snapshot sync failed.")
                 if restore_focus is not None:
                     restore_focus()
-                return self._retry_or_fail_library_entry_reconcile(generation, route_key)
+                return self._retry_or_fail_library_entry_reconcile(
+                    generation, route_key
+                )
 
         if restore_focus is not None:
             restore_focus()
@@ -12874,11 +13023,9 @@ class LibraryScreen(BaseAppScreen):
         )
         if recovery_state is not None:
             previous_recovery = self._library_lookup_recovery_state
-            if (
-                previous_recovery is not None
-                and dataclasses.replace(recovery_state, attempt=1)
-                == dataclasses.replace(previous_recovery, attempt=1)
-            ):
+            if previous_recovery is not None and dataclasses.replace(
+                recovery_state, attempt=1
+            ) == dataclasses.replace(previous_recovery, attempt=1):
                 # task-31632 final review I-1: a byte-identical repeat
                 # failure must still visibly repaint, never go silent --
                 # bumping ``attempt`` breaks the equality check below (and
@@ -13019,9 +13166,13 @@ class LibraryScreen(BaseAppScreen):
         from tldw_chatbook.Backup_Recovery.participants import run_finite_local_worker
 
         if isolate_in_worker:
-            return await asyncio.to_thread(run_finite_local_worker, invoke_service_in_worker)
+            return await asyncio.to_thread(
+                run_finite_local_worker, invoke_service_in_worker
+            )
 
-        result = await asyncio.to_thread(run_finite_local_worker, callable_obj, *args, **kwargs)
+        result = await asyncio.to_thread(
+            run_finite_local_worker, callable_obj, *args, **kwargs
+        )
         if inspect.isawaitable(result):
             return await result
         return result
@@ -13176,14 +13327,26 @@ class LibraryScreen(BaseAppScreen):
             total_known = False
         return records, max(count, 0), total_known
 
-    async def _notes_true_count_or_none(self, count_notes: Any, **kwargs: Any) -> int | None:
-        return await self._notes_controller._notes_true_count_or_none(count_notes, **kwargs)
+    async def _notes_true_count_or_none(
+        self, count_notes: Any, **kwargs: Any
+    ) -> int | None:
+        return await self._notes_controller._notes_true_count_or_none(
+            count_notes, **kwargs
+        )
 
-    async def _prompts_count_or_none(self, count_prompts: Any, **kwargs: Any) -> int | None:
-        return await self._prompts_controller._prompts_count_or_none(count_prompts, **kwargs)
+    async def _prompts_count_or_none(
+        self, count_prompts: Any, **kwargs: Any
+    ) -> int | None:
+        return await self._prompts_controller._prompts_count_or_none(
+            count_prompts, **kwargs
+        )
 
-    async def _skills_context_or_none(self, get_context: Any, **kwargs: Any) -> Mapping[str, Any] | None:
-        return await self._skills_controller._skills_context_or_none(get_context, **kwargs)
+    async def _skills_context_or_none(
+        self, get_context: Any, **kwargs: Any
+    ) -> Mapping[str, Any] | None:
+        return await self._skills_controller._skills_context_or_none(
+            get_context, **kwargs
+        )
 
     async def _study_count_or_none(
         self, count_callable: Any, label: str, **kwargs: Any
@@ -13575,24 +13738,19 @@ class LibraryScreen(BaseAppScreen):
     def _conversation_records(self) -> tuple[Mapping[str, Any], ...]:
         return self._conversations_controller._conversation_records()
 
-
     def _conversation_record_id(self, record: Mapping[str, Any], index: int) -> str:
         return self._conversations_controller._conversation_record_id(record, index)
 
-
     def _selected_conversation_record(self) -> tuple[int, Mapping[str, Any]] | None:
         return self._conversations_controller._selected_conversation_record()
-
 
     @classmethod
     def _conversation_message_count_label(cls, record: Mapping[str, Any]) -> str:
         return LibraryConversationsController._conversation_message_count_label(record)
 
-
     @classmethod
     def _conversation_workspace_label(cls, record: Mapping[str, Any]) -> str:
         return LibraryConversationsController._conversation_workspace_label(record)
-
 
     @classmethod
     def _conversation_updated_label(cls, record: Mapping[str, Any]) -> str:
@@ -13827,8 +13985,7 @@ class LibraryScreen(BaseAppScreen):
         if registry is None or not conversation_id or not workspace_id:
             if callable(notify):
                 notify(
-                    "Workspaces are unavailable, so this link cannot be "
-                    "undone.",
+                    "Workspaces are unavailable, so this link cannot be undone.",
                     severity="warning",
                 )
             return
@@ -14114,8 +14271,7 @@ class LibraryScreen(BaseAppScreen):
                 job for job in jobs_fn() if not job.dismissed and not job.superseded
             )
             if any(
-                job.state is IngestJobState.FAILED and not job.permanent
-                for job in live
+                job.state is IngestJobState.FAILED and not job.permanent for job in live
             ):
                 failures = [job for job in live if job.state is IngestJobState.FAILED]
                 # task-32351 AC#2 (critique #10, B D2): after 4 of 6 files
@@ -14148,9 +14304,7 @@ class LibraryScreen(BaseAppScreen):
                 members = [
                     job for job in live if (job.batch_id or job.job_id) == last_import
                 ]
-                failed = sum(
-                    1 for job in members if job.state is IngestJobState.FAILED
-                )
+                failed = sum(1 for job in members if job.state is IngestJobState.FAILED)
                 skipped = sum(
                     1 for job in members if job.state is IngestJobState.SKIPPED
                 )
@@ -14655,9 +14809,7 @@ class LibraryScreen(BaseAppScreen):
         # decided separately (PR #2581 review): one shared reason code does
         # not imply one shared item type, and neither implies that the
         # control the remedy names exists.
-        labels = {
-            linkable_ineligibility_label(row.reason_code) for row in blocked
-        }
+        labels = {linkable_ineligibility_label(row.reason_code) for row in blocked}
         every_block_is_linkable = "" not in labels
         # A set whose rows disagree cannot borrow one row's label for all of
         # them -- `not_in_active_workspace` and `cross_workspace` are both
@@ -14694,8 +14846,7 @@ class LibraryScreen(BaseAppScreen):
         blocked_count = int(match.group(1))
         noun = "item" if blocked_count == 1 else "items"
         return (
-            f"{blocked_count} {noun} can't be used in Console yet · "
-            f"{reason} · {remedy}"
+            f"{blocked_count} {noun} can't be used in Console yet · {reason} · {remedy}"
         )
 
     def _workspaces_detail_rows(
@@ -14899,7 +15050,9 @@ class LibraryScreen(BaseAppScreen):
         blocked, tooltip = self._workspace_handoff_action_state(state)
         active.update(library_dim_label_text("Active", state.workspace_name))
         receipt.update(
-            library_dim_label_text("Handoff", self._workspace_handoff_summary_label(state))
+            library_dim_label_text(
+                "Handoff", self._workspace_handoff_summary_label(state)
+            )
         )
         handoff.set_class(blocked, "library-source-action-blocked")
         handoff.tooltip = tooltip
@@ -15064,8 +15217,7 @@ class LibraryScreen(BaseAppScreen):
         single_notes_stage = (
             self._notes_state.compact and self._library_notes_compact_stage_applies()
         ) or (
-            not self._notes_state.compact
-            and self._library_notes_focused_task_active()
+            not self._notes_state.compact and self._library_notes_focused_task_active()
         )
         if (
             shell.canvas_kind
@@ -15166,12 +15318,15 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         if shell.canvas_kind in {
-            "artifacts-all", "artifacts-reports", "artifacts-chatbooks"
+            "artifacts-all",
+            "artifacts-reports",
+            "artifacts-chatbooks",
         }:
             if self._artifacts_controller is None:
                 from ..Library_Modules.library_artifacts_controller import (
                     LibraryArtifactsController,
                 )
+
                 self._artifacts_controller = LibraryArtifactsController(self)
             self._artifacts_controller.enter_view(
                 shell.canvas_kind.removeprefix("artifacts-")
@@ -16088,9 +16243,7 @@ class LibraryScreen(BaseAppScreen):
                 existing[0].update(rendered)
                 previous = existing[0]
                 continue
-            row = LibraryDetailsRow(
-                rendered, id=row_id, classes="library-details-row"
-            )
+            row = LibraryDetailsRow(rendered, id=row_id, classes="library-details-row")
             try:
                 await parent.mount(row, after=previous)
             except Exception:
@@ -16152,7 +16305,9 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Receipt action press consumed before switching to Archived.
         """
-        return self._conversations_controller.handle_library_conversation_view_archive(event)
+        return self._conversations_controller.handle_library_conversation_view_archive(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-undo")
     def handle_library_conversation_undo(self, event: Button.Pressed) -> None:
@@ -16173,7 +16328,11 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Single or bulk archive/restore press consumed by this handler.
         """
-        return self._conversations_controller.handle_library_conversation_archive_action(event)
+        return (
+            self._conversations_controller.handle_library_conversation_archive_action(
+                event
+            )
+        )
 
     def _conversation_recovery(self):
         from ..Library_Modules.library_conversation_recovery import (
@@ -16189,39 +16348,74 @@ class LibraryScreen(BaseAppScreen):
     def _build_library_conversations_state(self):
         return self._conversations_controller._build_library_conversations_state()
 
-
-    def _sync_library_conversation_canvas(self, *, then: Callable[[], None] | None=None) -> bool:
-        return self._conversations_controller._sync_library_conversation_canvas(then=then)
-
+    def _sync_library_conversation_canvas(
+        self, *, then: Callable[[], None] | None = None
+    ) -> bool:
+        return self._conversations_controller._sync_library_conversation_canvas(
+            then=then
+        )
 
     @staticmethod
     def _normalize_library_conversation_page(page: object) -> int:
         return LibraryConversationsController._normalize_library_conversation_page(page)
 
-
-    def _start_library_conversation_page_request(self, page: int, query: str, *, refocus_filter: bool=False, focus_after_apply: str='') -> None:
+    def _start_library_conversation_page_request(
+        self,
+        page: int,
+        query: str,
+        *,
+        refocus_filter: bool = False,
+        focus_after_apply: str = "",
+    ) -> None:
         self._library_unavailable_browse_scope = None
         self._conversations_state.projection = ""
-        return self._conversations_controller._start_library_conversation_page_request(page, query, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
+        return self._conversations_controller._start_library_conversation_page_request(
+            page,
+            query,
+            refocus_filter=refocus_filter,
+            focus_after_apply=focus_after_apply,
+        )
 
-
-    def _prepare_library_conversation_page_request(self, query: str, *, page: int=1, refocus_filter: bool=False, focus_after_apply: str='') -> tuple[str, int]:
-        return self._conversations_controller._prepare_library_conversation_page_request(query, page=page, refocus_filter=refocus_filter, focus_after_apply=focus_after_apply)
-
+    def _prepare_library_conversation_page_request(
+        self,
+        query: str,
+        *,
+        page: int = 1,
+        refocus_filter: bool = False,
+        focus_after_apply: str = "",
+    ) -> tuple[str, int]:
+        return (
+            self._conversations_controller._prepare_library_conversation_page_request(
+                query,
+                page=page,
+                refocus_filter=refocus_filter,
+                focus_after_apply=focus_after_apply,
+            )
+        )
 
     def _library_conversation_page_needs_recovery(self) -> bool:
-        return self._conversations_controller._library_conversation_page_needs_recovery()
+        return (
+            self._conversations_controller._library_conversation_page_needs_recovery()
+        )
 
+    def _fail_library_conversation_request(
+        self,
+        requested_page: int,
+        requested_query: str,
+        generation: int,
+        *,
+        copy: str = "",
+    ) -> None:
+        return self._conversations_controller._fail_library_conversation_request(
+            requested_page, requested_query, generation, copy=copy
+        )
 
-    def _fail_library_conversation_request(self, requested_page: int, requested_query: str, generation: int, *, copy: str='') -> None:
-        return self._conversations_controller._fail_library_conversation_request(requested_page, requested_query, generation, copy=copy)
-
-
-    async def _load_library_conversation_page(self, page: int, query: str, generation: int, *, _clamp_attempted: bool=False) -> None:
-        return await self._conversations_controller._load_library_conversation_page(page, query, generation, _clamp_attempted=_clamp_attempted)
-
-
-
+    async def _load_library_conversation_page(
+        self, page: int, query: str, generation: int, *, _clamp_attempted: bool = False
+    ) -> None:
+        return await self._conversations_controller._load_library_conversation_page(
+            page, query, generation, _clamp_attempted=_clamp_attempted
+        )
 
     def _build_library_media_state(self) -> LibraryMediaCanvasState:
         return self._media_controller._build_library_media_state()
@@ -16275,10 +16469,7 @@ class LibraryScreen(BaseAppScreen):
                 done_by_id = (
                     None
                     if review_set is None
-                    else {
-                        item.backing_media_id: item.done
-                        for item in review_set.items
-                    }
+                    else {item.backing_media_id: item.done for item in review_set.items}
                 )
                 self._review_done_map_cache = (revision, done_by_id)
         except Exception:
@@ -16337,7 +16528,9 @@ class LibraryScreen(BaseAppScreen):
     def _library_media_canvas_presentation(self) -> dict[str, Any]:
         return self._media_controller._library_media_canvas_presentation()
 
-    def _library_media_can_rename_speakers(self, db: Any, backing_id: int | None) -> bool:
+    def _library_media_can_rename_speakers(
+        self, db: Any, backing_id: int | None
+    ) -> bool:
         """Whether the selected item is a renameable meeting, memoized per id.
 
         The presentation this feeds is rebuilt on EVERY media selection,
@@ -16417,9 +16610,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.bulk_delete_in_flight = True
         try:
             self._begin_library_media_mutation()
-            self.run_worker(
-                work, exclusive=True, group="library_media_bulk_delete"
-            )
+            self.run_worker(work, exclusive=True, group="library_media_bulk_delete")
         except BaseException:
             # Review M-3: a worker cancelled BEFORE its first step runs no
             # ``finally``, so the flag would survive -- but nothing cancels
@@ -16527,7 +16718,7 @@ class LibraryScreen(BaseAppScreen):
         }
 
     @staticmethod
-    def _bounded_library_media_trash_title(title: str, limit: int=80) -> str:
+    def _bounded_library_media_trash_title(title: str, limit: int = 80) -> str:
         from ..Library_Modules.library_media_controller import (
             LibraryMediaController,
         )
@@ -16540,7 +16731,9 @@ class LibraryScreen(BaseAppScreen):
             LibraryMediaController,
         )
 
-        return LibraryMediaController._valid_library_media_trash_delete_ack(result, media_id=media_id)
+        return LibraryMediaController._valid_library_media_trash_delete_ack(
+            result, media_id=media_id
+        )
 
     @staticmethod
     def _validated_library_media_trash_restore_summary(
@@ -16725,12 +16918,8 @@ class LibraryScreen(BaseAppScreen):
         )
         if exact_pending_return:
             self._media_state.return_settlement = None
-            if (
-                focused is not None
-                and any(
-                    widget.id == "library-media-canvas"
-                    for widget in focused.ancestors
-                )
+            if focused is not None and any(
+                widget.id == "library-media-canvas" for widget in focused.ancestors
             ):
                 self.set_focus(None)
                 focused = None
@@ -16768,8 +16957,7 @@ class LibraryScreen(BaseAppScreen):
                 if (
                     self._library_pending_list_entry_focus
                     and exact_generation == self._library_list_entry_focus_generation
-                    and self._library_pending_list_entry_media_return
-                    is pending_receipt
+                    and self._library_pending_list_entry_media_return is pending_receipt
                     and pending_receipt is not None
                 ):
                     self._focus_library_list_entry_if_current(exact_generation)
@@ -16835,8 +17023,12 @@ class LibraryScreen(BaseAppScreen):
     def _cancel_library_media_selection_settlement(self) -> None:
         return self._media_controller._cancel_library_media_selection_settlement()
 
-    def _select_library_media_reader_row(self, media_id: str, title: str, *, immediate: bool, sync_surfaces: bool=True) -> None:
-        return self._media_controller._select_library_media_reader_row(media_id, title, immediate=immediate, sync_surfaces=sync_surfaces)
+    def _select_library_media_reader_row(
+        self, media_id: str, title: str, *, immediate: bool, sync_surfaces: bool = True
+    ) -> None:
+        return self._media_controller._select_library_media_reader_row(
+            media_id, title, immediate=immediate, sync_surfaces=sync_surfaces
+        )
 
     def _request_library_media_facets(self) -> Any | None:
         return self._media_controller._request_library_media_facets()
@@ -16872,8 +17064,12 @@ class LibraryScreen(BaseAppScreen):
         if callable(notify):
             notify(self._media_state.selection_notice)
 
-    def _request_library_media_page(self, page: int, *, focus_identity: str | None) -> Any | None:
-        return self._media_controller._request_library_media_page(page, focus_identity=focus_identity)
+    def _request_library_media_page(
+        self, page: int, *, focus_identity: str | None
+    ) -> Any | None:
+        return self._media_controller._request_library_media_page(
+            page, focus_identity=focus_identity
+        )
 
     def _request_library_media_type(
         self, media_type: str | None, *, focus_identity: str | None
@@ -17093,8 +17289,12 @@ class LibraryScreen(BaseAppScreen):
             selectors.append("#library-media-trash-back")
         return tuple(dict.fromkeys(selectors))
 
-    def _focus_library_media_trash_after_paint(self, identity: str, generation: int) -> None:
-        return self._media_controller._focus_library_media_trash_after_paint(identity, generation)
+    def _focus_library_media_trash_after_paint(
+        self, identity: str, generation: int
+    ) -> None:
+        return self._media_controller._focus_library_media_trash_after_paint(
+            identity, generation
+        )
 
     def _build_library_notes_state(self) -> LibraryNotesListState:
         """Build the notes canvas's list-view display state from local records."""
@@ -17852,8 +18052,7 @@ class LibraryScreen(BaseAppScreen):
                 navigation_generation
                 == getattr(self._notes_state, "navigation_generation", 0)
                 and topology_epoch == self._notes_state.tree_topology_epoch
-                and lifecycle_generation
-                == self._notes_state.tree_lifecycle_generation
+                and lifecycle_generation == self._notes_state.tree_lifecycle_generation
                 and (
                     focus_generation is None
                     or focus_generation
@@ -18497,12 +18696,12 @@ class LibraryScreen(BaseAppScreen):
             if projection is not None and projection.row(desired_target) is not None:
                 self._notes_state.tree_selected_placement_id = desired_target
             elif destination_folder_id:
-                self._notes_state.tree_selected_placement_id = (
-                    FolderPlacementId.folder(destination_folder_id)
+                self._notes_state.tree_selected_placement_id = FolderPlacementId.folder(
+                    destination_folder_id
                 )
             elif folder is not None and folder.parent_id is not None:
-                self._notes_state.tree_selected_placement_id = (
-                    FolderPlacementId.folder(folder.parent_id)
+                self._notes_state.tree_selected_placement_id = FolderPlacementId.folder(
+                    folder.parent_id
                 )
             elif operation == "detach_placement":
                 self._notes_state.tree_selected_placement_id = UNFILED_PLACEMENT_ID
@@ -18773,12 +18972,12 @@ class LibraryScreen(BaseAppScreen):
             elif operation == "restore_folder":
                 self._notes_state.deleted_folder_receipt = None
                 folder = result.folder
-                self._notes_state.tree_selected_placement_id = (
-                    FolderPlacementId.folder(folder.folder_id)
+                self._notes_state.tree_selected_placement_id = FolderPlacementId.folder(
+                    folder.folder_id
                 )
             elif operation == "create_folder":
-                self._notes_state.tree_selected_placement_id = (
-                    FolderPlacementId.folder(result.folder_id)
+                self._notes_state.tree_selected_placement_id = FolderPlacementId.folder(
+                    result.folder_id
                 )
             self._notes_state.notice = "Folder organization updated."
             await LibraryScreen._reconcile_library_notes_tree_mutation(
@@ -18847,8 +19046,12 @@ class LibraryScreen(BaseAppScreen):
     def _selected_library_notes_tree_row(self):
         return self._notes_controller._selected_library_notes_tree_row()
 
-    def _library_notes_folder_target_options(self, *, exclude_folder_id: str | None=None) -> tuple[tuple[str, str], ...]:
-        return self._notes_controller._library_notes_folder_target_options(exclude_folder_id=exclude_folder_id)
+    def _library_notes_folder_target_options(
+        self, *, exclude_folder_id: str | None = None
+    ) -> tuple[tuple[str, str], ...]:
+        return self._notes_controller._library_notes_folder_target_options(
+            exclude_folder_id=exclude_folder_id
+        )
 
     def _remove_library_note_source_record(self, note_id: str) -> None:
         return self._notes_controller._remove_library_note_source_record(note_id)
@@ -18865,8 +19068,12 @@ class LibraryScreen(BaseAppScreen):
     def _library_note_work_pane_kwargs(self) -> dict[str, Any]:
         return self._notes_controller._library_note_work_pane_kwargs()
 
-    def _library_prompt_basic_unavailable_reason(self, state: PromptEditorState, *, conflict: bool=False) -> str:
-        return self._prompts_controller._library_prompt_basic_unavailable_reason(state, conflict=conflict)
+    def _library_prompt_basic_unavailable_reason(
+        self, state: PromptEditorState, *, conflict: bool = False
+    ) -> str:
+        return self._prompts_controller._library_prompt_basic_unavailable_reason(
+            state, conflict=conflict
+        )
 
     def _library_prompts_list_canvas_kwargs(self) -> dict[str, Any]:
         return self._prompts_controller._library_prompts_list_canvas_kwargs()
@@ -18883,8 +19090,12 @@ class LibraryScreen(BaseAppScreen):
     def _library_skill_work_pane_kwargs(self) -> dict[str, Any]:
         return self._skills_controller._library_skill_work_pane_kwargs()
 
-    def _library_skills_canvas_kwargs(self, *, consume_scroll: bool = True) -> dict[str, Any]:
-        return self._skills_controller._library_skills_canvas_kwargs(consume_scroll=consume_scroll)
+    def _library_skills_canvas_kwargs(
+        self, *, consume_scroll: bool = True
+    ) -> dict[str, Any]:
+        return self._skills_controller._library_skills_canvas_kwargs(
+            consume_scroll=consume_scroll
+        )
 
     def _build_library_prompts_state(self):
         """Build the Library prompts canvas's list-view display state.
@@ -18905,7 +19116,9 @@ class LibraryScreen(BaseAppScreen):
         return self._prompts_controller._sync_library_prompt_selection(focus_identity)
 
     def _clear_library_prompt_selection(self, *, announce: bool) -> None:
-        return self._prompts_controller._clear_library_prompt_selection(announce=announce)
+        return self._prompts_controller._clear_library_prompt_selection(
+            announce=announce
+        )
 
     def _sync_library_prompt_memberships(self, state) -> None:
         return self._prompts_controller._sync_library_prompt_memberships(state)
@@ -18922,14 +19135,22 @@ class LibraryScreen(BaseAppScreen):
     def _library_prompts_focus_identity(self) -> str | None:
         return self._prompts_controller._library_prompts_focus_identity()
 
-    def _restore_library_prompts_focus(self, focus_identity: str | None, filter_cursor: int | None=None) -> None:
-        return self._prompts_controller._restore_library_prompts_focus(focus_identity, filter_cursor)
+    def _restore_library_prompts_focus(
+        self, focus_identity: str | None, filter_cursor: int | None = None
+    ) -> None:
+        return self._prompts_controller._restore_library_prompts_focus(
+            focus_identity, filter_cursor
+        )
 
     def _stop_library_prompts_search_debounce(self) -> None:
         return self._prompts_controller._stop_library_prompts_search_debounce()
 
-    def _capture_library_prompts_filter_cursor(self, request_token: int, focus_identity: str | None) -> None:
-        return self._prompts_controller._capture_library_prompts_filter_cursor(request_token, focus_identity)
+    def _capture_library_prompts_filter_cursor(
+        self, request_token: int, focus_identity: str | None
+    ) -> None:
+        return self._prompts_controller._capture_library_prompts_filter_cursor(
+            request_token, focus_identity
+        )
 
     def _request_library_prompts_browse(
         self,
@@ -18950,8 +19171,12 @@ class LibraryScreen(BaseAppScreen):
             focus_identity=focus_identity,
         )
 
-    def _sync_library_prompts_browse_result(self, result: PromptBrowseResult, focus_identity: str | None) -> LibraryEntryReconcileResult:
-        return self._prompts_controller._sync_library_prompts_browse_result(result, focus_identity)
+    def _sync_library_prompts_browse_result(
+        self, result: PromptBrowseResult, focus_identity: str | None
+    ) -> LibraryEntryReconcileResult:
+        return self._prompts_controller._sync_library_prompts_browse_result(
+            result, focus_identity
+        )
 
     def _queue_library_prompts_search(self, query: str) -> None:
         return self._prompts_controller._queue_library_prompts_search(query)
@@ -19017,11 +19242,19 @@ class LibraryScreen(BaseAppScreen):
             focus_identity=focus_identity,
         )
 
-    def _sync_library_skills_browse_result(self, result: SkillBrowseResult, focus_identity: str | None) -> LibraryEntryReconcileResult:
-        return self._skills_controller._sync_library_skills_browse_result(result, focus_identity)
+    def _sync_library_skills_browse_result(
+        self, result: SkillBrowseResult, focus_identity: str | None
+    ) -> LibraryEntryReconcileResult:
+        return self._skills_controller._sync_library_skills_browse_result(
+            result, focus_identity
+        )
 
-    def _refresh_library_skills_after_committed_mutation(self, *, scope: SkillBrowseScope | None = None) -> None:
-        return self._skills_controller._refresh_library_skills_after_committed_mutation(scope=scope)
+    def _refresh_library_skills_after_committed_mutation(
+        self, *, scope: SkillBrowseScope | None = None
+    ) -> None:
+        return self._skills_controller._refresh_library_skills_after_committed_mutation(
+            scope=scope
+        )
 
     def _refresh_library_skills_trust_posture(self) -> None:
         """Kick an off-thread read of the Skills trust service's posture.
@@ -19072,8 +19305,12 @@ class LibraryScreen(BaseAppScreen):
             exit_on_error=False,
         )
 
-    async def _load_library_skills_trust_posture(self, posture_fn) -> LibraryEntryReconcileResult:
-        return await self._skills_controller._load_library_skills_trust_posture(posture_fn)
+    async def _load_library_skills_trust_posture(
+        self, posture_fn
+    ) -> LibraryEntryReconcileResult:
+        return await self._skills_controller._load_library_skills_trust_posture(
+            posture_fn
+        )
 
     async def _refresh_library_media_detail(
         self,
@@ -19318,8 +19555,22 @@ class LibraryScreen(BaseAppScreen):
             self.call_next(self._recompose_library_media_detail_if_unrendered)
         return None
 
-    def _schedule_library_media_image_preview(self, *, request_generation: int, canonical_id: str, backing_id: int | str, detail: Mapping[str, Any], force: bool=False) -> None:
-        return self._media_controller._schedule_library_media_image_preview(request_generation=request_generation, canonical_id=canonical_id, backing_id=backing_id, detail=detail, force=force)
+    def _schedule_library_media_image_preview(
+        self,
+        *,
+        request_generation: int,
+        canonical_id: str,
+        backing_id: int | str,
+        detail: Mapping[str, Any],
+        force: bool = False,
+    ) -> None:
+        return self._media_controller._schedule_library_media_image_preview(
+            request_generation=request_generation,
+            canonical_id=canonical_id,
+            backing_id=backing_id,
+            detail=detail,
+            force=force,
+        )
 
     def _cache_library_media_preview(self, canonical_id: str, image: Any) -> None:
         return self._media_controller._cache_library_media_preview(canonical_id, image)
@@ -19375,11 +19626,17 @@ class LibraryScreen(BaseAppScreen):
     def _recompose_library_media_detail_if_unrendered(self) -> None:
         return self._media_controller._recompose_library_media_detail_if_unrendered()
 
-    async def _fetch_library_media_highlights(self, media_id: str) -> list[dict[str, Any]]:
+    async def _fetch_library_media_highlights(
+        self, media_id: str
+    ) -> list[dict[str, Any]]:
         return await self._media_controller._fetch_library_media_highlights(media_id)
 
-    async def _project_library_note_entry_result(self, *, entry_origin: bool, then: Callable[[], None] | None=None) -> LibraryEntryReconcileResult | None:
-        return await self._notes_controller._project_library_note_entry_result(entry_origin=entry_origin, then=then)
+    async def _project_library_note_entry_result(
+        self, *, entry_origin: bool, then: Callable[[], None] | None = None
+    ) -> LibraryEntryReconcileResult | None:
+        return await self._notes_controller._project_library_note_entry_result(
+            entry_origin=entry_origin, then=then
+        )
 
     async def _refresh_library_note_detail(
         self,
@@ -19438,9 +19695,7 @@ class LibraryScreen(BaseAppScreen):
             # routed elsewhere projects a Notes canvas over their new
             # destination.
             if load_no_longer_owns_the_view():
-                return (
-                    LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
-                )
+                return LibraryEntryReconcileResult.SUPERSEDED if entry_origin else None
             self._notes_state.load_state = "failed"
             self._notes_state.load_message = LIBRARY_NOTE_LOAD_TIMEOUT_COPY
             return await self._project_library_note_entry_result(
@@ -19505,8 +19760,12 @@ class LibraryScreen(BaseAppScreen):
             )
         return None
 
-    def _begin_library_note_load(self, note_id: str, *, entry_origin: bool=False) -> None:
-        return self._notes_controller._begin_library_note_load(note_id, entry_origin=entry_origin)
+    def _begin_library_note_load(
+        self, note_id: str, *, entry_origin: bool = False
+    ) -> None:
+        return self._notes_controller._begin_library_note_load(
+            note_id, entry_origin=entry_origin
+        )
 
     def _arm_library_note_editor(self, recompose_generation: int | None = None) -> None:
         """Enable dirty-tracking once the notes editor's mount-time
@@ -19521,7 +19780,9 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.editor_armed = True
 
     @on(LibraryNoteWorkPane.EditorReady)
-    def handle_library_note_work_pane_editor_ready(self, event: LibraryNoteWorkPane.EditorReady) -> None:
+    def handle_library_note_work_pane_editor_ready(
+        self, event: LibraryNoteWorkPane.EditorReady
+    ) -> None:
         return self._notes_controller.handle_library_note_work_pane_editor_ready(event)
 
     def _reset_library_note_editor_state(self) -> None:
@@ -19539,7 +19800,9 @@ class LibraryScreen(BaseAppScreen):
     def _default_library_export_form() -> dict[str, Any]:
         return LibraryExportController._default_library_export_form()
 
-    def _reset_library_export_transient_state(self, scope: ExportScope | None=None) -> None:
+    def _reset_library_export_transient_state(
+        self, scope: ExportScope | None = None
+    ) -> None:
         return self._export_controller._reset_library_export_transient_state(scope)
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
@@ -19549,11 +19812,17 @@ class LibraryScreen(BaseAppScreen):
         return self._export_controller._resolve_library_export_chachanotes_db()
 
     @staticmethod
-    def _compute_library_export_counts(scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any) -> dict[str, int]:
-        return LibraryExportController._compute_library_export_counts(scope, media_db, chachanotes_db, prompts_db)
+    def _compute_library_export_counts(
+        scope: ExportScope, media_db: Any, chachanotes_db: Any, prompts_db: Any
+    ) -> dict[str, int]:
+        return LibraryExportController._compute_library_export_counts(
+            scope, media_db, chachanotes_db, prompts_db
+        )
 
     @staticmethod
-    def _compute_library_export_preview(scope: ExportScope, media_db: Any) -> ExportPreview:
+    def _compute_library_export_preview(
+        scope: ExportScope, media_db: Any
+    ) -> ExportPreview:
         return LibraryExportController._compute_library_export_preview(scope, media_db)
 
     def _start_library_export_counts_worker(self) -> None:
@@ -19798,8 +20067,7 @@ class LibraryScreen(BaseAppScreen):
                 item_count=self._export_state.last_items,
                 size_bytes=self._export_state.last_bytes,
             )
-            if self._export_state.last_path
-            and self._export_state.last_at is not None
+            if self._export_state.last_path and self._export_state.last_at is not None
             else ""
         )
         return build_library_export_form_state(
@@ -19920,8 +20188,21 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @staticmethod
-    def _build_library_export_payload(*, name: str, description: str, selections: Mapping[ContentType, list[str]], destination: str, media_quality: str) -> dict[str, Any]:
-        return LibraryExportController._build_library_export_payload(name=name, description=description, selections=selections, destination=destination, media_quality=media_quality)
+    def _build_library_export_payload(
+        *,
+        name: str,
+        description: str,
+        selections: Mapping[ContentType, list[str]],
+        destination: str,
+        media_quality: str,
+    ) -> dict[str, Any]:
+        return LibraryExportController._build_library_export_payload(
+            name=name,
+            description=description,
+            selections=selections,
+            destination=destination,
+            media_quality=media_quality,
+        )
 
     @staticmethod
     def _run_library_export_via_service(
@@ -19970,7 +20251,9 @@ class LibraryScreen(BaseAppScreen):
                     )
                 )
             except Exception as exc:
-                logger.opt(exception=True).warning("Library export service call failed.")
+                logger.opt(exception=True).warning(
+                    "Library export service call failed."
+                )
                 return {
                     "success": False,
                     "message": f"Export failed: {exc}",
@@ -20041,9 +20324,11 @@ class LibraryScreen(BaseAppScreen):
         )
 
         databases = (
-            media_db if scope.kind in ('everything', 'media') else None,
-            chachanotes_db if scope.kind in ('everything', 'conversations', 'notes') else None,
-            prompts_db if scope.kind in ('everything', 'prompts') else None,
+            media_db if scope.kind in ("everything", "media") else None,
+            chachanotes_db
+            if scope.kind in ("everything", "conversations", "notes")
+            else None,
+            prompts_db if scope.kind in ("everything", "prompts") else None,
         )
         paths = tuple(getattr(db, "db_path", None) for db in databases) + (destination,)
         with operation(paths), worker_databases(databases):
@@ -20105,7 +20390,9 @@ class LibraryScreen(BaseAppScreen):
                 name=name,
                 description=description,
                 progress_callback=_progress_cb,
-                cancel_check=(cancel_event.is_set if cancel_event is not None else None),
+                cancel_check=(
+                    cancel_event.is_set if cancel_event is not None else None
+                ),
             )
             if outcome.get("cancelled"):
                 self._marshal_library_export_cancelled(run_id)
@@ -20122,8 +20409,26 @@ class LibraryScreen(BaseAppScreen):
             else:
                 self._marshal_library_export_failure(run_id, outcome["message"])
 
-    def _marshal_library_export_success(self, run_id: int, path: str, dependency_info: Any, registry_recorded: bool, message: str='', *, item_count: int | None=None, size_bytes: int | None=None) -> None:
-        return self._export_controller._marshal_library_export_success(run_id, path, dependency_info, registry_recorded, message, item_count=item_count, size_bytes=size_bytes)
+    def _marshal_library_export_success(
+        self,
+        run_id: int,
+        path: str,
+        dependency_info: Any,
+        registry_recorded: bool,
+        message: str = "",
+        *,
+        item_count: int | None = None,
+        size_bytes: int | None = None,
+    ) -> None:
+        return self._export_controller._marshal_library_export_success(
+            run_id,
+            path,
+            dependency_info,
+            registry_recorded,
+            message,
+            item_count=item_count,
+            size_bytes=size_bytes,
+        )
 
     def _marshal_library_export_failure(self, run_id: int, message: str) -> None:
         return self._export_controller._marshal_library_export_failure(run_id, message)
@@ -20142,8 +20447,12 @@ class LibraryScreen(BaseAppScreen):
         self._update_library_export_canvas_after_run()
 
     @staticmethod
-    def _build_library_export_success_message(path: Any, dependency_info: Any, creator_message: Any='') -> str:
-        return LibraryExportController._build_library_export_success_message(path, dependency_info, creator_message)
+    def _build_library_export_success_message(
+        path: Any, dependency_info: Any, creator_message: Any = ""
+    ) -> str:
+        return LibraryExportController._build_library_export_success_message(
+            path, dependency_info, creator_message
+        )
 
     def _apply_library_export_success(
         self,
@@ -20318,7 +20627,9 @@ class LibraryScreen(BaseAppScreen):
         before: LibraryIngestJob,
         after: LibraryIngestJob,
     ) -> None:
-        return self._ingest_controller._handle_library_ingest_progress_changed(before, after)
+        return self._ingest_controller._handle_library_ingest_progress_changed(
+            before, after
+        )
 
     def _refresh_library_ingest_canvas_preserving_context(self) -> None:
         """Recompose for a job-tick WITHOUT losing what the user was doing.
@@ -20389,7 +20700,9 @@ class LibraryScreen(BaseAppScreen):
         stale_path_input: Input | None = None,
         stale_path_value: str | None = None,
     ) -> None:
-        return self._ingest_controller._restore_library_ingest_canvas_context(focused_id, cursor, scroll_y, stale_path_input, stale_path_value)
+        return self._ingest_controller._restore_library_ingest_canvas_context(
+            focused_id, cursor, scroll_y, stale_path_input, stale_path_value
+        )
 
     def _update_library_ingest_gate(self, new_state: LibraryIngestCanvasState) -> None:
         """Sync the Start button + gate line in place (never a recompose).
@@ -20748,26 +21061,30 @@ class LibraryScreen(BaseAppScreen):
             lambda: self._fire_library_note_autosave(generation),
         )
 
-    @on(Input.Changed, '#library-note-title')
+    @on(Input.Changed, "#library-note-title")
     def handle_library_note_title_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_title_changed(event)
 
-    @on(TextArea.Changed, '#library-note-body')
+    @on(TextArea.Changed, "#library-note-body")
     def handle_library_note_body_changed(self, event: TextArea.Changed) -> None:
         return self._notes_controller.handle_library_note_body_changed(event)
 
-    @on(Input.Changed, '#library-note-keywords')
+    @on(Input.Changed, "#library-note-keywords")
     def handle_library_note_keywords_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_keywords_changed(event)
 
-    @on(Input.Changed, '#library-note-context-keywords')
-    def handle_library_note_context_keywords_changed(self, event: Input.Changed) -> None:
-        return self._notes_controller.handle_library_note_context_keywords_changed(event)
+    @on(Input.Changed, "#library-note-context-keywords")
+    def handle_library_note_context_keywords_changed(
+        self, event: Input.Changed
+    ) -> None:
+        return self._notes_controller.handle_library_note_context_keywords_changed(
+            event
+        )
 
     def _fire_library_note_autosave(self, generation: int) -> None:
         return self._notes_controller._fire_library_note_autosave(generation)
 
-    @on(Button.Pressed, '#library-note-save')
+    @on(Button.Pressed, "#library-note-save")
     def handle_library_note_save(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_save(event)
 
@@ -20847,8 +21164,10 @@ class LibraryScreen(BaseAppScreen):
             bool(getattr(self._notes_state, "filter", "").strip())
             and filter_state is not None
         )
-        if title_changed and filter_active and self._active_notes_filter_shows_note(
-            filter_state, baseline.note_id
+        if (
+            title_changed
+            and filter_active
+            and self._active_notes_filter_shows_note(filter_state, baseline.note_id)
         ):
             self._notes_state.filter = ""
             self._notes_state.filter_records = None
@@ -21009,9 +21328,7 @@ class LibraryScreen(BaseAppScreen):
                     if typed_a_blank_title:
                         notify = getattr(self.app_instance, "notify", None)
                         if callable(notify):
-                            notify(
-                                "Empty note discarded", severity="information"
-                            )
+                            notify("Empty note discarded", severity="information")
                     return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
@@ -21024,9 +21341,7 @@ class LibraryScreen(BaseAppScreen):
                 and snapshot.saved_revision > before_saved_revision
             ):
                 self._patch_library_note_list_from_session()
-                self._notes_state.autosave_state = (
-                    "idle" if snapshot.dirty else "saved"
-                )
+                self._notes_state.autosave_state = "idle" if snapshot.dirty else "saved"
                 self._update_library_note_meta_static(content=snapshot.body)
             return outcome
         if snapshot is None:
@@ -21059,11 +21374,11 @@ class LibraryScreen(BaseAppScreen):
     async def _gc_pending_blank_note(self) -> None:
         return await self._notes_controller._gc_pending_blank_note()
 
-    @on(Button.Pressed, '#library-note-conflict-overwrite')
+    @on(Button.Pressed, "#library-note-conflict-overwrite")
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_conflict_overwrite(event)
 
-    @on(Button.Pressed, '#library-note-conflict-reload')
+    @on(Button.Pressed, "#library-note-conflict-reload")
     def handle_library_note_conflict_reload(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_conflict_reload(event)
 
@@ -21072,19 +21387,19 @@ class LibraryScreen(BaseAppScreen):
     def _read_library_note_editor_fields(self) -> tuple[str, str, str] | None:
         return self._notes_controller._read_library_note_editor_fields()
 
-    @on(Button.Pressed, '#library-note-edit')
+    @on(Button.Pressed, "#library-note-edit")
     def handle_library_note_edit_mode(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_edit_mode(event)
 
-    @on(Button.Pressed, '#library-note-preview')
+    @on(Button.Pressed, "#library-note-preview")
     def handle_library_note_preview_toggle(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_preview_toggle(event)
 
-    @on(Button.Pressed, '#library-note-context')
+    @on(Button.Pressed, "#library-note-context")
     def handle_library_note_context_open(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_context_open(event)
 
-    @on(Button.Pressed, '#library-note-context-back')
+    @on(Button.Pressed, "#library-note-context-back")
     def handle_library_note_context_back(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_context_back(event)
 
@@ -21182,26 +21497,26 @@ class LibraryScreen(BaseAppScreen):
             )
         self._finish_library_notes_operation(active_operation, success=True)
 
-    @on(Button.Pressed, '#library-note-context-export-md')
-    @on(Button.Pressed, '#library-note-export-md')
+    @on(Button.Pressed, "#library-note-context-export-md")
+    @on(Button.Pressed, "#library-note-export-md")
     async def handle_library_note_export_markdown(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_export_markdown(event)
 
-    @on(Button.Pressed, '#library-note-context-export-txt')
-    @on(Button.Pressed, '#library-note-export-txt')
+    @on(Button.Pressed, "#library-note-context-export-txt")
+    @on(Button.Pressed, "#library-note-export-txt")
     async def handle_library_note_export_text(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_export_text(event)
 
-    @on(Button.Pressed, '#library-note-context-copy')
-    @on(Button.Pressed, '#library-note-copy')
+    @on(Button.Pressed, "#library-note-context-copy")
+    @on(Button.Pressed, "#library-note-copy")
     def handle_library_note_copy(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_copy(event)
 
     def _open_selected_library_note_handoff(self) -> tuple[str, str]:
         return self._notes_controller._open_selected_library_note_handoff()
 
-    @on(Button.Pressed, '#library-note-context-use-in-console')
-    @on(Button.Pressed, '#library-note-use-in-console')
+    @on(Button.Pressed, "#library-note-context-use-in-console")
+    @on(Button.Pressed, "#library-note-use-in-console")
     def handle_library_note_use_in_console(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_use_in_console(event)
 
@@ -21365,11 +21680,14 @@ class LibraryScreen(BaseAppScreen):
             from ...Library.library_content_evidence import (
                 get_library_artifact_content_evidence,
             )
+
             return await self._run_library_service_call(
                 get_library_artifact_content_evidence,
                 subscriptions_db=getattr(self.app_instance, "subscriptions_db", None),
                 chachanotes_db=getattr(self.app_instance, "chachanotes_db", None),
-                local_chatbook_service=getattr(self.app_instance, "local_chatbook_service", None),
+                local_chatbook_service=getattr(
+                    self.app_instance, "local_chatbook_service", None
+                ),
                 isolate_in_worker=True,
             )
         service_attributes = {
@@ -21987,31 +22305,39 @@ class LibraryScreen(BaseAppScreen):
             group="library_hub_open_recent",
         )
 
-    @on(Button.Pressed, '#library-notes-source-files')
+    @on(Button.Pressed, "#library-notes-source-files")
     async def _show_library_file_notes(self, event: Button.Pressed) -> None:
         return await self._notes_controller._show_library_file_notes(event)
 
     def _sync_library_notes_source_controls(self) -> None:
         return self._notes_controller._sync_library_notes_source_controls()
 
-    @on(Button.Pressed, '#library-notes-task-return')
+    @on(Button.Pressed, "#library-notes-task-return")
     async def _return_from_library_notes_task(self, event: Button.Pressed) -> None:
         return await self._notes_controller._return_from_library_notes_task(event)
 
-    @on(Button.Pressed, '#library-notes-source-database')
+    @on(Button.Pressed, "#library-notes-source-database")
     async def _show_library_database_notes(self, event: Button.Pressed) -> None:
         return await self._notes_controller._show_library_database_notes(event)
 
     @on(FileNotesReloadConfirmationChanged)
-    def _handle_file_notes_reload_confirmation_changed(self, event: FileNotesReloadConfirmationChanged) -> None:
-        return self._notes_controller._handle_file_notes_reload_confirmation_changed(event)
+    def _handle_file_notes_reload_confirmation_changed(
+        self, event: FileNotesReloadConfirmationChanged
+    ) -> None:
+        return self._notes_controller._handle_file_notes_reload_confirmation_changed(
+            event
+        )
 
     @on(FileNotesEditableOpened)
-    def _handle_file_notes_editable_opened(self, event: FileNotesEditableOpened) -> None:
+    def _handle_file_notes_editable_opened(
+        self, event: FileNotesEditableOpened
+    ) -> None:
         return self._notes_controller._handle_file_notes_editable_opened(event)
 
     @on(FileNotesIdentityCleared)
-    def _handle_file_notes_identity_cleared(self, event: FileNotesIdentityCleared) -> None:
+    def _handle_file_notes_identity_cleared(
+        self, event: FileNotesIdentityCleared
+    ) -> None:
         return self._notes_controller._handle_file_notes_identity_cleared(event)
 
     @on(FileNotesRootChanged)
@@ -22330,9 +22656,7 @@ class LibraryScreen(BaseAppScreen):
         ):
             self._conversations_state.request_generation += 1
             self._conversations_state.requested_page = self._conversations_state.page
-            self._conversations_state.requested_query = (
-                self._conversations_state.query
-            )
+            self._conversations_state.requested_query = self._conversations_state.query
             self._conversations_state.loading = False
         self._pending_library_source_open = None
         if row_id != LIBRARY_ROW_BROWSE_PROMPTS:
@@ -22739,25 +23063,25 @@ class LibraryScreen(BaseAppScreen):
         if conversation_id:
             self._start_library_conversation_reader_selection(conversation_id)
 
-
-
     @on(Button.Pressed, "#library-conversation-reader-read")
     def show_library_conversation_reader_read(self, event: Button.Pressed) -> None:
-        return self._conversation_reader_controller.show_library_conversation_reader_read(
-            event
+        return (
+            self._conversation_reader_controller.show_library_conversation_reader_read(
+                event
+            )
         )
 
     @on(Button.Pressed, "#library-conversation-reader-info")
     def show_library_conversation_reader_info(self, event: Button.Pressed) -> None:
-        return self._conversation_reader_controller.show_library_conversation_reader_info(
-            event
+        return (
+            self._conversation_reader_controller.show_library_conversation_reader_info(
+                event
+            )
         )
 
     @on(Input.Submitted, "#library-conversation-reader-find")
     def find_in_library_conversation(self, event: Input.Submitted) -> None:
-        return self._conversation_reader_controller.find_in_library_conversation(
-            event
-        )
+        return self._conversation_reader_controller.find_in_library_conversation(event)
 
     @on(LibraryConversationReader.MessagesSynced)
     def library_conversation_reader_messages_synced(
@@ -22781,22 +23105,25 @@ class LibraryScreen(BaseAppScreen):
             return None
         return self._conversations_state.row_selection.is_selected(loaded_id)
 
-
-
     @on(Button.Pressed, "#library-conversations-select-toggle")
     def handle_library_conversations_select_toggle(self, event: Button.Pressed) -> None:
-        return self._conversations_controller.handle_library_conversations_select_toggle(event)
-
+        return (
+            self._conversations_controller.handle_library_conversations_select_toggle(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-conversations-select-all")
     def handle_library_conversations_select_all(self, event: Button.Pressed) -> None:
-        return self._conversations_controller.handle_library_conversations_select_all(event)
-
+        return self._conversations_controller.handle_library_conversations_select_all(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-select-clear")
     def handle_library_conversations_select_clear(self, event: Button.Pressed) -> None:
-        return self._conversations_controller.handle_library_conversations_select_clear(event)
-
+        return self._conversations_controller.handle_library_conversations_select_clear(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-export-selected")
     async def handle_library_conversations_export_selected(
@@ -22815,8 +23142,6 @@ class LibraryScreen(BaseAppScreen):
         await self._open_library_export_canvas(
             self._conversations_state.row_selection.export_scope()
         )
-
-
 
     @on(Button.Pressed, "#library-media-type-filter")
     def handle_library_media_type_filter_pressed(self, event: Button.Pressed) -> None:
@@ -23533,7 +23858,9 @@ class LibraryScreen(BaseAppScreen):
                             # retryable set -- it is a failure, mapped like
                             # the unavailable path so the count stays honest.
                             failed.append(media_id)
-                            failure_reason = failure_reason or "restore returned no record"
+                            failure_reason = (
+                                failure_reason or "restore returned no record"
+                            )
                     except Exception as exc:
                         logger.warning(
                             "Failed to restore a Library media item in bulk-delete "
@@ -23664,34 +23991,42 @@ class LibraryScreen(BaseAppScreen):
     def _capture_library_media_trash_return(self) -> _LibraryMediaReturnReceipt:
         return self._media_controller._capture_library_media_trash_return()
 
-    @on(Input.Changed, '#library-media-trash-search')
+    @on(Input.Changed, "#library-media-trash-search")
     def handle_library_media_trash_search_changed(self, event: Input.Changed) -> None:
         return self._media_controller.handle_library_media_trash_search_changed(event)
 
-    @on(Input.Submitted, '#library-media-trash-search')
-    def handle_library_media_trash_search_submitted(self, event: Input.Submitted) -> None:
+    @on(Input.Submitted, "#library-media-trash-search")
+    def handle_library_media_trash_search_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         return self._media_controller.handle_library_media_trash_search_submitted(event)
 
-    @on(Button.Pressed, '#library-media-trash-type-filter')
+    @on(Button.Pressed, "#library-media-trash-type-filter")
     def handle_library_media_trash_type_filter(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_type_filter(event)
 
-    @on(OptionList.OptionSelected, '#library-media-trash-type-choices')
-    def handle_library_media_trash_type_choice(self, event: OptionList.OptionSelected) -> None:
+    @on(OptionList.OptionSelected, "#library-media-trash-type-choices")
+    def handle_library_media_trash_type_choice(
+        self, event: OptionList.OptionSelected
+    ) -> None:
         return self._media_controller.handle_library_media_trash_type_choice(event)
 
-    def _request_library_media_trash_page(self, page: int, *, focus_identity: str) -> Any | None:
-        return self._media_controller._request_library_media_trash_page(page, focus_identity=focus_identity)
+    def _request_library_media_trash_page(
+        self, page: int, *, focus_identity: str
+    ) -> Any | None:
+        return self._media_controller._request_library_media_trash_page(
+            page, focus_identity=focus_identity
+        )
 
-    @on(Button.Pressed, '#library-media-trash-previous')
+    @on(Button.Pressed, "#library-media-trash-previous")
     def handle_library_media_trash_previous(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_previous(event)
 
-    @on(Button.Pressed, '#library-media-trash-next')
+    @on(Button.Pressed, "#library-media-trash-next")
     def handle_library_media_trash_next(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_next(event)
 
-    @on(Button.Pressed, '#library-media-trash-retry')
+    @on(Button.Pressed, "#library-media-trash-retry")
     def handle_library_media_trash_retry(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_retry(event)
 
@@ -23802,7 +24137,7 @@ class LibraryScreen(BaseAppScreen):
     def _cancel_library_media_trash_delete_confirmation(self) -> None:
         return self._media_controller._cancel_library_media_trash_delete_confirmation()
 
-    @on(Button.Pressed, '#library-media-trash-delete-cancel')
+    @on(Button.Pressed, "#library-media-trash-delete-cancel")
     def handle_library_media_trash_delete_cancel(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_trash_delete_cancel(event)
 
@@ -23860,8 +24195,10 @@ class LibraryScreen(BaseAppScreen):
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
             notice = f"Deleted '{title}' permanently."
-            committed = self._library_media_trash_browse_controller.finish_mutation_commit(
-                claim, notice
+            committed = (
+                self._library_media_trash_browse_controller.finish_mutation_commit(
+                    claim, notice
+                )
             )
         finally:
             # task-31275: the permanently deleted row was already out of the
@@ -23886,7 +24223,7 @@ class LibraryScreen(BaseAppScreen):
             elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
                     claim,
-                    focus_identity=f"#library-media-trash-row-{target.page_index}"
+                    focus_identity=f"#library-media-trash-row-{target.page_index}",
                 )
 
     @on(Button.Pressed, "#library-media-trash-restore")
@@ -23981,8 +24318,10 @@ class LibraryScreen(BaseAppScreen):
 
             title = LibraryScreen._bounded_library_media_trash_title(target.title)
             notice = f"Restored '{title}'."
-            committed = self._library_media_trash_browse_controller.finish_mutation_commit(
-                claim, notice
+            committed = (
+                self._library_media_trash_browse_controller.finish_mutation_commit(
+                    claim, notice
+                )
             )
             if not committed:
                 return
@@ -24037,14 +24376,16 @@ class LibraryScreen(BaseAppScreen):
             elif committed:
                 self._library_media_trash_browse_controller.request_after_mutation(
                     claim,
-                    focus_identity=f"#library-media-trash-row-{target.page_index}"
+                    focus_identity=f"#library-media-trash-row-{target.page_index}",
                 )
 
     def _open_library_media_viewer(self, media_id: str) -> None:
         return self._media_controller._open_library_media_viewer(media_id)
 
     async def _open_library_external_media_detail(self, media_id: str) -> None:
-        return await self._media_controller._open_library_external_media_detail(media_id)
+        return await self._media_controller._open_library_external_media_detail(
+            media_id
+        )
 
     def _library_media_backing_id(self, media_id: str) -> int | str:
         """Resolve a canonical list identity to the positive local backing id."""
@@ -24059,7 +24400,9 @@ class LibraryScreen(BaseAppScreen):
                 return backing_id
         return media_id
 
-    def _library_media_reader_identity(self, media_id: str) -> tuple[str, int | str] | None:
+    def _library_media_reader_identity(
+        self, media_id: str
+    ) -> tuple[str, int | str] | None:
         return self._media_controller._library_media_reader_identity(media_id)
 
     def _required_library_media_backing_id(self, media_id: str) -> int:
@@ -24073,15 +24416,15 @@ class LibraryScreen(BaseAppScreen):
             return int(resolved)
         raise ValueError("Media mutation requires a positive backing id.")
 
-    @on(Button.Pressed, '#library-notes-sort')
+    @on(Button.Pressed, "#library-notes-sort")
     def handle_library_notes_sort(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_sort(event)
 
-    @on(Button.Pressed, '.library-notes-sort-choice')
+    @on(Button.Pressed, ".library-notes-sort-choice")
     def handle_library_notes_sort_choice(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_sort_choice(event)
 
-    @on(Button.Pressed, '#library-notes-new')
+    @on(Button.Pressed, "#library-notes-new")
     async def handle_library_notes_new(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_notes_new(event)
 
@@ -24196,14 +24539,12 @@ class LibraryScreen(BaseAppScreen):
             return bool(
                 generation == self._notes_state.filter_generation
                 and topology_epoch == self._notes_state.tree_topology_epoch
-                and lifecycle_generation
-                == self._notes_state.tree_lifecycle_generation
+                and lifecycle_generation == self._notes_state.tree_lifecycle_generation
                 and (
                     navigation_generation is None
                     and query == self._notes_state.filter
                     or navigation_generation is not None
-                    and navigation_generation
-                    == self._notes_state.navigation_generation
+                    and navigation_generation == self._notes_state.navigation_generation
                 )
             )
 
@@ -24540,9 +24881,7 @@ class LibraryScreen(BaseAppScreen):
             event: Input submission event emitted by the skills filter box.
         """
         event.stop()
-        self._skills_state.filter = self._safe_text(
-            event.value, max_length=200
-        ).strip()
+        self._skills_state.filter = self._safe_text(event.value, max_length=200).strip()
         scope = dataclasses.replace(
             self._library_skills_browse_controller.mutation_refresh_scope,
             query=self._skills_state.filter,
@@ -24795,8 +25134,12 @@ class LibraryScreen(BaseAppScreen):
             self._library_skill_import_coordinator.update_draft_path(event.value)
 
     @on(Input.Submitted, "#library-skills-import-path")
-    def handle_library_skills_import_path_submitted(self, event: Input.Submitted) -> None:
-        return self._skills_controller.handle_library_skills_import_path_submitted(event)
+    def handle_library_skills_import_path_submitted(
+        self, event: Input.Submitted
+    ) -> None:
+        return self._skills_controller.handle_library_skills_import_path_submitted(
+            event
+        )
 
     @on(Button.Pressed, "#library-skills-import-run")
     def handle_library_skills_import_run(self, event: Button.Pressed) -> None:
@@ -25028,9 +25371,13 @@ class LibraryScreen(BaseAppScreen):
             self._notify_skill_dirty_veto()
             return
         skill_name = getattr(event.button, "skill_name", None)
-        if getattr(event.button, "skill_builtin", False) and isinstance(skill_name, str):
+        if getattr(event.button, "skill_builtin", False) and isinstance(
+            skill_name, str
+        ):
             # TASK-32954: built-ins open a read-only preview, never the editor.
-            return self._skills_controller.builtin._open_library_skill_builtin_preview(skill_name)
+            return self._skills_controller.builtin._open_library_skill_builtin_preview(
+                skill_name
+            )
         self._reset_library_skill_editor_state()
         if isinstance(skill_name, str):
             self._skills_state.selected_skill_name = skill_name
@@ -25052,11 +25399,19 @@ class LibraryScreen(BaseAppScreen):
     def _invalidate_library_skill_detail_generation(self) -> None:
         return self._skills_controller._invalidate_library_skill_detail_generation()
 
-    def _library_skill_detail_request_is_current(self, *, skill_name: str, generation: int) -> bool:
-        return self._skills_controller._library_skill_detail_request_is_current(skill_name=skill_name, generation=generation)
+    def _library_skill_detail_request_is_current(
+        self, *, skill_name: str, generation: int
+    ) -> bool:
+        return self._skills_controller._library_skill_detail_request_is_current(
+            skill_name=skill_name, generation=generation
+        )
 
-    async def _refresh_library_skill_detail(self, skill_name: str, *, request_generation: int | None = None) -> None:
-        return await self._skills_controller._refresh_library_skill_detail(skill_name, request_generation=request_generation)
+    async def _refresh_library_skill_detail(
+        self, skill_name: str, *, request_generation: int | None = None
+    ) -> None:
+        return await self._skills_controller._refresh_library_skill_detail(
+            skill_name, request_generation=request_generation
+        )
 
     def _arm_library_skill_editor(self) -> None:
         return self._skills_controller._arm_library_skill_editor()
@@ -25096,11 +25451,15 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-skill-builtin-customize")
     def handle_library_skill_builtin_customize(self, event: Button.Pressed) -> None:
-        return self._skills_controller.builtin.handle_library_skill_builtin_customize(event)
+        return self._skills_controller.builtin.handle_library_skill_builtin_customize(
+            event
+        )
 
     @on(Switch.Changed, "#library-skill-builtin-enabled")
     def handle_library_skill_builtin_enabled(self, event: Switch.Changed) -> None:
-        return self._skills_controller.builtin.handle_library_skill_builtin_enabled(event)
+        return self._skills_controller.builtin.handle_library_skill_builtin_enabled(
+            event
+        )
 
     def _consume_library_skill_scroll_pending(self) -> bool:
         return self._skills_controller._consume_library_skill_scroll_pending()
@@ -25171,7 +25530,9 @@ class LibraryScreen(BaseAppScreen):
         return self._skills_controller.handle_library_skill_tool_filter(event)
 
     @on(SelectionList.SelectedChanged, "#library-skill-tool-picker")
-    def handle_library_skill_tool_selection(self, event: SelectionList.SelectedChanged) -> None:
+    def handle_library_skill_tool_selection(
+        self, event: SelectionList.SelectedChanged
+    ) -> None:
         return self._skills_controller.handle_library_skill_tool_selection(event)
 
     @on(Button.Pressed, "#library-skill-user-invocable")
@@ -25210,8 +25571,12 @@ class LibraryScreen(BaseAppScreen):
     async def _save_library_skill(self) -> None:
         return await self._skills_controller._save_library_skill()
 
-    def _apply_library_skill_save_success(self, result: Any, *, is_create: bool) -> None:
-        return self._skills_controller._apply_library_skill_save_success(result, is_create=is_create)
+    def _apply_library_skill_save_success(
+        self, result: Any, *, is_create: bool
+    ) -> None:
+        return self._skills_controller._apply_library_skill_save_success(
+            result, is_create=is_create
+        )
 
     def _enter_library_skill_conflict(self) -> None:
         return self._skills_controller._enter_library_skill_conflict()
@@ -25326,8 +25691,7 @@ class LibraryScreen(BaseAppScreen):
                 return bool(
                     (
                         visible_notes
-                        and region
-                        in {"navigator", "editor", "preview", "context"}
+                        and region in {"navigator", "editor", "preview", "context"}
                     )
                     or not self._library_selected_row_id
                 )
@@ -25414,8 +25778,7 @@ class LibraryScreen(BaseAppScreen):
             return self._library_media_trash_actions_live()
         if action == "library_note_editor_back":
             return (
-                self._library_note_editor_active()
-                and not self._notes_state.select_mode
+                self._library_note_editor_active() and not self._notes_state.select_mode
             )
         if action == "library_prompt_editor_back":
             return (
@@ -25651,10 +26014,7 @@ class LibraryScreen(BaseAppScreen):
                 # gated on this same call, so it can never advertise a
                 # refusal either way.
                 return not self._library_media_find_unavailable_reason()
-            if (
-                action == "library_media_move_to_trash"
-                and self._media_state.find_open
-            ):
+            if action == "library_media_move_to_trash" and self._media_state.find_open:
                 # task-32348 AC#2 (B D4a): with the Find bar open the user is
                 # typing a query. The bar takes focus on mount, so this is
                 # belt-and-braces -- but the one path where it did NOT (a
@@ -25984,7 +26344,10 @@ class LibraryScreen(BaseAppScreen):
             event: Button press event emitted by the editor's "Delete" action.
         """
         event.stop()
-        if self._skills_state.view != "editor" or not self._skills_state.selected_skill_name:
+        if (
+            self._skills_state.view != "editor"
+            or not self._skills_state.selected_skill_name
+        ):
             return
         self._snapshot_library_skill_live_fields()
         self._skills_state.confirming_delete = True
@@ -26024,8 +26387,12 @@ class LibraryScreen(BaseAppScreen):
             group="library_skill_delete",
         )
 
-    async def _run_library_skill_delete(self, skill_name: str, request_generation: int) -> None:
-        return await self._skills_controller._run_library_skill_delete(skill_name, request_generation)
+    async def _run_library_skill_delete(
+        self, skill_name: str, request_generation: int
+    ) -> None:
+        return await self._skills_controller._run_library_skill_delete(
+            skill_name, request_generation
+        )
 
     @on(Button.Pressed, "#library-skill-delete-cancel")
     def handle_library_skill_delete_cancel(self, event: Button.Pressed) -> None:
@@ -26050,11 +26417,19 @@ class LibraryScreen(BaseAppScreen):
             except (NoMatches, QueryError):
                 pass
 
-    async def _delete_library_skill(self, skill_name: str, *, request_generation: int) -> None:
-        return await self._skills_controller._delete_library_skill(skill_name, request_generation=request_generation)
+    async def _delete_library_skill(
+        self, skill_name: str, *, request_generation: int
+    ) -> None:
+        return await self._skills_controller._delete_library_skill(
+            skill_name, request_generation=request_generation
+        )
 
-    async def _request_library_skill_trust_passphrase(self, *, title: str | None = None, message: str | None = None) -> str | None:
-        return await self._skills_controller._request_library_skill_trust_passphrase(title=title, message=message)
+    async def _request_library_skill_trust_passphrase(
+        self, *, title: str | None = None, message: str | None = None
+    ) -> str | None:
+        return await self._skills_controller._request_library_skill_trust_passphrase(
+            title=title, message=message
+        )
 
     async def _call_library_skill_trust_service(
         self,
@@ -26164,12 +26539,15 @@ class LibraryScreen(BaseAppScreen):
         def current() -> bool:
             return (
                 self.is_mounted
-                and getattr(self.app_instance, "local_skill_trust_service", None) is service
+                and getattr(self.app_instance, "local_skill_trust_service", None)
+                is service
                 and self._library_entry_route_key() == route
                 and (service.skills_dir, service.trust_store.store_dir) == paths
             )
 
-        review, ok = await self._call_library_skill_trust_service("capture_recovery_review")
+        review, ok = await self._call_library_skill_trust_service(
+            "capture_recovery_review"
+        )
         if not ok or not current():
             return
         confirmed = await self.app.push_screen_wait(
@@ -26181,7 +26559,9 @@ class LibraryScreen(BaseAppScreen):
         if passphrase is None or not current():
             return
         _, ok = await self._call_library_skill_trust_service(
-            "trust_reviewed_recovery", review, passphrase,
+            "trust_reviewed_recovery",
+            review,
+            passphrase,
             failure_copy={
                 "skills_recovery_review_changed": "Skills changed after review. Capture a fresh review before setting up trust.",
                 "skills_recovery_root_changed": "The selected trust root changed. Reopen the profile and review again.",
@@ -26237,7 +26617,9 @@ class LibraryScreen(BaseAppScreen):
         )
 
     async def _open_library_skill_editor_for_review(self, skill_name: str) -> None:
-        return await self._skills_controller._open_library_skill_editor_for_review(skill_name)
+        return await self._skills_controller._open_library_skill_editor_for_review(
+            skill_name
+        )
 
     @on(Button.Pressed, "#library-skill-trust-setup")
     def handle_library_skill_trust_setup(self, event: Button.Pressed) -> None:
@@ -26357,11 +26739,17 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Input.Changed, "#library-prompts-import-path")
     def handle_library_prompts_import_path_changed(self, event: Input.Changed) -> None:
-        return self._prompts_controller.handle_library_prompts_import_path_changed(event)
+        return self._prompts_controller.handle_library_prompts_import_path_changed(
+            event
+        )
 
     @on(Input.Submitted, "#library-prompts-import-path")
-    def handle_library_prompts_import_path_submitted(self, event: Input.Submitted) -> None:
-        return self._prompts_controller.handle_library_prompts_import_path_submitted(event)
+    def handle_library_prompts_import_path_submitted(
+        self, event: Input.Submitted
+    ) -> None:
+        return self._prompts_controller.handle_library_prompts_import_path_submitted(
+            event
+        )
 
     @on(Button.Pressed, "#library-prompts-import-run")
     def handle_library_prompts_import_run(self, event: Button.Pressed) -> None:
@@ -26590,7 +26978,9 @@ class LibraryScreen(BaseAppScreen):
         )
         self._refresh_local_source_snapshot()
 
-    def _current_library_prompt_editor_state(self, base: PromptEditorState | None=None) -> PromptEditorState:
+    def _current_library_prompt_editor_state(
+        self, base: PromptEditorState | None = None
+    ) -> PromptEditorState:
         return self._prompts_controller._current_library_prompt_editor_state(base)
 
     def _library_prompt_can_update_original(self) -> bool:
@@ -26638,9 +27028,7 @@ class LibraryScreen(BaseAppScreen):
             except (TypeError, ValueError):
                 return
             focus_identity = self._library_prompts_focus_identity()
-            self._prompts_state.selection = self._prompts_state.selection.toggle(
-                entry
-            )
+            self._prompts_state.selection = self._prompts_state.selection.toggle(entry)
             self._sync_library_prompt_selection(focus_identity)
             return
         if type(prompt_id) is not int or prompt_id < 1:
@@ -26678,11 +27066,37 @@ class LibraryScreen(BaseAppScreen):
     def _invalidate_library_prompt_detail_generation(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_detail_generation()
 
-    async def _refresh_library_prompt_detail(self, prompt_id: int, *, open_history: bool=False, expected_history_scope: tuple[str, int] | None=None, entry_origin: bool=False, request_generation: int | None=None, mutation_generation: int | None=None, expected_version: int | None=None) -> LibraryEntryReconcileResult | None:
-        return await self._prompts_controller._refresh_library_prompt_detail(prompt_id, open_history=open_history, expected_history_scope=expected_history_scope, entry_origin=entry_origin, request_generation=request_generation, mutation_generation=mutation_generation, expected_version=expected_version)
+    async def _refresh_library_prompt_detail(
+        self,
+        prompt_id: int,
+        *,
+        open_history: bool = False,
+        expected_history_scope: tuple[str, int] | None = None,
+        entry_origin: bool = False,
+        request_generation: int | None = None,
+        mutation_generation: int | None = None,
+        expected_version: int | None = None,
+    ) -> LibraryEntryReconcileResult | None:
+        return await self._prompts_controller._refresh_library_prompt_detail(
+            prompt_id,
+            open_history=open_history,
+            expected_history_scope=expected_history_scope,
+            entry_origin=entry_origin,
+            request_generation=request_generation,
+            mutation_generation=mutation_generation,
+            expected_version=expected_version,
+        )
 
-    def _adopt_library_prompt_persisted_detail(self, detail: Mapping[str, Any], *, status: str='', open_history: bool | None=None) -> None:
-        return self._prompts_controller._adopt_library_prompt_persisted_detail(detail, status=status, open_history=open_history)
+    def _adopt_library_prompt_persisted_detail(
+        self,
+        detail: Mapping[str, Any],
+        *,
+        status: str = "",
+        open_history: bool | None = None,
+    ) -> None:
+        return self._prompts_controller._adopt_library_prompt_persisted_detail(
+            detail, status=status, open_history=open_history
+        )
 
     def _arm_library_prompt_editor(self) -> None:
         return self._prompts_controller._arm_library_prompt_editor()
@@ -26695,43 +27109,77 @@ class LibraryScreen(BaseAppScreen):
     def _invalidate_library_prompt_history(self) -> None:
         return self._prompts_controller._invalidate_library_prompt_history()
 
-    def _sync_library_prompt_history_region(self, state: PromptHistoryState | None=None) -> None:
+    def _sync_library_prompt_history_region(
+        self, state: PromptHistoryState | None = None
+    ) -> None:
         return self._prompts_controller._sync_library_prompt_history_region(state)
 
     @on(LibraryPromptHistoryRegion.Ready)
-    def _on_library_prompt_history_region_ready(self, event: LibraryPromptHistoryRegion.Ready) -> None:
+    def _on_library_prompt_history_region_ready(
+        self, event: LibraryPromptHistoryRegion.Ready
+    ) -> None:
         return self._prompts_controller._on_library_prompt_history_region_ready(event)
 
     @on(LibraryPromptHistoryRegion.DisclosureOpened)
-    def handle_library_prompt_history_opened(self, event: LibraryPromptHistoryRegion.DisclosureOpened) -> None:
+    def handle_library_prompt_history_opened(
+        self, event: LibraryPromptHistoryRegion.DisclosureOpened
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_opened(event)
 
     @on(LibraryPromptHistoryRegion.DisclosureClosed)
-    def handle_library_prompt_history_closed(self, event: LibraryPromptHistoryRegion.DisclosureClosed) -> None:
+    def handle_library_prompt_history_closed(
+        self, event: LibraryPromptHistoryRegion.DisclosureClosed
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_closed(event)
 
     @on(LibraryPromptHistoryRegion.CountRetryRequested)
-    def handle_library_prompt_history_retry_count(self, event: LibraryPromptHistoryRegion.CountRetryRequested) -> None:
+    def handle_library_prompt_history_retry_count(
+        self, event: LibraryPromptHistoryRegion.CountRetryRequested
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_retry_count(event)
 
     @on(LibraryPromptHistoryRegion.PageRequested)
-    def handle_library_prompt_history_request_page(self, event: LibraryPromptHistoryRegion.PageRequested) -> None:
-        return self._prompts_controller.handle_library_prompt_history_request_page(event)
+    def handle_library_prompt_history_request_page(
+        self, event: LibraryPromptHistoryRegion.PageRequested
+    ) -> None:
+        return self._prompts_controller.handle_library_prompt_history_request_page(
+            event
+        )
 
     @on(LibraryPromptHistoryRegion.RowSelected)
-    def handle_library_prompt_history_row(self, event: LibraryPromptHistoryRegion.RowSelected) -> None:
+    def handle_library_prompt_history_row(
+        self, event: LibraryPromptHistoryRegion.RowSelected
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_row(event)
 
     @on(LibraryPromptHistoryRegion.RestoreRequested)
-    def handle_library_prompt_history_restore(self, event: LibraryPromptHistoryRegion.RestoreRequested) -> None:
+    def handle_library_prompt_history_restore(
+        self, event: LibraryPromptHistoryRegion.RestoreRequested
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_restore(event)
 
     @on(LibraryPromptHistoryRegion.ReloadRequested)
-    def handle_library_prompt_history_reload(self, event: LibraryPromptHistoryRegion.ReloadRequested) -> None:
+    def handle_library_prompt_history_reload(
+        self, event: LibraryPromptHistoryRegion.ReloadRequested
+    ) -> None:
         return self._prompts_controller.handle_library_prompt_history_reload(event)
 
-    def _confirm_library_prompt_history_restore(self, confirmed: bool, *, prompt_uuid: str, change_id: int, source_version: int, expected_current_version: int) -> None:
-        return self._prompts_controller._confirm_library_prompt_history_restore(confirmed, prompt_uuid=prompt_uuid, change_id=change_id, source_version=source_version, expected_current_version=expected_current_version)
+    def _confirm_library_prompt_history_restore(
+        self,
+        confirmed: bool,
+        *,
+        prompt_uuid: str,
+        change_id: int,
+        source_version: int,
+        expected_current_version: int,
+    ) -> None:
+        return self._prompts_controller._confirm_library_prompt_history_restore(
+            confirmed,
+            prompt_uuid=prompt_uuid,
+            change_id=change_id,
+            source_version=source_version,
+            expected_current_version=expected_current_version,
+        )
 
     def _enter_library_prompt_create_editor(self) -> None:
         return self._prompts_controller._enter_library_prompt_create_editor()
@@ -26798,31 +27246,61 @@ class LibraryScreen(BaseAppScreen):
                 severity="warning",
             )
 
-    def on_prompt_block_editor_block_field_changed(self, event: PromptBlockEditor.BlockFieldChanged) -> None:
-        return self._prompts_controller.on_prompt_block_editor_block_field_changed(event)
+    def on_prompt_block_editor_block_field_changed(
+        self, event: PromptBlockEditor.BlockFieldChanged
+    ) -> None:
+        return self._prompts_controller.on_prompt_block_editor_block_field_changed(
+            event
+        )
 
-    def on_prompt_block_editor_block_action_requested(self, event: PromptBlockEditor.BlockActionRequested) -> None:
-        return self._prompts_controller.on_prompt_block_editor_block_action_requested(event)
+    def on_prompt_block_editor_block_action_requested(
+        self, event: PromptBlockEditor.BlockActionRequested
+    ) -> None:
+        return self._prompts_controller.on_prompt_block_editor_block_action_requested(
+            event
+        )
 
     @on(Checkbox.Changed, "#library-prompt-recipe-starter")
-    def handle_library_prompt_recipe_starter_changed(self, event: Checkbox.Changed) -> None:
-        return self._prompts_controller.handle_library_prompt_recipe_starter_changed(event)
+    def handle_library_prompt_recipe_starter_changed(
+        self, event: Checkbox.Changed
+    ) -> None:
+        return self._prompts_controller.handle_library_prompt_recipe_starter_changed(
+            event
+        )
 
     @on(Button.Pressed, "#library-prompt-convert")
     def handle_library_prompt_convert(self, event: Button.Pressed) -> None:
         return self._prompts_controller.handle_library_prompt_convert(event)
 
-    def on_prompt_block_editor_save_as_prompt_requested(self, event: PromptBlockEditor.SaveAsPromptRequested) -> None:
-        return self._prompts_controller.on_prompt_block_editor_save_as_prompt_requested(event)
+    def on_prompt_block_editor_save_as_prompt_requested(
+        self, event: PromptBlockEditor.SaveAsPromptRequested
+    ) -> None:
+        return self._prompts_controller.on_prompt_block_editor_save_as_prompt_requested(
+            event
+        )
 
-    def on_prompt_block_editor_save_as_recipe_requested(self, event: PromptBlockEditor.SaveAsRecipeRequested) -> None:
-        return self._prompts_controller.on_prompt_block_editor_save_as_recipe_requested(event)
+    def on_prompt_block_editor_save_as_recipe_requested(
+        self, event: PromptBlockEditor.SaveAsRecipeRequested
+    ) -> None:
+        return self._prompts_controller.on_prompt_block_editor_save_as_recipe_requested(
+            event
+        )
 
-    def on_prompt_block_editor_update_original_requested(self, event: PromptBlockEditor.UpdateOriginalRequested) -> None:
-        return self._prompts_controller.on_prompt_block_editor_update_original_requested(event)
+    def on_prompt_block_editor_update_original_requested(
+        self, event: PromptBlockEditor.UpdateOriginalRequested
+    ) -> None:
+        return (
+            self._prompts_controller.on_prompt_block_editor_update_original_requested(
+                event
+            )
+        )
 
-    async def on_prompt_block_editor_back_requested(self, event: PromptBlockEditor.BackRequested) -> None:
-        return await self._prompts_controller.on_prompt_block_editor_back_requested(event)
+    async def on_prompt_block_editor_back_requested(
+        self, event: PromptBlockEditor.BackRequested
+    ) -> None:
+        return await self._prompts_controller.on_prompt_block_editor_back_requested(
+            event
+        )
 
     def on_prompt_block_editor_apply_requested(
         self, event: PromptBlockEditor.ApplyRequested
@@ -26838,7 +27316,9 @@ class LibraryScreen(BaseAppScreen):
             user_prompt=event.user_prompt if event.apply_user else None,
         )
 
-    def _read_library_prompt_editor_fields(self) -> tuple[str, str, str, str, str, str] | None:
+    def _read_library_prompt_editor_fields(
+        self,
+    ) -> tuple[str, str, str, str, str, str] | None:
         return self._prompts_controller._read_library_prompt_editor_fields()
 
     def _update_library_prompt_status_static(self, text: str) -> None:
@@ -26848,8 +27328,24 @@ class LibraryScreen(BaseAppScreen):
     def handle_library_prompt_save(self, event: Button.Pressed) -> None:
         return self._prompts_controller.handle_library_prompt_save(event)
 
-    def _enter_library_prompt_conflict(self, *, name: str, author: str, details: str, system_prompt: str, user_prompt: str, keywords_text: str) -> None:
-        return self._prompts_controller._enter_library_prompt_conflict(name=name, author=author, details=details, system_prompt=system_prompt, user_prompt=user_prompt, keywords_text=keywords_text)
+    def _enter_library_prompt_conflict(
+        self,
+        *,
+        name: str,
+        author: str,
+        details: str,
+        system_prompt: str,
+        user_prompt: str,
+        keywords_text: str,
+    ) -> None:
+        return self._prompts_controller._enter_library_prompt_conflict(
+            name=name,
+            author=author,
+            details=details,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            keywords_text=keywords_text,
+        )
 
     async def _flush_library_prompt_save(self) -> bool:
         """Veto leaving the prompt editor while an edit is unsaved.
@@ -26876,8 +27372,16 @@ class LibraryScreen(BaseAppScreen):
             blocked_target=blocked_target
         )
 
-    def _apply_library_prompt_working_copy(self, *, state: PromptBlockEditorState, system_prompt: str | None, user_prompt: str | None) -> None:
-        return self._prompts_controller._apply_library_prompt_working_copy(state=state, system_prompt=system_prompt, user_prompt=user_prompt)
+    def _apply_library_prompt_working_copy(
+        self,
+        *,
+        state: PromptBlockEditorState,
+        system_prompt: str | None,
+        user_prompt: str | None,
+    ) -> None:
+        return self._prompts_controller._apply_library_prompt_working_copy(
+            state=state, system_prompt=system_prompt, user_prompt=user_prompt
+        )
 
     def _stage_library_prompt_for_console(
         self,
@@ -27467,13 +27971,29 @@ class LibraryScreen(BaseAppScreen):
             group="library_prompt_mutation",
         )
 
-    async def _delete_library_prompts(self, targets: tuple[PromptBatchTarget, ...], *, selection_generation: int | None, editor_prompt_id: int | None, mutation_token: int, focus_identity: str | None=None) -> None:
-        return await self._prompts_controller._delete_library_prompts(targets, selection_generation=selection_generation, editor_prompt_id=editor_prompt_id, mutation_token=mutation_token, focus_identity=focus_identity)
+    async def _delete_library_prompts(
+        self,
+        targets: tuple[PromptBatchTarget, ...],
+        *,
+        selection_generation: int | None,
+        editor_prompt_id: int | None,
+        mutation_token: int,
+        focus_identity: str | None = None,
+    ) -> None:
+        return await self._prompts_controller._delete_library_prompts(
+            targets,
+            selection_generation=selection_generation,
+            editor_prompt_id=editor_prompt_id,
+            mutation_token=mutation_token,
+            focus_identity=focus_identity,
+        )
 
     def _sync_library_prompt_mutation_presentation(self) -> None:
         return self._prompts_controller._sync_library_prompt_mutation_presentation()
 
-    def _library_prompt_nearest_survivor_focus(self, targets: tuple[PromptBatchTarget, ...]) -> str | None:
+    def _library_prompt_nearest_survivor_focus(
+        self, targets: tuple[PromptBatchTarget, ...]
+    ) -> str | None:
         return self._prompts_controller._library_prompt_nearest_survivor_focus(targets)
 
     def _notify_library_prompt_delete_failure(self, message: str) -> None:
@@ -27487,15 +28007,21 @@ class LibraryScreen(BaseAppScreen):
         return self._prompts_controller.handle_library_prompt_delete_undo(event)
 
     @on(Button.Pressed, "#library-prompts-delete-receipt-dismiss")
-    def handle_library_prompt_delete_receipt_dismiss(self, event: Button.Pressed) -> None:
-        return self._prompts_controller.handle_library_prompt_delete_receipt_dismiss(event)
+    def handle_library_prompt_delete_receipt_dismiss(
+        self, event: Button.Pressed
+    ) -> None:
+        return self._prompts_controller.handle_library_prompt_delete_receipt_dismiss(
+            event
+        )
 
     @on(Button.Pressed, "#library-prompt-open-existing")
     def handle_library_prompt_open_existing(self, event: Button.Pressed) -> None:
         return self._prompts_controller.handle_library_prompt_open_existing(event)
 
     async def _resolve_library_prompt_conflict(self, *, overwrite: bool) -> None:
-        return await self._prompts_controller._resolve_library_prompt_conflict(overwrite=overwrite)
+        return await self._prompts_controller._resolve_library_prompt_conflict(
+            overwrite=overwrite
+        )
 
     @on(Button.Pressed, "#library-prompt-conflict-save-new")
     def handle_library_prompt_conflict_save_new(self, event: Button.Pressed) -> None:
@@ -27512,18 +28038,31 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller._library_note_import_folder_repository()
 
     @staticmethod
-    def _build_library_note_import_executor(database: CharactersRAGDB, repository: LocalNoteFolderRepository, receipts: NoteImportReceiptRepository) -> NoteImportExecutor:
+    def _build_library_note_import_executor(
+        database: CharactersRAGDB,
+        repository: LocalNoteFolderRepository,
+        receipts: NoteImportReceiptRepository,
+    ) -> NoteImportExecutor:
         from ..Library_Modules.library_notes_controller import LibraryNotesController
-        return LibraryNotesController._build_library_note_import_executor(database, repository, receipts)
 
-    def _publish_library_note_import_snapshot(self, snapshot: LibraryNoteImportSnapshot) -> None:
+        return LibraryNotesController._build_library_note_import_executor(
+            database, repository, receipts
+        )
+
+    def _publish_library_note_import_snapshot(
+        self, snapshot: LibraryNoteImportSnapshot
+    ) -> None:
         return self._notes_controller._publish_library_note_import_snapshot(snapshot)
 
     def _refresh_after_library_note_import(self) -> None:
         return self._notes_controller._refresh_after_library_note_import()
 
-    def _publish_library_notes_lasting_sync_snapshot(self, snapshot: LibraryNotesLastingSyncSnapshot) -> None:
-        return self._notes_controller._publish_library_notes_lasting_sync_snapshot(snapshot)
+    def _publish_library_notes_lasting_sync_snapshot(
+        self, snapshot: LibraryNotesLastingSyncSnapshot
+    ) -> None:
+        return self._notes_controller._publish_library_notes_lasting_sync_snapshot(
+            snapshot
+        )
 
     def _notify_library_note_import_failure(self) -> None:
         return self._notes_controller._notify_library_note_import_failure()
@@ -27638,7 +28177,7 @@ class LibraryScreen(BaseAppScreen):
             thread=True,
         )
 
-    @on(Button.Pressed, '#library-notes-add-from-files')
+    @on(Button.Pressed, "#library-notes-add-from-files")
     async def handle_library_notes_add_from_files(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_notes_add_from_files(event)
 
@@ -27671,72 +28210,114 @@ class LibraryScreen(BaseAppScreen):
             )
 
     @on(LibraryNotesAddFromFilesCanvas.RelationshipRequested)
-    def handle_library_notes_relationship_choice(self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested) -> None:
+    def handle_library_notes_relationship_choice(
+        self, event: LibraryNotesAddFromFilesCanvas.RelationshipRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_relationship_choice(event)
 
     @on(LibraryNotesAddFromFilesCanvas.SetupChanged)
-    def handle_library_notes_lasting_setup_changed(self, event: LibraryNotesAddFromFilesCanvas.SetupChanged) -> None:
+    def handle_library_notes_lasting_setup_changed(
+        self, event: LibraryNotesAddFromFilesCanvas.SetupChanged
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_setup_changed(event)
 
     @on(LibraryNotesAddFromFilesCanvas.FolderRequested)
-    def handle_library_notes_lasting_folder_requested(self, event: LibraryNotesAddFromFilesCanvas.FolderRequested) -> None:
-        return self._notes_controller.handle_library_notes_lasting_folder_requested(event)
+    def handle_library_notes_lasting_folder_requested(
+        self, event: LibraryNotesAddFromFilesCanvas.FolderRequested
+    ) -> None:
+        return self._notes_controller.handle_library_notes_lasting_folder_requested(
+            event
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.CheckRequested)
-    async def handle_library_notes_lasting_check(self, event: LibraryNotesAddFromFilesCanvas.CheckRequested) -> None:
+    async def handle_library_notes_lasting_check(
+        self, event: LibraryNotesAddFromFilesCanvas.CheckRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_check(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ApplyRequested)
-    async def handle_library_notes_lasting_apply(self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested) -> None:
+    async def handle_library_notes_lasting_apply(
+        self, event: LibraryNotesAddFromFilesCanvas.ApplyRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_apply(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ActivateRequested)
-    async def handle_library_notes_lasting_activate(self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested) -> None:
+    async def handle_library_notes_lasting_activate(
+        self, event: LibraryNotesAddFromFilesCanvas.ActivateRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_activate(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ChoiceRequested)
-    def handle_library_notes_lasting_choice(self, event: LibraryNotesAddFromFilesCanvas.ChoiceRequested) -> None:
+    def handle_library_notes_lasting_choice(
+        self, event: LibraryNotesAddFromFilesCanvas.ChoiceRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_choice(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ViewRequested)
-    def handle_library_notes_lasting_comparison(self, event: LibraryNotesAddFromFilesCanvas.ViewRequested) -> None:
+    def handle_library_notes_lasting_comparison(
+        self, event: LibraryNotesAddFromFilesCanvas.ViewRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_comparison(event)
 
     @on(LibraryNotesAddFromFilesCanvas.ReturnRequested)
-    def handle_library_notes_lasting_comparison_return(self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested) -> None:
-        return self._notes_controller.handle_library_notes_lasting_comparison_return(event)
+    def handle_library_notes_lasting_comparison_return(
+        self, event: LibraryNotesAddFromFilesCanvas.ReturnRequested
+    ) -> None:
+        return self._notes_controller.handle_library_notes_lasting_comparison_return(
+            event
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.UndoRequested)
-    async def handle_library_notes_lasting_undo(self, event: LibraryNotesAddFromFilesCanvas.UndoRequested) -> None:
+    async def handle_library_notes_lasting_undo(
+        self, event: LibraryNotesAddFromFilesCanvas.UndoRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_undo(event)
 
     @on(LibraryNotesAddFromFilesCanvas.DismissRequested)
-    async def handle_library_notes_lasting_dismiss(self, event: LibraryNotesAddFromFilesCanvas.DismissRequested) -> None:
+    async def handle_library_notes_lasting_dismiss(
+        self, event: LibraryNotesAddFromFilesCanvas.DismissRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_dismiss(event)
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryRequested)
-    async def handle_library_notes_lasting_history(self, event: LibraryNotesAddFromFilesCanvas.HistoryRequested) -> None:
+    async def handle_library_notes_lasting_history(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryRequested
+    ) -> None:
         return await self._notes_controller.handle_library_notes_lasting_history(event)
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryPageRequested)
-    async def handle_library_notes_lasting_history_page(self, event: LibraryNotesAddFromFilesCanvas.HistoryPageRequested) -> None:
-        return await self._notes_controller.handle_library_notes_lasting_history_page(event)
+    async def handle_library_notes_lasting_history_page(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryPageRequested
+    ) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_history_page(
+            event
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.HistoryReturnRequested)
-    def handle_library_notes_lasting_history_return(self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested) -> None:
+    def handle_library_notes_lasting_history_return(
+        self, event: LibraryNotesAddFromFilesCanvas.HistoryReturnRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_history_return(event)
 
     @on(LibraryNotesAddFromFilesCanvas.PageRequested)
-    def handle_library_notes_lasting_review_page(self, event: LibraryNotesAddFromFilesCanvas.PageRequested) -> None:
+    def handle_library_notes_lasting_review_page(
+        self, event: LibraryNotesAddFromFilesCanvas.PageRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_review_page(event)
 
     @on(LibraryNotesSyncRootsCanvas.PageRequested)
-    def handle_library_notes_lasting_root_page(self, event: LibraryNotesSyncRootsCanvas.PageRequested) -> None:
+    def handle_library_notes_lasting_root_page(
+        self, event: LibraryNotesSyncRootsCanvas.PageRequested
+    ) -> None:
         return self._notes_controller.handle_library_notes_lasting_root_page(event)
 
     @on(LibraryNotesSyncRootsCanvas.RootActionRequested)
-    async def handle_library_notes_lasting_root_action(self, event: LibraryNotesSyncRootsCanvas.RootActionRequested) -> None:
-        return await self._notes_controller.handle_library_notes_lasting_root_action(event)
+    async def handle_library_notes_lasting_root_action(
+        self, event: LibraryNotesSyncRootsCanvas.RootActionRequested
+    ) -> None:
+        return await self._notes_controller.handle_library_notes_lasting_root_action(
+            event
+        )
 
     @on(LibraryNotesAddFromFilesCanvas.BackRequested)
     @on(LibraryNotesSyncRootsCanvas.BackRequested)
@@ -27756,36 +28337,50 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.view = "import"
         _sync_library_canvas(self, "notes")
 
-    @on(Button.Pressed, '#library-notes-import-back')
+    @on(Button.Pressed, "#library-notes-import-back")
     def handle_library_notes_import_back(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_import_back(event)
 
     @on(LibraryNoteImportCanvas.AddSourceRequested)
-    def handle_library_note_import_add_source(self, event: LibraryNoteImportCanvas.AddSourceRequested) -> None:
+    def handle_library_note_import_add_source(
+        self, event: LibraryNoteImportCanvas.AddSourceRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_add_source(event)
 
     @on(LibraryNoteImportCanvas.ChangeSourceRequested)
-    def handle_library_note_import_change_source(self, event: LibraryNoteImportCanvas.ChangeSourceRequested) -> None:
+    def handle_library_note_import_change_source(
+        self, event: LibraryNoteImportCanvas.ChangeSourceRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_change_source(event)
 
     @on(LibraryNoteImportCanvas.ClearSourceRequested)
-    def handle_library_note_import_clear_source(self, event: LibraryNoteImportCanvas.ClearSourceRequested) -> None:
+    def handle_library_note_import_clear_source(
+        self, event: LibraryNoteImportCanvas.ClearSourceRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_clear_source(event)
 
     @on(LibraryNoteImportCanvas.GroupActionRequested)
-    def handle_library_note_import_group_action(self, event: LibraryNoteImportCanvas.GroupActionRequested) -> None:
+    def handle_library_note_import_group_action(
+        self, event: LibraryNoteImportCanvas.GroupActionRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_group_action(event)
 
     @on(LibraryNoteImportCanvas.DestinationChanged)
-    def handle_library_note_import_destination(self, event: LibraryNoteImportCanvas.DestinationChanged) -> None:
+    def handle_library_note_import_destination(
+        self, event: LibraryNoteImportCanvas.DestinationChanged
+    ) -> None:
         return self._notes_controller.handle_library_note_import_destination(event)
 
     @on(LibraryNoteImportCanvas.CheckRequested)
-    def handle_library_note_import_check(self, event: LibraryNoteImportCanvas.CheckRequested) -> None:
+    def handle_library_note_import_check(
+        self, event: LibraryNoteImportCanvas.CheckRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_check(event)
 
     @on(LibraryNoteImportCanvas.ObsidianModeToggled)
-    def handle_library_note_import_obsidian_mode(self, event: LibraryNoteImportCanvas.ObsidianModeToggled) -> None:
+    def handle_library_note_import_obsidian_mode(
+        self, event: LibraryNoteImportCanvas.ObsidianModeToggled
+    ) -> None:
         """Delegate the vault-reading toggle to the notes controller.
 
         Args:
@@ -27794,27 +28389,39 @@ class LibraryScreen(BaseAppScreen):
         return self._notes_controller.handle_library_note_import_obsidian_mode(event)
 
     @on(LibraryNoteImportCanvas.CollisionNameChanged)
-    def handle_library_note_import_collision_name(self, event: LibraryNoteImportCanvas.CollisionNameChanged) -> None:
+    def handle_library_note_import_collision_name(
+        self, event: LibraryNoteImportCanvas.CollisionNameChanged
+    ) -> None:
         return self._notes_controller.handle_library_note_import_collision_name(event)
 
     @on(LibraryNoteImportCanvas.CollisionChoiceRequested)
-    def handle_library_note_import_collision_choice(self, event: LibraryNoteImportCanvas.CollisionChoiceRequested) -> None:
+    def handle_library_note_import_collision_choice(
+        self, event: LibraryNoteImportCanvas.CollisionChoiceRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_collision_choice(event)
 
     @on(LibraryNoteImportCanvas.UncertainMatchConfirmed)
-    def handle_library_note_import_confirm_match(self, event: LibraryNoteImportCanvas.UncertainMatchConfirmed) -> None:
+    def handle_library_note_import_confirm_match(
+        self, event: LibraryNoteImportCanvas.UncertainMatchConfirmed
+    ) -> None:
         return self._notes_controller.handle_library_note_import_confirm_match(event)
 
     @on(LibraryNoteImportCanvas.ItemActionRequested)
-    def handle_library_note_import_item_action(self, event: LibraryNoteImportCanvas.ItemActionRequested) -> None:
+    def handle_library_note_import_item_action(
+        self, event: LibraryNoteImportCanvas.ItemActionRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_item_action(event)
 
     @on(LibraryNoteImportCanvas.ItemChoiceRequested)
-    def handle_library_note_import_item_choice(self, event: LibraryNoteImportCanvas.ItemChoiceRequested) -> None:
+    def handle_library_note_import_item_choice(
+        self, event: LibraryNoteImportCanvas.ItemChoiceRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_item_choice(event)
 
     @on(LibraryNoteImportCanvas.PageRequested)
-    def handle_library_note_import_page(self, event: LibraryNoteImportCanvas.PageRequested) -> None:
+    def handle_library_note_import_page(
+        self, event: LibraryNoteImportCanvas.PageRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_page(event)
 
     async def _run_library_note_import_execution(
@@ -27855,15 +28462,21 @@ class LibraryScreen(BaseAppScreen):
         )
 
     @on(LibraryNoteImportCanvas.ViewImportedNotesRequested)
-    def handle_library_note_import_view_notes(self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested) -> None:
+    def handle_library_note_import_view_notes(
+        self, event: LibraryNoteImportCanvas.ViewImportedNotesRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_view_notes(event)
 
     @on(LibraryNoteImportCanvas.RetryRequested)
-    def handle_library_note_import_retry(self, event: LibraryNoteImportCanvas.RetryRequested) -> None:
+    def handle_library_note_import_retry(
+        self, event: LibraryNoteImportCanvas.RetryRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_retry(event)
 
     @on(LibraryNoteImportCanvas.CancelRequested)
-    def handle_library_note_import_cancel(self, event: LibraryNoteImportCanvas.CancelRequested) -> None:
+    def handle_library_note_import_cancel(
+        self, event: LibraryNoteImportCanvas.CancelRequested
+    ) -> None:
         return self._notes_controller.handle_library_note_import_cancel(event)
 
     # ----- Ingest canvas -----------------------------------------------
@@ -27944,7 +28557,9 @@ class LibraryScreen(BaseAppScreen):
         target: str,
         generation: int,
     ) -> None:
-        return self._ingest_controller._apply_library_ingest_backend_save(target, generation)
+        return self._ingest_controller._apply_library_ingest_backend_save(
+            target, generation
+        )
 
     @on(Button.Pressed, "#library-ingest-clear-path")
     def handle_library_ingest_clear_path(self, event: Button.Pressed) -> None:
@@ -28014,9 +28629,7 @@ class LibraryScreen(BaseAppScreen):
         """
         generation = claim_browse_directory("library.ingest", "last_directory")
         self.run_worker(
-            lambda: self._remember_library_ingest_location(
-                selected_path, generation
-            ),
+            lambda: self._remember_library_ingest_location(selected_path, generation),
             thread=True,
         )
 
@@ -28053,7 +28666,9 @@ class LibraryScreen(BaseAppScreen):
         self,
         event: LibraryIngestCanvas.ToolingDetailToggled,
     ) -> None:
-        return self._ingest_controller.sync_library_ingest_tooling_detail_expanded(event)
+        return self._ingest_controller.sync_library_ingest_tooling_detail_expanded(
+            event
+        )
 
     @on(LibraryIngestCanvas.OptionValueChanged)
     def handle_library_ingest_option_value_changed(
@@ -28089,9 +28704,7 @@ class LibraryScreen(BaseAppScreen):
         # Same for a pending re-stage: the option the user just changed is
         # among the things the re-stage would overwrite.
         self._disarm_library_ingest_retry_confirm()
-        group_options = self._ingest_state.form.type_options.setdefault(
-            event.group, {}
-        )
+        group_options = self._ingest_state.form.type_options.setdefault(event.group, {})
         group_options[event.name] = event.value
         # Generic group toggles mirror the legacy top-level form fields so
         # existing submit/config-persistence paths keep working.
@@ -28656,7 +29269,9 @@ class LibraryScreen(BaseAppScreen):
     def _trigger_library_ingest_preflight(
         self, path: str, *, allow_probe: bool = True
     ) -> None:
-        return self._ingest_controller._trigger_library_ingest_preflight(path, allow_probe=allow_probe)
+        return self._ingest_controller._trigger_library_ingest_preflight(
+            path, allow_probe=allow_probe
+        )
 
     @work(thread=True)
     def _run_library_ingest_preflight(
@@ -28696,7 +29311,9 @@ class LibraryScreen(BaseAppScreen):
         result: PreflightResult,
         generation: int,
     ) -> None:
-        return self._ingest_controller._apply_library_ingest_preflight_result(result, generation)
+        return self._ingest_controller._apply_library_ingest_preflight_result(
+            result, generation
+        )
 
     def _trigger_preflight(self, path: str) -> None:
         """Alias for ``_trigger_library_ingest_preflight``.
@@ -28768,14 +29385,18 @@ class LibraryScreen(BaseAppScreen):
         submitted_source: str,
         gate_state: LibraryIngestCanvasState | None = None,
     ) -> _LibraryIngestStartConsent:
-        return self._ingest_controller._current_library_ingest_start_consent(submitted_source, gate_state)
+        return self._ingest_controller._current_library_ingest_start_consent(
+            submitted_source, gate_state
+        )
 
     def _authoritative_library_ingest_consent_is_current(
         self,
         armed: _LibraryIngestStartConsent,
         pending: _LibraryIngestStartConsent,
     ) -> bool:
-        return self._ingest_controller._authoritative_library_ingest_consent_is_current(armed, pending)
+        return self._ingest_controller._authoritative_library_ingest_consent_is_current(
+            armed, pending
+        )
 
     def _submit_library_ingest_form(self) -> None:
         return self._ingest_controller._submit_library_ingest_form()
@@ -29710,15 +30331,20 @@ class LibraryScreen(BaseAppScreen):
         return await self._prompts_controller.handle_library_prompts_export(event)
 
     @on(Button.Pressed, "#library-prompts-export-selected")
-    async def handle_library_prompts_export_selected(self, event: Button.Pressed) -> None:
-        return await self._prompts_controller.handle_library_prompts_export_selected(event)
+    async def handle_library_prompts_export_selected(
+        self, event: Button.Pressed
+    ) -> None:
+        return await self._prompts_controller.handle_library_prompts_export_selected(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-export")
     async def handle_library_conversations_export(self, event: Button.Pressed) -> None:
-        return await self._conversations_controller.handle_library_conversations_export(event)
+        return await self._conversations_controller.handle_library_conversations_export(
+            event
+        )
 
-
-    @on(Button.Pressed, '#library-notes-export')
+    @on(Button.Pressed, "#library-notes-export")
     async def handle_library_notes_export(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_notes_export(event)
 
@@ -29809,7 +30435,7 @@ class LibraryScreen(BaseAppScreen):
         """
         return await self._notes_controller.handle_library_note_backlink(event)
 
-    @on(Button.Pressed, '.library-notes-folder-row')
+    @on(Button.Pressed, ".library-notes-folder-row")
     def handle_library_notes_folder_row(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_folder_row(event)
 
@@ -30114,7 +30740,7 @@ class LibraryScreen(BaseAppScreen):
             protected=selected.protected,
         )
 
-    @on(Button.Pressed, '#library-notes-select-toggle')
+    @on(Button.Pressed, "#library-notes-select-toggle")
     async def handle_library_notes_select_toggle(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_notes_select_toggle(event)
 
@@ -30139,7 +30765,7 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.row_selection.select_all(note_ids)
         _sync_library_canvas(self, "notes")
 
-    @on(Button.Pressed, '#library-notes-select-clear')
+    @on(Button.Pressed, "#library-notes-select-clear")
     def handle_library_notes_select_clear(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_select_clear(event)
 
@@ -30157,7 +30783,7 @@ class LibraryScreen(BaseAppScreen):
             self._notes_state.row_selection.export_scope()
         )
 
-    @on(Button.Pressed, '#library-note-back')
+    @on(Button.Pressed, "#library-note-back")
     async def handle_library_note_back(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_back(event)
 
@@ -30260,12 +30886,12 @@ class LibraryScreen(BaseAppScreen):
     async def action_library_note_editor_back(self) -> None:
         return await self._notes_controller.action_library_note_editor_back()
 
-    @on(Button.Pressed, '#library-note-load-retry')
+    @on(Button.Pressed, "#library-note-load-retry")
     def handle_library_note_load_retry(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_load_retry(event)
 
-    @on(Button.Pressed, '#library-note-context-delete')
-    @on(Button.Pressed, '#library-note-delete')
+    @on(Button.Pressed, "#library-note-context-delete")
+    @on(Button.Pressed, "#library-note-delete")
     async def handle_library_note_delete(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_note_delete(event)
 
@@ -30302,7 +30928,7 @@ class LibraryScreen(BaseAppScreen):
     def _restore_library_note_delete_origin(self) -> None:
         return self._notes_controller._restore_library_note_delete_origin()
 
-    @on(Button.Pressed, '#library-note-delete-cancel')
+    @on(Button.Pressed, "#library-note-delete-cancel")
     def handle_library_note_delete_cancel(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_delete_cancel(event)
 
@@ -30520,14 +31146,16 @@ class LibraryScreen(BaseAppScreen):
             group="library_note_mutation",
         )
 
-    @on(Button.Pressed, '#library-notes-delete-receipt-dismiss')
+    @on(Button.Pressed, "#library-notes-delete-receipt-dismiss")
     def handle_library_note_delete_receipt_dismiss(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_delete_receipt_dismiss(event)
 
-    async def _undo_library_note_delete(self, receipt: LibraryNoteDeleteReceipt) -> None:
+    async def _undo_library_note_delete(
+        self, receipt: LibraryNoteDeleteReceipt
+    ) -> None:
         return await self._notes_controller._undo_library_note_delete(receipt)
 
-    @on(Button.Pressed, '#library-notes-trash-open')
+    @on(Button.Pressed, "#library-notes-trash-open")
     def handle_library_notes_trash_open(self, event: Button.Pressed) -> None:
         """Open the Trash view (task-32144).
 
@@ -30536,7 +31164,7 @@ class LibraryScreen(BaseAppScreen):
         """
         return self._notes_controller.handle_library_notes_trash_open(event)
 
-    @on(Button.Pressed, '#library-notes-trash-back')
+    @on(Button.Pressed, "#library-notes-trash-back")
     def handle_library_notes_trash_back(self, event: Button.Pressed) -> None:
         """Leave the Trash view for the notes list (task-32144).
 
@@ -30545,7 +31173,7 @@ class LibraryScreen(BaseAppScreen):
         """
         return self._notes_controller.handle_library_notes_trash_back(event)
 
-    @on(Button.Pressed, '.library-notes-trash-restore')
+    @on(Button.Pressed, ".library-notes-trash-restore")
     def handle_library_notes_trash_restore(self, event: Button.Pressed) -> None:
         """Restore one soft-deleted note (task-32144).
 
@@ -30585,15 +31213,15 @@ class LibraryScreen(BaseAppScreen):
     def _notify_library_note_missing_warning(self) -> None:
         return self._notes_controller._notify_library_note_missing_warning()
 
-    @on(Button.Pressed, '#library-notes-create-blank')
+    @on(Button.Pressed, "#library-notes-create-blank")
     def handle_library_notes_create_blank(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_create_blank(event)
 
-    @on(Button.Pressed, '.library-notes-template-row')
+    @on(Button.Pressed, ".library-notes-template-row")
     def handle_library_notes_create_template(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_notes_create_template(event)
 
-    @on(Button.Pressed, '#library-notes-create-back')
+    @on(Button.Pressed, "#library-notes-create-back")
     async def handle_library_notes_create_back(self, event: Button.Pressed) -> None:
         return await self._notes_controller.handle_library_notes_create_back(event)
 
@@ -30613,8 +31241,12 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "notes")
         return token
 
-    def _finish_library_note_create(self, create_token: str, *, status: str='') -> bool:
-        return self._notes_controller._finish_library_note_create(create_token, status=status)
+    def _finish_library_note_create(
+        self, create_token: str, *, status: str = ""
+    ) -> bool:
+        return self._notes_controller._finish_library_note_create(
+            create_token, status=status
+        )
 
     @staticmethod
     def _library_note_template_fields(template: Any) -> tuple[Any, Any]:
@@ -30882,7 +31514,7 @@ class LibraryScreen(BaseAppScreen):
             _sync_library_canvas(self, "notes", then=finish_create_projection)
         return LibraryNoteCreateOutcome("opened", created_id)
 
-    @on(Button.Pressed, '#library-note-discard-new')
+    @on(Button.Pressed, "#library-note-discard-new")
     def handle_library_note_discard_new(self, event: Button.Pressed) -> None:
         return self._notes_controller.handle_library_note_discard_new(event)
 
@@ -30901,12 +31533,14 @@ class LibraryScreen(BaseAppScreen):
             LibraryScreen._sync_library_notes_tree_canvas_if_present(self)
 
     async def _discard_new_library_note_claimed(self, create_token: str) -> None:
-        return await self._notes_controller._discard_new_library_note_claimed(create_token)
+        return await self._notes_controller._discard_new_library_note_claimed(
+            create_token
+        )
 
     def _notify_library_note_create_warning(self, message: str) -> None:
         return self._notes_controller._notify_library_note_create_warning(message)
 
-    @on(Button.Pressed, '#library-media-back')
+    @on(Button.Pressed, "#library-media-back")
     def handle_library_media_back(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_back(event)
 
@@ -31012,9 +31646,7 @@ class LibraryScreen(BaseAppScreen):
         if self._close_open_library_choice_strip():
             return
         try:
-            shell = self.query_one(
-                ".library-media-route", LibraryBrowseReaderShell
-            )
+            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
         except (NoMatches, QueryError):
             self._exit_library_media_viewer()
             return
@@ -31064,9 +31696,7 @@ class LibraryScreen(BaseAppScreen):
         if layout.items_open:
             self._focus_library_media_items_pane()
         elif layout.library_open:
-            self._focus_library_rail_action(
-                f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}"
-            )
+            self._focus_library_rail_action(f"#library-row-{LIBRARY_ROW_BROWSE_MEDIA}")
         else:
             self._exit_library_media_viewer()
         self._register_footer_shortcuts()
@@ -31264,9 +31894,7 @@ class LibraryScreen(BaseAppScreen):
             )
             return True
 
-        outcome = plan_walk(
-            review_set.items, displayed_position, direction, is_live
-        )
+        outcome = plan_walk(review_set.items, displayed_position, direction, is_live)
         was_complete = review_set.completed_at is not None
         if outcome.mark_done_backing_id is not None:
             service.mark_item_done(
@@ -31378,9 +32006,7 @@ class LibraryScreen(BaseAppScreen):
         review_set, live_ids = snapshot
         loaded_backing = self._media_state.reader_session.loaded_backing_id
         try:
-            loaded_backing = (
-                int(loaded_backing) if loaded_backing is not None else None
-            )
+            loaded_backing = int(loaded_backing) if loaded_backing is not None else None
         except (TypeError, ValueError):
             return False
         if loaded_backing is None:
@@ -31413,6 +32039,7 @@ class LibraryScreen(BaseAppScreen):
                 format_review_progress,
                 review_progress,
             )
+
             progress = format_review_progress(
                 review_progress(
                     review_set.items,
@@ -31429,20 +32056,14 @@ class LibraryScreen(BaseAppScreen):
                 loaded = None
             item_state = ""
             current = next(
-                (
-                    item
-                    for item in review_set.items
-                    if item.backing_media_id == loaded
-                ),
+                (item for item in review_set.items if item.backing_media_id == loaded),
                 None,
             )
             if current is not None and current.backing_media_id in live_ids:
                 # Live items only (Qodo #2351): progress counts live items,
                 # so claiming a state for a tombstoned (deleted-but-open)
                 # item would contradict the set's own arithmetic.
-                item_state = (
-                    " · ✓ reviewed" if current.done else " · not yet reviewed"
-                )
+                item_state = " · ✓ reviewed" if current.done else " · not yet reviewed"
             elif loaded is not None and current is None:
                 # task-31273: an explicit open outside the set keeps the
                 # set's banner but never claims a state for this item.
@@ -31532,11 +32153,7 @@ class LibraryScreen(BaseAppScreen):
         except (TypeError, ValueError):
             return
         current = next(
-            (
-                item
-                for item in review_set.items
-                if item.backing_media_id == backing_id
-            ),
+            (item for item in review_set.items if item.backing_media_id == backing_id),
             None,
         )
         if current is None:
@@ -31569,9 +32186,7 @@ class LibraryScreen(BaseAppScreen):
                 self._review_these_name(scope), "browse", pairs
             )
         except Exception:
-            self._notify_review_set(
-                "Couldn't build the review set.", severity="error"
-            )
+            self._notify_review_set("Couldn't build the review set.", severity="error")
 
     async def _review_selected_worker(self, backing_ids: tuple[int, ...]) -> None:
         """Order the selected ids by the browse sort, then create + open."""
@@ -31581,9 +32196,7 @@ class LibraryScreen(BaseAppScreen):
                 f"{len(backing_ids)} selected items", "selection", pairs
             )
         except Exception:
-            self._notify_review_set(
-                "Couldn't build the review set.", severity="error"
-            )
+            self._notify_review_set("Couldn't build the review set.", severity="error")
 
     async def _collect_review_pairs_from_scope(
         self, scope: Any
@@ -31624,11 +32237,7 @@ class LibraryScreen(BaseAppScreen):
             for item in items:
                 pairs.append((int(item["backing_media_id"]), str(item["title"])))
             total = int(payload.get("total", 0)) if isinstance(payload, Mapping) else 0
-            if (
-                not items
-                or page * page_size >= total
-                or len(pairs) > REVIEW_SET_CAP
-            ):
+            if not items or page * page_size >= total or len(pairs) > REVIEW_SET_CAP:
                 break
             page += 1
         return pairs
@@ -31699,9 +32308,7 @@ class LibraryScreen(BaseAppScreen):
 
         items, truncated = build_pinned_items(pairs, cap=REVIEW_SET_CAP)
         if not items:
-            self._notify_review_set(
-                "No media items to review.", severity="warning"
-            )
+            self._notify_review_set("No media items to review.", severity="warning")
             return
         service = self._review_set_service()
         if service is None:
@@ -31741,13 +32348,10 @@ class LibraryScreen(BaseAppScreen):
                 item.backing_media_id for item in displaced.items
             )
             progress = format_review_progress(
-                review_progress(
-                    displaced.items, displaced.cursor, live.__contains__
-                )
+                review_progress(displaced.items, displaced.cursor, live.__contains__)
             )
             self._notify_review_set(
-                f"Paused '{escape(displaced.name)}' at {progress}. "
-                "Resume from Sets."
+                f"Paused '{escape(displaced.name)}' at {progress}. Resume from Sets."
             )
         # task-31233: a create invoked from Select mode must leave it before
         # landing -- select mode is otherwise cleared only by Done/bulk-delete,
@@ -31804,14 +32408,10 @@ class LibraryScreen(BaseAppScreen):
             action, set_id = decision
             if action == PICKER_READ_LATER:
                 pairs = await self._review_read_later_pairs()
-                self._create_and_open_review_set(
-                    "Read later", "read_later", pairs
-                )
+                self._create_and_open_review_set("Read later", "read_later", pairs)
                 return
             if action == PICKER_DISMISS:
-                dismissed_row = next(
-                    (row for row in rows if row[0] == set_id), None
-                )
+                dismissed_row = next((row for row in rows if row[0] == set_id), None)
                 await self._run_library_service_call(
                     service.dismiss, set_id, isolate_in_worker=True
                 )
@@ -31848,14 +32448,10 @@ class LibraryScreen(BaseAppScreen):
             # live wedge left NO trace in the log because this swallowed the
             # traceback.
             logger.opt(exception=True).warning("review-set picker failed")
-            self._notify_review_set(
-                "Couldn't open review sets.", severity="error"
-            )
+            self._notify_review_set("Couldn't open review sets.", severity="error")
 
     @on(Button.Pressed, "#library-media-review-dismiss-undo")
-    def handle_library_media_review_dismiss_undo(
-        self, event: Button.Pressed
-    ) -> None:
+    def handle_library_media_review_dismiss_undo(self, event: Button.Pressed) -> None:
         """Restore the set named by the dismiss receipt (task-31236).
 
         Args:
@@ -31867,9 +32463,7 @@ class LibraryScreen(BaseAppScreen):
         # settles -- a second press would CANCEL the first through the
         # exclusive worker group, and a racing receipt-close would strand
         # the restore without its receipt.
-        if receipt is None or getattr(
-            self, "_review_dismiss_undo_in_flight", False
-        ):
+        if receipt is None or getattr(self, "_review_dismiss_undo_in_flight", False):
             return
         self._review_dismiss_undo_in_flight = True
         self.run_worker(
@@ -31897,9 +32491,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.review_dismiss_receipt = None
         _sync_library_canvas(self, "media")
 
-    async def _review_dismiss_undo_worker(
-        self, receipt: tuple[str, str, bool]
-    ) -> None:
+    async def _review_dismiss_undo_worker(self, receipt: tuple[str, str, bool]) -> None:
         """Un-tombstone the receipt's set, restoring activation if it had it.
 
         task-31236 AC#2: cursor and done marks were never touched by the
@@ -31929,9 +32521,7 @@ class LibraryScreen(BaseAppScreen):
             self._sync_library_media_viewer_or_recompose()
         except Exception:
             # task-30042 (user ruling): failures are never silent.
-            logger.opt(exception=True).warning(
-                "review-set dismiss undo failed"
-            )
+            logger.opt(exception=True).warning("review-set dismiss undo failed")
             self._notify_review_set(
                 "Couldn't restore the review set.", severity="error"
             )
@@ -31991,9 +32581,7 @@ class LibraryScreen(BaseAppScreen):
             return []
         sets = service.list_review_sets()
         live_ids = self._review_set_live_ids(
-            item.backing_media_id
-            for review_set in sets
-            for item in review_set.items
+            item.backing_media_id for review_set in sets for item in review_set.items
         )
         return build_picker_rows(sets, lambda candidate: candidate in live_ids)
 
@@ -32191,9 +32779,7 @@ class LibraryScreen(BaseAppScreen):
             ``(find_open, controls)`` -- ``controls`` is ``None`` when the
             bar is closed or has not been mounted yet.
         """
-        find_open = bool(
-            self._media_state.find_open or self._media_state.content_query
-        )
+        find_open = bool(self._media_state.find_open or self._media_state.content_query)
         if not find_open:
             return False, None
         try:
@@ -32230,8 +32816,10 @@ class LibraryScreen(BaseAppScreen):
                 layout = self._media_state.reader_layout
         return not (layout.library_open and layout.items_open)
 
-    def _library_media_list_surface_active(self, *, require_focus: bool=True) -> bool:
-        return self._media_controller._library_media_list_surface_active(require_focus=require_focus)
+    def _library_media_list_surface_active(self, *, require_focus: bool = True) -> bool:
+        return self._media_controller._library_media_list_surface_active(
+            require_focus=require_focus
+        )
 
     def _library_media_escape_label(self) -> str:
         """Describe the action Escape will take from the current effective role.
@@ -32266,9 +32854,7 @@ class LibraryScreen(BaseAppScreen):
             return "close"
         focused = self.focused
         try:
-            shell = self.query_one(
-                ".library-media-route", LibraryBrowseReaderShell
-            )
+            shell = self.query_one(".library-media-route", LibraryBrowseReaderShell)
         except (NoMatches, QueryError):
             return "back"
         # task-31271 seam (a): the bar's LIVE state, not its DOM presence
@@ -32306,11 +32892,11 @@ class LibraryScreen(BaseAppScreen):
             return "focus Library"
         return "back"
 
-    @on(Button.Pressed, '#library-media-edit')
+    @on(Button.Pressed, "#library-media-edit")
     def handle_library_media_edit(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_edit(event)
 
-    @on(Button.Pressed, '#library-media-edit-cancel')
+    @on(Button.Pressed, "#library-media-edit-cancel")
     def handle_library_media_edit_cancel(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_edit_cancel(event)
 
@@ -32403,9 +32989,7 @@ class LibraryScreen(BaseAppScreen):
         # was outside the old guard, so a notify that raised (app teardown)
         # left the shared write interlock claimed with no way to release it.
         try:
-            service = getattr(
-                self.app_instance, "media_reading_scope_service", None
-            )
+            service = getattr(self.app_instance, "media_reading_scope_service", None)
             update_media_item = getattr(service, "update_media_item", None)
             if callable(update_media_item):
                 try:
@@ -32450,9 +33034,7 @@ class LibraryScreen(BaseAppScreen):
                         "saved version."
                     )
             else:
-                self._notify_library_media_edit_warning(
-                    "Media editing is unavailable."
-                )
+                self._notify_library_media_edit_warning("Media editing is unavailable.")
             self._media_state.editing = False
             await self._refresh_library_media_detail(media_id)
         finally:
@@ -32461,8 +33043,12 @@ class LibraryScreen(BaseAppScreen):
                 upsert_items=(updated_item,) if updated_item is not None else (),
             )
 
-    def _patch_local_media_record(self, media_id: str, *, title: str, author: str, url: str, keywords: list[str]) -> None:
-        return self._media_controller._patch_local_media_record(media_id, title=title, author=author, url=url, keywords=keywords)
+    def _patch_local_media_record(
+        self, media_id: str, *, title: str, author: str, url: str, keywords: list[str]
+    ) -> None:
+        return self._media_controller._patch_local_media_record(
+            media_id, title=title, author=author, url=url, keywords=keywords
+        )
 
     def _notify_library_media_edit_warning(self, message: str) -> None:
         """Surface a quiet warning notice for a failed media-edit save.
@@ -32496,7 +33082,7 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
 
-    @on(Button.Pressed, '#library-media-delete-cancel')
+    @on(Button.Pressed, "#library-media-delete-cancel")
     def handle_library_media_delete_cancel(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_delete_cancel(event)
 
@@ -32533,9 +33119,7 @@ class LibraryScreen(BaseAppScreen):
             self._media_state.confirming_delete = False
             self.refresh(recompose=True)
             return
-        self._claim_library_media_mutation(
-            self._delete_library_media_item(media_id)
-        )
+        self._claim_library_media_mutation(self._delete_library_media_item(media_id))
 
     async def _delete_library_media_item(self, media_id: str) -> None:
         """Trash the selected Library media item, then return to the list view.
@@ -32682,17 +33266,21 @@ class LibraryScreen(BaseAppScreen):
         if callable(notify):
             notify(message, severity="warning")
 
-    @on(Button.Pressed, '#library-media-highlight-add')
+    @on(Button.Pressed, "#library-media-highlight-add")
     def handle_library_media_highlight_add(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_highlight_add(event)
 
-    @on(Button.Pressed, '.library-media-highlight-delete')
+    @on(Button.Pressed, ".library-media-highlight-delete")
     def handle_library_media_highlight_delete(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_highlight_delete(event)
 
-    @on(Input.Submitted, '#library-media-content-search')
-    def handle_library_media_content_search_submitted(self, event: Input.Submitted) -> None:
-        return self._media_controller.handle_library_media_content_search_submitted(event)
+    @on(Input.Submitted, "#library-media-content-search")
+    def handle_library_media_content_search_submitted(
+        self, event: Input.Submitted
+    ) -> None:
+        return self._media_controller.handle_library_media_content_search_submitted(
+            event
+        )
 
     def _build_library_media_active_child(self) -> Widget:
         return self._media_controller._build_library_media_active_child()
@@ -32829,23 +33417,23 @@ class LibraryScreen(BaseAppScreen):
     def _sync_library_media_viewer_state(self, viewer: LibraryMediaViewer) -> bool:
         return self._media_controller._sync_library_media_viewer_state(viewer)
 
-    @on(Button.Pressed, '#library-media-reader-retry')
+    @on(Button.Pressed, "#library-media-reader-retry")
     def handle_library_media_reader_retry(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_reader_retry(event)
 
-    @on(Button.Pressed, '#library-media-reader-more')
+    @on(Button.Pressed, "#library-media-reader-more")
     def handle_library_media_reader_more(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_reader_more(event)
 
-    @on(Button.Pressed, '#library-media-image-preview-toggle')
+    @on(Button.Pressed, "#library-media-image-preview-toggle")
     def handle_library_media_image_preview_toggle(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_image_preview_toggle(event)
 
-    @on(Button.Pressed, '#library-media-image-preview-retry')
+    @on(Button.Pressed, "#library-media-image-preview-retry")
     def handle_library_media_image_preview_retry(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_image_preview_retry(event)
 
-    @on(Button.Pressed, '.library-media-reader-mode')
+    @on(Button.Pressed, ".library-media-reader-mode")
     def handle_library_media_reader_mode(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_reader_mode(event)
 
@@ -32920,9 +33508,7 @@ class LibraryScreen(BaseAppScreen):
         inflight = self._media_state.progress_inflight_write
         if inflight is not None and inflight[0] == canonical_id:
             return inflight[2] == offset
-        return (
-            self._media_state.progress_persisted_offsets.get(canonical_id) == offset
-        )
+        return self._media_state.progress_persisted_offsets.get(canonical_id) == offset
 
     def _queue_library_media_progress_write(
         self, canonical_id: str, backing_id: int | str, offset: tuple[int, int]
@@ -33137,7 +33723,7 @@ class LibraryScreen(BaseAppScreen):
             self._focus_library_media_content_search_input
         )
 
-    @on(Button.Pressed, '#library-media-open-original')
+    @on(Button.Pressed, "#library-media-open-original")
     def handle_library_media_open_original(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_open_original(event)
 
@@ -33258,25 +33844,33 @@ class LibraryScreen(BaseAppScreen):
     def _mounted_library_media_viewer(self) -> LibraryMediaViewer | None:
         return self._media_controller._mounted_library_media_viewer()
 
-    def _focus_library_media_content_search_input(self, *, _retries: int=4) -> None:
-        return self._media_controller._focus_library_media_content_search_input(_retries=_retries)
+    def _focus_library_media_content_search_input(self, *, _retries: int = 4) -> None:
+        return self._media_controller._focus_library_media_content_search_input(
+            _retries=_retries
+        )
 
-    @on(Button.Pressed, '#library-media-content-mode-rendered')
-    async def handle_library_media_content_mode_rendered(self, event: Button.Pressed) -> None:
-        return await self._media_controller.handle_library_media_content_mode_rendered(event)
+    @on(Button.Pressed, "#library-media-content-mode-rendered")
+    async def handle_library_media_content_mode_rendered(
+        self, event: Button.Pressed
+    ) -> None:
+        return await self._media_controller.handle_library_media_content_mode_rendered(
+            event
+        )
 
-    @on(Button.Pressed, '#library-media-content-mode-raw')
-    async def handle_library_media_content_mode_raw(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#library-media-content-mode-raw")
+    async def handle_library_media_content_mode_raw(
+        self, event: Button.Pressed
+    ) -> None:
         return await self._media_controller.handle_library_media_content_mode_raw(event)
 
     async def _set_library_media_content_mode(self, mode: str) -> None:
         return await self._media_controller._set_library_media_content_mode(mode)
 
-    @on(Button.Pressed, '#library-media-content-search-next')
+    @on(Button.Pressed, "#library-media-content-search-next")
     def handle_library_media_content_search_next(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_content_search_next(event)
 
-    @on(Button.Pressed, '#library-media-content-search-prev')
+    @on(Button.Pressed, "#library-media-content-search-prev")
     def handle_library_media_content_search_prev(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_content_search_prev(event)
 
@@ -33345,7 +33939,7 @@ class LibraryScreen(BaseAppScreen):
     def _scroll_library_media_content_to_line(self, line_index: int) -> None:
         return self._media_controller._scroll_library_media_content_to_line(line_index)
 
-    @on(Button.Pressed, '#library-media-read-later')
+    @on(Button.Pressed, "#library-media-read-later")
     def handle_library_media_read_later(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_read_later(event)
 
@@ -33370,15 +33964,15 @@ class LibraryScreen(BaseAppScreen):
         self._media_state.delete_receipt_ids = ()
         self._sync_library_media_viewer_or_recompose()
 
-    @on(Button.Pressed, '#library-media-analysis-edit')
+    @on(Button.Pressed, "#library-media-analysis-edit")
     def handle_library_media_analysis_edit(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_analysis_edit(event)
 
-    @on(Button.Pressed, '#library-media-analysis-cancel')
+    @on(Button.Pressed, "#library-media-analysis-cancel")
     def handle_library_media_analysis_cancel(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_analysis_cancel(event)
 
-    @on(Button.Pressed, '#library-media-analysis-save')
+    @on(Button.Pressed, "#library-media-analysis-save")
     def handle_library_media_analysis_save(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_analysis_save(event)
 
@@ -33654,8 +34248,7 @@ class LibraryScreen(BaseAppScreen):
             none.
         """
         user_prompt = (
-            "Analyze and summarize the following content.\n\n"
-            f"---\n\n{content}"
+            f"Analyze and summarize the following content.\n\n---\n\n{content}"
         )
         response = chat_api_call(
             api_endpoint=resolution.dispatch_name,
@@ -33830,7 +34423,9 @@ class LibraryScreen(BaseAppScreen):
         # same signal C-1's branch above already uses to distinguish the
         # two origins.
         self._media_state.analyze_origin = (
-            _ANALYZE_ORIGIN_IMPORT if on_item_done is not None else _ANALYZE_ORIGIN_MEDIA
+            _ANALYZE_ORIGIN_IMPORT
+            if on_item_done is not None
+            else _ANALYZE_ORIGIN_MEDIA
         )
         self.run_worker(
             self._analyze_library_media_selection(
@@ -33896,9 +34491,7 @@ class LibraryScreen(BaseAppScreen):
                     if on_item_done is not None:
                         for media_id in media_ids:
                             if media_id not in still_skipped:
-                                on_item_done(
-                                    media_id, True, _ANALYZE_AUTO_SKIP_REASON
-                                )
+                                on_item_done(media_id, True, _ANALYZE_AUTO_SKIP_REASON)
                     notify = getattr(self.app_instance, "notify", None)
                     if not unanalyzed:
                         if callable(notify):
@@ -33971,9 +34564,7 @@ class LibraryScreen(BaseAppScreen):
                 # torn down, ``_library_selected_row_id`` still pointing at
                 # Import) falls into a whole-screen recompose on a dying
                 # screen.
-                self._update_library_ingest_dynamic_regions(
-                    allow_screen_fallback=False
-                )
+                self._update_library_ingest_dynamic_regions(allow_screen_fallback=False)
 
     async def _analyze_one_library_media_item(
         self, media_id: str, *, resolution: Any
@@ -34027,10 +34618,14 @@ class LibraryScreen(BaseAppScreen):
                 unanalyzed.append(media_id)
         return tuple(unanalyzed)
 
-    async def _fetch_library_media_analysis_detail(self, media_id: str, *, include_content: bool) -> Mapping[str, Any] | None:
-        return await self._media_controller._fetch_library_media_analysis_detail(media_id, include_content=include_content)
+    async def _fetch_library_media_analysis_detail(
+        self, media_id: str, *, include_content: bool
+    ) -> Mapping[str, Any] | None:
+        return await self._media_controller._fetch_library_media_analysis_detail(
+            media_id, include_content=include_content
+        )
 
-    @on(Button.Pressed, '#library-media-open')
+    @on(Button.Pressed, "#library-media-open")
     def handle_library_media_open(self, event: Button.Pressed) -> None:
         return self._media_controller.handle_library_media_open(event)
 
@@ -34122,8 +34717,7 @@ class LibraryScreen(BaseAppScreen):
         """
         selected_id = self._rag_search_state.selected_result_id
         return bool(selected_id) and any(
-            result.result_id == selected_id
-            for result in self._rag_search_state.results
+            result.result_id == selected_id for result in self._rag_search_state.results
         )
 
     @on(Button.Pressed, "#library-hub-step-use")
@@ -34139,8 +34733,7 @@ class LibraryScreen(BaseAppScreen):
             if callable(notify):
                 notify(
                     (
-                        "Use it in Console needs a search result — "
-                        "Import a file first."
+                        "Use it in Console needs a search result — Import a file first."
                         if not self._has_local_sources()
                         else "Use it in Console needs a search result — "
                         "run Find it and pick one."
@@ -34166,7 +34759,9 @@ class LibraryScreen(BaseAppScreen):
         search.focus()
 
     @on(Input.Submitted, "#library-conversations-filter")
-    def handle_library_conversations_filter_submitted(self, event: Input.Submitted) -> None:
+    def handle_library_conversations_filter_submitted(
+        self, event: Input.Submitted
+    ) -> None:
         if self._library_unavailable_browse_scope is not None:
             event.stop()
             self._unavailable_navigation._start_library_unavailable_conversation_page_request(
@@ -34176,8 +34771,9 @@ class LibraryScreen(BaseAppScreen):
                 refocus_filter=True,
             )
             return
-        return self._conversations_controller.handle_library_conversations_filter_submitted(event)
-
+        return self._conversations_controller.handle_library_conversations_filter_submitted(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-empty-console")
     def handle_library_conversations_empty_console(self, event: Button.Pressed) -> None:
@@ -34190,8 +34786,6 @@ class LibraryScreen(BaseAppScreen):
                 title="Start a conversation",
                 action_label="Start in Console",
             )
-
-
 
     @on(Button.Pressed, "#library-conversations-empty-clear-filter")
     def handle_library_conversations_empty_clear_filter(
@@ -34215,8 +34809,6 @@ class LibraryScreen(BaseAppScreen):
                 refocus_filter=True,
             )
 
-
-
     @on(Button.Pressed, "#library-conversations-retry")
     def handle_library_conversations_retry(self, event: Button.Pressed) -> None:
         if self._library_unavailable_browse_scope is not None:
@@ -34231,7 +34823,6 @@ class LibraryScreen(BaseAppScreen):
             )
             return
         return self._conversations_controller.handle_library_conversations_retry(event)
-
 
     @on(Button.Pressed, "#library-conversations-previous")
     def handle_library_conversations_previous(self, event: Button.Pressed) -> None:
@@ -34250,8 +34841,9 @@ class LibraryScreen(BaseAppScreen):
                 focus_after_apply="#library-conversations-previous",
             )
             return
-        return self._conversations_controller.handle_library_conversations_previous(event)
-
+        return self._conversations_controller.handle_library_conversations_previous(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversations-next")
     def handle_library_conversations_next(self, event: Button.Pressed) -> None:
@@ -34272,46 +34864,59 @@ class LibraryScreen(BaseAppScreen):
             return
         return self._conversations_controller.handle_library_conversations_next(event)
 
-
     def _refresh_library_collections_capture_reader(self) -> None:
-        return self._collections_controller._refresh_library_collections_capture_reader()
+        return (
+            self._collections_controller._refresh_library_collections_capture_reader()
+        )
 
     async def _load_library_collections_capture_entry(self) -> None:
-        return await self._collections_controller._load_library_collections_capture_entry()
+        return (
+            await self._collections_controller._load_library_collections_capture_entry()
+        )
 
     async def _run_library_collections_capture_transition(
         self,
         operation: Awaitable[bool],
     ) -> bool:
-        return await self._collections_controller._run_library_collections_capture_transition(operation)
+        return await self._collections_controller._run_library_collections_capture_transition(
+            operation
+        )
 
     @on(Button.Pressed, ".library-collections-item-row")
     async def select_library_collection_capture(self, event: Button.Pressed) -> None:
-        return await self._collections_controller.select_library_collection_capture(event)
+        return await self._collections_controller.select_library_collection_capture(
+            event
+        )
 
     async def _select_library_collection_capture(
         self,
         identity: CaptureIdentity,
     ) -> None:
-        return await self._collections_controller._select_library_collection_capture(identity)
+        return await self._collections_controller._select_library_collection_capture(
+            identity
+        )
 
     @on(Button.Pressed, ".library-collections-scope-row")
     async def select_library_collection_capture_scope(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.select_library_collection_capture_scope(event)
+        return (
+            await self._collections_controller.select_library_collection_capture_scope(
+                event
+            )
+        )
 
     @on(Input.Submitted, "#library-collections-filter")
-    async def filter_library_collection_captures(
-        self, event: Input.Submitted
-    ) -> None:
-        return await self._collections_controller.filter_library_collection_captures(event)
+    async def filter_library_collection_captures(self, event: Input.Submitted) -> None:
+        return await self._collections_controller.filter_library_collection_captures(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-quick-capture")
-    def toggle_library_collection_quick_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.toggle_library_collection_quick_capture(event)
+    def toggle_library_collection_quick_capture(self, event: Button.Pressed) -> None:
+        return self._collections_controller.toggle_library_collection_quick_capture(
+            event
+        )
 
     @on(
         Input.Changed,
@@ -34321,67 +34926,99 @@ class LibraryScreen(BaseAppScreen):
     def retain_library_collection_quick_capture_input(
         self, event: Input.Changed
     ) -> None:
-        return self._collections_controller.retain_library_collection_quick_capture_input(event)
+        return (
+            self._collections_controller.retain_library_collection_quick_capture_input(
+                event
+            )
+        )
 
     @on(TextArea.Changed, "#library-collections-capture-note")
     def retain_library_collection_quick_capture_note(
         self, event: TextArea.Changed
     ) -> None:
-        return self._collections_controller.retain_library_collection_quick_capture_note(event)
+        return (
+            self._collections_controller.retain_library_collection_quick_capture_note(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-capture-cancel")
-    def cancel_library_collection_quick_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.cancel_library_collection_quick_capture(event)
+    def cancel_library_collection_quick_capture(self, event: Button.Pressed) -> None:
+        return self._collections_controller.cancel_library_collection_quick_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-capture-save")
     async def save_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.save_library_collection_quick_capture(event)
+        return await self._collections_controller.save_library_collection_quick_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-capture-retry-confirm")
     async def retry_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.retry_library_collection_quick_capture(event)
+        return (
+            await self._collections_controller.retry_library_collection_quick_capture(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-capture-retry-back")
     def cancel_library_collection_quick_capture_retry(
         self, event: Button.Pressed
     ) -> None:
-        return self._collections_controller.cancel_library_collection_quick_capture_retry(event)
+        return (
+            self._collections_controller.cancel_library_collection_quick_capture_retry(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-capture-refresh")
     async def refresh_library_collection_quick_capture(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.refresh_library_collection_quick_capture(event)
+        return (
+            await self._collections_controller.refresh_library_collection_quick_capture(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-filters")
-    def toggle_library_collection_capture_filters(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.toggle_library_collection_capture_filters(event)
+    def toggle_library_collection_capture_filters(self, event: Button.Pressed) -> None:
+        return self._collections_controller.toggle_library_collection_capture_filters(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-filters-apply")
     async def apply_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.apply_library_collection_capture_filters(event)
+        return (
+            await self._collections_controller.apply_library_collection_capture_filters(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-filters-clear")
     async def clear_library_collection_capture_filters(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.clear_library_collection_capture_filters(event)
+        return (
+            await self._collections_controller.clear_library_collection_capture_filters(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-sort")
     async def cycle_library_collection_capture_sort(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.cycle_library_collection_capture_sort(event)
+        return await self._collections_controller.cycle_library_collection_capture_sort(
+            event
+        )
 
     @on(Input.Changed, "#library-rag-query-input")
     async def update_library_rag_query(self, event: Input.Changed) -> None:
@@ -34397,7 +35034,9 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, "#library-rag-open-import-export")
     async def open_import_export_from_library_rag(self, event: Button.Pressed) -> None:
-        return await self._rag_search_controller.open_import_export_from_library_rag(event)
+        return await self._rag_search_controller.open_import_export_from_library_rag(
+            event
+        )
 
     @on(Button.Pressed, "#library-rag-mode-toggle")
     def cycle_library_rag_mode(self, event: Button.Pressed) -> None:
@@ -34417,7 +35056,9 @@ class LibraryScreen(BaseAppScreen):
 
     @on(Button.Pressed, ".library-rag-history-row")
     async def rerun_library_search_from_history(self, event: Button.Pressed) -> None:
-        return await self._rag_search_controller.rerun_library_search_from_history(event)
+        return await self._rag_search_controller.rerun_library_search_from_history(
+            event
+        )
 
     @staticmethod
     def _trailing_index(button_id: str | None) -> int | None:
@@ -34434,67 +35075,77 @@ class LibraryScreen(BaseAppScreen):
         return await self._rag_search_controller._start_library_rag_query()
 
     @on(Button.Pressed, "#library-collections-page-previous")
-    async def previous_library_collection_captures(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.previous_library_collection_captures(event)
+    async def previous_library_collection_captures(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.previous_library_collection_captures(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-page-next")
-    async def next_library_collection_captures(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.next_library_collection_captures(event)
+    async def next_library_collection_captures(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.next_library_collection_captures(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-page-retry")
-    async def retry_library_collection_captures(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.retry_library_collection_captures(event)
+    async def retry_library_collection_captures(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.retry_library_collection_captures(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-reader-retry")
     async def retry_library_collection_capture_detail(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.retry_library_collection_capture_detail(event)
+        return (
+            await self._collections_controller.retry_library_collection_capture_detail(
+                event
+            )
+        )
 
     @on(
         Button.Pressed,
         "#library-collections-mode-read, #library-collections-mode-highlights, "
         "#library-collections-mode-notes, #library-collections-mode-info",
     )
-    async def set_library_collection_capture_mode(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.set_library_collection_capture_mode(event)
+    async def set_library_collection_capture_mode(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.set_library_collection_capture_mode(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-more")
-    def toggle_library_collection_capture_more(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.toggle_library_collection_capture_more(event)
+    def toggle_library_collection_capture_more(self, event: Button.Pressed) -> None:
+        return self._collections_controller.toggle_library_collection_capture_more(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-legacy-recovery")
     async def inspect_library_collection_legacy_recovery(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.inspect_library_collection_legacy_recovery(event)
+        return await self._collections_controller.inspect_library_collection_legacy_recovery(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-legacy-recovery-close")
-    def close_library_collection_legacy_recovery(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.close_library_collection_legacy_recovery(event)
+    def close_library_collection_legacy_recovery(self, event: Button.Pressed) -> None:
+        return self._collections_controller.close_library_collection_legacy_recovery(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-legacy-recovery-export")
     async def choose_library_collection_legacy_recovery_export(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.choose_library_collection_legacy_recovery_export(event)
+        return await self._collections_controller.choose_library_collection_legacy_recovery_export(
+            event
+        )
 
     async def _export_library_collection_legacy_recovery(
         self, selected_path: Path | None
     ) -> None:
-        return await self._collections_controller._export_library_collection_legacy_recovery(selected_path)
+        return await self._collections_controller._export_library_collection_legacy_recovery(
+            selected_path
+        )
 
     @on(
         TextArea.Changed,
@@ -34508,103 +35159,127 @@ class LibraryScreen(BaseAppScreen):
     async def save_library_collection_capture_highlight(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.save_library_collection_capture_highlight(event)
+        return await self._collections_controller.save_library_collection_capture_highlight(
+            event
+        )
 
     @on(Button.Pressed, ".library-collections-highlight-delete")
     async def delete_library_collection_capture_highlight(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.delete_library_collection_capture_highlight(event)
+        return await self._collections_controller.delete_library_collection_capture_highlight(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-freeform-note-save")
-    async def save_library_collection_capture_note(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.save_library_collection_capture_note(event)
+    async def save_library_collection_capture_note(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.save_library_collection_capture_note(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-linked-note-save")
-    async def link_library_collection_capture_note(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.link_library_collection_capture_note(event)
+    async def link_library_collection_capture_note(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.link_library_collection_capture_note(
+            event
+        )
 
     @on(Button.Pressed, ".library-collections-linked-note-unlink")
     async def unlink_library_collection_capture_note(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.unlink_library_collection_capture_note(event)
+        return (
+            await self._collections_controller.unlink_library_collection_capture_note(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-summarize")
-    async def summarize_library_collection_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.summarize_library_collection_capture(event)
+    async def summarize_library_collection_capture(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.summarize_library_collection_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-listen")
-    async def listen_to_library_collection_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.listen_to_library_collection_capture(event)
+    async def listen_to_library_collection_capture(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.listen_to_library_collection_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-save-offline")
     async def save_library_collection_capture_offline(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.save_library_collection_capture_offline(event)
+        return (
+            await self._collections_controller.save_library_collection_capture_offline(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-mark-read")
-    async def mark_library_collection_capture_read(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.mark_library_collection_capture_read(event)
+    async def mark_library_collection_capture_read(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.mark_library_collection_capture_read(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-favorite")
-    async def favorite_library_collection_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.favorite_library_collection_capture(event)
+    async def favorite_library_collection_capture(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.favorite_library_collection_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-archive")
-    async def archive_library_collection_capture(
-        self, event: Button.Pressed
-    ) -> None:
-        return await self._collections_controller.archive_library_collection_capture(event)
+    async def archive_library_collection_capture(self, event: Button.Pressed) -> None:
+        return await self._collections_controller.archive_library_collection_capture(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-archive-undo")
     async def undo_library_collection_capture_archive(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.undo_library_collection_capture_archive(event)
+        return (
+            await self._collections_controller.undo_library_collection_capture_archive(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-retry-extraction")
     async def retry_library_collection_capture_extraction(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.retry_library_collection_capture_extraction(event)
+        return await self._collections_controller.retry_library_collection_capture_extraction(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-open-original")
-    def open_library_collection_capture_original(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.open_library_collection_capture_original(event)
+    def open_library_collection_capture_original(self, event: Button.Pressed) -> None:
+        return self._collections_controller.open_library_collection_capture_original(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-hard-delete")
-    def arm_library_collection_capture_hard_delete(
-        self, event: Button.Pressed
-    ) -> None:
-        return self._collections_controller.arm_library_collection_capture_hard_delete(event)
+    def arm_library_collection_capture_hard_delete(self, event: Button.Pressed) -> None:
+        return self._collections_controller.arm_library_collection_capture_hard_delete(
+            event
+        )
 
     @on(Button.Pressed, "#library-collections-hard-delete-cancel")
     def cancel_library_collection_capture_hard_delete(
         self, event: Button.Pressed
     ) -> None:
-        return self._collections_controller.cancel_library_collection_capture_hard_delete(event)
+        return (
+            self._collections_controller.cancel_library_collection_capture_hard_delete(
+                event
+            )
+        )
 
     @on(Button.Pressed, "#library-collections-hard-delete-confirm")
     async def confirm_library_collection_capture_hard_delete(
         self, event: Button.Pressed
     ) -> None:
-        return await self._collections_controller.confirm_library_collection_capture_hard_delete(event)
+        return await self._collections_controller.confirm_library_collection_capture_hard_delete(
+            event
+        )
 
     @on(Button.Pressed, ".library-rag-result-action")
     async def select_library_rag_result(self, event: Button.Pressed) -> None:
@@ -34683,11 +35358,11 @@ class LibraryScreen(BaseAppScreen):
         def required_character_scope_is_current() -> bool:
             if required_database is None:
                 return True
-            return getattr(
-                self.app_instance, "chachanotes_db", None
-            ) is required_database and self._unavailable_navigation._library_character_authority_is_current(
-                self,
-                required_authority
+            return (
+                getattr(self.app_instance, "chachanotes_db", None) is required_database
+                and self._unavailable_navigation._library_character_authority_is_current(
+                    self, required_authority
+                )
             )
 
         def entry_is_current() -> bool:
@@ -34701,8 +35376,7 @@ class LibraryScreen(BaseAppScreen):
                         and entry_route_key == self._library_entry_route_key()
                         and (
                             entry_conversation_id is None
-                            or entry_conversation_id
-                            == self._selected_conversation_id
+                            or entry_conversation_id == self._selected_conversation_id
                         )
                     )
                 )
@@ -34727,8 +35401,7 @@ class LibraryScreen(BaseAppScreen):
                 # queued to apply after the save. The name is what the user
                 # actually pressed when the caller knows it.
                 self._notify_prompt_dirty_veto(
-                    blocked_target=display_name.strip()
-                    or f"Prompt {parsed_prompt_id}"
+                    blocked_target=display_name.strip() or f"Prompt {parsed_prompt_id}"
                 )
                 return None
             if not entry_is_current():
@@ -35018,18 +35691,22 @@ class LibraryScreen(BaseAppScreen):
     def _notify_library_conversation_unavailable(self) -> None:
         return self._conversations_controller._notify_library_conversation_unavailable()
 
-
     @staticmethod
-    def _validate_library_conversation_locator(response: object, conversation_id: str) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
-        return LibraryConversationsController._validate_library_conversation_locator(response, conversation_id)
-
+    def _validate_library_conversation_locator(
+        response: object, conversation_id: str
+    ) -> tuple[tuple[Mapping[str, Any], ...], int, int, bool]:
+        return LibraryConversationsController._validate_library_conversation_locator(
+            response, conversation_id
+        )
 
     @on(Button.Pressed, "#library-rag-use-selected-in-console")
     def use_selected_library_rag_result_in_console(
         self,
         event: Button.Pressed,
     ) -> None:
-        return self._rag_search_controller.use_selected_library_rag_result_in_console(event)
+        return self._rag_search_controller.use_selected_library_rag_result_in_console(
+            event
+        )
 
     async def action_library_rag_use_in_console(self) -> None:
         return await self._rag_search_controller.action_library_rag_use_in_console()
@@ -35139,7 +35816,9 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         outcome: LibraryRagSearchOutcome,
     ) -> None:
-        return await self._rag_search_controller._apply_library_rag_search_outcome(request, outcome)
+        return await self._rag_search_controller._apply_library_rag_search_outcome(
+            request, outcome
+        )
 
     def _library_rag_answer_chat_kwargs(self) -> dict[str, Any] | None:
         return self._rag_search_controller._library_rag_answer_chat_kwargs()
@@ -35190,7 +35869,9 @@ class LibraryScreen(BaseAppScreen):
         request: LibraryRagSearchRequest,
         answer: LibraryRagAnswer,
     ) -> None:
-        return await self._rag_search_controller._apply_library_rag_answer(request, answer)
+        return await self._rag_search_controller._apply_library_rag_answer(
+            request, answer
+        )
 
     def _sync_library_rag_scope_toggle_and_run_gate_widgets(self) -> None:
         return self._rag_search_controller._sync_library_rag_scope_toggle_and_run_gate_widgets()
@@ -35265,7 +35946,11 @@ class LibraryScreen(BaseAppScreen):
         scope_container: Vertical,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        return await self._rag_search_controller._apply_library_rag_scope_recovery_block(scope_container, panel_state)
+        return (
+            await self._rag_search_controller._apply_library_rag_scope_recovery_block(
+                scope_container, panel_state
+            )
+        )
 
     async def _refresh_search_rag_panel_state_widgets(
         self,
@@ -35373,13 +36058,19 @@ class LibraryScreen(BaseAppScreen):
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        return await self._rag_search_controller._refresh_library_rag_query_status_widgets(panel_state)
+        return (
+            await self._rag_search_controller._refresh_library_rag_query_status_widgets(
+                panel_state
+            )
+        )
 
     async def _refresh_library_rag_answer_widgets(
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        return await self._rag_search_controller._refresh_library_rag_answer_widgets(panel_state)
+        return await self._rag_search_controller._refresh_library_rag_answer_widgets(
+            panel_state
+        )
 
     async def _refresh_library_rag_history_widget(
         self,
@@ -35387,13 +36078,17 @@ class LibraryScreen(BaseAppScreen):
         *,
         force_collapsed: bool | None = None,
     ) -> None:
-        return await self._rag_search_controller._refresh_library_rag_history_widget(panel_state, force_collapsed=force_collapsed)
+        return await self._rag_search_controller._refresh_library_rag_history_widget(
+            panel_state, force_collapsed=force_collapsed
+        )
 
     async def _refresh_library_rag_results_widgets(
         self,
         panel_state: LibraryRagPanelState,
     ) -> None:
-        return await self._rag_search_controller._refresh_library_rag_results_widgets(panel_state)
+        return await self._rag_search_controller._refresh_library_rag_results_widgets(
+            panel_state
+        )
 
     @staticmethod
     def _library_rag_scope_summary(panel_state: LibraryRagPanelState) -> str:
@@ -35406,7 +36101,6 @@ class LibraryScreen(BaseAppScreen):
     def _open_selected_conversation_handoff(self) -> None:
         return self._conversations_controller._open_selected_conversation_handoff()
 
-
     @on(Button.Pressed, "#library-conversation-open-console")
     def open_selected_conversation_in_console(self, event: Button.Pressed) -> None:
         """Resume the fully loaded original conversation in Console.
@@ -35414,8 +36108,9 @@ class LibraryScreen(BaseAppScreen):
         Args:
             event: Resume press consumed before checking the retained identity fence.
         """
-        return self._conversations_controller.open_selected_conversation_in_console(event)
-
+        return self._conversations_controller.open_selected_conversation_in_console(
+            event
+        )
 
     @on(Button.Pressed, "#library-conversation-use-source")
     def use_selected_conversation_as_source(self, event: Button.Pressed) -> None:
@@ -35560,7 +36255,7 @@ class LibraryScreen(BaseAppScreen):
             return
         open_chat_with_handoff(payload, action_label="Use in Console")
 
-    @on(Button.Pressed, '#library-media-use-in-chat')
+    @on(Button.Pressed, "#library-media-use-in-chat")
     def use_media_in_chat(self, event: Button.Pressed) -> None:
         return self._media_controller.use_media_in_chat(event)
 
@@ -35601,7 +36296,9 @@ class LibraryScreen(BaseAppScreen):
         self.app.push_screen(
             WorkspaceCreateModal(
                 registry_service=registry_service,
-                persona_service=getattr(self.app_instance, "local_character_persona_service", None),
+                persona_service=getattr(
+                    self.app_instance, "local_character_persona_service", None
+                ),
                 description="Local workspace created from Library.",
             ),
             _done,
@@ -35775,6 +36472,7 @@ class LibraryScreen(BaseAppScreen):
             ),
             action_label="Use in Console",
         )
+
 
 # task 8: classmethod dependency binding -- `_conversation_workspace_label`/
 # `_conversation_updated_label`'s moved bodies (byte-for-byte, on
