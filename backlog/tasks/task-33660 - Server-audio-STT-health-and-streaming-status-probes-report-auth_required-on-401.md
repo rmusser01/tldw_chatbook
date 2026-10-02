@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-01 23:30'
-updated_date: '2026-10-02 05:55'
+updated_date: '2026-10-02 18:15'
 labels:
   - audio
   - server-parity
@@ -80,6 +80,12 @@ Negative control against unchanged current-dev production source: 7 expected Aut
 Scope limits: no full local suite, paid provider request, real server request, microphone capture, extension setup or native permission workaround. The broader Buddy human-speech/audibility, native-interaction and historical reload-trigger work remains open. Prior UAT receipts retain their original attribution; their server checkout and the main checkouts were not edited.
 
 **2026-10-01 integration qualification:** All hosted checks, including required Derived Artifacts, passed on 092ed65e1c30; matching-head Qodo reported zero bugs, rule violations and cross-repo conflicts, with both review threads resolved. Dev then advanced to ab4df9995954 through the config warm-path change. Rebase completed without conflicts or overlapping PR paths; both reviewed commits are patch-identical by range-diff. The same 85 targeted tests pass on the new base (2.83s); Ruff lint/format, production-source Bandit, diff checks and both Backlog guards pass (4759 tasks). Implementation acceptance criteria are complete and the task is Done. Fresh hosted review and gates must qualify the final integration head before normal merge; prior-head green results do not authorize bypassing those gates. Existing ADR-178 applies. This closes only the Chatbook audio-probe implementation, not broader Buddy UAT.
+
+2026-10-02 current-dev and live qualification: rebased onto e92b01515f95. All three earlier patches are identical by range-diff, with no incoming audio/client changes; incoming conftest and dependency changes were checked. The focused scope passed 85 tests in 1.92s. Ruff lint/format, production-source Bandit (zero findings), diff checks and all derived-artifact preflight guards passed. The first Ruff attempt could not write the managed-worktree cache and is excluded; a writable private cache supplied the passing result. Pytest reported one managed-worktree cache warning and existing temporary-directory cleanup warnings; no full suite ran.
+
+Against the real disposable server on source f21f1160dd0a (current backend dev df17c8ac3f), both STT health and streaming status returned HTTP 401 with each of missing and deliberately rejected API credentials. The actual production client, server service and scope converted all four refusals to auth_required, and the existing recovery presenter returned Server sign-in required with the Settings action. No HTTP transport was mocked. This is client/service/scope and presenter evidence; no native screen caller, microphone, voice, provider request or model warm-up was exercised. Receipt: /private/tmp/buddy-audio-live-uat-20261002/result.json. The two failed setup probes were blocked by the imported test bootstrap's socket guard; its documented numeric-loopback-only mode supplied the valid live result, retaining external socket denial. Both failed logs remain private and excluded. Only the owned API listener was stopped, its port closed, and the previous profile database remained unchanged.
+
+Hosted green/Qodo-zero results retain source 6ed8f96c5851 attribution. Fresh matching-head gates/review are required after publishing this rebase. TASK-33660 remains Done for the implementation; wider Buddy human speech/audibility, native interaction and historical reload-trigger UAT remain open.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
