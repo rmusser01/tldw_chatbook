@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-from datetime import UTC, datetime
 import hashlib
 import io
 import json
@@ -18,12 +17,12 @@ import sys
 import tempfile
 import time
 from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, NamedTuple, Sequence
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
-
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(REPO_ROOT) not in sys.path:
@@ -341,10 +340,11 @@ def isolated_benchmark_host_state(root: Path) -> Iterator[None]:
     config_directory.mkdir(parents=True, mode=0o700, exist_ok=True)
     overrides = {
         "HOME": str(home),
+        "USERPROFILE": str(home),
         "XDG_CONFIG_HOME": str(config_root),
         "XDG_DATA_HOME": str(data_root),
         "TLDW_CONFIG_PATH": str(config_directory / "config.toml"),
-        "TLDW_TEST_CONFIG_ROOT": str(config_root),
+        "TLDW_TEST_CONFIG_ROOT": str(root),
         "TLDW_TEST_MODE": "1",
     }
     secret_markers = ("API_KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL")
@@ -1927,12 +1927,30 @@ async def run_benchmark(
     scratch_root: Path | None = None,
     baseline: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run all local benchmark groups without external resolution."""
+    """Run local groups using the caller's lifetime-bound private profile.
+
+    The CLI selects that profile before importing application modules. Direct
+    callers must do the same; changing HOME mid-run invalidates config custody.
+    """
 
     if mode not in {"baseline", "qualification"}:
         raise ValueError(f"unsupported mode: {mode}")
     if samples < 1 or warmups < 0:
         raise ValueError("samples must be positive and warmups non-negative")
+    selected_root = os.environ.get("TLDW_TEST_CONFIG_ROOT")
+    if not selected_root or os.environ.get("TLDW_TEST_MODE") != "1":
+        raise ValueError("benchmark requires a lifetime-bound private profile")
+    profile = Path(selected_root).resolve()
+    for name in (
+        "HOME",
+        "USERPROFILE",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "TLDW_CONFIG_PATH",
+    ):
+        selected = os.environ.get(name)
+        if not selected or not Path(selected).resolve().is_relative_to(profile):
+            raise ValueError("benchmark requires a lifetime-bound private profile")
     corpus = _load_fixture()
     workload = _workload_from_corpus(corpus)
     temporary_root: tempfile.TemporaryDirectory[str] | None = None
@@ -1945,16 +1963,15 @@ async def run_benchmark(
 
     repository_storage = None
     try:
-        with isolated_benchmark_host_state(root / "host-state"):
-            with sample_group_workspace(root, "first-token") as workspace:
-                _init_console_schema(workspace.db_path)
-                first_token = await _measure_first_token(
-                    workspace.db_path,
-                    samples=samples,
-                    warmups=warmups,
-                    qualification=mode == "qualification",
-                    workload=workload,
-                )
+        with sample_group_workspace(root, "first-token") as workspace:
+            _init_console_schema(workspace.db_path)
+            first_token = await _measure_first_token(
+                workspace.db_path,
+                samples=samples,
+                warmups=warmups,
+                qualification=mode == "qualification",
+                workload=workload,
+            )
         with sample_group_workspace(root, "finalization"):
             finalization = _measure_finalization(
                 samples=samples,
@@ -1986,14 +2003,13 @@ async def run_benchmark(
                 corpus_input_sha256=workload["finalization_sha256"],
             )
         if mode == "qualification":
-            with isolated_benchmark_host_state(root / "repository-host-state"):
-                with sample_group_workspace(root, "repository-storage") as workspace:
-                    repository_storage = _measure_repository_storage(
-                        workspace.db_path,
-                        samples=samples,
-                        warmups=warmups,
-                        snapshots=workload["standard_snapshots"],
-                    )
+            with sample_group_workspace(root, "repository-storage") as workspace:
+                repository_storage = _measure_repository_storage(
+                    workspace.db_path,
+                    samples=samples,
+                    warmups=warmups,
+                    snapshots=workload["standard_snapshots"],
+                )
         with sample_group_workspace(root, "migration") as workspace:
             _init_migration_schema(
                 workspace.db_path,
@@ -2059,39 +2075,41 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     try:
         args = parse_args(argv)
-        if args.baseline is not None:
-            args.baseline = _validate_cli_path(
-                args.baseline,
-                require_exists=True,
-            )
-        if args.output is not None:
-            args.output = _validate_cli_path(
-                args.output,
-                require_exists=False,
-            )
-        validate_args(args)
-        baseline = None
-        if args.mode == "external":
-            result = asyncio.run(
-                run_external_measurement(
-                    target=args.external_target,
-                    samples=args.samples,
-                    warmups=args.warmups,
-                    timeout_seconds=args.external_timeout_seconds or 10.0,
-                )
-            )
-        else:
+        # One profile owns validation imports and every measured group. In
+        # particular, migration's real DB owner must not enroll the host HOME.
+        with (
+            tempfile.TemporaryDirectory(prefix="ragcp-host-") as host,
+            isolated_benchmark_host_state(Path(host)),
+        ):
             if args.baseline is not None:
-                baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
-                _validate_baseline_document(baseline)
-            result = asyncio.run(
-                run_benchmark(
-                    mode=args.mode,
-                    samples=args.samples,
-                    warmups=args.warmups,
-                    baseline=baseline,
+                args.baseline = _validate_cli_path(
+                    args.baseline, require_exists=True
                 )
-            )
+            if args.output is not None:
+                args.output = _validate_cli_path(args.output, require_exists=False)
+            validate_args(args)
+            baseline = None
+            if args.mode == "external":
+                result = asyncio.run(
+                    run_external_measurement(
+                        target=args.external_target,
+                        samples=args.samples,
+                        warmups=args.warmups,
+                        timeout_seconds=args.external_timeout_seconds or 10.0,
+                    )
+                )
+            else:
+                if args.baseline is not None:
+                    baseline = json.loads(args.baseline.read_text(encoding="utf-8"))
+                    _validate_baseline_document(baseline)
+                result = asyncio.run(
+                    run_benchmark(
+                        mode=args.mode,
+                        samples=args.samples,
+                        warmups=args.warmups,
+                        baseline=baseline,
+                    )
+                )
         rendered = json.dumps(result, indent=2, sort_keys=True) + "\n"
         if args.output is None:
             sys.stdout.write(rendered)

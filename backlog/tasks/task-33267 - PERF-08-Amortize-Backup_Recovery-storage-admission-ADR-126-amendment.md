@@ -15,7 +15,7 @@ priority: high
 references:
 - qa/perf-structural-audit-2026-09-27/report.md
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
-updated_date: 2026-10-02 15:01
+updated_date: 2026-10-02 15:02
 ---
 
 ## Description
@@ -98,6 +98,9 @@ Every outermost guarded call re-derives admission evidence from disk. It walks d
 - A macOS dependency-completeness trace: every path the derivation reads is stamped. It fails when registry.json is dropped.
 - Engagement, settle-margin, epoch and concurrency tests.
 2026-10-02 integration reconciliation: dev113e435 merged PR2911 (ADR amendment) and PR2919 (ordinary acquire_storage evidence reuse) while the separate approved backup followup/performance work was being prepared. Preserve this Task's upstream Done/part1 acceptance record and all prior measurements; they are not the reconstructed complete-transaction probe. The requester approved the retained-source/full-byte/native-hold amortization design on2026-10-01. Its reconstructed Task1 probe and independently reviewed signal-failure fix retain separate original identities. Remaining approved monitor/MCP/raw/current-byte/native-platform work will build on the merged implementation under existing TASK-33560; do not duplicate it or relabel old receipts as dev113 qualification. The proposed design doc added by PR2955 is historical input and must be reconciled with the already accepted ADR before further production edits.
+Historical branch proposal notes retained during latest-dev rebase; their awaiting-approval state predates the requester's later yes and the merged part1 implementation:
+Concrete proposed ADR-126 amendment: Docs/superpowers/specs/2026-10-01-task33267-admission-amortization-design.md. Independent read-only review /private/tmp/task33267-admission-design-review-wMGTxE/report.md. Hold-bound descriptor/parsed-record reuse retains fresh pathname, ancestor, ACL, intent and native gate barriers; no global mutex across disk validation/transactions, one-second bounded native monitor probe, byte-fresh MCP parse cache. Existing numeric goals remain unproven and will not be met by weakening checks. Awaiting owner approval of this architectural contract before performance implementation.
+2026-10-01 proposal remains awaiting the owner's explicit amendment decision; no admission performance implementation made. Independent design review is linked in the committed proposal. Original September probe scripts were lost, as the source audit itself records; any reconstruction must be a disclosed identical protocol on historical/current source rather than falsely claiming reuse of preserved scripts. Existing <0.5ms /80% /concurrency targets remain unmeasured and unwaived. TASK-33370/33373 finite fixes and unchanged benchmark budgets now pass separately; earlier current/prior timing failures remain retained without an invented host-load or regression cause.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
