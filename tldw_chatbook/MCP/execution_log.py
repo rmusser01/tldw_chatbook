@@ -150,18 +150,12 @@ def build_record(
         status=safe_metadata_token(status or ("success" if ok else "error")),
         duration_ms=max(0, int(duration_ms)),
         error_category=(
-            safe_metadata_token(error_category)
-            if error_category is not None
-            else None
+            safe_metadata_token(error_category) if error_category is not None else None
         ),
         exception_type=(
-            safe_metadata_token(exception_type)
-            if exception_type is not None
-            else None
+            safe_metadata_token(exception_type) if exception_type is not None else None
         ),
-        status_code=(
-            max(0, int(status_code)) if status_code is not None else None
-        ),
+        status_code=(max(0, int(status_code)) if status_code is not None else None),
         argument_names=argument_names,
         unknown_argument_count=unknown_argument_count,
         result_type=result_type,
@@ -228,9 +222,7 @@ class MCPExecutionLog:
                 application_owned_directory=self.path.parent,
             ) as handle:
                 handle.write(encoded_line.decode("utf-8"))
-            self._remember_migration(
-                self.path, (active_payload or b"") + encoded_line
-            )
+            self._remember_migration(self.path, (active_payload or b"") + encoded_line)
 
     @mcp_sources.guarded
     def read_recent(self, limit: int = 200) -> list[dict[str, Any]]:
@@ -326,16 +318,12 @@ class MCPExecutionLog:
                 }
             )
 
-        unknown_argument_count = cls._nonnegative_int(
-            raw.get("unknown_argument_count")
-        )
+        unknown_argument_count = cls._nonnegative_int(raw.get("unknown_argument_count"))
         legacy_arguments = raw.get("arguments")
         if isinstance(legacy_arguments, dict):
             # Legacy rows lack the schema required to distinguish registered
             # names. Count every supplied key and discard every key/value.
-            unknown_argument_count = max(
-                unknown_argument_count, len(legacy_arguments)
-            )
+            unknown_argument_count = max(unknown_argument_count, len(legacy_arguments))
             argument_names = []
 
         error_category = raw.get("error_category")
@@ -450,9 +438,7 @@ class MCPExecutionLog:
                 continue
             if isinstance(decoded, dict):
                 rows.append(self._metadata_only_payload(decoded))
-        sanitized = b"".join(
-            (json.dumps(row) + "\n").encode("utf-8") for row in rows
-        )
+        sanitized = b"".join((json.dumps(row) + "\n").encode("utf-8") for row in rows)
         if sanitized != raw:
             atomic_private_write_bytes(
                 path,

@@ -5313,8 +5313,7 @@ class UnifiedMCPControlPlaneService:
                         # task-32280 fix round: the cancelled-mid-approval
                         # row moved to "denied-unresolved" (nobody answered
                         # the card), and it is still exactly this category.
-                        if error
-                        and decision in ("denied", UNRESOLVED_DENIED_DECISION)
+                        if error and decision in ("denied", UNRESOLVED_DENIED_DECISION)
                         else "denied"
                         # task-32280 split the permissions-Off refusal out of
                         # plain "denied" into its own decision token; it is
