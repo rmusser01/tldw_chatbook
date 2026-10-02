@@ -1275,3 +1275,52 @@ review object remains on the original head. Fresh final-head CI and comments
 must qualify the new publication before the authorized normal head-pinned merge.
 The user approved a ten-minute current-thread heartbeat to complete those checks,
 fix actionable findings and merge after verification, then pause itself.
+
+
+### Final Delete/Undo dev eba4305d83
+
+The final pre-publication freshness check catches dev moving again, to
+`eba4305d8389a2112c99ac19fa804e9abea394ba` (Delete/Undo PR #2941 /
+TASK-33628.2). The qualified `113e435ab0` candidate is published as `c21e37983f`
+with an exact previous-head lease; it is not merged or represented as including
+the newly advanced base. Rebase all **29 commits** onto `eba4305d83`: every patch
+replays identically (`hooks-pr2946-eba-range-diff.txt`). Eleven relevant upstream
+Delete/Undo, recovered-media and stylesheet-owner files are byte-identical;
+the DB subtree-restore AST is exact. Existing ADR-052/097/126/163/197/210 apply;
+no new ADR or runtime behavior is introduced by this integration.
+
+The actual mounted hook-review and Delete/Undo flows, modal stylesheet ownership
+and affected boot guards pass **23 cases in 142.21s**, with no skips and one
+existing headroom warning (`hooks-pr2946-eba-ui-boot.xml`). UI-ready remains
+**1032/1033**. The persistence/media/semantic-inventory selection completes with
+**112 passes and three failures in 693.42s**
+(`hooks-pr2946-eba-delete-persistence.xml`): all **12 Delete/Undo persistence**
+and **17 recovered-media** cases pass, as do **83 semantic-inventory controls**.
+The three inventory failures are independently reproduced on immutable exact
+upstream `eba4305d83`, not hidden or converted to xfails:
+
+- `test_live_sql_mutation_sites_are_classified`: two unreviewed dynamic SQL
+  executor sites in the existing staged credential reconstruction.
+- `test_public_mutation_boundary_calls_are_classified`: five missing and three
+  stale character/conversation/voice/importer route names.
+- `test_repository_scan_results_are_cached_and_immutable`: the same credential
+  dynamic-SQL assertion as the first failure.
+
+Retain `hooks-pr2946-eba-upstream-semantic.xml` (the first two failures plus a
+passing document-sync control) and `hooks-pr2946-eba-upstream-cached-scan.xml`
+(the third failure). All six implicated source/scanner files are byte-identical
+to dev; failure messages match the branch. These are explicit upstream inventory
+exclusions, not a new hook regression or a clean aggregate pass. Earlier pet,
+recovery and interrupted stress limitations remain unchanged.
+
+All **eleven artifact commands** pass again on this latest-base source
+(`hooks-pr2946-eba-local-artifacts.json`); diagnostic inventory reproduces at
+**633 owners / 1427 TASK-492 / 56 TASK-31551 / 7593 TASK-494 / 16 sinks**. The
+previously qualified recovery fixture, admission oracle and hook continuation
+implementation remain unchanged. Qodo's persistent report refreshes on published
+`c21e37983f` at **2026-10-02T15:16:47Z**, retaining nine resolved findings, one
+independently disproved finding and no unresolved inline threads; its separate
+review object still references the original head. The latest independently read
+dev remains `eba4305d83`. Fresh checks and comments on the final published head
+must pass before the authorized normal head-pinned merge; the approved ten-minute
+heartbeat remains active to complete it and pause after confirmed merge.
