@@ -76,6 +76,16 @@ def _upstream_v15_database(path):
             conn.execute(f"DROP TABLE {table}")
         conn.execute("ALTER TABLE agent_runs DROP COLUMN work_chain_id")
         conn.execute("ALTER TABLE agent_runs DROP COLUMN budget_tokens")
+        # v21 (agent routing, ADR-147) columns -- dropped so the standalone
+        # route can genuinely apply agent_runs_v20_to_v21_agent_routing.sql
+        # (task-19565; the file is only runnable against tables lacking
+        # these columns, per its header note).
+        conn.execute("ALTER TABLE agent_definitions DROP COLUMN provider")
+        conn.execute("ALTER TABLE agent_definitions DROP COLUMN params_json")
+        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_provider")
+        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_model")
+        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_base_url")
+        conn.execute("ALTER TABLE agent_runs DROP COLUMN resolved_params_json")
         conn.execute("DROP TABLE automatic_work_chains")
         conn.execute("DELETE FROM schema_version WHERE version > 15")
     db.close()
@@ -87,10 +97,17 @@ def test_v15_upgrade_preserves_upstream_records_and_authority(tmp_path, standalo
     path = tmp_path / "runs.db"
     run_id, receipt_id = _upstream_v15_database(path)
     if standalone:
+        # task-19565: the standalone path applies EVERY agent_runs migration
+        # file -- they are the hand-applied upgrade route for databases the
+        # app cannot open, so an unexercised file in the family is a file
+        # that can silently rot. v18->v21 were previously app-path-only.
         for version, name in (
             (16, "agent_runs_v15_to_v16_budget_tokens.sql"),
             (17, "agent_runs_v16_to_v17_automatic_work.sql"),
             (18, "agent_runs_v17_to_v18_runtime_owner.sql"),
+            (19, "agent_runs_v18_to_v19_definition_wall_seconds.sql"),
+            (20, "agent_runs_v19_to_v20_worktree_recovery.sql"),
+            (21, "agent_runs_v20_to_v21_agent_routing.sql"),
         ):
             with sqlite3.connect(path) as conn:
                 conn.executescript(

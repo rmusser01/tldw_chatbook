@@ -66,9 +66,9 @@ covers a creation style:
   this shape simply is not reported, like the rest of this bullet. Keep
   schema DDL a literal string.
 * **A ``.sql`` file whose name does not match a glob in ``SCHEMAS``.**
-  ``migrations/add_sync_fields_to_notes.sql`` is exactly that shape today (it
-  is unreferenced, and its two tables happen to be declared inline in
-  ``ChaChaNotes_DB.py`` as well, so nothing is currently missed).
+  ``migrations/add_sync_fields_to_notes.sql`` was exactly that shape until
+  task-19565 deleted it (it was unreferenced, and its two tables are
+  declared inline in ``ChaChaNotes_DB.py`` as well, so nothing was missed).
 * **A table created from a ``.py`` module not listed in ``SCHEMAS``**, or from
   DDL loaded from a file at runtime and ``executescript``-ed.
 * **``DROP TABLE`` and ``ALTER TABLE ... RENAME TO``.** The scan is
