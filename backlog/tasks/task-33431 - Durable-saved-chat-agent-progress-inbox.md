@@ -1,11 +1,11 @@
 ---
 id: TASK-33431
 title: Durable saved-chat agent progress inbox
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 18:11'
+updated_date: '2026-10-02 18:56'
 labels:
   - agents
   - console
@@ -23,7 +23,7 @@ Preserve pending child reports across saved-chat closure and application restart
 - [x] #1 Saved-chat reports persist transactionally with chat-owned SQLite data, FIFO collection and existing no-eviction limits; reopening recovers data without restoring child capabilities
 - [x] #2 Temporary chats remain memory-only; explicit Save commits the chat and pending reports atomically and failed or cancelled promotion preserves the original queue
 - [x] #3 Collection commits before returning and ambiguous checkpoints never requeue or replay the old call; explicit discard and count-only navigation remain available
-- [ ] #4 Chat-data schema migration and installed backup schema agree; targeted reopen, rollback, limits, ownership, atomic Save promotion and privacy tests pass
+- [x] #4 Chat-data schema migration and installed backup schema agree; targeted reopen, rollback, limits, ownership, atomic Save promotion and privacy tests pass
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -82,4 +82,6 @@ Final compaction-rebase integration: dev 27e718f01d ships auxiliary failure reas
 Final affected selection: 31 passed in 82.20s (/private/tmp/pr2918-compaction-schema-final-green.log); mounted saved reopen/read/discard and promoted-alias close: 2 passed in 18.15s. Independent approval has no remaining findings: 30 complementary recovery/dictionary cases, 5 frozen history cases, 1 exact staged shared candidate/refusal and 3 real linear upgrade/rollback cases. These selections overlap and are not summed. Initial 29 passed/2 failed qualification is retained: test-only connection ownership and live-WAL candidate setup were corrected, with no production validator weakening. The staged candidate independently matches 584 SQL objects, 715 catalog rows and 523 metadata entries.
 
 Final static covers 79 Python files: fatal, added-line/new-file lint, all ten new-file formats, owned migration/test formatting and whitespace pass. The audited diagnostic inventory remains verified. ADR-199 amended; ADR-052 preserved; testing lesson records the WAL staging incident. Docs-only dev 922440b93e is the following rebase target and changes no runtime file. All four criteria remain satisfied; Done. Fresh published-head CI is required, with no full suite or merge claim.
+
+October2 expanded-hooks schema composition: shipped73→74 compaction and74→75 hook receipts remain exact. Durable progress uses unchanged DDL75→76; fresh/current core/shared catalogs and both stamp gates require76, retaining frozen AgentRuns18/21/22/current23 and current-only Chat recovery. Root31schema cases passed; two retained75receipt/rollback fixture failures required sender and are corrected/passing within10checks17.73s. Independent41schema cases plus final live allowlist/static checks approve exact final3d14b4a bytes. Corrected only the receipt index evidence filename. Final mounted saved reopen passes; the live report/Save test initially refused a stale config participant before behavior, then passes19.45s under existing private_profile_test with every assertion/production guard preserved. Static/format/whitespace/CSS/worker/diagnostic checks pass under original rules. Existing ADR199 amended, ADR052 preserved; no new ADR or recovery weakening. Earlier non-green evidence remains disclosed. AC4 requalified.
 <!-- SECTION:NOTES:END -->

@@ -189,3 +189,11 @@ Unchanged UI-ready census on root is RED1034/1033; exact incoming e92 archive is
 ### Final observed modal-quit base
 
 Dev advanced to fccf70d3b0cd21b0d44a906ec3a68b0633887684 (PR2949 / TASK33622.10) before publication; published43 remains conflicted with no current Actions run. Preserve this required update without changing its quit/keybinding policy. Compare the qualified schema/child/runtime source, run only actual quit/Console cleanup overlap checks plus changed startup guards, and obtain immutable final schema/runtime review before exact43 lease publication. ADR required: no new ADR; preserve ADR-031 and the incoming task, existing ADR-126/163/199 apply. Do not close separate TASK33621.28 or broaden into keybinding repair.
+
+
+### Mounted qualification isolation
+
+The final two mounted consumers produce one saved-reopen pass and one raw_source_selection_changed refusal inside _build_test_app/load_settings before live-report behavior. The latter test constructs the real app after Tests/UI per-test profile selection but imports production config during collection; its stale raw participant correctly refuses. Reuse existing private_profile_test for this one owned mounted test, preserving all Save/selection/arrival/revocation assertions and the production recovery guard. ADR required: no; test-only setup isolation, existing ADR-126/199 unchanged. Retain /private/tmp/pr2918-expanded-final-mounted.log as NON-GREEN.
+
+
+Qualification complete at3d14b4a: independent schema41 cases and runtime19 cases approve; actual v2 wake refusal/refund4 cases pass. Root10 repair,24 runtime, final4 originalstartup/storage,7 modal-quit and corrected actual mounted checks pass. All affected tasks are Done through CLI. Minimal child admission and no-inbox import corrections preserve existing owners; supplemental private-profile wrapper is test-only and independently approved. Detailed positive/non-green evidence and separateToDoTASK33648 are recorded in the final review. Doc-only publication cut must retain every reviewed production byte, then require fresh exact-head Qodo and all four CI jobs before protected merge.
