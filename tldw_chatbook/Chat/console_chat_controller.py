@@ -4428,6 +4428,18 @@ def _maintenance_boundary(kind="turn"):
             task = asyncio.current_task()
             depth = self._maintenance_calls.get(task, 0)
             if self._maintenance_paused and not depth:
+                # This refusal precedes the submit lifecycle's exact wake cleanup.
+                authorization = kwargs.get("wake_authorization")
+                if (
+                    kwargs.get("origin") is ConsoleSubmissionOrigin.AGENT_WAKE
+                    and self._fleet_wake.authorizes(
+                        authorization,
+                        kwargs.get("session_id") or self.store.active_session_id,
+                    )
+                    and not authorization.acceptance_started
+                    and not authorization.accepted
+                ):
+                    authorization.preflight_refused = True
                 if kind == "bool":
                     return False
                 if kind == "compact":
