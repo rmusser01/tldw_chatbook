@@ -60,6 +60,7 @@ class _Operation:
         raise TypeError("operation_is_installed_owner_issued")
 
     def check(self, path=None):
+        # Callers normalize paths before taking the coordinator mutex.
         from .participants import _installed_repositories
 
         if (
@@ -77,13 +78,10 @@ class _Operation:
             or self.lease not in _live_leases
         ):
             raise bootstrap.RecoveryRequired("operation_provenance_invalid")
-        if path is not None:
-            selected = lexical_path(path)
-            if (
-                selected != self.path
-                or self.participant.repository().db_path != self.path
-            ):
-                raise bootstrap.RecoveryRequired("operation_path_outside_scope")
+        if path is not None and (
+            path != self.path or self.participant.repository().db_path != self.path
+        ):
+            raise bootstrap.RecoveryRequired("operation_path_outside_scope")
         if _pause is not None:
             hold = _holds.get(self.lease._key)
             if (
@@ -102,13 +100,15 @@ def _check_operation(operation, path=None):
     # validation callback or an instance-shadowed method.
     if type(operation) is not _Operation:
         raise bootstrap.RecoveryRequired("operation_provenance_invalid")
+    selected = lexical_path(path) if path is not None else None
     with _lock:
-        _Operation.check(operation, path)
+        _Operation.check(operation, selected)
     if path is not None:
         parent = os.stat(operation.path.parent)
-        resolved = lexical_path(path).resolve()
+        selected = lexical_path(path)
+        resolved = selected.resolve()
         with _lock:
-            _Operation.check(operation, path)
+            _Operation.check(operation, selected)
             if (
                 resolved != operation.resolved_path
                 or (parent.st_dev, parent.st_ino) != operation.parent_identity
@@ -1429,10 +1429,11 @@ def _acquire_storage(
         raise bootstrap.RecoveryRequired("forked_owner_restart_required")
     root = bootstrap.default_bootstrap_root()
     selector = effective_config_path()
+    normalized_path = lexical_path(path) if path is not None else None
     related_paths = tuple(lexical_path(selected) for selected in related_paths)
 
     def check():
-        for selected in (path, *related_paths):
+        for selected in (normalized_path, *related_paths):
             attempt.check(selected)
         with _lock:
             key = (os.getpid(), str(root))
@@ -1464,7 +1465,7 @@ def _acquire_storage(
         if reused is not None:
             return reused
         before = _observe_candidates(root, selector, path, related_paths)
-    with attempt.initializing(root, path):
+    with attempt.initializing(root, normalized_path):
         check()
         allowed, reason = bootstrap.startup_permission(selector, root)
         if not allowed:

@@ -1452,3 +1452,92 @@ def test_candidate_selection_cwd_failure_does_not_leak_observation_reservation(
         source=str(source),
         source_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
     )
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_installed_relative_acquisition_selects_outside_coordinator_mutex(
+    local_scope, reuse_switch, monkeypatch, reuse  # noqa: F811
+):
+    """A blocked real cwd lookup must not stall another installed transaction."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event, current_thread
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    reuse_switch(reuse)
+    before_leases = set(storage._live_leases)
+    before_pending = set(storage._pending_acquisitions)
+    before_operations = set(storage._operations)
+    monkeypatch.chdir(data)
+    selected, release, committed = Event(), Event(), Event()
+    lock_states = []
+    original = os.getcwd
+    worker = []
+
+    def getcwd():
+        if worker and current_thread() is worker[0]:
+            lock_states.append(storage._lock._is_owned())
+            if not selected.is_set():
+                selected.set()
+                assert release.wait(5)
+        return original()
+
+    owner = storage.acquire_storage()
+    hold = storage._holds[owner._key]
+    first = CharactersRAGDB(data / "relative.db", "relative-selection")
+    second = CharactersRAGDB(data / "independent.db", "independent-selection")
+
+    def relative_transaction():
+        try:
+            with first.transaction() as cursor:
+                worker.append(current_thread())
+                try:
+                    with storage.acquire_storage(Path("relative.db")):
+                        assert cursor.execute("SELECT 1").fetchone()[0] == 1
+                finally:
+                    worker.clear()
+        finally:
+            first.close_connection()
+
+    def independent_transaction():
+        try:
+            with second.transaction() as cursor:
+                cursor.execute("CREATE TABLE f4_commit (value INTEGER)")
+                cursor.execute("INSERT INTO f4_commit VALUES (1)")
+            committed.set()
+        finally:
+            second.close_connection()
+
+    try:
+        # Populate the same real transaction route before interception.
+        for _ in range(3):
+            with first.transaction() as cursor:
+                cursor.execute("SELECT 1").fetchone()
+        monkeypatch.setattr(os, "getcwd", getcwd)
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            relative = pool.submit(relative_transaction)
+            try:
+                assert selected.wait(5)
+                independent = pool.submit(independent_transaction)
+                progressed = committed.wait(2)
+            finally:
+                release.set()
+            relative.result(timeout=5)
+            independent.result(timeout=5)
+        assert progressed, "relative cwd lookup blocked independent commit"
+        assert lock_states and not any(lock_states), lock_states
+        with second.transaction() as cursor:
+            rows = cursor.execute("SELECT value FROM f4_commit")
+            assert [tuple(row) for row in rows] == [(1,)]
+    finally:
+        release.set()
+        first.close()
+        second.close()
+        owner.close()
+    assert storage._live_leases == before_leases
+    assert storage._pending_acquisitions == before_pending
+    assert storage._operations == before_operations
+    assert hold.native_context is None and not hold.thread.is_alive()
+    assert hold not in storage._retiring_holds and hold.key not in storage._holds
