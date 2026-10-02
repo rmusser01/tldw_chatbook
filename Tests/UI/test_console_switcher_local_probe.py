@@ -72,6 +72,8 @@ class Servers:
 
     def __init__(self, *up: int) -> None:
         self.up = set(up)
+        #: Port -> HTTP status a server answers its listing with (401, 403).
+        self.status: dict[int, int] = {}
         self.hold: threading.Event | None = None
         self.requests: list[tuple[str, int, str | None, int]] = []
         self.in_flight = self.max_in_flight = 0
@@ -92,6 +94,8 @@ class Servers:
         try:
             if self.hold is not None:
                 self.hold.wait(10)
+            if request.url.port in self.status:
+                return httpx.Response(self.status[request.url.port])
             if request.url.port not in self.up:
                 raise httpx.ConnectError("refused") from OSError(
                     errno.ECONNREFUSED, "refused"
@@ -462,6 +466,35 @@ async def test_an_untouched_shipped_default_that_runs_reads_reachable(servers):
 
     assert "tabbyapi" in ready
     assert word.startswith("Ready · reachable ")
+
+
+@pytest.mark.parametrize(
+    ("status", "word", "blocked"),
+    [(401, "Not ready · key rejected", True), (403, "Ready · not tested", False)],
+    ids=["401", "403"],
+)
+async def test_a_listing_403_never_blocks_but_a_401_does(servers, status, word, blocked):
+    """Qodo #2958 follow-up (owner ruling): llama.cpp answers its listing with
+    a 401 or a 403. The switcher row and the Console's readiness for the same
+    connection agree; only the 401 rejects the key and blocks sending."""
+    servers.status = {LLAMA: status}
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(app)
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        row = line_with(list_lines(app, switcher), "llama.cpp")
+        console = build_console_settings_readiness(
+            build_target_default_console_session_settings(CONFIG, "llama_cpp", "model-a"),
+            app_config=CONFIG,
+            connection_evidence=shared_connection_evidence(lambda: app),
+        )
+
+    assert LLAMA in servers.ports
+    assert console.connection is not None  # The Console read the probe's result.
+    assert popover_module.switcher_readiness_words(console) == word
+    assert word in row
+    assert (console.operability != "ready_to_send") is blocked
 
 
 async def test_the_switcher_widget_makes_no_network_call_itself(servers):

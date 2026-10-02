@@ -196,7 +196,7 @@ The rules:
   |---|---|
   | The listing returns models | `Ready · verified HH:MM`, with "key accepted (models listed); generation not tested" |
   | 401 | `Not ready · key rejected` |
-  | 403, or a successful answer with no model in it (ruling of 2026-10-02, PR #2958 review) | "model listing unavailable": `Ready · not tested`, never blocks. A 403 says this key may not list models, not that it cannot chat |
+  | 403, or a successful answer with no model in it (ruling of 2026-10-02, PR #2958 review) | "model listing unavailable": `Ready · not tested`, never blocks. A 403 says this key may not list models, not that it cannot chat. Every local model-listing probe reads a 403 the same way |
   | Connection refused or timed out | a distinct `Not ready` reason |
   | The listing needs no key (OpenRouter's catalog is public, per ADR-020) | "models listed; key not checked". Never "accepted" |
   | The provider has no listing endpoint | today's local readiness check, labelled as local |

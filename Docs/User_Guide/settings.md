@@ -249,7 +249,8 @@ the provider's models. Nothing is generated and nothing is saved. A URL-based
 local provider gets a short model-listing probe, sent with the draft's API key
 when it has one (a server started with a key is tested with it, never
 without), and it is listed even before you choose a model, since the list is
-how you find one. A cloud provider gets one model listing at the endpoint a
+how you find one. As for a cloud provider below, only a 401 reads "key
+rejected"; a 403 means the key may not list models and blocks nothing. A cloud provider gets one model listing at the endpoint a
 send would use, with the key a send would use (saved, from the env var, or
 typed and not yet saved). That listing is the key check: "Ready · verified
 14:01" with "key accepted (*N* models listed) · generation not tested", or

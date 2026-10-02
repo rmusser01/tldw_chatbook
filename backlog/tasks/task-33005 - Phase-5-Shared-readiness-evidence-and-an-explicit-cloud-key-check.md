@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-26 11:47'
-updated_date: '2026-10-02 10:30'
+updated_date: '2026-10-02 11:30'
 labels:
   - model-config-redesign
   - phase-5
@@ -129,6 +129,7 @@ Riders filed from the checkpoint: TASK-33005.11 ("verified" for a model the key 
 3. `CUSTOM_ENDPOINT_ID_PREFIX` replaces the literal in `provider_left_at_shipped_default`, lazily imported because `custom_endpoint_registry` imports this module, and in `switcher_probe_plan`.
 4. An empty listing is "model listing unavailable", never a key acceptance.
 5. Owner ruling: only a 401 from the key check reads "key rejected" and blocks; a 403 is "model listing unavailable". ADR-012's outcome table is amended to match. See TASK-33005.4's notes.
+6. Follow-up: the same ruling holds for every model-listing probe (Settings 't' on a URL provider, Chat settings' Test connection, the Switch model probe, the first-run wizard). The shared mapping turns a 403 into the non-blocking listing result. See TASK-33005.4's notes.
 
 **Pre-existing reds (not this branch).** ADR-126 `RecoveryRequired: raw_source_selection_changed` locally in clean worktrees (failure-name sets compared instead). Size rows red at base `92a95170a5` and unchanged: chat_screen.py and library_screen.py screen rows; console_chat_controller, console_chat_store, mcp_workbench, llm_screen, personas_screen, watchlists_collections_screen, FirstRunSetupWizard, console_transcript, tldw_api/client module rows (11 names, identical at base and wave). `test_css_class_coverage_contract` red on dev with the same message.
 

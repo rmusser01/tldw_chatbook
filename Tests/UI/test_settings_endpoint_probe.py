@@ -12,6 +12,7 @@ import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_probe_module
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     probe_settings_endpoint,
+    provider_probe_result_from_settings_outcome,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
@@ -1256,20 +1257,60 @@ def test_key_check_listing_maps_to_bounded_evidence(result, key_sent, expected):
     ) == expected
 
 
+def _cloud_key_check(category: str):
+    """What Settings 't' records for a cloud key check answered 401/403."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    return key_check_probe_result(
+        _discovery("error", kind="missing_credentials", category=category),
+        key_sent=True,
+    )
+
+
+def _local_listing_probe(category: str):
+    """What a local listing probe records for a 401/403: the transport's
+    outcome (pinned by test_probe_classifies_bounded_http_failures) through
+    the shared mapping Settings 't', Chat settings' Test connection and the
+    Switch model probe all use."""
+    return provider_probe_result_from_settings_outcome(
+        SettingsEndpointProbeOutcome(
+            state="unreachable", summary=f"unreachable: {category}", category=category
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "table", "endpoint", "probe"),
+    [
+        ("openai", {}, "", _cloud_key_check),
+        # Qodo #2958 follow-up: the ruling holds for every listing probe.
+        (
+            "vllm",
+            {"api_url": "http://127.0.0.1:8000"},
+            "http://127.0.0.1:8000",
+            _local_listing_probe,
+        ),
+    ],
+    ids=["cloud-key-check", "local-listing"],
+)
 @pytest.mark.parametrize(
     ("category", "word", "blocked"),
     [
         ("unauthorized", "Not ready · key rejected", True),
         ("forbidden", "Ready · not tested", False),
     ],
+    ids=["401", "403"],
 )
-def test_only_a_401_from_the_key_check_blocks_sending(category, word, blocked):
-    """Qodo #2958 finding 5 (owner ruling): a key that may chat but not list
-    models must not read "key rejected" or block the Console; a 401 still
-    does. Driven through the real mapping, shared owner, Console readiness
-    and Settings rows."""
+def test_only_a_401_from_a_listing_probe_blocks_sending(
+    provider, table, endpoint, probe, category, word, blocked
+):
+    """Qodo #2958 finding 5 (owner ruling): a credential that may chat but
+    not list models must not read "key rejected" or block the Console; a 401
+    still does. Driven through the real mapping, shared owner, Console
+    readiness and Settings rows, which must all agree."""
     from tldw_chatbook.Chat.console_session_settings import (
-        ConsoleSessionSettings,
         build_console_settings_readiness,
         build_target_default_console_session_settings,
         console_send_connection,
@@ -1280,39 +1321,29 @@ def test_only_a_401_from_the_key_check_blocks_sending(category, word, blocked):
         ProviderTestEvidenceStore,
         provider_connection_evidence,
     )
-    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
-        key_check_probe_result,
-    )
     from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
-    config = {"api_settings": {"openai": {"api_key": "sk-test-403-0123456789"}}}
+    config = {
+        "api_settings": {provider: {**table, "api_key": "sk-test-403-0123456789"}}
+    }
+    settings = build_target_default_console_session_settings(config, provider, "m-1")
     app = type("App", (), {})()
-    identity = console_send_connection(
-        build_target_default_console_session_settings(config, "openai", "gpt-4o"),
-        app_config=config,
-        environ={},
-    )
+    identity = console_send_connection(settings, app_config=config, environ={})
     store = ProviderTestEvidenceStore(lambda: app)
-    store.settle(
-        store.begin(identity),
-        key_check_probe_result(
-            _discovery("error", kind="missing_credentials", category=category),
-            key_sent=True,
-        ),
-    )
+    store.settle(store.begin(identity), probe(category))
 
     console = build_console_settings_readiness(
-        ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+        settings,
         app_config=config,
         environ={},
         connection_evidence=provider_connection_evidence(app),
     )
     rows = dict(
         SettingsScreen._provider_test_rows(
-            get_provider_readiness("openai", config, environ={}),
-            display_name="OpenAI",
-            model="gpt-4o",
-            endpoint="",
+            get_provider_readiness(provider, config, environ={}),
+            display_name=provider,
+            model="m-1",
+            endpoint=endpoint,
             evidence=store.evidence_for(identity),
         )
     )
@@ -1320,7 +1351,7 @@ def test_only_a_401_from_the_key_check_blocks_sending(category, word, blocked):
     assert console.connection == identity  # The Console read this result.
     assert readiness_words(console) == rows["Readiness"] == word
     assert (console.operability != "ready_to_send") is blocked
-    assert ("key rejected" in rows["Key"]) is blocked
+    assert rows["Key"].endswith("key rejected" if blocked else "present, not verified")
     assert "verified" not in rows["Readiness"]
 
 

@@ -218,10 +218,21 @@ class SettingsEndpointProbeOutcome:
         return self._legacy_model_count
 
 
+def _listing_not_permitted() -> ProviderProbeResult:
+    """A 403 on a model listing: this credential may not LIST models, which
+    says nothing about chatting, so it blocks nothing and verifies nothing.
+    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review)."""
+    return ProviderProbeResult("model_listing_unavailable", (), "http_status")
+
+
 def provider_probe_result_from_settings_outcome(
     outcome: SettingsEndpointProbeOutcome,
 ) -> ProviderProbeResult:
     """Project the shared transport outcome into bounded provider evidence.
+
+    Every local listing probe (Settings 't' on a URL provider, Chat settings'
+    Test connection, the Switch model probe) records through here, so a 403
+    reads as the cloud key check's does: listing not permitted, non-blocking.
 
     Args:
         outcome: Validated result from the shared Settings endpoint probe.
@@ -235,6 +246,8 @@ def provider_probe_result_from_settings_outcome(
 
     if type(outcome) is not SettingsEndpointProbeOutcome:
         raise ValueError("Provider probe outcome is invalid.")
+    if outcome.category == "forbidden":
+        return _listing_not_permitted()
     endpoint = {
         SpeechTTSConnectionState.REACHABLE: "reachable",
         SpeechTTSConnectionState.UNREACHABLE: "unreachable",
@@ -285,8 +298,8 @@ def key_check_probe_result(
     if kind == "missing_credentials":
         if not key_sent:
             return ProviderProbeResult("model_listing_unavailable", ())
-        if category == "forbidden":  # Listing not permitted: no key verdict.
-            return ProviderProbeResult("model_listing_unavailable", (), "http_status")
+        if category == "forbidden":
+            return _listing_not_permitted()
         return ProviderProbeResult("unreachable", (), "unauthorized")
     if kind == "request_failed" and category in {
         "timeout",
