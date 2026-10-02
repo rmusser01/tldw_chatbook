@@ -2338,14 +2338,6 @@
         margin-top: 1;
     }
 
-/* ===== WIDGET: ConsoleMessageDeleteReceiptModal (Widgets/Console/console_message_delete_receipt.py) ===== */
-
-
-    ConsoleMessageDeleteReceiptModal #console-delete-receipt { width: 60; max-width: 100%; height: auto;
-        border: tall $primary; background: $surface; padding: 1 2; }
-    ConsoleMessageDeleteReceiptModal #console-delete-receipt-actions { height: auto; }
-    ConsoleMessageDeleteReceiptModal #console-delete-receipt-actions Button { width: auto; min-width: 8; margin-right: 1; }
-
 /* ===== WIDGET: ConsoleProjectInstructionStatusRow (Widgets/Console/console_project_instructions.py) ===== */
 
 

@@ -361,7 +361,9 @@ CSS_MODULES = [
 #: deliberately NOT split: its generated sheet always rode the boot parse
 #: (TldwCli.CSS_PATH loads it eagerly because the Console is the initial
 #: tab), so the split indirection was dropped and the bytes ride the
-#: bundle directly. The monolith remainder is shared agentic-shell chrome.
+#: bundle directly (the one exception, the message-Delete receipt modal's
+#: ids, is a modal-owned split -- TASK-33628.2, below). The monolith
+#: remainder is shared agentic-shell chrome.
 
 #: Owner -> (token prefix, generated sheet). A rule block moves to a sheet
 #: only when EVERY ``#id``/``.class`` token in its selector belongs to that
@@ -374,6 +376,20 @@ AGENTIC_SPLIT_SHEETS = {
     "settings": "screen_agentic_settings.tcss",
 }
 
+#: Split sheets a MODAL screen loads through its own ``CSS_PATH`` on first
+#: open (sheet -> ``(module, class)`` of that modal), as opposed to the
+#: route-loaded sheets in ``TldwCli._SCREEN_OWNED_ROUTE_CSS``. Reserved for
+#: rarely opened modals whose rules must not ride the boot parse (ADR-097:
+#: "a rarely-opened modal's large sheet does not need to ride the boot
+#: bundle"); each adds one stylesheet source, parsed only once the modal
+#: opens, so keep this list short (the LRUCache(64) note above).
+MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
+    "screen_modal_console_delete_receipt.tcss": (
+        "tldw_chatbook.Widgets.Console.console_message_delete_receipt",
+        "ConsoleMessageDeleteReceiptModal",
+    ),
+}
+
 #: Tokens that PREFIX-match an owner but are composed by widgets on OTHER
 #: surfaces, so their rules must stay in the boot bundle. Found by auditing
 #: every moved token against Python compose sites (2026-08-31):
@@ -384,8 +400,8 @@ AGENTIC_SPLIT_SHEETS = {
 #: that pins it) rather than weakening the classifier.
 #: (ADR-161 task 10: the sixteen console-* pins from the Qodo review of
 #: PR #2281 became moot when the console split was dissolved -- every
-#: console rule rides the boot bundle now -- and the settings pin moved to
-#: the settings split below.)
+#: console rule but the Delete receipt's rides the boot bundle now -- and
+#: the settings pin moved to the settings split below.)
 SETTINGS_SPLIT_PINNED_TOKENS = frozenset({"settings-input-label"})
 
 _SPLIT_HEADER = """/* ========================================
@@ -527,6 +543,21 @@ SCREEN_OWNED_SPLITS: tuple[ScreenOwnedSplit, ...] = (
     # matching nothing flagged 128/132), because an earlier cross-surface
     # audit filtered ABSOLUTE paths and was silently vacuous
     # (see the pinned-token note above).
+    # TASK-33628.2 / ADR-097: the message-Delete receipt is a rarely opened
+    # Console modal, so its `console-delete-receipt*` ids leave the boot
+    # bundle (which had 2 B of headroom when it landed) for a sheet its own
+    # CSS_PATH loads on first open -- see MODAL_OWNED_SPLIT_SHEETS. Every
+    # other features/_console.tcss rule still rides the bundle (ADR-161 task
+    # 10). Owner audit 2026-10-01, repo-relative paths: the moved ids are
+    # composed only in Widgets/Console/console_message_delete_receipt.py.
+    ScreenOwnedSplit(
+        modules=("features/_console.tcss",),
+        sheets={
+            "console_delete_receipt": "screen_modal_console_delete_receipt.tcss"
+        },
+        prefixes={"console_delete_receipt": ("console-delete-receipt",)},
+        pinned=frozenset(),
+    ),
     ScreenOwnedSplit(
         modules=("features/_watchlists.tcss",),
         sheets={"watchlists": "screen_feature_watchlists.tcss"},

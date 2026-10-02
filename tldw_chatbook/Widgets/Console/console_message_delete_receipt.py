@@ -5,10 +5,16 @@ TASK-33628.2: follows the Archive receipt pattern
 deliberate interaction, with Undo as the focused default -- so a delete that
 removed a whole run of later turns states its real count and can be taken
 back exactly.
+
+Its styling is NOT on the boot path (ADR-097): the ``console-delete-receipt*``
+rules live in ``css/features/_console.tcss`` and ``build_css.py`` splits them
+into ``screen_modal_console_delete_receipt.tcss``, which this modal's
+``CSS_PATH`` loads the first time a receipt opens.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import ClassVar
 
 from textual import on
@@ -23,19 +29,22 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 class ConsoleMessageDeleteReceiptModal(SafeModalDismissMixin, ModalScreen[str | None]):
     """Counted delete receipt; dismisses with ``"undo"`` or ``None`` (Done)."""
 
-    BUNDLED_CSS = """
-    ConsoleMessageDeleteReceiptModal { align: center middle; }
-    #console-delete-receipt { width: 60; max-width: 100%; height: auto;
-        border: tall $primary; background: $surface; padding: 1 2; }
-    #console-delete-receipt-actions { height: auto; }
-    #console-delete-receipt-actions Button { width: auto; min-width: 8; margin-right: 1; }
-    """
+    CSS_PATH = str(
+        Path(__file__).resolve().parents[2]
+        / "css"
+        / "screen_modal_console_delete_receipt.tcss"
+    )
     SAFE_MODAL_CONTENT = "#console-delete-receipt"
     BINDINGS: ClassVar = [("escape", "request_safe_cancel", "Done")]
     AUTO_FOCUS = "#console-delete-receipt-undo"
 
     def __init__(self, *, count: int) -> None:
         super().__init__()
+        # The lazy sheet centers the receipt through this class: a bare type
+        # selector carries no owner token, so the split would keep it on the
+        # boot bundle, and a screen id could collide with a retried receipt
+        # whose predecessor is still being removed.
+        self.add_class("console-delete-receipt-modal")
         self._count = count
 
     def compose(self) -> ComposeResult:

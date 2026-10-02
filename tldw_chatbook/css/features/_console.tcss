@@ -1843,6 +1843,35 @@ ConsoleTurnFileCard.console-turn-file-card-selected .console-turn-file-header {
     text-style: bold;
 }
 
+/* TASK-33628.2 / ADR-097: the message-Delete receipt (Archive receipt
+   pattern) is a rarely opened modal, so its rules do NOT ride the boot
+   parse: build_css.py splits every `console-delete-receipt*` block out of
+   this module into screen_modal_console_delete_receipt.tcss, which
+   ConsoleMessageDeleteReceiptModal's own CSS_PATH loads on first open
+   (the ConsoleHooksReviewModal model). */
+.console-delete-receipt-modal {
+    align: center middle;
+}
+
+#console-delete-receipt {
+    width: $ds-size-60;
+    max-width: $ds-width-full;
+    height: auto;
+    border: tall $primary;
+    background: $surface;
+    padding: $ds-space-1 $ds-space-2;
+}
+
+#console-delete-receipt-actions {
+    height: auto;
+}
+
+#console-delete-receipt-actions Button {
+    width: auto;
+    min-width: $ds-size-8;
+    margin-right: $ds-space-1;
+}
+
 #console-workspace-files-modal {
     width: $ds-size-110;
     max-width: $ds-percent-96;
@@ -2160,11 +2189,6 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
     color: $ds-focus-fg;
     text-style: bold underline;
     outline: none;
-}
-
-/* TASK-33628.2: the confirm half of a pending, row-scoped Delete. */
-.console-transcript-action-danger {
-    color: $ds-status-error-readable;
 }
 
 .console-workspace-selector-row {
