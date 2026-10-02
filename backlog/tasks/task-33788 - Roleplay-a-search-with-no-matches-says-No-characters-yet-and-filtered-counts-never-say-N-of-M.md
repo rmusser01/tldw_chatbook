@@ -39,9 +39,9 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 When a search or tag filter matches nothing in any of the four modes, the list says that nothing matches, names the query, states how many items exist in total, and offers a way to clear the filter.
+- [ ] #1 When a search in any of the four modes, or a tag filter in Characters (the only mode that has one), matches nothing, the list says that nothing matches, names the query, states how many items exist in total, and offers a way to clear the filter.
 - [ ] #2 The "No characters yet" message, and each mode's equivalent with its New or Import hint, appears only when that mode's unfiltered total is 0.
-- [ ] #3 While a search or tag filter is active, the count in all four modes reads N of M (for example 0 of 28, or 20 of 348), and the page bar reports matches against the total (for example 1-50 of 85 matches).
+- [ ] #3 While a search (any mode) or a Characters tag filter is active, the count reads N of M (for example 0 of 28, or 20 of 348), and the page bar reports matches against the total (for example 1-50 of 85 matches).
 - [ ] #4 While a filter has zero results, the centre pane does not say "Pick a character from the list".
-- [ ] #5 Regression tests cover a no-match search and a matching tag filter in Characters and in Personas; they fail on the current code.
+- [ ] #5 Regression tests cover a no-match search in Characters and in Personas, and a no-match tag filter in Characters; they fail on the current code. Tag filtering stays Characters-only (the screen's tag-filter handler is characters-only); this task adds no tag filter to other modes.
 <!-- AC:END -->
