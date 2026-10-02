@@ -10,6 +10,10 @@
 
 **Spec:** `Docs/superpowers/specs/2026-10-01-task33267-admission-amortization-design.md`, approved by the requester on 2026-10-01; ADR-126 ordinary admission amendment.
 
+ADR required: yes.
+ADR path: `backlog/decisions/126-complete-local-backup-and-recovery.md`.
+Reason: hold-owned evidence changes ordinary admission ownership and concurrency; the approved amendment preserves its security and retirement boundaries.
+
 ## Global Constraints
 
 - Cache entries never grant authority. Fresh pathname-to-object bindings cover every verified ancestor, owner/mode/ACL, exact source selection, native gates, registry publication and pending intent before dependent I/O.
