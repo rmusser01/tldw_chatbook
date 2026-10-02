@@ -31,6 +31,8 @@ Qodo's four findings remain addressed and independently reviewed. The earlier bo
 
 Delivery is through [PR #2918](https://github.com/rmusser01/tldw_chatbook/pull/2918) against dev. The user authorized merge after fresh Qodo review and remote checks, plus temporary five-minute background checks until verified merge. Latest integration passes 11 wake/close/Save checks, four schema checks and five startup/CSS/freeze checks; independent queue and logging/maintenance review passes 14 and 25 checks. After admission changes, seven consumers and 16 independent evidence-reuse cases pass; all 79 patch Python bytes remain unchanged from the queue/logging qualification. Selections overlap. The extra full-registry warning assertion remains unqualified because optional pydub is absent; the review record retains its earlier profile setup failure and separate passing freeze observations. No full suite, live-provider, Windows, aggregate-resource or merge result is claimed.
 
+TASK-33647 was identified by fresh-head CI during final integration and is also Done: the legacy read-only probe and write fallback share existing repository admission, preserving the original storage ceiling, SQL lock behavior and worker retirement. Controlled cold-worker RED, unchanged ratchet GREEN, affected and independent checks are recorded in the final review. All 13 original tasks remain Done; delivery still awaits fresh published-head checks and merge.
+
 ## September 12 completion status (historical)
 
 PR #2641 merged the earlier five reliability/verification follow-ups at

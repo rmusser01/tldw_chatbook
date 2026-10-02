@@ -109,3 +109,8 @@ Rebase onto dev `ab4df99959`, qualify the incoming warm-config behavior with tar
 Latest qualified dev: `113e435ab0bff12e89ae1c9f06ec154f32f776bf`, following queue/logging/maintenance/freeze base `ee1c1e7365`. ADR required: no new ADR; integrate the accepted ADR-126 admission-evidence amendment while preserving ADR-199/200 and all existing authority, migration and recovery boundaries.
 
 Rebase, inspect overlapping runtime paths, verify source-byte preservation, run targeted consumer and independent checks, record failed setup/optional-dependency qualification limits, publish with the exact remote lease, then require fresh Qodo and all four CI jobs before head-pinned normal merge. The approved five-minute heartbeat stops after verified merge. All 13 implementation tasks remain Done; no full sweep is authorized.
+
+
+## TASK-33647 — latency integration repair
+
+Keep the existing two-admission maintenance budget by sharing the installed core repository operation across the read-only probe and immediate-write fallback. Pin a genuine cold file-backed callback and retain the existing full census, idle read-only, lease refusal, rollback, parking, worker lifetime, startup and exact recovery checks. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: no schema, authority or runtime boundary changes; reuse an existing admitted operation. Implementation and independent review are complete; fresh-head CI/Qodo and protected merge remain.
