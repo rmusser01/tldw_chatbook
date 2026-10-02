@@ -328,3 +328,30 @@ def test_an_unstampable_data_dir_reaches_the_resolutions_own_error(request, monk
 
     with pytest.raises(PrivatePathError, match="own refusal"):
         config.get_user_data_dir.__wrapped__()  # the memo, not the admission layer
+
+
+@private_profile_test
+def test_a_regular_file_data_dir_fails_with_a_private_path_error(request, monkeypatch, tmp_path):
+    """Integration: ``paths.data_dir`` set to a real regular file, the real
+    resolution and the public entry point. Loading the settings resolves the
+    data dir (as startup does), and the caller still gets the
+    ``PrivatePathError`` the CLI reports, not a raw ``OSError`` from the
+    memo's stamps (Qodo, #2924).
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: pytest fixture used for the scratch environment.
+        tmp_path: Holds the regular file named as the data dir.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Utils.private_paths import PrivatePathError
+
+    not_a_directory = tmp_path / "data-file"
+    not_a_directory.write_text("")
+    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(f'[paths]\ndata_dir = "{not_a_directory}"\n')
+    monkeypatch.setattr(config, "_USER_DATA_DIR_MEMO", None)
+
+    with pytest.raises(PrivatePathError, match="link_or_non_regular"):
+        config.load_settings(force_reload=True)  # resolves get_user_data_dir()
