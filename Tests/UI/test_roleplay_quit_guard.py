@@ -277,7 +277,9 @@ async def test_ctrl_q_failed_save_offers_retry_and_never_quits_silently(
         await pilot.click("#roleplay-draft-save-continue")
         await _until(
             pilot,
-            lambda: isinstance(app.screen, RoleplayDraftRecoveryDialog) or "quit" in events,
+            lambda: (
+                isinstance(app.screen, RoleplayDraftRecoveryDialog) or "quit" in events
+            ),
             "the failed save to offer Retry / Stay",
         )
         assert "quit" not in events, "a failed save quit silently"
@@ -289,10 +291,12 @@ async def test_ctrl_q_failed_save_offers_retry_and_never_quits_silently(
         await _until(
             pilot,
             lambda: (
-                isinstance(app.screen, RoleplayDraftRecoveryDialog)
-                and app.screen is not first
-            )
-            or "quit" in events,
+                (
+                    isinstance(app.screen, RoleplayDraftRecoveryDialog)
+                    and app.screen is not first
+                )
+                or "quit" in events
+            ),
             "the retried save to fail and ask again",
         )
         assert events == [("save failed", "1"), ("save failed", "1")]
@@ -360,8 +364,10 @@ async def test_a_vanished_roleplay_quit_prompt_means_stay(monkeypatch, vanishing
             await pilot.click("#roleplay-draft-save-continue")
             await _until(
                 pilot,
-                lambda: isinstance(app.screen, RoleplayDraftRecoveryDialog)
-                or "quit" in events,
+                lambda: (
+                    isinstance(app.screen, RoleplayDraftRecoveryDialog)
+                    or "quit" in events
+                ),
                 "the failed save to offer Retry / Stay",
             )
             assert "quit" not in events
@@ -383,6 +389,76 @@ async def test_a_vanished_roleplay_quit_prompt_means_stay(monkeypatch, vanishing
         )
         assert modal not in app.screen_stack
         assert app._exception is None
+
+
+def _waiting_notice(app) -> str | None:
+    """The quit flow's "waiting for Roleplay work" toast, if one was shown."""
+    for notification in app._notifications:
+        if notification.message.startswith("Waiting for Roleplay work"):
+            return notification.message
+    return None
+
+
+async def test_ctrl_q_during_roleplay_work_says_it_is_waiting_then_asks(
+    monkeypatch,
+):
+    """Ctrl+Q over a running Roleplay operation says what it waits for.
+
+    The quit waits for in-flight Roleplay work (a save, or a reaction
+    generation holding the visual-identity operation) before asking, so it
+    never asks about a draft that is still changing. That wait used to be
+    silent: Ctrl+Q appeared to do nothing, and pressing it again did nothing
+    either because the quit was already in progress.
+    """
+    events: list[object] = []
+    _Store(monkeypatch, events)
+    app = _build_test_app(configured_default="personas")
+    monkeypatch.setattr(app, "_run_approved_quit_cleanup", _quit_recorder(app, events))
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen, name = await _roleplay_editor(app, pilot)
+        await _dirty(pilot, screen, name)
+        # Stand in for a running reaction generation: the screen holds the
+        # visual-identity operation task for as long as the work runs.
+        finish = asyncio.Event()
+        operation = asyncio.get_running_loop().create_task(finish.wait())
+        screen._visual_identity_operation_task = operation
+        try:
+            await pilot.press("ctrl+q")
+            await _until(
+                pilot,
+                lambda: _waiting_notice(app) is not None or "quit" in events,
+                "Ctrl+Q to say what it is waiting for",
+                timeout=5.0,
+            )
+            assert "quit" not in events, (
+                "Ctrl+Q quit straight past the unsaved Roleplay draft"
+            )
+            assert "character visuals" in _waiting_notice(app)
+
+            # Still waiting: no question and no quit until the work finishes.
+            await pilot.pause(0.3)
+            assert not isinstance(app.screen, RoleplayDraftNavigationDialog)
+            assert "quit" not in events
+            assert app._quit_in_progress is True
+
+            finish.set()
+            await _until(
+                pilot,
+                lambda: (
+                    isinstance(app.screen, RoleplayDraftNavigationDialog)
+                    or "quit" in events
+                ),
+                "the finished work to hand over to the Roleplay question",
+            )
+            assert "quit" not in events
+            assert "character visuals" not in _domains(app.screen)
+            assert "character form" in _domains(app.screen)
+            await pilot.click("#roleplay-draft-stay")
+            await _assert_stayed(pilot, app, screen, name, events)
+            assert events == []
+        finally:
+            finish.set()
+            await operation
 
 
 async def test_ctrl_q_with_clean_drafts_quits_without_asking(monkeypatch):

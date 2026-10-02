@@ -53,7 +53,11 @@ AskPrompt = Callable[[ModalScreen[str | None]], Awaitable[str | None]]
 async def confirm_roleplay_quit(screen: PersonasScreen) -> bool:
     """Ask the Roleplay draft question for the app's quit flow.
 
-    Must run inside a worker; the app's quit flow is one.
+    Must run inside a worker; the app's quit flow is one. The flow first
+    waits for in-flight Roleplay work (a save, or a reaction generation), so
+    it never asks about a draft that is still changing. That wait can be long
+    and Ctrl+Q cannot be pressed again meanwhile, so it is announced rather
+    than silent.
 
     Args:
         screen: The Roleplay screen holding the drafts.
@@ -62,6 +66,13 @@ async def confirm_roleplay_quit(screen: PersonasScreen) -> bool:
         True when the quit may proceed (no drafts, or they were saved or
         discarded); False to stay, including when a prompt vanished.
     """
+
+    waiting_for = screen._aggregate_roleplay_draft_snapshot().inflight_save_domains
+    if waiting_for:
+        screen.app.notify(
+            "Waiting for Roleplay work to finish before quitting: "
+            f"{', '.join(waiting_for)}."
+        )
 
     async def ask(prompt: ModalScreen[str | None]) -> str | None:
         return await await_quit_prompt(screen.app, prompt, no_answer=None)
@@ -169,7 +180,10 @@ async def _save_aggregate_roleplay_drafts(
                     screen._actor_pack_save_worker_handle,
                     screen._profile_save_completion,
                 )
-                if current_owners != prior_owners or not screen.state.has_unsaved_changes:
+                if (
+                    current_owners != prior_owners
+                    or not screen.state.has_unsaved_changes
+                ):
                     break
             await _await_roleplay_save_owners(screen)
         except Exception:  # noqa: BLE001
