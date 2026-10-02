@@ -114,3 +114,8 @@ Rebase, inspect overlapping runtime paths, verify source-byte preservation, run 
 ## TASK-33647 — latency integration repair
 
 Keep the existing two-admission maintenance budget by sharing the installed core repository operation across the read-only probe and immediate-write fallback. Pin a genuine cold file-backed callback and retain the existing full census, idle read-only, lease refusal, rollback, parking, worker lifetime, startup and exact recovery checks. ADR required: no new ADR. ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: no schema, authority or runtime boundary changes; reuse an existing admitted operation. Implementation and independent review are complete; fresh-head CI/Qodo and protected merge remain.
+
+
+## Final Delete/Undo merge base
+
+Latest qualified dev: `eba4305d8389a2112c99ac19fa804e9abea394ba` (PR #2941). Preserve incoming exact tombstone restore and native context fencing; compare the 81-file source manifest, run targeted persistence/Save/close/storage/startup checks and independent mounted/nonreplay review, then publish TASK-33647 with the exact observed lease. These checks and review pass. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: integrate accepted Delete/Undo behavior and reuse existing repository admission without changing orchestration, migration or authority contracts. Fresh-head Qodo/CI and protected merge remain; do not repeatedly rebase while checks run merely because dev moves.
