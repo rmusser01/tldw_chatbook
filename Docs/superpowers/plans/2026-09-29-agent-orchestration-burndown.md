@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6 (upstream deferred Resend imports), preserving the qualified compaction, hook, Resend, readiness and recovery integrations below.
+**Integration base:** dev ecc0a531c855bc9e80906bff90180fd2045f7159 (PERF-07 verified data-path memo), preserving the qualified compaction, hook, Resend, readiness and recovery integrations below.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -306,3 +306,10 @@ Reason: preserve landed ADR-126 D2 path memo and existing config/recovery owners
 4. Run focused real replay readiness, saved-close, wake/refund/nonreplay/config consumers; obtain independent immutable config/recovery and runtime review. Leave incoming TASK33266 status as shipped and separate open work untouched.
 5. After reviewers/runtime checks finish, run the original five budget cases unchanged, plus fatal/added-line/new-file static, CSS and affected artifact/task guards. Retain non-green evidence and original limits.
 6. Close this requalification through CLI only after evidence; documentation-only closure preserves approved bytes. Publish once with exact observed84b8 lease, then require fresh exact-head Qodo/all four CI jobs and normal protected merge.
+
+
+### PERF-07 publication qualification
+
+Preserving PERF-07 integration is independently approved at immutable source 13e261a2582d661d8b41fa3111937659d589241a on dev ecc0a531c855bc9e80906bff90180fd2045f7159. The rebase is clean: all 96 previously approved Python/CSS files and all eight incoming files are exact, with no direct overlap. Incoming config memo remains behind admission and re-verifies path posture; sensitive contexts resolve their memoized raw inputs afresh. Existing ADR-126 D2 applies; no new ADR, source repair, owner, permission, schema, dependency or ceiling.
+Independent config/recovery selection passes 11 cases (8.363s); independent replay passes 13 (51.881s), custody/refund/nonreplay/saved-close passes 12 (65.239s). Root incoming memo/bundle/sensitive-path/mounted consumers have 24 passes and one inherited config-retarget fixture failure (45.702s). The same raw_source_selection_changed failure reproduces on exact incoming ecc with cwd/PYTHONPATH pinned (1.511s); both non-green logs/XML are retained, with no gate/test masking. All twelve incoming memo tests pass. Final original five budgets pass 83.786s, exit 0, at 681/686 imports and 1033/1033 UI-ready with unchanged sources, workload and warnings.
+Final 93-file fatal/added-line, ten new Ruff/format, whitespace, CSS, diagnostic, worker and 4789 task guards pass. Evidence is /private/tmp/pr2918-perf07-*. All schema76/both gates/frozen AgentRuns and runtime/replay/queue/hook/refund/physical custody bytes remain exact. Incoming TASK33266 retains shipped To Do status; separate open tasks and all earlier limits remain. Fresh published-head Qodo, four CI jobs and normal protected merge remain delivery gates.
