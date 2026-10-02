@@ -1,8 +1,9 @@
 ---
 id: TASK-26968
 title: Clean Ruff formatter debt for ruff-console-session-send
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - rmusser01
 created_date: '2026-08-31 18:31'
 updated_date: '2026-08-31 18:31'
 labels:
@@ -60,3 +61,13 @@ Clean the `ruff-console-session-send` Ruff formatter batch at the owner boundary
 - [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
 - [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reconcile assigned paths against current `origin/dev` (existence + format state) and against the TASK-26000 evidence JSON `cleanup_records` `paths_sha256` (mechanical ownership check).
+2. Snapshot each assigned path's `ast.dump` (parse with `type_comments=True`, normalize `TypeIgnore.lineno`, `include_attributes=False`) before formatting.
+3. Run Ruff 0.15.22 `ruff format` on exactly the assigned paths.
+4. Snapshot after-ASTs; require per-file equality with the before-snapshot (formatter-mandated docstring quote-initial normalization documented if it occurs).
+5. `ruff format --check` must pass on every assigned path; `ruff check` findings must not increase vs the pre-format baseline.
+6. Run the focused test surface recorded by TASK-26000, plus `Tests/CI/test_backlog_task_id_uniqueness.py` and `git diff --check`.
+7. Tick ACs, record Implementation Notes (lineage, commands, results), set status Done.
