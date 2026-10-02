@@ -1478,6 +1478,25 @@ instead of landing exactly at the local cap.
 
 ---
 
+## A boot census run from a worktree can measure the main checkout instead (TASK-33661, 2026-10-02)
+
+**Incident.** PR #2956 (Resend) added `Chat/console_turn_resend.py` and
+imported it at module level from three boot-path modules. That made the
+module resident at `_ui_ready`, and dev's push-run Perf Guard failed:
+`1034 tldw_chatbook modules resident at _ui_ready (ratchet limit 1033)`.
+The PR's own local census runs had passed, and so did one PR-head Perf Guard
+run. The shared `.venv` has an editable install that points at the MAIN
+checkout, so a census run from a worktree can import the main checkout's
+code and never load the new module.
+
+**What to do.**
+- A module that only user actions need is imported inside the function
+  that uses it.
+- Measure a boot census from a worktree with `PYTHONPATH=<worktree>`. That
+  outranks the editable install's `.pth`, and subprocesses inherit it.
+- The RED reproduced at 1034 only that way. The lazy-import fix then
+  measured 1033.
+
 ## A census taken on the next tick is not a census taken at the flag
 
 **PR #2373 / task-31281, 2026-09-04.** The UI-ready module census failed on

@@ -2923,15 +2923,18 @@ class ConsoleMessageController:
         stop the timer while the session still read blocked, so the resent
         turn ran unpolled and the transcript froze (live check, 2026-10-01).
         """
-        from ...Chat.console_turn_resend import is_refused_echo, resend_turn
+        # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
+        from ...Chat import console_turn_resend
 
         try:
-            refused_echo = is_refused_echo(controller.store.get_message(message_id))
+            refused_echo = console_turn_resend.is_refused_echo(
+                controller.store.get_message(message_id)
+            )
         except KeyError:
             refused_echo = False
         if not refused_echo:
             self._start_console_transcript_sync_timer()
-        result = await resend_turn(
+        result = await console_turn_resend.resend_turn(
             controller, message_id, resend_echo=self._resend_refused_echo_fn
         )
         if result.visible_copy and not result.accepted:

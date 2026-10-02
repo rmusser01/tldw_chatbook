@@ -112,3 +112,15 @@ fails identically against archived unmodified dev 185c845; critical source
 files were verified byte-for-byte against that commit before the control run.
 Bounded integration review found no blockers. The changelog now also records
 TASK-33621.44's periodic trace-maintenance performance limitation.
+
+### Reconcile upstream's duplicate Resend startup fix
+
+Dev advanced to ef8fd5d38a512be299af17b1e0d5b367a352a5d6 (#2962),
+merging the same three first-use import deferrals already in this preparation.
+Resolved the four overlapping code/test-name conflicts using the upstream
+implementations, retaining our additional first-paint absence guard and
+all release/main/digest changes. Preserved both sets of lessons and trimmed
+an inherited extra blank line at the task file's end. No new feature or
+changelog scope change. Bounded review found no blockers. All 75 Resend
+checks and 119 release/native-boundary/digest/UI-ready checks passed;
+the unchanged first-paint budget remains 1033/1033. Required CI is refreshed.
