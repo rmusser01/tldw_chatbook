@@ -223,6 +223,9 @@ async def test_a_second_resend_never_cancels_the_one_in_flight(in_flight):
         ),
         chat_store_accessor=lambda: store,
         ensure_console_chat_controller=lambda: controller,
+        generation_refusal_copy=lambda controller, session_id: (
+            controller.send_refusal_copy(session_id)
+        ),
     )
     button = SimpleNamespace(
         id="console-message-action-resend-u1",
@@ -453,3 +456,90 @@ async def test_resend_poll_survives_initial_hook_admission_read(request, monkeyp
             hook_release.set()
             gateway.release.set()
             await pilot.pause(0.25)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_transcript_resend_retains_failed_rows_until_connection_is_ready(request):
+    from datetime import UTC, datetime
+
+    from tldw_chatbook.Chat.console_session_settings import console_send_connection
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidence,
+        provider_connection_evidence,
+    )
+
+    gateway = FailThenRecoverGateway()
+    host = _console_app(gateway)
+    async with host.run_test(size=(211, 44)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        _select_llamacpp_console(console)
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        console.query_one("#console-send-message", Button).press()
+        await _wait_for_text(console, pilot, "llama.cpp stream failed")
+        user = next(row for row in _session_rows(console) if row.role is USER)
+        settings = console._active_console_settings_readiness_uncached()[0]
+        identity = console_send_connection(
+            settings,
+            app_config=console._provider_readiness_app_config(),
+        )
+        assert identity is not None
+        owner = provider_connection_evidence(host)
+        assert owner.publish(
+            ProviderTestEvidence(
+                identity,
+                "unreachable",
+                (),
+                "connection_refused",
+                observed_at=datetime.now(UTC),
+            ),
+            order=1,
+        )
+        console._poll_console_credential_readiness()
+        await console._sync_native_console_chat_ui()
+        assert (
+            console._active_console_settings_readiness()[1].blocker
+            == "endpoint_unreachable"
+        )
+        assert console.query_one("#console-send-message", Button).disabled
+        composer.load_draft("")
+        console._ensure_console_chat_store().set_session_draft(
+            console._ensure_console_chat_store().active_session_id, ""
+        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
+        transcript.select_message(user.id)
+        await console._sync_native_console_chat_ui()
+        await _wait_for_selector(
+            console, pilot, f"#console-message-action-resend-{user.id}"
+        )
+        before = tuple(
+            (row.id, row.status, row.content) for row in _session_rows(console)
+        )
+        assert await pilot.click(f"#console-message-action-resend-{user.id}")
+        await pilot.pause(0.3)
+        assert gateway.calls == 1
+        assert (
+            tuple((row.id, row.status, row.content) for row in _session_rows(console))
+            == before
+        )
+        assert owner.publish(
+            ProviderTestEvidence(
+                identity,
+                "reachable",
+                (settings.model,),
+                observed_at=datetime.now(UTC),
+            ),
+            order=2,
+        )
+        console._poll_console_credential_readiness()
+        await console._sync_native_console_chat_ui()
+        assert console._active_console_settings_readiness()[1].blocker is None
+        assert await pilot.click(f"#console-message-action-resend-{user.id}")
+        await _wait_for_text(console, pilot, "recovered")
+        assert gateway.calls == 2
+        assert (
+            next(row for row in _session_rows(console) if row.role is USER).id
+            == user.id
+        )
