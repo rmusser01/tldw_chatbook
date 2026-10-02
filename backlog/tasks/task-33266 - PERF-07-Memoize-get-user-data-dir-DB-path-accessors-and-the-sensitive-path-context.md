@@ -40,18 +40,19 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
 **`get_user_data_dir`**
 - After the guarded handshake, the resolution is memoized on two things:
   - the config cache object (compared by identity) with its generation and source;
-  - `users_name` and the data base, which is either the configured `data_dir` or the HOME-derived default.
+  - `users_name` and the data base, which is either the configured `data_dir` (made absolute, so a relative value follows the working directory) or the HOME-derived default.
 - Every call re-observes posture stamps `(dev, ino, type, mode, uid)` for:
   - every component from `/` to each candidate user dir (conventional and fallback, or the configured base);
   - the conventional root, the fallback root and the root lock file, which are the default-root ambiguity inputs.
 - Any mismatch runs `_resolve_user_data_dir`, the unmodified body and the only place that creates, hardens or refuses.
-- A result is recorded only when stamps taken before and after that resolution are identical, and no component of the resolved chain is a symlink.
+- A result is recorded only when stamps taken before and after that resolution are identical, every component of the resolved chain was stamped (it is one of the candidates), and none is a symlink.
 - The memo is guarded by a lock (free-threading safe).
 
 **Accessors built on it.** The `get_*_db_path` accessors and `default_emergency_stop_path` derive from `get_user_data_dir()`, so they inherit the memo.
 
 **`resolve_sensitive_context`** memoizes only its raw, config-derived inputs (`_raw_inputs`).
-- The key is the config identity and generation, the effective config path, and the re-verified user data dir.
+- The key is the config identity, generation and source, the effective config path, the re-verified user data dir, the whole environment (accessors read overrides such as `RAG_PERSIST_DIR`) and the working directory (a relative custom database path is made absolute against it).
+- The key is read again after the inputs are built; inputs built while it moved are returned but not kept.
 - Every path is still `_resolved()` on every call, and the docstring is amended accordingly.
 - A snapshot built while any accessor failed (counted through `_debug`) is never kept, so the deny list cannot keep a gap.
 
@@ -60,9 +61,9 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
 - `resolve_sensitive_context`: 237 -> 3.5 ms, 6,738 -> 360 opens.
 - Before `_ui_ready`: 40 main-thread calls now make 2 resolutions instead of 40 (AC #5).
 
-**Tests.** `Tests/test_user_data_dir_memo_perf07.py` runs 5 private-profile tests: warm reuse, a re-permissioned leaf, a replaced leaf, a group-writable ancestor (refused as before), and a config reload. With the per-call stamp check removed, the three filesystem tests fail.
+**Tests.** `Tests/test_user_data_dir_memo_perf07.py` runs 10 private-profile tests: warm reuse, a re-permissioned leaf, a replaced leaf, a group-writable ancestor (refused as before), a config reload, a working-directory change during resolution, an environment override, an override switched while the inputs build, raw-input reuse until the key moves, and a relative database override after a directory change. With the per-call stamp check removed, the three filesystem tests fail; with the raw-input memo hit removed, the reuse test fails.
 
-**Remote worker bundle.** It embeds `sensitive_paths.py`, so it was regenerated. `_raw_inputs` joins the laptop-only stub allowlist: it is reached only through `resolve_sensitive_context`, and it fails closed exactly where that function's own `config` import did.
+**Remote worker bundle.** It embeds `sensitive_paths.py`, so it was regenerated. `_raw_inputs` and `_raw_inputs_key` join the laptop-only stub allowlist: it is reached only through `resolve_sensitive_context`, and it fails closed exactly where that function's own `config` import did.
 
 **Not covered.** The bound-profile branch (`verified_user_data_directory`) is unchanged; it returns before the memo and was never the lock-and-walk path.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -10087,7 +10087,8 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
     if configured_data_dir:
         candidates = (lexical_path(configured_data_dir) / user_folder,)
         entries: tuple[Path, ...] = ()
-        base = str(configured_data_dir)
+        # Expanded, not as written: a relative value follows the working dir.
+        base = str(candidates[0].parent)
     else:
         conventional = _default_base_data_dir()
         fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
@@ -10151,7 +10152,9 @@ def get_user_data_dir() -> Path:
     from tldw_chatbook.Backup_Recovery.storage_admission import _chain
 
     walked = set(_chain(result))
-    if before == after and all(
+    # The result must be one of the stamped candidates: a working directory
+    # changed mid-resolution makes a relative data dir resolve elsewhere.
+    if before == after and walked <= set(stamped) and all(
         stamp is not None and not stat.S_ISLNK(stamp[2])
         for path, stamp in zip(stamped, after)
         if path in walked

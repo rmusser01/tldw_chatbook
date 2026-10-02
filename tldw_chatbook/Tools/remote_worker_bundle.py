@@ -1122,10 +1122,12 @@ def resolve_sensitive_context() -> SensitivePathContext:
     Do NOT cache the returned context at module or process scope. Its paths
     are resolved (symlinks followed) on every call, so a filesystem change
     is seen at once. PERF-07 memoizes only the raw, config-derived inputs
-    (``_raw_inputs``), keyed on the config generation, the effective config
-    path and the re-verified user data directory, so a config change (e.g.
-    the test suite swapping ``TLDW_CONFIG_PATH`` between cases) is still
-    observed on the very next call rather than serving a stale answer.
+    (``_raw_inputs``), keyed on the config cache identity, generation and
+    source, the effective config path, the re-verified user data directory,
+    the whole environment and the working directory, so a config change (e.g.
+    the test suite swapping ``TLDW_CONFIG_PATH`` between cases), an override
+    such as ``RAG_PERSIST_DIR`` or a directory change is observed on the very
+    next call rather than serving a stale answer.
 
     Returns:
         A ``SensitivePathContext`` snapshotting the currently configured
@@ -5307,4 +5309,4 @@ REMOTE_SENSITIVE_PATHS: tuple[str, ...] = (
 #: ``build_remote_worker_bundle.expected_bundle_stamp``. The remote
 #: worker's ``ping`` echoes it so callers can confirm which bundle the
 #: remote actually executed.
-BUNDLE_SHA256 = _enter_worker_exchange("f305e7bbebbe3a1ace7431f4079f030300a6827cd9d7065dbc3dc4031930b5ef")
+BUNDLE_SHA256 = _enter_worker_exchange("0096373750b3e01d4d52237177f1727acf0c263967b958e07140d6f5e22a8cf7")

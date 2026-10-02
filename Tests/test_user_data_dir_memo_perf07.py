@@ -236,3 +236,50 @@ def test_a_relative_database_override_follows_the_working_directory(request, mon
 
     context = sensitive_paths.resolve_sensitive_context()
     assert sensitive_paths.is_sensitive_path(second / "db" / "ChaChaNotes.db", context)
+
+
+
+@private_profile_test
+def test_a_directory_change_during_resolution_is_not_memoized(request, monkeypatch, tmp_path):
+    """A relative ``paths.data_dir`` is made absolute against the working
+    directory. If it changes between stamping the inputs and resolving, the
+    result is not one of the stamped candidates and must not be kept (Qodo,
+    #2924). In the app the admission layer refuses such a mismatch first; this
+    pins the memo on its own, with the resolution replaced by its outcome.
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: Configures a relative data dir and replaces the resolution.
+        tmp_path: Holds the two working directories.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Utils.private_paths import lexical_path
+
+    folder = config.get_user_folder_name()
+    first, second = tmp_path / "first", tmp_path / "second"
+    for root in (first, second):
+        (root / "data" / folder).mkdir(parents=True, mode=0o700)
+    real_setting = config.get_cli_setting
+
+    def relative_data_dir(section, key, default=None):
+        if (section, key) == ("paths", "data_dir"):
+            return "data"
+        return real_setting(section, key, default)
+
+    moved = []
+
+    def resolve():
+        if not moved:  # another thread changes directory mid-resolution, once
+            moved.append(True)
+            os.chdir(second)
+        return lexical_path("data") / folder
+
+    monkeypatch.setattr(config, "get_cli_setting", relative_data_dir)
+    monkeypatch.setattr(config, "_resolve_user_data_dir", resolve)
+    monkeypatch.setattr(config, "_USER_DATA_DIR_MEMO", None)
+    monkeypatch.chdir(first)
+    memoized = config.get_user_data_dir.__wrapped__  # the memo, not the admission layer
+    memoized()  # stamped under first, resolved under second
+    os.chdir(first)
+
+    assert Path(memoized()).is_relative_to(first)
