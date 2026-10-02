@@ -44,12 +44,17 @@ def _capture(token=" a"):
     )
 
 
-def test_schema_version_is_five():
-    # task-1691 phase 1: bumped for the character probe annotation and
+def test_schema_version_is_six():
+    # task-1691 phase 1 bumped to 5 for the character probe annotation and
     # review-state tables (eval_probe_turn_annotations/eval_probe_review_state)
     # added to this same shared Evals_DB schema -- word_bench's own tables
     # and behavior are unchanged.
-    assert SCHEMA_VERSION == 5
+    #
+    # TASK-19566 F8 bumped to 6: the five inert ``version`` columns
+    # (eval_tasks/eval_datasets/eval_models/eval_runs/ab_tests) were dropped
+    # from the shared schema -- again with no change to word_bench's own
+    # tables or behavior.
+    assert SCHEMA_VERSION == 6
 
 
 def test_run_group_id_column_exists(db):
