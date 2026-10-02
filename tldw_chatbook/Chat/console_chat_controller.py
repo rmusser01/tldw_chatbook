@@ -9517,6 +9517,13 @@ class ConsoleChatController:
             return ConsoleSubmitResult(False, False, "Console is shutting down.")
         reason = await self.hook_admission_reason()
         if reason is not None:
+            if (
+                origin is ConsoleSubmissionOrigin.AGENT_WAKE
+                and self._fleet_wake.authorizes(wake_authorization, owner_key)
+                and not wake_authorization.acceptance_started
+                and not wake_authorization.accepted
+            ):
+                wake_authorization.preflight_refused = True
             return ConsoleSubmitResult(
                 False,
                 False,

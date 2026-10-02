@@ -691,3 +691,86 @@ async def test_fourth_progress_report_stays_pending_when_shared_generations_exha
         assert rig[2].get_run(identity.run_id)["wake_delivered_at"] is None
     finally:
         await close_rig(rig)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("agent", [False, True])
+@private_profile_test
+async def test_hook_refusal_refunds_exact_unaccepted_wake_then_retries_once(
+    tmp_path, request, monkeypatch, agent
+):
+    from copy import copy
+    from types import SimpleNamespace
+
+    from Tests.Chat.test_automatic_wake_budget import attempts
+    from Tests.Chat.test_automatic_wake_dispatch import real_gateway
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmissionOrigin
+
+    rig = _controller_rig(tmp_path)
+    db, session, controller = rig[2], rig[4], rig[7]
+    gateway, calls = real_gateway(rig, agent=agent)
+    reason = ["Hook review required"]
+    controller._hook_permissions_accessor = lambda: SimpleNamespace(
+        snapshot=lambda: SimpleNamespace(blocked_reason=reason[0])
+    )
+    chain_id = db.automatic_work.create_chain(session.id, root_submission_id="manual")
+    child = result_for(rig, chain_id)
+    original_submit = controller.submit_draft
+    observed = []
+
+    async def submit_with_authority_probes(draft, **kwargs):
+        token = kwargs["wake_authorization"]
+        if not observed:
+            manual = await original_submit(
+                "Manual hook refusal",
+                session_id=session.id,
+                origin=ConsoleSubmissionOrigin.MANUAL,
+                wake_authorization=token,
+            )
+            assert not manual.accepted and manual.visible_copy == reason[0]
+            assert not token.preflight_refused
+            foreign = copy(token)
+            refused = await original_submit(
+                draft,
+                session_id=session.id,
+                origin=ConsoleSubmissionOrigin.AGENT_WAKE,
+                wake_authorization=foreign,
+            )
+            assert not refused.accepted and refused.visible_copy == reason[0]
+            assert not foreign.preflight_refused and not token.preflight_refused
+            observed.append(token)
+        return await original_submit(draft, **kwargs)
+
+    monkeypatch.setattr(controller, "submit_draft", submit_with_authority_probes)
+    try:
+        queue_result(rig, child)
+        assert await _settle(
+            lambda: attempts(db) and not controller.fleet_wake._delivery_tasks
+        )
+        snapshot = db.automatic_work.snapshot(chain_id)
+        assert [row["state"] for row in attempts(db)] == ["aborted"], snapshot
+        assert snapshot.status == "active" and snapshot.pause_reason is None
+        assert snapshot.used["generation"] == snapshot.reserved["generation"] == 0
+        assert observed and observed[0].preflight_refused
+        assert not observed[0].acceptance_started and not observed[0].accepted
+        assert calls == []
+        assert db.get_run(child)["wake_delivered_at"] is None
+        assert controller.fleet_wake.has_pending(session.id)
+        reason[0] = None
+        controller.fleet_wake.retry_soon()
+        assert await _settle(
+            lambda: db.get_run(child)["wake_delivered_at"] is not None, seconds=20
+        )
+        assert await _settle(lambda: not controller.fleet_wake._delivery_tasks)
+        assert sorted(row["state"] for row in attempts(db)) == ["aborted", "completed"]
+        snapshot = db.automatic_work.snapshot(chain_id)
+        assert snapshot.used["generation"] == 1
+        assert snapshot.reserved["generation"] == 0
+        assert len(calls) == 1
+        queue_result(rig, child)
+        controller.fleet_wake.retry_soon()
+        await asyncio.sleep(0.35)
+        assert len(calls) == 1
+    finally:
+        await close_rig(rig)
+        await gateway.aclose()

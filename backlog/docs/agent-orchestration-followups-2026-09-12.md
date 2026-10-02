@@ -23,8 +23,14 @@ The [implementation plan](../../Docs/superpowers/plans/2026-09-29-agent-orchestr
 tracks this scope. All 13 tasks are Done with checked acceptance criteria and implementation
 notes. The [final review and qualification record](../../Docs/superpowers/reviews/2026-09-29-agent-orchestration-burndown.md)
 records the corrections, independent approvals, passing targeted selections and disclosed limits.
-The branch is rebased onto dev `6423c4fbd1`; all 217 post-rebase integration checks pass.
-Delivery is through a draft PR against dev; no merge is claimed.
+The branch is rebased onto dev `31d4f9b764`. October 1 CI corrections and the
+new upstream hook-refusal integration defect are repaired and independently
+reviewed: 145 affected messaging/schema checks, 147 lifecycle/UI checks and
+focused real-gateway wake/refund checks pass. Selections overlap and are not
+summed. Exact tool inventory, canonical timestamps, real query-plan pins, table
+allowlist and audited diagnostic inventory are qualified.
+Delivery is through [PR #2918](https://github.com/rmusser01/tldw_chatbook/pull/2918)
+against dev; remote checks must rerun on the published head. No merge is claimed.
 
 ## September 12 completion status (historical)
 
