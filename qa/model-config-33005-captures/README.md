@@ -43,3 +43,16 @@ Every changed Phase 5 surface, captured at 211x44 and at 235x52 at branch head `
 Log note: Ollama 07:28:42 is a `curl` check before the app started. On 9201, 07:32:37 is a click on the **Test Provider** button and 07:32:38 is **t**, both for capture 10. 07:33:06 (**t**) and 07:33:27 (the button) are re-checks before capture 10 was taken. Save, the Console and the switcher sent nothing to 9201.
 
 Reading note: "Agent blocked" in the status strip is the Library access policy chip, unrelated to provider readiness.
+
+## Addendum: fix wave (`fix/`, 2026-10-02)
+
+The three surfaces the checkpoint fix changed, re-captured at 211x44 and 235x52 with the same procedure: tmux socket `-L cap33005fix`, `env -i` with `HOME`/`XDG_*`/`TLDW_CONFIG_PATH` in a scratch directory, the null keyring, `[first_run] setup_completed = true`, `[console.onboarding] first_send_completed = true`, `[model_catalog] auto_refresh_enabled = false`, splash off. The real `~/.config/tldw_cli/config.toml` (sha256 prefix 15c6cb224a6a51c7) and the `~/.local/share/tldw_cli` name listing (db7e7faf5bff92d2) were the same before and after. Stand-ins (not committed): an Ollama listing `qwen2.5:0.5b` on 11435, and on 9201 an OpenAI-compatible server that answers 401 to every key. Nothing listened on 2242, 8080, 1234, 5678 or 9199; another process answers 404 on `localhost:8000`. `fix/stub-request-log.txt` is their log. No real provider was contacted.
+
+Profile A (`verify_cap33005fix_a`): llama.cpp saved at `http://127.0.0.1:9199` as the chat default (model `model-a`), Ollama saved at `http://127.0.0.1:11435`, a fake OpenAI key. Every other provider keeps the shipped template's table.
+
+1. `fix/01-switcher-untouched-defaults-not-running`: Console, Alt+M, about 7 s. llama.cpp (configured: the chat default, endpoint edited) reads "Not ready · refused :9199" on CURRENT and leads NEEDS SETUP with "start it; rechecked on open". Ollama reads "Ready · reachable 08:24" (log 08:24:49). Aphrodite Engine, TabbyAPI and both custom slots were probed, refused, and are listed once under "NOT RUNNING · local servers never set up · rechecked on open", not as "refused :PORT" rows (TASK-33005.6 AC#3). NEEDS SETUP's overflow line now reads "… 39 more" (43 in capture 06). The header badge agrees: "Not ready · refused :9199".
+2. `fix/02-settings-overview-refused`: Esc, F4, Providers & Models, **t**, then Overview. "Configuration: llama.cpp / model-a; Status: Not ready · refused :9199" sits directly above "Last connection test: Readiness: Not ready · refused :9199" (capture 03 read "Status: Ready" there). The refusal evidence is shared: the switcher's probe in capture 1 had already recorded it.
+
+Profile B (`verify_cap33005fix_b`): OpenAI as the chat default (model `gpt-4o`) with the fake key and `api_base_url = "http://127.0.0.1:9201/v1"` saved.
+
+3. `fix/03-settings-t-key-rejected-key-row`: F4, Providers & Models (OpenAI), **t**: one listing request with the key (log 08:26:55), answered 401. "Readiness   Not ready · key rejected" and "Key   saved in config · key rejected" (capture 08 read "present, not verified" there).

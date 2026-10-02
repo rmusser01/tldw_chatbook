@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-26 11:47'
-updated_date: '2026-10-02 06:40'
+updated_date: '2026-10-02 08:30'
 labels:
   - model-config-redesign
   - phase-5
@@ -74,7 +74,7 @@ Constraints.
 - [x] #8 No cloud provider is contacted except by an explicit 't'
 - [x] #9 Composer keystroke cost and the idle credential poll's per-tick cost do not rise, measured by the methods recorded in task-24454 and task-32804.3
 - [x] #10 chat_screen.py stays within its screen-size ratchet row, console_chat_controller.py gains no lines, and the ADR-097 boot ratchets (boot CSS bytes, _ui_ready module census) do not rise
-- [ ] #11 (delegated to TASK-33005.6, owner call) Live evidence at 211x44 and 235x52 comes from a scratch profile (TLDW_CONFIG_PATH; the real ~/.config/tldw_cli is never touched). It shows three cases: a stopped llama.cpp reads 'Not ready · refused' in the switcher and status row; 't' on a valid cloud key shows 'Ready · verified HH:MM' in Settings and Console; 't' on a rejected key shows 'Not ready · key rejected'
+- [x] #11 (owner ruling 2026-10-02, TASK-33005.6 AC#1: the documented local stand-in is accepted for the valid-cloud-key case) Live evidence at 211x44 and 235x52 comes from a scratch profile (TLDW_CONFIG_PATH; the real ~/.config/tldw_cli is never touched). It shows three cases: a stopped llama.cpp reads 'Not ready · refused' in the switcher and status row; 't' on a valid cloud key shows 'Ready · verified HH:MM' in Settings and Console; 't' on a rejected key shows 'Not ready · key rejected'
 - [x] #12 Docs/User_Guide pages updated: console.md (readiness words), and settings.md (the Test Provider section near :228-232, the first-run steps near :816-817 and the 't' key row near :869)
 - [x] #13 ./scripts/preflight.sh passes
 <!-- AC:END -->
@@ -95,7 +95,7 @@ Constraints.
 
 **How two ACs were read.** AC#1: the five subtasks are on this one branch, for one PR; riders .6-.10 are follow-ups, not part of it. AC#10: the chat_screen.py row was already red on dev (25,311 against 25,218) before this branch, so it was read as the plan's ruling, nets <= 0 lines and methods; it nets -16 lines and 0 methods.
 
-**Delegations.** AC#11's valid-cloud-key case has no real key behind it (a local stand-in, documented in qa/model-config-p5-2026-10-01/task-4/README.md); that, keyless "verified" and shipped-default probing are owner rulings, delegated to TASK-33005.6 (to settle before merge). The rejected-key case is live at 211x44 (task-4 captures 01-02) and 235x52 (final-fix captures 6-7); the stopped llama.cpp case at both sizes (task-5, final-fix).
+**Delegations.** AC#11's valid-cloud-key case has no real key behind it (a local stand-in, documented in qa/model-config-p5-2026-10-01/task-4/README.md); that, keyless "verified" and shipped-default probing were owner rulings, delegated to TASK-33005.6. The owner ruled on 2026-10-02: the stand-in is accepted (so AC#11 is ticked), a keyless successful paid test reads "verified" (already so), and shipped localhost defaults stay probed but an untouched one that refuses is listed quietly as not running. TASK-33005.6 is Done and records the rulings. The rejected-key case is live at 211x44 (task-4 captures 01-02) and 235x52 (final-fix captures 6-7); the stopped llama.cpp case at both sizes (task-5, final-fix).
 
 **Riders filed** (not in this PR): TASK-33005.6 owner rulings; .7 the four remaining readiness copies (Settings "Readiness: provider / model" rows, Inspector "Provider configuration required", composer copy after a rejected key, the empty-transcript Ready line); .8 Settings rows keep "(draft)" after Save until a return visit; .9 Home, Library lock pre-check and the first-run wizard stay config-only; .10 unmeasured warm-switch cost, `_BEGIN_ORDER` without a lock, Save rebuilding the saved identity, three test gaps.
 
@@ -116,6 +116,12 @@ Constraints.
 - Settings 't' checks a cloud key with one model listing (accepted, rejected, unavailable; OpenRouter/NVIDIA public lists never count), and lists a URL provider's models before a model is chosen.
 - Switch model probes keyless local servers on loopback or private addresses (3 at a time, 10 s reuse); nothing cloud or public is contacted automatically.
 - A failed cloud key check's Retry connection opens Settings at that provider; a non-auth HTTP answer to 't' never blocks sending.
+
+**Capture checkpoint fix wave (2026-10-02).** The full-screen captures (qa/model-config-33005-captures) found two surfaces contradicting the Readiness row; both are fixed, with the AC#3 ruling, in "fix(model-config): one readiness truth on Settings rows; quiet refusals for untouched defaults (TASK-33005)":
+- Settings' Key row read "present, not verified" under "Not ready · key rejected"; it now says "key rejected" from the same 401/403 evidence (`test_a_rejected_key_reads_rejected_on_the_key_row_too`).
+- The Overview "Status:" was config-only ("Ready" above a refused "Last connection test"). It now reads the Console's future-chat readiness through `build_console_settings_readiness` with the shared evidence and `readiness_words` (`test_settings_overview_status_reads_a_refused_test_as_the_console_does`). Rewritten on purpose to the one vocabulary: the three TASK-31805 Overview pins in Tests/UI/test_settings_configuration_hub.py ("Not ready · no key", "Ready · not tested", "Not ready · no model"), three in Tests/UI/test_settings_custom_endpoint_default.py ("unsupported", "check settings") and the "Checking Claude" waits in Tests/UI/test_settings_subscription_readiness.py ("Not ready · checking login").
+- Switch model lists a refused, untouched shipped default once under NOT RUNNING instead of NEEDS SETUP (TASK-33005.6 AC#3).
+Riders filed from the checkpoint: TASK-33005.11 ("verified" for a model the key check did not list), .12 (switcher rows ignore the models a probe listed), .13 ("not saved this session" counts per visit), .14 (Test Provider looks like a heading, provider names cut at 20 columns, "~4k" vs "Context unknown"). Live: qa/model-config-33005-captures/fix/.
 
 **Pre-existing reds (not this branch).** ADR-126 `RecoveryRequired: raw_source_selection_changed` locally in clean worktrees (failure-name sets compared instead). Size rows red at base `92a95170a5` and unchanged: chat_screen.py and library_screen.py screen rows; console_chat_controller, console_chat_store, mcp_workbench, llm_screen, personas_screen, watchlists_collections_screen, FirstRunSetupWizard, console_transcript, tldw_api/client module rows (11 names, identical at base and wave). `test_css_class_coverage_contract` red on dev with the same message.
 
