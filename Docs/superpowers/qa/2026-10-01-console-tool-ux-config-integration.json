@@ -1,0 +1,394 @@
+{
+  "verified_tree": {
+    "head_commit": "854e3f20d6538cfb4ba6313858e8a7f2dad5650f",
+    "head_tree": "cf6463cca1a7a05f39dbe4911fc57b1e377d208e",
+    "upstream_base": "ab4df99959545e37d8d2048c1c1ce15fd914721d",
+    "source_sha256": {
+      "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+      "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+      "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+      "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+      "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+      "tldw_chatbook/Chat/console_display_state.py": "716748622b441c056d38bad7021f439944e1caa6feb1ae56996586cc2293b10d",
+      "Tests/UI/test_console_pending_interrupt_projection.py": "b7360f85a103de0c19e63c98fdf5e837ce7612064748815de73b0512feeffbba",
+      "Tests/test_config_warm_settings_no_handshake_perf06.py": "6d1c92f5a236477253d985699fc265c2372f7761161a244b88dbef9117026e2d"
+    }
+  },
+  "rebase": {
+    "base": "ab4df99959545e37d8d2048c1c1ce15fd914721d",
+    "previous_head": "166e89a359f770cb02accc51550ee675830c012e",
+    "six_patches_unchanged_by_range_diff": true
+  },
+  "targeted_checks": {
+    "passed": 16,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0,
+    "source_pins_current": true,
+    "private_profiles": true,
+    "real_profile_unchanged": true,
+    "results": [
+      {
+        "target": "Tests/UI/test_console_pending_interrupt_projection.py::test_question_and_approval_copy_survives_sibling_view_and_remount",
+        "cases": 1,
+        "passed": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 22.81,
+        "case_names": [
+          "test_question_and_approval_copy_survives_sibling_view_and_remount"
+        ]
+      },
+      {
+        "target": "Tests/UI/test_console_pending_interrupt_projection.py::test_inspector_counts_queued_approval_rounds_for_its_own_session",
+        "cases": 1,
+        "passed": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 16.66,
+        "case_names": [
+          "test_inspector_counts_queued_approval_rounds_for_its_own_session"
+        ]
+      },
+      {
+        "target": "Tests/UI/test_console_pending_interrupt_projection.py::test_review_routes_reach_visible_skill_confirm_before_queued_approval",
+        "cases": 1,
+        "passed": 1,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 17.74,
+        "case_names": [
+          "test_review_routes_reach_visible_skill_confirm_before_queued_approval"
+        ]
+      },
+      {
+        "target": "Tests/test_config_warm_settings_no_handshake_perf06.py",
+        "cases": 13,
+        "passed": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 1.84,
+        "case_names": [
+          "test_a_warm_load_settings_does_not_enter_the_handshake",
+          "test_a_warm_runtime_snapshot_does_not_enter_the_handshake",
+          "test_a_forced_reload_still_rebuilds",
+          "test_the_miss_paths_stay_guarded",
+          "test_a_warm_load_settings_does_not_stall_behind_an_in_flight_write",
+          "test_a_warm_snapshot_copies_the_hit_it_checked",
+          "test_a_warm_snapshot_never_blocks_behind_a_held_config_lock",
+          "test_a_replaced_config_file_is_not_served_warm[replaced]",
+          "test_a_replaced_config_file_is_not_served_warm[symlinked]",
+          "test_a_replaced_config_file_is_not_served_warm[parent-symlinked]",
+          "test_a_config_file_the_load_created_is_served_warm_next",
+          "test_only_a_plain_owned_file_may_replace_a_missing_stamp",
+          "test_the_owned_file_check_works_without_geteuid"
+        ]
+      }
+    ]
+  },
+  "native_approval": {
+    "passed": true,
+    "journeys": 9,
+    "app_exit_code": 0,
+    "process_exit_code": 0,
+    "network_attempts": [],
+    "real_config_unchanged": true,
+    "real_data_unchanged": true,
+    "tracked_real_data_files": 533,
+    "pinned_native_sources_current": true,
+    "integration_sources": {
+      "head": "854e3f20d6538cfb4ba6313858e8a7f2dad5650f",
+      "upstream_base": "ab4df99959545e37d8d2048c1c1ce15fd914721d",
+      "sha256": {
+        "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+        "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67"
+      }
+    },
+    "source_hashes": {
+      "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+      "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+      "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+      "tldw_chatbook/css/tldw_cli_modular.tcss": "06de3846778e2770e864f1d1b23e4394b7502997d2658a96a4e6b728d1123694",
+      "tldw_chatbook/css/widget_defaults_scoped.tcss": "64958e3290cd2d7de727872a6bc00f78c463442423987a47054f1cb29a702899",
+      "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
+      "tldw_chatbook/css/core/_variables.tcss": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
+      "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
+    },
+    "cells": [
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": true,
+        "mode": "fast-deny",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": true,
+        "mode": "deny-all",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": true,
+        "mode": "approve-once",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": true,
+        "result_ok": true,
+        "error": ""
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": false,
+        "mode": "fast-deny",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": false,
+        "mode": "deny-all",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "inspect_open": false,
+        "mode": "approve-once",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": true,
+        "result_ok": true,
+        "error": ""
+      },
+      {
+        "size": [
+          235,
+          52
+        ],
+        "inspect_open": true,
+        "mode": "fast-deny",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          235,
+          52
+        ],
+        "inspect_open": true,
+        "mode": "deny-all",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": false,
+        "result_ok": false,
+        "error": "local tool call denied by the user. Do not retry this call, do not rephrase it, and do not pursue the same outcome by another route. Ask the user what to do instead."
+      },
+      {
+        "size": [
+          235,
+          52
+        ],
+        "inspect_open": true,
+        "mode": "approve-once",
+        "painted_controls": true,
+        "real_ask_gate": true,
+        "real_local_executor_on_approval": true,
+        "result_ok": true,
+        "error": ""
+      }
+    ],
+    "representative_exports_inspected": 3,
+    "fixture_scope": "Real Ask-gated fs_read via the production controller-composed LocalToolProvider, real private permission store, native Console decisions and production local executor. The disposable project root is supplied explicitly at the provider-composition seam; no model turn, external MCP server or network request is simulated as successful.",
+    "receipt": "/private/tmp/console-tool-ux-approval-native-11/evidence/result.json"
+  },
+  "native_close": {
+    "passed": true,
+    "profile": "run12",
+    "root_provided_upstream": "ab4df99959545e37d8d2048c1c1ce15fd914721d",
+    "app_return_code": 0,
+    "app_exception": null,
+    "terminal": {
+      "pane_dead": true,
+      "process_exit_code": 0,
+      "qualified_profile": "run12",
+      "pane_status": "1 0",
+      "owned_socket_released": true,
+      "socket_cleanup_exit_code": 0
+    },
+    "cells": [
+      {
+        "size": [
+          235,
+          52
+        ],
+        "kind": "approval",
+        "named_dialog_painted": true,
+        "default_stay": true,
+        "zero_consequences_absent": true,
+        "terminal_mouse_close": true,
+        "worker_result": {
+          "close-call": "deny"
+        },
+        "owning_task_cancelled": true,
+        "target_fleet_and_wake_fences_released": true,
+        "target_rounds_removed": true,
+        "viewed_sibling_question_pending": true
+      },
+      {
+        "size": [
+          235,
+          52
+        ],
+        "kind": "question",
+        "named_dialog_painted": true,
+        "default_stay": true,
+        "zero_consequences_absent": true,
+        "terminal_mouse_close": true,
+        "worker_result": {
+          "answered": false,
+          "reason": "cancelled"
+        },
+        "owning_task_cancelled": true,
+        "target_fleet_and_wake_fences_released": true,
+        "target_rounds_removed": true,
+        "viewed_sibling_question_pending": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "kind": "approval",
+        "named_dialog_painted": true,
+        "default_stay": true,
+        "zero_consequences_absent": true,
+        "terminal_mouse_close": true,
+        "worker_result": {
+          "close-call": "deny"
+        },
+        "owning_task_cancelled": true,
+        "target_fleet_and_wake_fences_released": true,
+        "target_rounds_removed": true,
+        "viewed_sibling_question_pending": true
+      },
+      {
+        "size": [
+          80,
+          24
+        ],
+        "kind": "question",
+        "named_dialog_painted": true,
+        "default_stay": true,
+        "zero_consequences_absent": true,
+        "terminal_mouse_close": true,
+        "worker_result": {
+          "answered": false,
+          "reason": "cancelled"
+        },
+        "owning_task_cancelled": true,
+        "target_fleet_and_wake_fences_released": true,
+        "target_rounds_removed": true,
+        "viewed_sibling_question_pending": true
+      }
+    ],
+    "max_risk_dialog": {
+      "size": [
+        80,
+        24
+      ],
+      "title_characters": 60,
+      "all_six_nonzero_counts": true,
+      "all_five_pending_kinds": true,
+      "title_and_actions_fully_painted": true,
+      "default_stay": true,
+      "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories."
+    },
+    "source_hashes": {
+      "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+      "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+      "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+      "tldw_chatbook/Widgets/confirmation_dialog.py": "b3d0f40aafb5c1baefecb98a366542eb1da91dff15716737617a3b1ac6a6cd0f",
+      "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+      "tldw_chatbook/css/tldw_cli_modular.tcss": "06de3846778e2770e864f1d1b23e4394b7502997d2658a96a4e6b728d1123694",
+      "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+      "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+      "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+      "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+      "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "f68d457a823e6e81dca595d13fa1f7a1c0273597f02a60b3b6750a58ff0c88ec"
+    },
+    "sources_stable_and_current": true,
+    "real_config_unchanged": true,
+    "real_data_mtimes_unchanged": true,
+    "real_data_file_count": 515,
+    "committed_qa_files_unchanged": true,
+    "committed_qa_file_count": 23,
+    "network_attempts": [],
+    "visual_inspection": {
+      "five_confirmation_pngs_viewed": true,
+      "confirmation_and_closed_terminal_text_inspected": true,
+      "max_risk_actual_terminal_text_title_wrapped_53_plus_7": true,
+      "raster_limit": "Cairo fallback font metrics and missing terminal glyphs do not reproduce terminal cell widths. Long-title containment is proven by actual tmux painted text and compositor assertions."
+    },
+    "fixture_scope": "Actual TldwCli and LinuxDriver. Real request_user_questions and request_mcp_approvals worker rounds; deterministic registered owning asyncio task, no provider, tool dispatch or external server. Actual ConsoleRuntime closes the requested background session. Terminal SGR mouse input presses both tab close and confirmation buttons.",
+    "repository_or_git_mutations": false,
+    "full_test_sweep": false
+  },
+  "limits": [
+    "Native approval dispatches only a disposable Ask-gated fs_read; no accepted model turn or external MCP server.",
+    "Close runs actual decision workers; maximum-risk counts are a synthetic impact snapshot.",
+    "Committed screenshots describe preceding runs with identical pinned UI sources. New replay exports remain in temporary directories.",
+    "Cairo font fallback does not reproduce terminal cell widths; terminal text and compositor assertions provide containment evidence.",
+    "Local checks are targeted; fresh published-head GitHub gates and Qodo resolution remain required."
+  ],
+  "preflight": {
+    "passed": true,
+    "receipt": "/tmp/console-tool-ux-devab4-preflight.txt",
+    "ui_census": 122
+  },
+  "lint": {
+    "base": "ab4df99959545e37d8d2048c1c1ce15fd914721d",
+    "modified_python_files": 16,
+    "new_diagnostics": 0,
+    "receipt": "/tmp/console-tool-ux-devab4-lint-qualified.json"
+  }
+}

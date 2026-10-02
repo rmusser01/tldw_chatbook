@@ -141,7 +141,7 @@ changing the census, weakening assertions or modifying CI/timeouts.
 
 The exact-head UI Fast Lane must still pass within its existing 20-minute cap.
 
-## Final combined-tree qualification
+## Preceding combined-tree qualification
 
 Rebased cleanly onto dev27e718f01d81, including the compaction failure-copy
 and v74 lineage/recovery fix. Range-diff confirms all four patches unchanged;
@@ -164,11 +164,50 @@ six modified test/native helper files; Ruff introduces zero diagnostics across
 
 Final preflight passes: /tmp/console-tool-ux-final-preflight.txt. Current
 native source-hash qualification is recorded below.
-The final rebase onto dev922440b93e83 adds only ADR-210 documentation.
+The preceding rebase onto dev922440b93e83 adds only ADR-210 documentation.
 All five patches remain identical by range-diff, and production/native hashes
 remain valid. ADR-210 keeps the approval card as the decision surface and
 requires these TASK-33625 safety repairs before its separate region migration.
 The exact-head GitHub gates and fresh Qodo resolution remain merge prerequisites.
+
+## Latest-dev warm-config integration
+
+Clean rebase onto devab4df9995954 includes PR #2903's guarded warm settings
+and runtime-snapshot paths. All six patches remain unchanged by range-diff.
+The config miss, forced reload, file replacement and symlink paths remain guarded;
+no Console decision ownership, layout or execution interface changed upstream.
+**16 targeted checks pass, zero skips**: three mounted pending projections and
+thirteen warm-config safety cases, each using a private profile before imports.
+Eight exercised sources remained stable and current; the real profile was unchanged.
+
+Fresh native approval11 repeats all nine Ask-gated fs_read journeys at 80×24
+Inspect open/closed and 235×52. Fresh Close12 repeats four owning-worker closes
+and the explicitly synthetic five-kind, six-loss, 60-character-title geometry.
+Both app/process exits are0; no network attempts. UI and new config-source hashes
+match the combined tree. Real config and data-file mtimes remain unchanged
+(533 files for approval; 515 for Close). Three approval raster exports and five
+Close exports were inspected with the recorded Cairo font-fallback limitation.
+Committed images below remain evidence from preceding runs with unchanged UI
+source hashes; the new replay exports remain in temporary directories.
+
+[Sanitized integration receipt](2026-10-01-console-tool-ux-config-integration.json)
+records the verified tree, source pins, individual check results and fixture limits.
+Temporary full receipts are /tmp/console-tool-ux-labels/combined-warm-config-receipt.json,
+/private/tmp/console-tool-ux-approval-native-11/evidence/result.json and
+/tmp/console-tool-ux-close-native/run12/qualification.json.
+
+Fresh combined-tree preflight passes, including generated CSS, pinned Mermaid
+assets, diagnostic inventory and the unchanged122-file UI census:
+/tmp/console-tool-ux-devab4-preflight.txt. Ruff adds zero diagnostics in16 modified
+Python files against immutable devab4df9995954:
+/tmp/console-tool-ux-devab4-lint-qualified.json. Task closeout also removes a
+duplicate unchecked criterion and preserves explicit approval denial/cancellation
+while distinguishing recoverable Close failures from the restart refusal.
+
+Published preceding head166e89a359 passed PR Fast Lane, UI Fast Lane, UI latency
+and derived artifacts. UI Fast Lane completed921 tests in17m52s within its unchanged
+20-minute budget. Those receipts are historical: all four gates and fresh Qodo
+review must pass on the new published head before normal merge.
 
 ## Native evidence
 
@@ -188,15 +227,15 @@ Session projection is synchronized and its pending count asserted before capture
 [80×24 Inspect closed](2026-10-01-console-approval-layout/native/80x24-inspect-False-approve-once-pending.svg),
 [235×52 wide](2026-10-01-console-approval-layout/native/235x52-inspect-True-fast-deny-pending.svg).
 Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–10 remain under
-/tmp/console-tool-ux-approval-native-*; final10 requalified all nine journeys
+/tmp/console-tool-ux-approval-native-*; run10 requalified all nine journeys
 after the recovery refusal, dev27e718f01d81 rebase and declaration-neutral
-CSS budget/formatting fix. All eight source hashes match the final tree; the
+CSS budget/formatting fix. All eight UI source hashes still match the current tree; the
 real config and all 533 tracked data-file mtimes remain unchanged.
 
 [Close report](2026-10-01-console-close-followup/README.md): four real decision
 worker closes, owning task cancellation, sibling isolation and explicitly
 synthetic maximum-risk geometry. No provider/server execution is claimed
-for Close. Final run11 requalified the four real closes and all-five-kind geometry
+for Close. Run11 requalified the four real closes and all-five-kind geometry
 after the recovery refusal, dev27e718f01d81 rebase and CSS formatting/budget
 correction, including target fleet/wake fence release. Current controller,
 session and model-copy hashes match; its

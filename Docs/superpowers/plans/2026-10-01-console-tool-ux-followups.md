@@ -87,4 +87,5 @@ Job110655142114 reports that timeout; the repeated full-app cases consumed
 - [x] Review component diffs against all acceptance criteria and perform independent correctness review.
 - [x] Run focused combined tests once, build/derived guards, preflight and UI latency guardrails; repeat only for new changes/failures.
 - [x] Record evidence/limits in Docs/superpowers/qa/2026-10-01-console-tool-ux-followups.md, update guides and task notes, check acceptance criteria and set Done via CLI only after all DoD requirements.
+- [x] Rebase onto devab4df9995954 with all six patches unchanged; verify three mounted pending projections, thirteen warm-config safety cases and fresh native approval11/Close12 against current source hashes and private-profile isolation. Record the sanitized integration receipt.
 - [ ] Create/attach PR against dev, address verified Qodo findings, rebase when needed and qualify final head, merge normally and verify MERGED.
