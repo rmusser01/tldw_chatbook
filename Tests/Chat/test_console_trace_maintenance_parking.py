@@ -71,10 +71,13 @@ def _fast_runtime(monkeypatch: pytest.MonkeyPatch) -> ConsoleRuntime:
 async def test_complete_maintenance_parks_instead_of_polling_the_database(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """With nothing to normalize, run_batch is not called again and again."""
+    """With nothing to normalize, run_batch is not called again and again.
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
     calls: list[str] = []
     _install_fake_maintenance(monkeypatch, calls)
-    chat_persistence_service.consume_trace_maintenance_work_signal()
     runtime = _fast_runtime(monkeypatch)
 
     runtime._schedule_legacy_trace_maintenance(object(), object)
@@ -88,10 +91,13 @@ async def test_complete_maintenance_parks_instead_of_polling_the_database(
 async def test_an_exchange_write_signal_wakes_parked_maintenance(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A new exchange row is picked up promptly after the loop has parked."""
+    """A new exchange row is picked up promptly after the loop has parked.
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
     calls: list[str] = []
     _install_fake_maintenance(monkeypatch, calls)
-    chat_persistence_service.consume_trace_maintenance_work_signal()
     runtime = _fast_runtime(monkeypatch)
 
     runtime._schedule_legacy_trace_maintenance(object(), object)
@@ -102,7 +108,45 @@ async def test_an_exchange_write_signal_wakes_parked_maintenance(
     await runtime.dispose()
 
     assert len(calls) > parked_calls, "the work signal did not wake maintenance"
-    assert not chat_persistence_service.consume_trace_maintenance_work_signal()
+
+
+@pytest.mark.asyncio
+async def test_one_signal_wakes_every_parked_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two parked runtimes both wake on one signal; neither consumes the
+    other's (Qodo, #2914).
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
+    calls: list[object] = []
+
+    class _Maintenance:
+        def __init__(self, database: object, **_kwargs: object) -> None:
+            self._database = database
+
+        def run_batch(self) -> SimpleNamespace:
+            calls.append(self._database)
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtimes = [_fast_runtime(monkeypatch), _fast_runtime(monkeypatch)]
+    databases = ["db-a", "db-b"]
+
+    for runtime, database in zip(runtimes, databases):
+        runtime._schedule_legacy_trace_maintenance(database, object)
+    await _real_sleep(0.2)
+    parked = {database: calls.count(database) for database in databases}
+    chat_persistence_service.signal_trace_maintenance_work()
+    await _real_sleep(0.2)
+    for runtime in runtimes:
+        await runtime.dispose()
+
+    for database in databases:
+        assert calls.count(database) > parked[database], f"{database} stayed parked"
 
 
 def test_a_successful_exchange_append_signals_maintenance() -> None:
@@ -112,14 +156,14 @@ def test_a_successful_exchange_append_signals_maintenance() -> None:
         def append_message_exchanges_local(self, message_id: str, rows: object) -> None:
             del message_id, rows
 
-    chat_persistence_service.consume_trace_maintenance_work_signal()
+    before = chat_persistence_service.trace_maintenance_work_generation()
     service = chat_persistence_service.ChatPersistenceService.__new__(
         chat_persistence_service.ChatPersistenceService
     )
     service.db = _DB()
 
     assert service.append_message_exchanges(message_id="m-1", rows=[]) is True
-    assert chat_persistence_service.consume_trace_maintenance_work_signal()
+    assert chat_persistence_service.trace_maintenance_work_generation() > before
 
 
 # -- Real database: the runtime loop with the real worker, collector and writer --
@@ -191,11 +235,15 @@ def _real_db(tmp_path: Path) -> tuple[CharactersRAGDB, str]:
 async def test_a_real_exchange_append_wakes_parked_maintenance(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """The production writer's signal wakes the parked loop, which normalizes the row."""
+    """The production writer's signal wakes the parked loop, which normalizes the row.
+
+    Args:
+        monkeypatch: Spies on run_batch and shortens the loop's sleeps.
+        tmp_path: Holds the real ChaChaNotes database.
+    """
     db, conversation_id = _real_db(tmp_path)
     first = _message(db, conversation_id, "answer-0")
     _append_exchange(db, first, 0)
-    chat_persistence_service.consume_trace_maintenance_work_signal()  # loop starts unparked
     batches: list[str] = []
     _spy(monkeypatch, LegacyTraceMaintenance, "run_batch", batches)
     runtime = _fast_runtime(monkeypatch)
@@ -219,11 +267,15 @@ async def test_parked_maintenance_still_collects_once_per_interval(
 ) -> None:
     """Writers other than exchange appends advance the graph epoch without a
     signal, and a failed collection sets no signal either; both are picked up
-    at the next GC interval (Qodo, #2914)."""
+    at the next GC interval (Qodo, #2914).
+
+    Args:
+        monkeypatch: Spies on collection, shortens the GC interval and sleeps.
+        tmp_path: Holds the real ChaChaNotes database.
+        case: Which unsignalled reason the interval wake must cover.
+    """
     db, conversation_id = _real_db(tmp_path)
     _append_exchange(db, _message(db, conversation_id, "answer-0"), 0)
-    # No exchange signal may be pending: it would wake the loop by itself.
-    chat_persistence_service.consume_trace_maintenance_work_signal()
     collects: list[str] = []
     _spy(monkeypatch, TraceGarbageCollector, "collect", collects,
          fail_first=case == "failed-collection")

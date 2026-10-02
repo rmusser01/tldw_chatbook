@@ -177,34 +177,35 @@ _VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
 )
 
 
-#: PERF-10 (TASK-33269): raised after exchange rows are appended, so parked
+#: PERF-10 (TASK-33269): bumped after exchange rows are appended, so parked
 #: legacy trace maintenance wakes on new work instead of polling the database
 #: once a second. ``append_message_exchanges`` is the only exchange writer.
-_TRACE_MAINTENANCE_WORK = threading.Event()
+#: A counter, not a cleared event: every runtime compares it with the value it
+#: last saw, so no runtime can consume another's wake.
+_TRACE_MAINTENANCE_WORK_LOCK = threading.Lock()
+_trace_maintenance_work_generation = 0
 
 
 def signal_trace_maintenance_work() -> None:
     """Tell parked legacy trace maintenance that new exchange rows exist."""
 
-    _TRACE_MAINTENANCE_WORK.set()
+    global _trace_maintenance_work_generation
+    with _TRACE_MAINTENANCE_WORK_LOCK:
+        _trace_maintenance_work_generation += 1
 
 
-def consume_trace_maintenance_work_signal() -> bool:
-    """Return whether work was signalled since the last call, and clear it.
+def trace_maintenance_work_generation() -> int:
+    """Return the exchange-write generation; it changes on every signal.
 
-    A signal raised between the check and the clear is not lost in practice:
-    its rows were committed before it was raised, so the maintenance pass the
-    caller is about to run reads them.
+    A maintenance loop reads it before each pass and wakes when it differs.
+    A signal raised after the read wakes the loop again; one raised before it
+    had its rows committed first, so the pass about to run reads them.
 
     Returns:
-        True when an exchange append signalled since the previous call; the
-        caller should run a maintenance pass.
+        The number of exchange-write signals raised in this process.
     """
 
-    if _TRACE_MAINTENANCE_WORK.is_set():
-        _TRACE_MAINTENANCE_WORK.clear()
-        return True
-    return False
+    return _trace_maintenance_work_generation
 
 
 @dataclass(frozen=True, slots=True)

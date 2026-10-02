@@ -3283,7 +3283,7 @@ class ConsoleRuntime:
                 provider_active=provider_active,
             )
             from tldw_chatbook.Chat.chat_persistence_service import (
-                consume_trace_maintenance_work_signal,
+                trace_maintenance_work_generation,
             )
 
             last_provider_activity = time.monotonic()
@@ -3299,15 +3299,17 @@ class ConsoleRuntime:
             # semantic revisions and other processes advance the graph epoch
             # without signalling, and a failed GC attempt must be retried.
             parked = False
+            seen_work = trace_maintenance_work_generation()
             while not self._disposed:
                 if parked:
                     await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
-                    if consume_trace_maintenance_work_signal() or (
+                    if trace_maintenance_work_generation() != seen_work or (
                         time.monotonic() - last_physical_attempt
                         >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):
                         parked = False
                     continue
+                seen_work = trace_maintenance_work_generation()
                 try:
                     result = await run_owned_db_call(database, maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe

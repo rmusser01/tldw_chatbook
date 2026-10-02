@@ -395,6 +395,10 @@ def test_complete_check_without_new_rows_takes_no_write_transaction(
     With nothing new to normalize the check used to run inside a write
     transaction, holding the lock user sends contend for. A read-only
     pre-check now answers it; new rows still take the write path.
+
+    Args:
+        db: A real ChaChaNotes database.
+        monkeypatch: Spies on the transactions the check opens.
     """
     conversation_id = db.add_conversation({"title": "idle completion"})
     assert conversation_id is not None
