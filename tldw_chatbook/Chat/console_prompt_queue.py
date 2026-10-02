@@ -1067,8 +1067,23 @@ class ConsolePromptQueueRegistry:
         *,
         entry_id: str,
         preparation_id: str,
+        live_chain_owns_claim: bool = False,
     ) -> PromptQueueMutationResult:
-        """Settle an exact committed claim even after its live chain vanished."""
+        """Settle an exact committed claim, with or without its live chain.
+
+        Args:
+            session_id: Session owning the claim.
+            entry_id: The exact claimed entry the durable commit accepted.
+            preparation_id: The preparation bound to that claim.
+            live_chain_owns_claim: True when the coordinator's live chain is
+                still draining this exact claim. That chain keeps its
+                reservation and advances to the next entry after the turn,
+                so settling must not pause it. Only a detached settlement
+                (no live owner left to advance later work) pauses waiting
+                entries for explicit user action (TASK-33621.19: pausing on
+                the live path halted every multi-entry queue as FAILED after
+                its first successful turn).
+        """
 
         self._assert_owner_thread()
         session_id = self._session_id(session_id)
@@ -1107,11 +1122,13 @@ class ConsolePromptQueueRegistry:
             self._active_entry_ids.discard(entry_id)
             state.claimed = None
             state.claimed_preparation_id = None
-            if state.waiting:
+            # A live owner settles exactly like ``settle_claim``: mode and
+            # reservation stay with the chain that is still draining.
+            if not live_chain_owns_claim and state.waiting:
                 state.mode = PromptQueueMode.PAUSED
                 state.pause_reason = PromptQueuePauseReason.FAILED
                 state.reservation = PromptQueueReservation.RELEASED
-            else:
+            elif not live_chain_owns_claim:
                 state.reservation = PromptQueueReservation.RELEASED
                 self._finalize_released_empty_state(state)
             self._bump(state)

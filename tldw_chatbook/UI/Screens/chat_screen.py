@@ -16549,13 +16549,13 @@ class ChatScreen(BaseAppScreen):
                 id="console-prompt-queue",
                 on_manage_requested=self._open_console_prompt_queue,
                 on_primary_requested=(
-                    lambda session_id, revision, action: self.run_worker(
+                    lambda session_id, revision, action: self.app.run_worker(
                         self._prompt_queue.handle_primary_intent(
                             session_id,
                             action=action,
                             expected_revision=revision,
                         ),
-                        exclusive=True,
+                        # TASK-33621.19: never exclusive -- Pause must not kill a Resume's drain.
                         group="console-prompt-queue-shelf",
                     )
                 ),

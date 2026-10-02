@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import TYPE_CHECKING, Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
@@ -34,6 +34,15 @@ if TYPE_CHECKING:
 
 
 _AUTHORIZATION_KEY = object()
+
+# Shown when a press that would run the queue stops at a context review
+# instead (TASK-33621.19). It names no cause and no time, because the change
+# need not be the user's or happen during the pause: an edit, a delete, a
+# compaction, or a failed regeneration the queue itself ran all move the
+# context epoch.
+CONTEXT_CHANGED_REVIEW_NOTICE = (
+    "The conversation has changed. Review it before the queue continues."
+)
 
 
 class QueueGenerationAuthorization:
@@ -367,7 +376,11 @@ class ConsolePromptQueueCoordinator:
         if snapshot.total_count == 0:
             return PromptQueueMutationResult(QueueMutationStatus.UNCHANGED, snapshot)
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a context change while the response
+        # was pending makes resume() re-pause as CONTEXT_CHANGED (APPLIED, no
+        # chain). Stop at that review; its detail carries the notice for the
+        # Retry or Discard press that settled the owner (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, terminal_status)
         return resumed
@@ -546,10 +559,16 @@ class ConsolePromptQueueCoordinator:
         chain = self._chains.get(session_id)
         if chain is not None and chain.current_entry_id not in {None, entry_id}:
             return False
+        # TASK-33621.19: the ordinary durable post-commit path acknowledges
+        # EVERY queued turn while its live chain is still draining. That
+        # chain advances the queue after the turn ends, so only a detached
+        # acknowledgement (no exact live owner) may pause later work.
+        live_owner = chain is not None and chain.current_entry_id == entry_id
         result = self.registry.settle_durable_acceptance(
             session_id,
             entry_id=entry_id,
             preparation_id=preparation_id,
+            live_chain_owns_claim=live_owner,
         )
         if result.status not in {
             QueueMutationStatus.APPLIED,
@@ -572,8 +591,12 @@ class ConsolePromptQueueCoordinator:
         if chain is not None:
             chain.accepted_live_turn = True
             chain.logical_outcome_id = f"queue-chain:{preparation_id}"
-            if chain.current_entry_id == entry_id:
-                chain.current_entry_id = None
+            # The live owner keeps ``current_entry_id`` exactly as the
+            # ephemeral ``turn_accepted`` path does: its own post-turn step
+            # (the drain loop, or ``finish_recovered_entry`` for a reclaimed
+            # preparation) must still recognise this turn to advance or
+            # finish the chain. Clearing it here left a reclaimed durable
+            # entry's chain DRAINING/HELD with nothing to drive it.
             self._changed(session_id)
         if result.status is QueueMutationStatus.APPLIED:
             callback = self.on_queued_accepted
@@ -847,7 +870,20 @@ class ConsolePromptQueueCoordinator:
             callback(session_id, status, logical_outcome_id)
 
     def resume(self, session_id: str) -> PromptQueueMutationResult:
-        """Reacquire a slot and resume a manually/dispatch-paused queue."""
+        """Reacquire a slot and resume a manually/dispatch-paused queue.
+
+        Args:
+            session_id: Session whose paused queue should resume.
+
+        Returns:
+            The resume result, or a refusal. If the conversation context
+            changed since the queue's baseline, the queue is re-paused as
+            CONTEXT_CHANGED instead. That result is APPLIED (or UNCHANGED if
+            it already was), its mode is still PAUSED, no chain is created,
+            and ``detail`` carries ``CONTEXT_CHANGED_REVIEW_NOTICE`` for the
+            Resume or Retry press that asked to run. A caller that drains
+            must stop on a PAUSED result (TASK-33621.19).
+        """
         if self._maintenance_paused:
             return self._maintenance_refusal(session_id)
 
@@ -867,6 +903,11 @@ class ConsolePromptQueueCoordinator:
                 expected_revision=snapshot.revision,
             )
             self._changed(session_id)
+            if result.status in {
+                QueueMutationStatus.APPLIED,
+                QueueMutationStatus.UNCHANGED,
+            }:
+                return replace(result, detail=CONTEXT_CHANGED_REVIEW_NOTICE)
             return result
         if not self._can_reacquire_slot(session_id):
             return PromptQueueMutationResult(
@@ -893,7 +934,10 @@ class ConsolePromptQueueCoordinator:
         """Reacquire one slot and dispatch the next waiting entry."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # A changed context epoch makes resume() re-pause as CONTEXT_CHANGED,
+        # which the registry reports as APPLIED with no chain created. Drain
+        # only a queue that actually resumed (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         await self._drain_waiting(session_id, self._run_status(session_id))
         return resumed
@@ -977,7 +1021,11 @@ class ConsolePromptQueueCoordinator:
         """Run one typed failed/stopped recovery, adopt its epoch, then drain."""
 
         resumed = self.resume(session_id)
-        if not resumed.applied:
+        # Same guard as resume_and_drain: a CONTEXT_CHANGED re-pause is
+        # APPLIED with no chain, so a recovery turn run now is refused, its
+        # refusal is lost and the FAILED/STOPPED pause is written back -- a
+        # Retry that silently did nothing. Stop at the review (TASK-33621.19).
+        if not resumed.applied or resumed.snapshot.mode is PromptQueueMode.PAUSED:
             return resumed
         authorization = QueueGenerationAuthorization(
             self, session_id, _key=_AUTHORIZATION_KEY
