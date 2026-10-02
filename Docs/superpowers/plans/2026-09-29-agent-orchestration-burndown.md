@@ -240,3 +240,18 @@ Reason: restore accepted queue capacity and presentation lifetime contracts; tas
 - [ ] Retain both real probes as durable targeted RED regressions before the narrow shared predicate fixes.
 - [ ] Qualify queued scheduled hook behavior and mounted incremental publication, neighboring authority/capacity/idle controls and immutable independent reviews.
 - [ ] Run original performance/static/artifact guards after reviewers finish; retain all non-green evidence and qualify final bytes before task closure/publication.
+
+
+### Required provider-readiness merge-base update
+
+Both durable replay regressions are RED on c9a09, then GREEN21.094s after the narrow existing predicate repairs. Forty affected hook/queue/capacity/close/mounted publication cases pass99.209s. Owned formatting spill was removed with exact AST equivalence; final90-file fatal/added-line and ten-new-file Ruff/format/whitespace checks pass. Local repair e27ca28937 remains unpublished; both tasks remain In Progress until final review and guards.
+
+Live dev advanced to 185c845fe836bf452e4beaaf8853162ce49b1e8d (PR2958 / TASK33005 shared provider-readiness evidence) while no PR003 job remains running. Read incoming33005/33005.1/33005.2 and ADR012: one process-memory connection-evidence owner, exact endpoint/credential identity, explicit cloud listing and non-generating local recovery. Preserve those upstream behaviors and limits; qualify only the actual readiness/replay/poll overlap. The incoming storage census now measures tested and untested evidence and every builder binding; preserve both variants and all original ceilings, key/tick counts and workload, without editing the incoming test.
+
+ADR required: no
+ADR path: backlog/decisions/012-provider-credential-settings-boundary.md; backlog/decisions/033-application-session-state-ownership.md; existing ADR097/098/126/163/197/199 apply.
+Reason: preserving accepted readiness evidence and existing replay/publication owners; no new architecture or authority.
+
+1. Preserve the clean qualified local repair while rebasing onto the observed185c base; compare the pre-update code/CSS manifest and both lesson tails.
+2. Qualify actual shared-readiness and replay/queue/hook/polling consumers and unchanged schema76/current gates/AgentRuns history; independent immutable runtime/UI review of final source.
+3. Run the incoming original storage census (both variants), unchanged import/UI/CSS budgets, source/static/artifact checks after reviewers finish. Record exact bytes, evidence and limits; close33663/64 via CLI and publish once with observed003 exact lease, then fresh-head Qodo and four jobs before protected merge.
