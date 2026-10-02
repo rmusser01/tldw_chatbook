@@ -215,14 +215,18 @@ def project_instruction_context_kwargs(
         )
 
     async def state_factory():
-        state = await session_controller._refresh_console_project_instruction_display_state(
-            session_id
+        state = (
+            await session_controller._refresh_console_project_instruction_display_state(
+                session_id
+            )
         )
         return project_state(state)
 
     return {
         "project_instruction_state": project_state(
-            session_controller._build_console_project_instruction_display_state(session_id)
+            session_controller._build_console_project_instruction_display_state(
+                session_id
+            )
         ),
         "project_instruction_state_factory": state_factory,
         "project_instruction_session_id": session_id,
@@ -378,14 +382,10 @@ class ConsoleProjectInstructionContextPanel(VerticalScroll):
         for source in state.sources:
             warning = f" · warning {source.warning_code}" if source.warning_code else ""
             byte_copy = (
-                f" · {source.byte_count} bytes"
-                if source.byte_count is not None
-                else ""
+                f" · {source.byte_count} bytes" if source.byte_count is not None else ""
             )
             basename = source.relative_source.rsplit("/", 1)[-1]
-            precedence = (
-                "override" if basename == "AGENTS.override.md" else "standard"
-            )
+            precedence = "override" if basename == "AGENTS.override.md" else "standard"
             yield Static(
                 f"{source.relative_source} · Precedence: {precedence} · "
                 f"scope {source.scope}{byte_copy} · {source.outcome}{warning}",

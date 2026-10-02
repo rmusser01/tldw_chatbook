@@ -89,7 +89,9 @@ async def _seed_rows(console, pilot) -> tuple:
     """Type a query so the tray renders grouped browser rows, and return them."""
     search = console.query_one(SEARCH_SELECTOR, Input)
     console.on_console_workspace_conversation_search_changed(
-        type("E", (), {"value": "a", "input": search, "stop": staticmethod(lambda: None)})()
+        type(
+            "E", (), {"value": "a", "input": search, "stop": staticmethod(lambda: None)}
+        )()
     )
     await pilot.pause(0.4)
     for _ in range(3):
@@ -135,7 +137,9 @@ async def test_a_structural_change_still_recomposes():
         assert browser is not None
 
         # Drop every section: a maximal structural change.
-        changed = replace(tray.state, conversation_browser=replace(browser, sections=()))
+        changed = replace(
+            tray.state, conversation_browser=replace(browser, sections=())
+        )
         with _RecomposeCounter() as counter:
             tray.sync_state(changed)
             assert counter.calls == 1
