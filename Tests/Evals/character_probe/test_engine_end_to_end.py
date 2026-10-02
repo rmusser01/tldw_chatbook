@@ -214,9 +214,7 @@ def test_a_bench_runs_end_to_end_and_its_conversations_reload(db, chacha_db, tar
     # --- I4: the run is self-describing, from storage alone --------------
     snapshot = load_probe_run_snapshot(db, group_id)
     (snap_card,) = snapshot["cards"]
-    assert snap_card["description"] == (
-        "A dock-side fixer who owes everyone a favour."
-    )
+    assert snap_card["description"] == ("A dock-side fixer who owes everyone a favour.")
     assert snap_card["system_prompt"] == "You are {{char}}. {{user}} is your rival."
     assert snapshot["sampler"] == {
         "temperature": 0.3,
@@ -307,9 +305,7 @@ def test_a_run_survives_its_card_being_edited_afterwards(db, chacha_db, targets)
 
     snapshot = load_probe_run_snapshot(db, group_id)
     (snap_card,) = snapshot["cards"]
-    assert snap_card["description"] == (
-        "A dock-side fixer who owes everyone a favour."
-    )
+    assert snap_card["description"] == ("A dock-side fixer who owes everyone a favour.")
     assert snapshot["composed_system_prompts"]["7"][targets[0]["id"]].startswith(
         "You are Vex."
     )

@@ -20,6 +20,7 @@ Skipped unless `RAG_EVAL=1` plus the embeddings extras plus a warm model
 cache — see `harness/environment.py`. `RAG_EVAL_UPDATE_BASELINES=1` turns
 the gate test into a deliberate re-stamp of the committed baselines.
 """
+
 from __future__ import annotations
 
 import io
@@ -295,9 +296,7 @@ def test_the_committed_baselines_still_hold(tmp_path, capsys):
 
     update = update_requested()
     rendered = io.StringIO()
-    outcome = compare_or_update(
-        report, BASELINES_DIR, update=update, stream=rendered
-    )
+    outcome = compare_or_update(report, BASELINES_DIR, update=update, stream=rendered)
 
     with capsys.disabled():
         print("\n" + report.format_summary())

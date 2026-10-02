@@ -143,9 +143,7 @@ class EvaluationOrchestrator:
         return EvalsDB(db_path=str(selected), client_id=client_id)
 
     @staticmethod
-    def _safe_validate_existence_check_path(
-        path: Path, purpose: str
-    ) -> Optional[Path]:
+    def _safe_validate_existence_check_path(path: Path, purpose: str) -> Optional[Path]:
         """Validate a path through validate_path_simple before an existence check.
 
         This exists solely to decide whether to emit an informational warning
@@ -195,8 +193,10 @@ class EvaluationOrchestrator:
             Path("~/.local/share/tldw_cli").expanduser() / "default_user" / "evals.db"
         )
 
-        validated_resolved_path = EvaluationOrchestrator._safe_validate_existence_check_path(
-            resolved_path, "resolved Evals database"
+        validated_resolved_path = (
+            EvaluationOrchestrator._safe_validate_existence_check_path(
+                resolved_path, "resolved Evals database"
+            )
         )
         if validated_resolved_path is None:
             # Validation failed (e.g. TASK-838 over-rejection). This function
@@ -206,8 +206,10 @@ class EvaluationOrchestrator:
             return
         resolved_path = validated_resolved_path
 
-        validated_legacy_path = EvaluationOrchestrator._safe_validate_existence_check_path(
-            legacy_path, "legacy Evals database"
+        validated_legacy_path = (
+            EvaluationOrchestrator._safe_validate_existence_check_path(
+                legacy_path, "legacy Evals database"
+            )
         )
         if validated_legacy_path is None:
             return
@@ -422,8 +424,13 @@ class EvaluationOrchestrator:
         self._maintenance_runs[task] = depth + 1
         try:
             return await self._run_admitted_evaluation(
-                task_id, model_id, run_name, max_samples, config_overrides,
-                progress_callback, run_started_callback,
+                task_id,
+                model_id,
+                run_name,
+                max_samples,
+                config_overrides,
+                progress_callback,
+                run_started_callback,
             )
         finally:
             if depth:
@@ -614,9 +621,7 @@ class EvaluationOrchestrator:
                             )
 
                 # Call user progress callback if provided
-                await _invoke_callback(
-                    progress_callback, completed, total, result
-                )
+                await _invoke_callback(progress_callback, completed, total, result)
 
                 # Log progress
                 if completed % 10 == 0 or completed == total:
@@ -733,8 +738,7 @@ class EvaluationOrchestrator:
                     self.db.update_run_status(run_id, "cancelled")
                 except Exception as status_error:
                     logger.error(
-                        f"Could not persist cancellation for {run_id}: "
-                        f"{status_error}"
+                        f"Could not persist cancellation for {run_id}: {status_error}"
                     )
             raise
 
