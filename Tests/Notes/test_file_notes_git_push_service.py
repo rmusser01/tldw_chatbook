@@ -52,9 +52,7 @@ BRANCH_REF = "refs/heads/main"
 def test_git_mutation_admission_reasons_cover_push_recovery_contract() -> None:
     required_reasons = {"authorization_required", "recovery_not_ready"}
 
-    assert required_reasons <= set(
-        get_args(git_service.GitMutationAdmissionReason)
-    )
+    assert required_reasons <= set(get_args(git_service.GitMutationAdmissionReason))
     assert required_reasons <= set(get_args(OwnerGitMutationAdmissionReason))
 
 
@@ -92,9 +90,7 @@ def _resolve(
     return push_contracts._resolve_push_configuration(
         tuple(facts),
         BRANCH_REF,
-        push_contracts.TransportAdmission()
-        if admission is None
-        else admission,
+        push_contracts.TransportAdmission() if admission is None else admission,
     )
 
 
@@ -156,11 +152,7 @@ def test_destination_configuration_rejects_empty_tracking_remote_label(
             if fact.key not in {"remote.origin.pushurl", "remote.origin.url"}
         ],
         lambda facts: [
-            *[
-                fact
-                for fact in facts
-                if fact.key != "remote.origin.pushurl"
-            ],
+            *[fact for fact in facts if fact.key != "remote.origin.pushurl"],
             _fact(
                 "remote.origin.url",
                 "https://second-fetch.example.test/team/notes.git",
@@ -356,13 +348,16 @@ def test_configuration_fingerprint_includes_origin_identity_and_value() -> None:
         )
     )
 
-    assert len(
-        {
-            initial.configuration_fingerprint,
-            changed_origin.configuration_fingerprint,
-            changed_value.configuration_fingerprint,
-        }
-    ) == 3
+    assert (
+        len(
+            {
+                initial.configuration_fingerprint,
+                changed_origin.configuration_fingerprint,
+                changed_value.configuration_fingerprint,
+            }
+        )
+        == 3
+    )
 
 
 def test_local_destination_proof_environment_strips_all_redirects_and_helpers() -> None:
@@ -395,11 +390,7 @@ def test_local_destination_proof_environment_strips_all_redirects_and_helpers() 
         index_file="/tmp/service-owned-index",
     )
 
-    assert all(
-        key not in environment
-        for key in removed
-        if key != "GIT_INDEX_FILE"
-    )
+    assert all(key not in environment for key in removed if key != "GIT_INDEX_FILE")
     assert environment["GIT_INDEX_FILE"] == "/tmp/service-owned-index"
     assert environment["GIT_TERMINAL_PROMPT"] == "0"
     assert environment["GIT_NO_LAZY_FETCH"] == "1"
@@ -519,9 +510,7 @@ def _network_authorizations(
 
 @lru_cache(maxsize=1)
 def _test_git_installation() -> tuple[Path, Path]:
-    developer_git = Path(
-        "/Library/Developer/CommandLineTools/usr/bin/git"
-    )
+    developer_git = Path("/Library/Developer/CommandLineTools/usr/bin/git")
     if developer_git.is_file():
         git_executable = developer_git
     else:
@@ -558,8 +547,7 @@ def _pinnable_python_executable() -> Path:
     """
     candidates = [Path(sys.executable)]
     candidates += [
-        Path(f"/usr/bin/python{minor}")
-        for minor in ("3", "3.11", "3.12", "3.13")
+        Path(f"/usr/bin/python{minor}") for minor in ("3", "3.11", "3.12", "3.13")
     ]
     for candidate in candidates:
         try:
@@ -589,14 +577,8 @@ def _network_factory(
         environment={} if environment is None else environment,
         temporary_parent=parent,
         git_executable=str(git_executable),
-        git_exec_path=(
-            installed_exec_path
-            if git_exec_path is None
-            else git_exec_path
-        ),
-        ssh_executable=(
-            None if ssh_executable is None else str(ssh_executable)
-        ),
+        git_exec_path=(installed_exec_path if git_exec_path is None else git_exec_path),
+        ssh_executable=(None if ssh_executable is None else str(ssh_executable)),
         python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=allow_ssh_agent,
     )
@@ -741,8 +723,7 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
         "pack",
     }
     assert not any(
-        (git_dir / name).exists()
-        for name in ("hooks", "index", "remotes", "worktrees")
+        (git_dir / name).exists() for name in ("hooks", "index", "remotes", "worktrees")
     )
     assert not any((git_dir / "refs").iterdir())
     assert (git_dir / "HEAD").read_text(encoding="ascii") == (
@@ -764,7 +745,8 @@ def test_network_context_builds_private_bare_layout_without_source_mutation(
         mode = stat.S_IMODE(path.lstat().st_mode)
         expected_mode = (
             0o500
-            if path in {
+            if path
+            in {
                 Path(environment["HOME"]),
                 Path(environment["XDG_CONFIG_HOME"]),
                 Path(environment["TMPDIR"]),
@@ -1044,9 +1026,9 @@ def test_network_environment_pins_authorized_owner_agent_socket(
             ssh_executable=_fake_ssh_executable(tmp_path),
             allow_ssh_agent=True,
         )
-        assert context.command_settings().environment[
-            "SSH_AUTH_SOCK"
-        ] == str(agent_path.resolve())
+        assert context.command_settings().environment["SSH_AUTH_SOCK"] == str(
+            agent_path.resolve()
+        )
 
         original.close()
         agent_path.unlink()
@@ -1173,9 +1155,7 @@ def test_network_environment_rejects_agent_identity_substitution_at_command_seam
         ssh_executable=_fake_ssh_executable(tmp_path),
         allow_ssh_agent=True,
     )
-    assert context.command_settings().environment["SSH_AUTH_SOCK"] == str(
-        socket_path
-    )
+    assert context.command_settings().environment["SSH_AUTH_SOCK"] == str(socket_path)
 
     identity += 1
 
@@ -1425,9 +1405,7 @@ def test_network_context_config_copy_rejects_unapproved_facts(
 
 
 def test_network_context_config_copy_is_https_only() -> None:
-    destination = _network_destination(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    destination = _network_destination("ssh://git@push.example.test:22/team/notes.git")
 
     with pytest.raises(git_network.NetworkContextError):
         git_network._authorize_network_config_facts(
@@ -1442,9 +1420,7 @@ def test_ssh_config_snapshot_omits_transport_irrelevant_credential_facts(
     isolated_ssh_environment: Mapping[str, str],
 ) -> None:
     repository = _network_repository(tmp_path)
-    destination = _network_destination(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    destination = _network_destination("ssh://git@push.example.test:22/team/notes.git")
     fingerprint = "f" * 64
     snapshot = git_network._authorize_network_config_snapshot(
         (
@@ -1483,8 +1459,7 @@ def test_network_context_config_snapshot_rejects_scoped_use_http_path() -> None:
         git_network._authorize_network_config_snapshot(
             (
                 _fact(
-                    "credential.https://push.example.test/team/notes.git."
-                    "useHttpPath",
+                    "credential.https://push.example.test/team/notes.git.useHttpPath",
                     "true",
                     scope="global",
                 ),
@@ -1587,9 +1562,7 @@ def test_ssh_host_trust_snapshot_materializes_private_file_and_exact_openssh_inv
 ) -> None:
     """Dropping any frozen trust or agent pin must make SSH context use fail."""
     repository = _network_repository(tmp_path)
-    endpoint = _network_endpoint(
-        "ssh://git@push.example.test:2222/team/notes.git"
-    )
+    endpoint = _network_endpoint("ssh://git@push.example.test:2222/team/notes.git")
     destination = endpoint.projection
     _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "isolated-home"
@@ -1642,9 +1615,7 @@ def test_ssh_host_trust_snapshot_materializes_private_file_and_exact_openssh_inv
         )
         private_trust = Path(trust_argument.partition("=")[2])
 
-        assert private_trust.read_bytes() == (
-            b"first-host-key\nsecond-host-key\n"
-        )
+        assert private_trust.read_bytes() == (b"first-host-key\nsecond-host-key\n")
         assert stat.S_IMODE(private_trust.stat().st_mode) == 0o400
         assert private_trust.stat().st_nlink == 1
         assert invocation.argv == (
@@ -1744,9 +1715,7 @@ def _private_host_trust_path(
     invocation = context.openssh_invocation()
     assert invocation is not None
     argument = next(
-        value
-        for value in invocation.argv
-        if value.startswith("UserKnownHostsFile=")
+        value for value in invocation.argv if value.startswith("UserKnownHostsFile=")
     )
     return Path(argument.partition("=")[2])
 
@@ -1820,9 +1789,7 @@ def test_ssh_host_trust_combined_limit_counts_inserted_newlines(
 ) -> None:
     """The private payload, including separators, must remain at most 4 MiB."""
     repository = _network_repository(tmp_path)
-    destination = _network_destination(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    destination = _network_destination("ssh://git@push.example.test:22/team/notes.git")
     system_paths = _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "full-trust-home"
     user_paths = (
@@ -1864,9 +1831,7 @@ def test_ssh_host_trust_rejects_unsafe_present_source_before_context(
 ) -> None:
     """Accepting an unsafe present source would turn local proof into live trust."""
     repository = _network_repository(tmp_path)
-    destination = _network_destination(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    destination = _network_destination("ssh://git@push.example.test:22/team/notes.git")
     _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "unsafe-home"
     ssh_directory = home / ".ssh"
@@ -1894,10 +1859,7 @@ def test_ssh_host_trust_rejects_unsafe_present_source_before_context(
         def unstable_fstat(descriptor: int):
             nonlocal matching_calls
             metadata = original_fstat(descriptor)
-            if (
-                metadata.st_dev == identity.device
-                and metadata.st_ino == identity.inode
-            ):
+            if metadata.st_dev == identity.device and metadata.st_ino == identity.inode:
                 matching_calls += 1
                 if matching_calls > 1:
                     values = list(metadata)
@@ -1934,9 +1896,7 @@ def test_ssh_host_trust_requires_safe_existing_agent_during_local_proof(
 ) -> None:
     """Deferring missing-agent refusal to OpenSSH would cross the network boundary."""
     repository = _network_repository(tmp_path)
-    destination = _network_destination(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    destination = _network_destination("ssh://git@push.example.test:22/team/notes.git")
     _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "agentless-home"
     home.mkdir(mode=0o700)
@@ -1995,9 +1955,7 @@ def test_private_host_trust_tamper_invalidates_context_and_can_be_cleaned(
 ) -> None:
     """Failing to pin private trust would let same-session drift reach OpenSSH."""
     repository = _network_repository(tmp_path)
-    endpoint = _network_endpoint(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    endpoint = _network_endpoint("ssh://git@push.example.test:22/team/notes.git")
     destination = endpoint.projection
     _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "trust-home"
@@ -2129,9 +2087,7 @@ def test_openssh_invocation_is_exact_literal_direct_argv(
 ) -> None:
     executable = _fake_ssh_executable(tmp_path)
     repository = _network_repository(tmp_path)
-    endpoint = _network_endpoint(
-        "ssh://git@[2001:db8::1]:2222/team/notes.git"
-    )
+    endpoint = _network_endpoint("ssh://git@[2001:db8::1]:2222/team/notes.git")
     destination = endpoint.projection
     _isolated_system_ssh_trust_paths(tmp_path, monkeypatch)
     home = tmp_path / "isolated-home"
@@ -2214,9 +2170,7 @@ def test_openssh_invocation_rejects_tokenized_private_host_trust_path(
 ) -> None:
     """OpenSSH token expansion must not redirect the private trust snapshot."""
     repository = _network_repository(tmp_path)
-    endpoint = _network_endpoint(
-        "ssh://git@push.example.test:22/team/notes.git"
-    )
+    endpoint = _network_endpoint("ssh://git@push.example.test:22/team/notes.git")
     destination = endpoint.projection
     source_authorization, configuration = _network_authorizations(
         repository,
@@ -2232,7 +2186,7 @@ def test_openssh_invocation_rejects_tokenized_private_host_trust_path(
         git_executable=str(git_executable),
         git_exec_path=git_exec_path,
         ssh_executable=str(_fake_ssh_executable(tmp_path)),
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=True,
     )
 
@@ -2420,9 +2374,7 @@ def test_real_sha256_network_context_uses_alternate_for_query_and_push(
         parent_oid,
         candidate_oid,
     )
-    endpoint = _network_endpoint(
-        "git@push.example.test:team/notes.git"
-    )
+    endpoint = _network_endpoint("git@push.example.test:team/notes.git")
     destination = endpoint.projection
     source_authorization, configuration = _network_authorizations(
         repository,
@@ -2608,9 +2560,7 @@ def test_network_context_builders_require_live_exact_context_endpoint(
 ) -> None:
     repository, _destination, context = _create_network_context(tmp_path)
     other_repository = _network_repository(tmp_path / "other")
-    other_endpoint = _network_endpoint(
-        "https://other.example.test/team/notes.git"
-    )
+    other_endpoint = _network_endpoint("https://other.example.test/team/notes.git")
     other_destination = other_endpoint.projection
     other_source, other_config = _network_authorizations(
         other_repository,
@@ -2622,7 +2572,7 @@ def test_network_context_builders_require_live_exact_context_endpoint(
         environment={},
         temporary_parent=other_parent,
         git_exec_path=_test_git_installation()[1],
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=other_repository,
         source_objects=other_source,
@@ -2641,9 +2591,7 @@ def test_network_context_builders_require_live_exact_context_endpoint(
         "d" * 40,
     )
 
-    private_git_dir = context.command_settings().environment[
-        "GIT_DIR"
-    ]
+    private_git_dir = context.command_settings().environment["GIT_DIR"]
     assert f"--git-dir={private_git_dir}" in query
     assert f"--git-dir={private_git_dir}" in push
     assert "ls-remote" in query
@@ -2662,9 +2610,7 @@ def test_network_context_cleanup_waits_for_every_retained_purpose(
     tmp_path: Path,
 ) -> None:
     _repository, _destination, context = _create_network_context(tmp_path)
-    root = Path(
-        context.command_settings().environment["GIT_DIR"]
-    ).parent
+    root = Path(context.command_settings().environment["GIT_DIR"]).parent
     review = context.retain("review")
     active = context.retain("active")
     recovery = context.retain("recovery")
@@ -2686,12 +2632,8 @@ def test_network_context_cleanup_waits_for_every_retained_purpose(
 def test_network_context_lease_is_bound_to_its_issuing_context(
     tmp_path: Path,
 ) -> None:
-    _repository, _destination, first = _create_network_context(
-        tmp_path / "first"
-    )
-    _repository, _destination, second = _create_network_context(
-        tmp_path / "second"
-    )
+    _repository, _destination, first = _create_network_context(tmp_path / "first")
+    _repository, _destination, second = _create_network_context(tmp_path / "second")
     lease = first.retain("active")
 
     assert first.close() is False
@@ -2794,7 +2736,7 @@ def test_network_context_rejects_safe_leaf_under_writable_ancestor(
         temporary_parent=parent,
         git_executable=str(git_executable),
         git_exec_path=_test_git_installation()[1],
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
     )
 
     with pytest.raises(git_network.NetworkContextError):
@@ -2912,7 +2854,7 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
         temporary_parent=parent,
         git_executable=str(git_executable),
         git_exec_path=proved_exec_path,
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -2924,9 +2866,7 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
     context_exec_path = Path(settings.environment["GIT_EXEC_PATH"])
 
     assert context_exec_path == proved_exec_path
-    assert {
-        path.name for path in context_exec_path.iterdir()
-    } == {
+    assert {path.name for path in context_exec_path.iterdir()} == {
         "git-remote-https",
         f"git-credential-{helper_name}",
     }
@@ -2951,9 +2891,7 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
         endpoint_value,
         endpoint_value,
     ]
-    assert remote_record["environment"]["GIT_EXEC_PATH"] == str(
-        context_exec_path
-    )
+    assert remote_record["environment"]["GIT_EXEC_PATH"] == str(context_exec_path)
     assert remote_record["scratch_writes"] == {
         "HOME": False,
         "XDG_CONFIG_HOME": False,
@@ -2969,27 +2907,19 @@ def test_network_context_proved_git_exec_path_dispatches_pinned_targets(
         ),
         cwd=settings.cwd,
         env=dict(settings.environment),
-        input=(
-            b"protocol=https\n"
-            b"host=push.example.test\n"
-            b"path=team/notes.git\n\n"
-        ),
+        input=(b"protocol=https\nhost=push.example.test\npath=team/notes.git\n\n"),
         capture_output=True,
         timeout=5,
         check=False,
     )
     assert credential.returncode == 0
     assert b"username=pinned-user" in credential.stdout
-    credential_record = json.loads(
-        credential_log.read_text(encoding="utf-8")
-    )
+    credential_record = json.loads(credential_log.read_text(encoding="utf-8"))
     assert credential_record["argv"] == [
         str(proved_exec_path / f"git-credential-{helper_name}"),
         "get",
     ]
-    assert credential_record["environment"]["GIT_EXEC_PATH"] == str(
-        context_exec_path
-    )
+    assert credential_record["environment"]["GIT_EXEC_PATH"] == str(context_exec_path)
     assert credential_record["scratch_writes"] == {
         "HOME": False,
         "XDG_CONFIG_HOME": False,
@@ -3053,9 +2983,7 @@ def test_network_context_rejects_source_repository_network_executables(
     else:
         selected_exec_path = tmp_path / "proved-exec-path"
         selected_exec_path.mkdir(mode=0o700)
-        (selected_exec_path / "git-remote-https").symlink_to(
-            source_executable
-        )
+        (selected_exec_path / "git-remote-https").symlink_to(source_executable)
 
     parent = tmp_path / "network-contexts"
     parent.mkdir(mode=0o700)
@@ -3064,9 +2992,7 @@ def test_network_context_rejects_source_repository_network_executables(
         temporary_parent=parent,
         git_executable=str(selected_git),
         git_exec_path=selected_exec_path,
-        ssh_executable=(
-            None if selected_ssh is None else str(selected_ssh)
-        ),
+        ssh_executable=(None if selected_ssh is None else str(selected_ssh)),
         python_executable=str(_pinnable_python_executable()),
         allow_ssh_agent=destination.scheme == "ssh",
     )
@@ -3104,7 +3030,7 @@ def test_https_network_context_ignores_source_repository_python(
         temporary_parent=parent,
         git_executable=str(_test_git_installation()[0]),
         git_exec_path=_test_git_installation()[1],
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source_authorization,
@@ -3136,9 +3062,7 @@ def test_network_context_rejects_credential_helper_inside_source_repository(
         proved_exec_path / "git-remote-https",
         tmp_path / "unused-source-remote-log.json",
     )
-    (proved_exec_path / f"git-credential-{helper_name}").symlink_to(
-        helper
-    )
+    (proved_exec_path / f"git-credential-{helper_name}").symlink_to(helper)
     endpoint = _network_endpoint()
     destination = endpoint.projection
     source_authorization, configuration = _network_authorizations(
@@ -3184,7 +3108,7 @@ def test_network_context_restart_never_discovers_or_reuses_crash_left_directory(
         environment={},
         temporary_parent=parent,
         git_exec_path=_test_git_installation()[1],
-            python_executable=str(_pinnable_python_executable()),
+        python_executable=str(_pinnable_python_executable()),
     ).create(
         repository=repository,
         source_objects=source,
@@ -3192,9 +3116,7 @@ def test_network_context_restart_never_discovers_or_reuses_crash_left_directory(
         destination=destination,
         endpoint=_network_endpoint(),
     )
-    root = Path(
-        context.command_settings().environment["GIT_DIR"]
-    ).parent
+    root = Path(context.command_settings().environment["GIT_DIR"]).parent
 
     assert root != orphan
     assert marker.read_bytes() == b"no credentials or note body"
@@ -3289,13 +3211,9 @@ def _publish_candidate_on_owner(
         approved_move_edges=(),
         approved_current_path="note.md",
         original_baselines={
-            "note.md": IndexBaseline(
-                IndexEntry("note.md", "100644", "a" * 40)
-            )
+            "note.md": IndexBaseline(IndexEntry("note.md", "100644", "a" * 40))
         },
-        post_stage_entries={
-            "note.md": IndexEntry("note.md", "100644", "c" * 40)
-        },
+        post_stage_entries={"note.md": IndexEntry("note.md", "100644", "c" * 40)},
     )
     assert owner.publish_ownership(binding, {sequence: ownership})
     lease = owner.try_acquire_mutation(binding)
@@ -3363,9 +3281,7 @@ class _ControlledLocalProofRunner:
         self.head_oid = head_oid
         self.parent_oid = parent_oid
         self.git_exec_path = (
-            _test_git_installation()[1]
-            if git_exec_path is None
-            else git_exec_path
+            _test_git_installation()[1] if git_exec_path is None else git_exec_path
         )
         self.config_reads = 0
         self.calls: list[
@@ -3518,9 +3434,7 @@ class _ControlledExactPushRunner(_ControlledLocalProofRunner):
         self.observations = list(observations)
         self.push_result = push_result
         self.launch_error = launch_error
-        self.network_calls: list[
-            tuple[tuple[str | bytes, ...], dict[str, object]]
-        ] = []
+        self.network_calls: list[tuple[tuple[str | bytes, ...], dict[str, object]]] = []
 
     async def run(self, argv, **kwargs) -> GitCommandResult:
         command = tuple(os.fsdecode(argument) for argument in argv)
@@ -3560,9 +3474,7 @@ class _UnprovedCancelledPushRecoveryRunner(_ControlledExactPushRunner):
             self.query_count += 1
             if self.query_count == 4:
                 self.network_calls.append((tuple(argv), dict(kwargs)))
-                raise git_service.GitRunCancelled(
-                    retained_child=self.token
-                ) from None
+                raise git_service.GitRunCancelled(retained_child=self.token) from None
         return await super().run(argv, **kwargs)
 
     def claim_retained_child(self, token) -> bool:
@@ -3700,9 +3612,7 @@ class _RetainedCancelledPushPreflightRunner(_ControlledLocalProofRunner):
         try:
             await asyncio.Event().wait()
         except asyncio.CancelledError:
-            raise git_service.GitRunCancelled(
-                retained_child=self.token
-            ) from None
+            raise git_service.GitRunCancelled(retained_child=self.token) from None
         raise AssertionError("unreachable")
 
     def claim_retained_child(self, token) -> bool:
@@ -3740,17 +3650,13 @@ class _RetainedCancelledPushPreflightRunner(_ControlledLocalProofRunner):
         self.shutdown_called.set()
 
 
-class _RetainedCancelledConfirmQueryRunner(
-    _RetainedCancelledPushPreflightRunner
-):
+class _RetainedCancelledConfirmQueryRunner(_RetainedCancelledPushPreflightRunner):
     """Settle cancellation of Confirm's retained final query child."""
 
     def __init__(self, repository: RepositoryIdentity) -> None:
         super().__init__(repository)
         self.query_count = 0
-        self.network_calls: list[
-            tuple[tuple[str | bytes, ...], dict[str, object]]
-        ] = []
+        self.network_calls: list[tuple[tuple[str | bytes, ...], dict[str, object]]] = []
 
     async def run(self, argv, **kwargs) -> GitCommandResult:
         command = tuple(os.fsdecode(argument) for argument in argv)
@@ -3767,17 +3673,13 @@ class _RetainedCancelledConfirmQueryRunner(
         return await super().run(argv, **kwargs)
 
 
-class _RetainedCancelledPostflightRunner(
-    _RetainedCancelledPushPreflightRunner
-):
+class _RetainedCancelledPostflightRunner(_RetainedCancelledPushPreflightRunner):
     """Expose a retained child when the exact postflight is cancelled."""
 
     def __init__(self, repository: RepositoryIdentity) -> None:
         super().__init__(repository)
         self.query_count = 0
-        self.network_calls: list[
-            tuple[tuple[str | bytes, ...], dict[str, object]]
-        ] = []
+        self.network_calls: list[tuple[tuple[str | bytes, ...], dict[str, object]]] = []
 
     async def run(self, argv, **kwargs) -> GitCommandResult:
         command = tuple(os.fsdecode(argument) for argument in argv)
@@ -3797,9 +3699,7 @@ class _RetainedCancelledPostflightRunner(
         if self.query_count <= 2:
             return _remote_observation("b" * 40)
         self.started.set()
-        raise git_service.GitRunCancelled(
-            retained_child=self.token
-        ) from None
+        raise git_service.GitRunCancelled(retained_child=self.token) from None
 
 
 class _NormallyReturnedRetainedPushPreflightRunner(
@@ -3843,9 +3743,7 @@ class _NormallyReturnedRetainedPushPreflightRunner(
         )
 
 
-class _UnprovedShutdownPushPreflightRunner(
-    _RetainedCancelledPushPreflightRunner
-):
+class _UnprovedShutdownPushPreflightRunner(_RetainedCancelledPushPreflightRunner):
     """Report bounded controller failure while the owned tree stays unproved."""
 
     async def settle_retained_child(self, token, *, timeout):
@@ -4148,9 +4046,7 @@ async def test_start_push_review_retains_local_proof_and_decline_preserves_candi
     assert service.authorize_push_destination(binding) is None
     assert service.retained_push_operation(binding) is None
     assert not any(
-        {"ls-remote", "push"}.intersection(
-            os.fsdecode(argument) for argument in argv
-        )
+        {"ls-remote", "push"}.intersection(os.fsdecode(argument) for argument in argv)
         for argv, _environment, _stdin in runner.calls
     )
 
@@ -4224,7 +4120,9 @@ async def test_push_authorization_revalidates_local_policy_before_context_or_que
 
     after = owner.snapshot(binding)
     assert result.state == "blocked"
-    assert after.destination_authorization_epoch == before.destination_authorization_epoch
+    assert (
+        after.destination_authorization_epoch == before.destination_authorization_epoch
+    )
     assert after.push_candidate is not None
     assert runner.network_calls == []
     assert list((tmp_path / "network-contexts").iterdir()) == []
@@ -4349,11 +4247,14 @@ async def test_ssh_host_trust_source_replacement_before_confirm_revokes_review(
         )
         settings = snapshot.context.command_settings()
 
-        assert service._push_command_policy_fingerprint(
-            changed_policy,
-            snapshot.context,
-            settings.environment_fingerprint,
-        ) != snapshot.command_policy_fingerprint
+        assert (
+            service._push_command_policy_fingerprint(
+                changed_policy,
+                snapshot.context,
+                settings.environment_fingerprint,
+            )
+            != snapshot.command_policy_fingerprint
+        )
         result = await service.start_push(binding, reviewed.handle)
 
         assert result.state == "blocked"
@@ -4481,10 +4382,10 @@ async def test_push_preflight_parent_issues_one_review_and_back_preserves_candid
     config_path = Path(repository.git_dir) / "config"
     config_path.write_text(
         (
-            "[branch \"main\"]\n"
+            '[branch "main"]\n'
             "\tremote = replacement\n"
             f"\tmerge = {BRANCH_REF}\n"
-            "[remote \"replacement\"]\n"
+            '[remote "replacement"]\n'
             "\tpushurl = https://replacement.example.test/other.git\n"
         ),
         encoding="utf-8",
@@ -4509,11 +4410,14 @@ async def test_push_preflight_parent_issues_one_review_and_back_preserves_candid
     settings = review_snapshot.context.command_settings()
     service._push_query_timeout = 0.5
     try:
-        assert service._push_command_policy_fingerprint(
-            review_snapshot.policy,
-            review_snapshot.context,
-            settings.environment_fingerprint,
-        ) != review_snapshot.command_policy_fingerprint
+        assert (
+            service._push_command_policy_fingerprint(
+                review_snapshot.policy,
+                review_snapshot.context,
+                settings.environment_fingerprint,
+            )
+            != review_snapshot.command_policy_fingerprint
+        )
     finally:
         service._push_query_timeout = 0.25
     retained = service.retained_push_operation(binding)
@@ -4851,8 +4755,7 @@ async def test_push_preflight_cancel_during_local_revalidation_never_authorizes(
     after = owner.snapshot(binding)
     assert result.state == "cancelled"
     assert (
-        after.destination_authorization_epoch
-        == before.destination_authorization_epoch
+        after.destination_authorization_epoch == before.destination_authorization_epoch
     )
     assert after.push_candidate is not None
     assert not owner.mutation_active(binding)
@@ -4957,9 +4860,7 @@ async def test_push_preflight_ownership_failure_quarantines_token_and_context(
     waiter = service._push_preflight_waiter
     assert cycle is not None and waiter is not None
     assert cycle.get_coro().cr_frame is not None
-    assert "REMOTE_HELPER_SECRET_CANARY" not in repr(
-        cycle.get_coro().cr_frame.f_locals
-    )
+    assert "REMOTE_HELPER_SECRET_CANARY" not in repr(cycle.get_coro().cr_frame.f_locals)
     cycle.cancel()
     waiter.cancel()
     await asyncio.gather(cycle, waiter, return_exceptions=True)
@@ -5182,9 +5083,7 @@ async def test_lfs_or_indeterminate_candidate_tree_attributes_block_locally(
     assert review.authorization is None
     assert service.authorize_push_destination(binding) is None
     assert not any(
-        {"ls-remote", "push"}.intersection(
-            os.fsdecode(argument) for argument in argv
-        )
+        {"ls-remote", "push"}.intersection(os.fsdecode(argument) for argument in argv)
         for argv, _environment, _stdin in runner.calls
     )
 
@@ -5248,12 +5147,8 @@ async def test_confirm_revalidation_revokes_authorization_on_format_mismatch(
     assert valid is False
     assert owner.snapshot(binding).destination_authorization_epoch > epoch
     assert not any(
-        {"ls-remote", "push"}.intersection(
-            os.fsdecode(argument) for argument in argv
-        )
-        for argv, _environment, _stdin in runner.calls[
-            first_revalidation_call:
-        ]
+        {"ls-remote", "push"}.intersection(os.fsdecode(argument) for argument in argv)
+        for argv, _environment, _stdin in runner.calls[first_revalidation_call:]
     )
 
 
@@ -5282,8 +5177,7 @@ async def test_destination_authorization_reuses_only_unchanged_revalidation(
     after = owner.snapshot(binding)
     assert after.destination_policy_generation == before.destination_policy_generation
     assert (
-        after.destination_authorization_epoch
-        == before.destination_authorization_epoch
+        after.destination_authorization_epoch == before.destination_authorization_epoch
     )
 
 
@@ -5616,11 +5510,13 @@ async def test_candidate_tree_lfs_proof_batches_paths_with_bounded_commands(
 
     assert review.state == "ready"
     assert len(runner.calls) <= 9
-    assert sum(
-        "--exec-path"
-        in tuple(os.fsdecode(argument) for argument in argv)
-        for argv, _environment, _stdin in runner.calls
-    ) == 1
+    assert (
+        sum(
+            "--exec-path" in tuple(os.fsdecode(argument) for argument in argv)
+            for argv, _environment, _stdin in runner.calls
+        )
+        == 1
+    )
     attribute_calls = [
         (argv, stdin)
         for argv, _environment, stdin in runner.calls
@@ -5628,9 +5524,7 @@ async def test_candidate_tree_lfs_proof_batches_paths_with_bounded_commands(
     ]
     assert len(attribute_calls) == 1
     argv, stdin = attribute_calls[0]
-    assert {"--cached", "--stdin", "-z"}.issubset(
-        os.fsdecode(item) for item in argv
-    )
+    assert {"--cached", "--stdin", "-z"}.issubset(os.fsdecode(item) for item in argv)
     assert stdin is not None
     assert tuple(path for path in stdin.split(b"\0") if path) == paths
 
@@ -5654,9 +5548,7 @@ def _real_candidate_repository(
     lfs: bool = False,
     object_format: str = "sha1",
 ) -> tuple[Path, str, str]:
-    root = tmp_path / (
-        f"real-{object_format}-lfs" if lfs else f"real-{object_format}"
-    )
+    root = tmp_path / (f"real-{object_format}-lfs" if lfs else f"real-{object_format}")
     root.mkdir()
     init_arguments = ["init", "-b", "main"]
     if object_format == "sha256":
@@ -5770,16 +5662,8 @@ async def test_real_sha256_lfs_proof_reaches_exact_tree_attribute_check(
 
     review = await service.review_push_destination(binding)
 
-    read_tree = [
-        result
-        for command, result in runner.calls
-        if "read-tree" in command
-    ]
-    check_attr = [
-        result
-        for command, result in runner.calls
-        if "check-attr" in command
-    ]
+    read_tree = [result for command, result in runner.calls if "read-tree" in command]
+    check_attr = [result for command, result in runner.calls if "check-attr" in command]
     diagnostic = "\n".join(
         f"{index}: rc={result.returncode} argv={command!r} "
         f"stdout={result.stdout!r} stderr={result.stderr!r}"
@@ -5880,11 +5764,7 @@ async def test_configuration_include_edge_aba_revokes_stale_authorization(
     )
 
     def local_config(include_name: str) -> str:
-        section = (
-            '[includeIf "onbranch:main"]'
-            if conditional
-            else "[include]"
-        )
+        section = '[includeIf "onbranch:main"]' if conditional else "[include]"
         return f"{section}\n\tpath = {include_name}\n"
 
     config = git_dir / "config"
@@ -6138,10 +6018,7 @@ async def test_attribute_proof_directory_substitution_blocks_without_cleanup_fol
     assert runner.replaced is True
     assert runner.replacement_marker is not None
     assert runner.replacement_marker.exists()
-    assert not any(
-        "check-attr" in command
-        for command, _result in runner.calls
-    )
+    assert not any("check-attr" in command for command, _result in runner.calls)
     await service.shutdown()
 
 
@@ -6178,9 +6055,7 @@ async def test_attribute_proof_rejects_directory_index_without_mutating_it(
     assert index_path.is_dir()
     assert stat.S_IMODE(index_path.stat().st_mode) == 0o700
     assert not any(
-        "check-attr" in tuple(
-            os.fsdecode(argument) for argument in argv
-        )
+        "check-attr" in tuple(os.fsdecode(argument) for argument in argv)
         for argv, _environment, _stdin in runner.calls
     )
     await service.shutdown()
@@ -6261,9 +6136,7 @@ async def test_attribute_proof_rejects_source_object_metadata_change(
     index_path = Path(read_tree_environments[0]["GIT_INDEX_FILE"])
     assert not index_path.parent.exists()
     assert not any(
-        "check-attr" in tuple(
-            os.fsdecode(argument) for argument in argv
-        )
+        "check-attr" in tuple(os.fsdecode(argument) for argument in argv)
         for argv, _environment, _stdin in runner.calls
     )
     await service.shutdown()
@@ -6446,11 +6319,7 @@ def _remote_observation(oid: str) -> GitCommandResult:
 def _accepted_push_result() -> GitCommandResult:
     return _settled_network_result(
         0,
-        b" \t"
-        + b"d" * 40
-        + b":"
-        + BRANCH_REF.encode("ascii")
-        + b"\tb..d\n",
+        b" \t" + b"d" * 40 + b":" + BRANCH_REF.encode("ascii") + b"\tb..d\n",
     )
 
 
@@ -6594,8 +6463,7 @@ async def test_confirm_consumes_review_once_and_exact_push_postflight_succeeds(
         for argv, _kwargs in runner.network_calls
     ]
     assert [
-        "push" if "push" in command else "ls-remote"
-        for command in network_commands
+        "push" if "push" in command else "ls-remote" for command in network_commands
     ] == ["ls-remote", "ls-remote", "push", "ls-remote"]
     assert network_commands[2][-2:] == (
         "https://push.example.test/team/notes.git",
@@ -6992,9 +6860,7 @@ async def test_exact_push_classifies_machine_result_and_postflight(
     assert result.state == expected
     assert result.outcome is not None
     assert result.outcome.state == expected
-    assert (owner.snapshot(binding).push_candidate is None) is (
-        expected == "succeeded"
-    )
+    assert (owner.snapshot(binding).push_candidate is None) is (expected == "succeeded")
     assert "REMOTE_SECRET_CANARY" not in repr(result)
 
 
@@ -7046,10 +6912,10 @@ async def test_uncertain_push_retains_only_query_recovery_and_exact_endpoint(
 
     config_path = Path(repository.git_dir) / "config"
     config_path.write_text(
-        "[branch \"main\"]\n"
+        '[branch "main"]\n'
         "\tremote = replacement\n"
         f"\tmerge = {BRANCH_REF}\n"
-        "[remote \"replacement\"]\n"
+        '[remote "replacement"]\n'
         "\tpushurl = https://replacement.example.test/other.git\n",
         encoding="utf-8",
     )
@@ -7107,9 +6973,7 @@ async def test_push_recovery_rejects_stale_operation_after_new_attempt(
     reviewed_a = await _prepare_exact_push_review(service, binding)
     assert (await service.start_push(binding, reviewed_a.handle)).state == "uncertain"
     operation_a = _current_push_operation(service, binding)
-    assert (
-        await service.check_push_again(binding, operation_a)
-    ).state == "succeeded"
+    assert (await service.check_push_again(binding, operation_a)).state == "succeeded"
 
     _publish_candidate_on_owner(
         owner,
@@ -7191,10 +7055,13 @@ async def test_push_recovery_never_retries_and_unresolved_state_keeps_gate(
     assert recovery.state == expected
     assert recovery.can_check_again
     assert len(runner.network_calls) == calls_before + 1
-    assert sum(
-        "push" in tuple(os.fsdecode(argument) for argument in argv)
-        for argv, _kwargs in runner.network_calls
-    ) == 1
+    assert (
+        sum(
+            "push" in tuple(os.fsdecode(argument) for argument in argv)
+            for argv, _kwargs in runner.network_calls
+        )
+        == 1
+    )
     assert owner.mutation_active(binding)
     assert owner.snapshot(binding).push_recovery == recovery
     assert owner.snapshot(binding).push_candidate is not None
@@ -7285,10 +7152,13 @@ async def test_push_recovery_retains_unproved_cancelled_child_until_shutdown(
     assert evidence.recovery_handle is None
     assert owner._push_recovery_grant is None
     assert owner.snapshot(binding).push_recovery_available is False
-    assert service.authorize_push_recovery(
-        binding,
-        _current_push_operation(service, binding),
-    ) is False
+    assert (
+        service.authorize_push_recovery(
+            binding,
+            _current_push_operation(service, binding),
+        )
+        is False
+    )
     assert owner.mutation_active(binding)
     assert runner.released is False
 
@@ -7457,10 +7327,7 @@ async def test_push_recovery_trust_drift_requires_fresh_exact_authorization(
     assert service.authorize_push_recovery(binding, operation) is True
     recovery = await service.check_push_again(binding, operation)
     assert recovery.state == "uncertain"
-    command = tuple(
-        os.fsdecode(argument)
-        for argument in runner.network_calls[-1][0]
-    )
+    command = tuple(os.fsdecode(argument) for argument in runner.network_calls[-1][0])
     assert command[-2:] == (
         "https://push.example.test/team/notes.git",
         BRANCH_REF,
