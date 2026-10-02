@@ -23,13 +23,13 @@ The [implementation plan](../../Docs/superpowers/plans/2026-09-29-agent-orchestr
 tracks this scope. All 13 tasks are Done with checked acceptance criteria and implementation
 notes. The [final review and qualification record](../../Docs/superpowers/reviews/2026-09-29-agent-orchestration-burndown.md)
 records the corrections, independent approvals, passing targeted selections and disclosed limits.
-The branch is integrated with dev `27e718f01d` (compaction) and the following docs-only `922440b93e` (ADR-210). Upstream Chat schema 74 remains intact; durable progress uses a separate 74→75 migration. Exact current Chat/shared-Subscriptions recovery gates and catalogs use 75, while frozen AgentRuns histories remain unchanged. ADR-199 records the composition under ADR-052.
+The branch is integrated with dev `ab4df99959` (PERF-06), following `27e718f01d` (compaction) and docs-only `922440b93e` (ADR-210). Upstream Chat schema 74 remains intact; durable progress uses a separate 74→75 migration. Exact current Chat/shared-Subscriptions recovery gates and catalogs use 75, while frozen AgentRuns histories remain unchanged. ADR-199 records the composition under ADR-052.
 
 Final schema qualification passes 31 cases; mounted saved reopen/close passes two; independent compaction/wake review passes ten. Independent schema review approves 39 overlapping checks, including genuine upgrades, rollback, dictionary variants, frozen histories and exact staged shared recovery. Startup/CSS/guide passes four cases with imports 679/686 and UI-ready 1032/1033; original pins remain unchanged. Final 79-file changed-code checks and audited diagnostic inventory pass. Selections overlap and are not summed. The two initial schema qualification setup failures are corrected and preserved in the review record; no recovery validator was weakened.
 
 Qodo's four findings remain addressed and independently reviewed. The earlier boot CSS breach is repaid with one scoped editor class, preserving actual paint and the original 608090 B limit. Readiness rebase test corrections and their negative controls remain qualified; historical failed combined runs are not claimed green. All 13 original tasks are Done with checked criteria and notes.
 
-Delivery is through [PR #2918](https://github.com/rmusser01/tldw_chatbook/pull/2918) against dev. Fresh remote checks must run on its published head. No full suite, live-provider, Windows, aggregate-resource or merge result is claimed.
+Delivery is through [PR #2918](https://github.com/rmusser01/tldw_chatbook/pull/2918) against dev. The user has authorized merge after fresh Qodo review and remote checks on its published head. Incoming warm-config integration passes 19 targeted checks, three startup/CSS guards and five independently reviewed consumer cases; no patch Python bytes changed. No full suite, live-provider, Windows, aggregate-resource or merge result is claimed.
 
 ## September 12 completion status (historical)
 

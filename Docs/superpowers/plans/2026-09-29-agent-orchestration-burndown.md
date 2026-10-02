@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** dev 27e718f01d81b7093502c0ea1d2690e07b9f6362 (compaction), followed by docs-only dev 922440b93e83b4dd7086086de21b1276c477fc8e.
+**Integration base:** dev ab4df99959545e37d8d2048c1c1ce15fd914721d (PERF-06), following the qualified compaction and docs-only integrations below.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -97,3 +97,8 @@ Qualification: genuine 73/74 upgrades retain saved conversations and auxiliary f
 Independent verification passes 30 core/dictionary/AgentRuns/standalone-Subscriptions checks and five frozen AgentRuns history checks. Incoming compaction/refund/nonreplay qualification passes 10 cases in 82.63s. Mounted saved reopen/close passes two cases in 18.15s; startup/CSS/guide passes four in 51.29s, imports 679/686 and UI-ready 1032/1033. Selections overlap and are not summed. The audited diagnostic inventory remains verified.
 
 The subsequent dev 922440b93e changes only canonical ADRs, including ADR-210's accepted Console migration plan. Its step 6 retains the current Model/Agent rail sections until their replacement; this patch does not implement that separate redesign. Rebase without changing runtime code, verify its source manifest, then publish PR #2918 for fresh remote checks. No full suite or merge is claimed.
+
+
+## Requested merge
+
+Rebase onto dev `ab4df99959`, qualify the incoming warm-config behavior with targeted checks and independent review, publish the exact reviewed head, wait for Qodo and fresh required CI, address any new finding and merge under normal branch protection. ADR required: no; integration of the accepted PERF-06 behavior without changes to orchestration contracts. Existing qualification limits remain. The fresh 19-case integration, three startup/CSS guards and five independent consumer/fallback cases pass; all preceding patch Python bytes remain unchanged.
