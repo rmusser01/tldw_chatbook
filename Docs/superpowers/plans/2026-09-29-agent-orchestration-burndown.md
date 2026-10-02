@@ -145,3 +145,18 @@ Published `64d77044761dbfd4993cdad7fcd12cc987c14cc9` passes all four jobs and ex
 ADR required: no new ADR. ADR path: backlog/decisions/148-console-run-hooks.md and backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md. Reason: preserve accepted upstream human review behavior and existing orchestration authority; no new schema, permission or lifecycle contract is planned. Existing ADR-126 worker/storage boundaries remain.
 
 Qualification complete on `932d80aa56f34735b2168df4c76b2267d16b6daa`: sole lesson conflict preserves both exact append blocks; only upstream ChatScreen changes among 81 qualified patch files. Twelve real consumers, four unchanged storage/startup/CSS guards, six independent controller cases and nine independent mounted modal/diagnostic cases pass. Both source reviews approve; final static/new-file, worker-contract and 634-owner diagnostic guards pass. Original module pins and authority remain unchanged. Harness pump responsiveness does not qualify or close upstream TASK-33621.28's real-app Ctrl+Q criterion. Publish once; fresh-head gates and protected merge remain.
+
+
+## Required maintenance-probe integration
+
+All four jobs on published 8cf1014cbf4b6bc62da9823ef1707a96164fad2a pass; exact-head Qodo is clear, with zero unresolved threads. Live strict up-to-date protection requires including actual dev 52620c3a08bfe6057aa58b9319efb4ec34a40213 (PR #2920).
+
+1. Preserve the incoming 1 Hz native maintenance probe and its two existing interval oracles during the required rebase. Compare all 81 previously qualified Python files and CSS.
+2. Run the actual unpatched-monitor interval/cancellation/same-task coordination cases and targeted orchestration maintenance/close/cold-admission consumers. Obtain independent read-only review, retain original gates and qualify startup/storage only proportionately.
+3. Record results and limits in existing qualification records, publish once with the exact observed 8cf1014 lease, then require fresh-head Qodo and all four jobs before protected merge. No full sweep or preemptive rebase while jobs run.
+
+ADR required: no new ADR.
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md.
+Reason: preserving the accepted upstream probe interval without changing native custody, pause authority, SQL admission, migration, recovery or orchestration contracts. Do not close upstream TASK-33560: its remaining guarded-read/cache/performance criteria remain unchecked.
+
+Qualification complete on `d4b3311586568d9ae1d66839731e40938f504528`: independent review reopened existing TASK-33432 AC3 for a proven early maintenance refusal. The exact-authority guard and one progress/completion regression repair it using existing cleanup; two controlled RED cases, 11 repair/neighbor cases, seven maintenance caller/drain cases and an independent real refund/resume probe establish the result. The original source census is restored and passes; its earlier unexplained typing-helper failure remains disclosed. Static/new-file/owned-format/worker/diagnostic checks pass, original module pins remain. No new ADR; existing ADR-126/199. Fresh published-head gates and protected merge remain.
