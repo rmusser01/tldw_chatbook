@@ -17845,3 +17845,10 @@ to conceal a small but real contribution.
 The held Stop fixture separately expired its 5s first-chunk precondition during provider validation. An observation-only private-profile plugin recorded actual dispatch at 9.578s and first yield 4.6ms later, with normal durable commit and cleanup. Giving only preparation a 15s bound preserves all subsequent 5s action checks; wake entry uses the same preparation bound while its paint, ledger and timer checks retain 8s.
 
 **What to do.** Wait for the actual asynchronous state a test needs, and distinguish preparation from the action being measured. A negative control must reach valid admission and streaming before its intended publication assertion fails; an earlier setup failure is not evidence that the oracle catches the bug. Keep production deadlines, profile admission, caps and authority unchanged.
+
+
+## Immutable recovery candidates must be staged from a live WAL source
+
+During PR #2918's schema-75 rebase, a new shared-Subscriptions test passed a live Chat WAL database directly to `validate_candidate`. The ordinary adapter saw 584 committed SQL objects, while immutable recovery validation saw the old 533-object main file and correctly refused `unsupported_schema`. Recovery's documented input is a disposable staged candidate, not the live destination. Using the existing `backup_database` API produced exact 584-object candidates; independent comparison also matched all 715 catalog rows and 523 metadata entries. A second staged copy with Chat stamp 74 correctly failed the version-75 gate. The final affected selection passed 31 cases after this and a separate test-only read-only owner correction.
+
+Stage through the existing owned SQLite backup before testing immutable recovery. Do not weaken or normalize catalog checks to accommodate WAL fixture mistakes. Check the Chat-only gate before adding shared subscription tables; afterward the core owner correctly refuses the extra schema before inspecting its stamp.
