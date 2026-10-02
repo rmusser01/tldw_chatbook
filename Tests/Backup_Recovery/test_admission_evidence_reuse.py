@@ -1372,3 +1372,83 @@ def test_lent_lock_replacement_never_authorizes_detached_description(
         with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
             target.write_bytes(b"forbidden")
         assert replaced and target.read_bytes() == b"foreign"
+
+
+def test_candidate_selection_cwd_failure_does_not_leak_observation_reservation(
+    local_scope,  # noqa: F811
+):
+    """Repeated relative-path selection can fail after earlier admission checks."""
+    import hashlib
+    import textwrap
+
+    root, _config, _data, _ = local_scope
+    source = Path(storage.__file__).resolve()
+    _in_subprocess(
+        textwrap.dedent("""\
+        from pathlib import Path
+        import hashlib, os, time
+        from Tests import network_guard
+        network_guard.install()
+        import keyring
+        from keyring.backends.null import Keyring
+        keyring.set_keyring(Keyring())
+        from tldw_chatbook.Backup_Recovery import storage_admission as s, bootstrap
+        from tldw_chatbook.Backup_Recovery.admission import Admission
+        source = Path(s.__file__).resolve()
+        assert str(source) == values['source']
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == values['source_hash']
+        root = Path(values['root'])
+        bootstrap.default_bootstrap_root = lambda: root
+        owner = s.acquire_storage()
+        hold = s._holds[owner._key]
+        before = set(s._live_leases)
+        count = hold.count
+        original = s._observe_candidates
+        previous_cwd = Path.cwd()
+        deleted_cwd = root.parent / 'deleted-cwd'
+        deleted_cwd.mkdir(mode=0o700)
+        protected = root.parent / 'unchanged-foreign-bytes'
+        protected.write_bytes(b'foreign')
+        getcwd = os.getcwd
+        lock_states = []
+        def missing_cwd():
+            lock_states.append(s._lock._is_owned())
+            return getcwd()
+        def remove_before_selection(*args):
+            os.chdir(deleted_cwd)
+            deleted_cwd.rmdir()
+            os.getcwd = missing_cwd
+            return original(*args)
+        s._observe_candidates = remove_before_selection
+        refused = False
+        try:
+            with s.acquire_storage(Path('relative.db')):
+                protected.write_bytes(b'forbidden')
+        except bootstrap.RecoveryRequired:
+            refused = True
+        finally:
+            os.getcwd = getcwd
+            os.chdir(previous_cwd)
+            s._observe_candidates = original
+        assert refused and protected.read_bytes() == b'foreign'
+        assert s._live_leases == before, 'selection leaked an observation token'
+        assert hold.count == count, 'selection leaked a counted borrower'
+        assert lock_states == [False], 'path selection ran under coordinator mutex'
+        owner.close()
+        assert hold.native_context is None and not hold.thread.is_alive()
+        assert hold not in s._retiring_holds and hold.key not in s._holds
+        assert not s._pending_acquisitions
+        pause = s._begin_local_pause()
+        try:
+            assert pause.drain(time.monotonic() + 1)
+        finally:
+            pause.resume()
+        with Admission.open_existing(root / 'admission').maintenance(hold.names, .05):
+            pass
+        assert hashlib.sha256(source.read_bytes()).hexdigest() == values['source_hash']
+        assert not network_guard.blocked_attempts()
+        """),
+        root=str(root),
+        source=str(source),
+        source_hash=hashlib.sha256(source.read_bytes()).hexdigest(),
+    )

@@ -1243,19 +1243,20 @@ def _reuse_evidence(
 
 def _observe_candidates(root, selector, path, related_paths):
     """Reserve the actual generation before observing its retained pins."""
+    selected = _selected_paths(path, related_paths)
     key = (os.getpid(), str(root))
     epoch = bootstrap._admission_epoch
     with _lock:
         hold = _holds.get(key)
         if not _hold_serving(hold):
             return epoch, None, {}
-        hold.count += 1
-        token = StorageLease(key)
         wanted = {str(selector): hold.evidence.get(str(selector))}
-        for item in _selected_paths(path, related_paths):
+        for item in selected:
             wanted[(str(selector), str(item))] = hold.path_evidence.get(
                 (str(selector), str(item))
             )
+        hold.count += 1
+        token = StorageLease(key)
     try:
         now = time.time_ns()
         observations = {
