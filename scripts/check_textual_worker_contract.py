@@ -73,8 +73,19 @@ W003 (census ratchet, TASK-33621.13)
     ``NoActiveWorker`` -- but Textual runs ``done`` through the requester
     pump's ``call_next``, and from a handler that pump is the one blocked on
     the await, so it deadlocks. PR #2922's
-    ``request_hook_review`` is this, and freezes the Console's Send
-    (TASK-33621.28). Known limitation: it is recognized only when ONE
+    ``request_hook_review`` was this, and froze the Console's Send
+    (TASK-33621.28). It now awaits a future the modal settles in its own
+    ``dismiss``, which no pump has to flush -- a shape W003 does not match.
+    That is not a licence to await it on the APP pump: the app pump delivers
+    the keys that dismiss the modal, so awaiting any screen's answer there
+    still freezes the app, and W003 cannot see that either. The Console hands
+    a Send's review to a worker unless the caller IS a worker's own task
+    (``hooks.in_worker_task``: a screen pushed from a worker inherits that
+    worker's contextvar, so ``get_current_worker()`` alone answers "worker"
+    on its pump), and ``request_hook_review`` logs an ERROR when awaited off
+    one; the runtime proof is
+    ``Tests/UI/test_console_hook_review_send_freeze.py``. Known limitation:
+    the hand-rolled shape is recognized only when ONE
     function creates the future, pushes and awaits it. A helper that creates
     and pushes and hands the future back (returned, or stored on ``self``)
     for its caller to await is the same deadlock, and W003 does not see it;

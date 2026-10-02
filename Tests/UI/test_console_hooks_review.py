@@ -19,6 +19,16 @@ pytestmark = pytest.mark.bootstrap_profile
 hook_file = _hook_file
 
 
+def _send_in_worker(console, draft):
+    """Send the way a worker caller does (spoken "Console, send."), which
+    waits for the review and returns the settled outcome. A caller outside a
+    worker gets AWAITING_REVIEW at once and the review runs in a worker of its
+    own (TASK-33621.28), so it cannot observe these outcomes."""
+    return console.run_worker(
+        console._dispatch_console_draft_send(draft), group="test-hook-send"
+    )
+
+
 @pytest.mark.parametrize("size", [(80, 24), (120, 40)])
 async def test_hooks_action_is_reachable_and_returns_focus(size, hook_file):
     app = _build_test_app()
@@ -74,18 +84,14 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file):
             )
 
         console._prompt_queue.dispatch = dispatch
-        first = asyncio.create_task(
-            console._dispatch_console_draft_send("retained draft")
-        )
+        first = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
         await pilot.press("escape")
-        assert not await first
+        assert not await first.wait()
         assert composer.draft_text() == "retained draft" and calls == []
-        second = asyncio.create_task(
-            console._dispatch_console_draft_send("retained draft")
-        )
+        second = _send_in_worker(console, "retained draft")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -97,7 +103,7 @@ async def test_next_send_cancel_keeps_draft_then_allow_resumes_once(hook_file):
         detail = str(modal.query_one(".hook-review-detail", Static).render())
         assert '"-c"' in detail and '"pass"' in detail
         await pilot.click("#console-hooks-allow-all")
-        assert await second
+        assert await second.wait()
         assert calls == ["retained draft"]
         third = await console._dispatch_console_draft_send("retained draft")
         assert third and calls == ["retained draft", "retained draft"]
@@ -129,9 +135,7 @@ async def test_escape_during_approval_keeps_send_cancelled(hook_file):
             )
 
         console._prompt_queue.dispatch = dispatch
-        send = asyncio.create_task(
-            console._dispatch_console_draft_send("keep while saving")
-        )
+        send = _send_in_worker(console, "keep while saving")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -151,7 +155,7 @@ async def test_escape_during_approval_keeps_send_cancelled(hook_file):
         await pilot.click("#console-hooks-allow-all")
         await asyncio.wait_for(saved.wait(), 5)
         await pilot.press("escape")
-        assert not await send
+        assert not await send.wait()
         release.set()
         await pilot.pause()
         assert host.screen is console and calls == []
@@ -184,9 +188,7 @@ async def test_partial_approval_keeps_review_open_and_settings_cancels_send(hook
             return original_post(message)
 
         console.post_message = post
-        send = asyncio.create_task(
-            console._dispatch_console_draft_send("keep for settings")
-        )
+        send = _send_in_worker(console, "keep for settings")
         async with asyncio.timeout(5):
             while not isinstance(host.screen, ConsoleHooksReviewModal):
                 await pilot.pause(0.01)
@@ -197,9 +199,9 @@ async def test_partial_approval_keeps_review_open_and_settings_cancels_send(hook
         async with asyncio.timeout(5):
             while modal.snapshot.pending_count != 1 or modal._busy:
                 await pilot.pause(0.01)
-        assert host.screen is modal and not send.done()
+        assert host.screen is modal and not send.is_finished
         assert await pilot.click("#console-hooks-settings")
-        assert not await asyncio.wait_for(send, 5)
+        assert not await asyncio.wait_for(send.wait(), 5)
         await pilot.pause()
         assert composer.draft_text() == "keep for settings"
         assert posted
@@ -278,3 +280,62 @@ async def test_dismissal_during_row_refresh_does_not_query_removed_modal(hook_fi
         release.set()
         await asyncio.wait_for(refresh, 5)
         assert synced == []
+
+
+@pytest.mark.parametrize("waiting", [False, True], ids=["idle", "send-waiting"])
+@pytest.mark.parametrize("caller", ["worker", "plain-task"])
+async def test_a_review_awaited_off_a_worker_task_is_logged(caller, waiting, hook_file):
+    """TASK-33621.28 review: W003 cannot see ``request_hook_review``'s await
+    (the modal settles its own answer), and the freeze it caused on the app
+    pump logged nothing. A caller off a worker task is now an ERROR in the
+    app log; a worker caller -- every caller today -- is not. Run under
+    ``asyncio.eager_task_factory``, as Textual's ``run_async`` runs the real
+    app (``run_test`` does not): there a worker's first step runs before
+    ``Worker._task`` is set, and the live hfrf1 run logged a false ERROR.
+    Both ``waiting`` values run, so the logged ``waiting_for_send`` must
+    follow the caller's flag rather than a constant (PR #2945 review)."""
+    from loguru import logger
+
+    errors: list[str] = []
+    sink = logger.add(
+        lambda message: errors.append(message.record["message"]),
+        level="ERROR",
+        filter=lambda record: "TASK-33621.28" in record["message"],
+    )
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(120, 40)) as pilot:
+            loop = asyncio.get_running_loop()
+            previous = loop.get_task_factory()
+            loop.set_task_factory(asyncio.eager_task_factory)
+            try:
+                console = host.screen
+                owner = console._console_runtime().ensure_hook_permissions()
+                snapshot = await asyncio.to_thread(owner.snapshot)
+                review = console._request_console_hooks_review(
+                    snapshot, waiting, lambda: None
+                )
+                if caller == "worker":
+                    worker = console.run_worker(review, group="test-hook-review")
+                    pending = worker.wait()
+                else:
+                    pending = asyncio.ensure_future(review)
+                async with asyncio.timeout(5):
+                    while not isinstance(host.screen, ConsoleHooksReviewModal):
+                        await pilot.pause(0.01)
+                await _wait_for_selector(host.screen, pilot, "#console-hooks-review")
+                await pilot.press("escape")
+                result = await asyncio.wait_for(pending, 5)
+                assert result.kind == "cancel" and host.screen is console
+            finally:
+                loop.set_task_factory(previous)
+    finally:
+        logger.remove(sink)
+    assert len(errors) == (1 if caller == "plain-task" else 0), errors
+    if errors:
+        # Attributable without a traceback: which screen's caller blocked,
+        # and whether a Send was waiting on the review.
+        assert "screen=ChatScreen" in errors[0], errors
+        assert f"waiting_for_send={waiting}" in errors[0], errors

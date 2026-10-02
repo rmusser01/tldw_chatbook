@@ -49,9 +49,6 @@ tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.on_contai
 tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.on_container_click => tldw_chatbook/UI/Chatbooks_Window_Improved.py::ChatbooksWindowImproved.action_manage_exports	1
 tldw_chatbook/UI/Library_Modules/library_skills_controller.py::LibrarySkillsController.handle_library_skill_cancel => tldw_chatbook/UI/Speech/speech_settings_pane.py::SpeechSettingsPane._ask_leave_choice	1
 tldw_chatbook/UI/Library_Modules/library_skills_controller.py::LibrarySkillsController.handle_library_skill_cancel => tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::SpeechTTSSettingsPanel._ask_leave_choice	1
-tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_button_pressed => tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review	2	REAL freeze: Send deadlocks the Console pump. TASK-33621.28; proof: Tests/UI/test_console_hook_review_send_freeze.py
-tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_console_workbench_action_requested => tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review	1	REAL freeze: Workbench send deadlocks the Console pump. TASK-33621.28; proof: Tests/UI/test_console_hook_review_send_freeze.py
-tldw_chatbook/UI/Screens/chat_screen.py::ChatScreen.on_key->_send_console_message_from_visible_action => tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review	1	REAL freeze: Enter deadlocks the app pump (no keys, no Ctrl+Q). TASK-33621.28; proof: Tests/UI/test_console_hook_review_send_freeze.py
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen._continue_library_landing => tldw_chatbook/UI/Speech/speech_settings_pane.py::SpeechSettingsPane._ask_leave_choice	1
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen._continue_library_landing => tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::SpeechTTSSettingsPanel._ask_leave_choice	1
 tldw_chatbook/UI/Screens/library_screen.py::LibraryScreen._recover_library_landing_attention => tldw_chatbook/UI/Speech/speech_settings_pane.py::SpeechSettingsPane._ask_leave_choice	1
@@ -83,7 +80,6 @@ tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button
 tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button_pressed => tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow._save_general_settings	2
 tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button_pressed => tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow._setup_encryption	2
 tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button_pressed => tldw_chatbook/UI/Wizards/ChatbookImportWizard.py::FileSelectionStep._browse_for_file	1
-tldw_chatbook/UI/Screens/tools_settings_screen.py::ToolsSettingsScreen.on_button_pressed => tldw_chatbook/Widgets/Console/console_hooks_review_modal.py::request_hook_review	1
 tldw_chatbook/UI/Screens/trajectory_screen.py::TrajectoryScreen.action_open_trace => tldw_chatbook/UI/Screens/trajectory_screen.py::TrajectoryScreen._pick_trace_file	1
 tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow.on_button_pressed => tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow._change_encryption_password	2
 tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow.on_button_pressed => tldw_chatbook/UI/Tools_Settings_Window.py::ToolsSettingsWindow._create_chatbook	1

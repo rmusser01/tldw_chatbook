@@ -100,6 +100,9 @@ class ConsolePromptDispatchStatus(str, Enum):
     SENT = "sent"
     QUEUED = "queued"
     REFUSED = "refused"
+    #: Parked behind a hook review that a worker now owns: neither sent nor
+    #: refused yet, and still cancellable (TASK-33621.28).
+    AWAITING_REVIEW = "awaiting_review"
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,7 +117,10 @@ class ConsolePromptDispatchResult:
     def accepted(self) -> bool:
         """Return whether the caller may truthfully say the draft was accepted."""
 
-        return self.status is not ConsolePromptDispatchStatus.REFUSED
+        return self.status in (
+            ConsolePromptDispatchStatus.SENT,
+            ConsolePromptDispatchStatus.QUEUED,
+        )
 
 
 @dataclass(frozen=True, slots=True)
