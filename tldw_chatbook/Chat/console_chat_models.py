@@ -392,8 +392,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
 
     Precedence, when more than one kind is outstanding at once: an approval
     wins. That is the one kind the Inspector counts
-    (``ConsoleInspectorState.pending_approval_count`` counts mounted APPROVAL
-    cards), so it is the only choice that keeps the chip and the Inspector
+    (``ConsoleInspectorState.pending_approval_count`` counts outstanding APPROVAL
+    rounds), so it is the only choice that keeps the chip and the Inspector
     telling the same story -- and an approval is the heavier decision of the
     two. Otherwise a lone question asks for an answer, and anything else --
     including a mix of non-approval kinds -- asks for a confirmation.

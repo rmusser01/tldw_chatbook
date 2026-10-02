@@ -40,6 +40,7 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_workspace_context_rail import (
     _base_grouped_workspace_state,
@@ -583,7 +584,8 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
 
 
 @pytest.mark.asyncio
-async def test_close_tab_button_confirms_before_dropping_a_session_with_messages():
+@private_profile_test
+async def test_close_tab_button_confirms_before_dropping_a_session_with_messages(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -605,8 +607,8 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
         assert "Saved history stays in Library" in dialog.message
         assert "Temporary or unsaved messages: 1" in dialog.message
-        assert "Live agent turns: 0" in dialog.message
-        assert "Unsent queued prompts: 0" in dialog.message
+        assert "Live agent turns:" not in dialog.message
+        assert "Unsent queued prompts:" not in dialog.message
         # Still open: the confirmation is a gate, not a notification.
         assert doomed.id in {session.id for session in store.sessions()}
 
@@ -617,7 +619,8 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
 
 @pytest.mark.asyncio
-async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text():
+@private_profile_test
+async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text(request):
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -657,8 +660,8 @@ async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text
         (await _close_tab_button(console, pilot, doomed.id)).press()
         dialog = await _wait_for_confirmation(host)
 
-        assert "Temporary or unsaved messages: 0" in dialog.message
-        assert "Live agent turns: 0" in dialog.message
+        assert "Temporary or unsaved messages:" not in dialog.message
+        assert "Live agent turns:" not in dialog.message
         assert "Unsent queued prompts: 1" in dialog.message
         assert "secret queued close text" not in dialog.message
 
@@ -841,7 +844,8 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
 
 
 @pytest.mark.asyncio
-async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(tmp_path):
+@private_profile_test
+async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(request, tmp_path):
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
@@ -880,7 +884,7 @@ async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_save
         (await _close_tab_button(console, pilot, saved.id)).press()
         dialog = await _wait_for_confirmation(host)
         assert "Saved history stays in Library" in dialog.message
-        assert "Temporary or unsaved messages: 0" in dialog.message
+        assert "Temporary or unsaved messages:" not in dialog.message
         assert "Unsent draft: yes" in dialog.message
         assert "private draft" not in dialog.message
         dialog.query_one("#cancel-button", Button).press()

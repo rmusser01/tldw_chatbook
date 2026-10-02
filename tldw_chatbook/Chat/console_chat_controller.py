@@ -7341,6 +7341,22 @@ class ConsoleChatController:
         with self._approval_state_lock:
             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
 
+    def pending_round_count(self, session_id: str, *, kind: str = "approval") -> int:
+        """Count one session's outstanding rounds of the requested kind.
+
+        Args:
+            session_id: The owning session to inspect.
+            kind: Interrupt kind to count, including queued or hidden rounds.
+
+        Returns:
+            Number of registered rounds of this kind for the session.
+        """
+        with self._approval_state_lock:
+            return sum(
+                value == kind
+                for value in self._pending_round_kinds.get(session_id, {}).values()
+            )
+
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
 
@@ -16167,6 +16183,17 @@ class ConsoleChatController:
                     if isinstance(decisions, dict):
                         for name in state.get("names", ()):
                             decisions[name] = "deny"
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
+        with self._pending_question_lock:
+            for state in self._pending_question_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                if not state.get("settled"):
+                    state["settled"] = True
+                    state["terminal_reason"] = "cancelled"
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)

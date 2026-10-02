@@ -1,0 +1,121 @@
+{
+  "pid": 75572,
+  "cells": [
+    {
+      "size": [
+        235,
+        52
+      ],
+      "kind": "approval",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "close-call": "deny"
+      },
+      "owning_task_cancelled": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        235,
+        52
+      ],
+      "kind": "question",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "answered": false,
+        "reason": "cancelled"
+      },
+      "owning_task_cancelled": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "kind": "approval",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "close-call": "deny"
+      },
+      "owning_task_cancelled": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    },
+    {
+      "size": [
+        80,
+        24
+      ],
+      "kind": "question",
+      "named_dialog_painted": true,
+      "default_stay": true,
+      "zero_consequences_absent": true,
+      "terminal_mouse_close": true,
+      "worker_result": {
+        "answered": false,
+        "reason": "cancelled"
+      },
+      "owning_task_cancelled": true,
+      "target_rounds_removed": true,
+      "viewed_sibling_question_pending": true
+    }
+  ],
+  "module_origins": {
+    "tldw_chatbook": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/__init__.py",
+    "tldw_chatbook.app": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/app.py",
+    "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py"
+  },
+  "source_hashes": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "7afad79abf3ca1109c6bc622aef60dab18ef5e2e3bb1879af2c86f661b15857c",
+    "tldw_chatbook/Chat/console_chat_controller.py": "edfc4af0cffc18869ac309c4ee6b4fe87c88bde30d7fe83497df58ecf49a2849",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "8c466a147e9b34504d12b9615d05333c442beda536521d607a815d01a25c58a8",
+    "tldw_chatbook/Widgets/confirmation_dialog.py": "b3d0f40aafb5c1baefecb98a366542eb1da91dff15716737617a3b1ac6a6cd0f",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "1ea4fd88586f1a141e7df1a064087b7e1d8adcaff80176e592970e8d4a0aac30",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6392bd59928f9e8bc2ce2fc9e48c60f23cd7d438573f9278531663dd39736d40",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
+  },
+  "runner_sha256": "f684d65931efb8fb1ae3d1666e7fdbe909627356b79949374e627aea8b604f17",
+  "fixture_scope": "Actual TldwCli and LinuxDriver. Real request_user_questions and request_mcp_approvals worker rounds; deterministic registered owning asyncio task, no provider, tool dispatch or external server. Actual ConsoleRuntime closes the requested background session. Terminal SGR mouse input presses both tab close and confirmation buttons.",
+  "driver": "LinuxDriver",
+  "tty_streams": true,
+  "lock_acquired": true,
+  "waiting_for": "notices clear",
+  "max_risk_dialog": {
+    "size": [
+      80,
+      24
+    ],
+    "title_characters": 60,
+    "all_six_nonzero_counts": true,
+    "all_four_pending_kinds": true,
+    "title_and_actions_fully_painted": true,
+    "default_stay": true,
+    "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories."
+  },
+  "passed": true,
+  "network_attempts": [],
+  "app_run_returned": true,
+  "app_return_code": 0,
+  "app_exception": null,
+  "source_hashes_after": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "7afad79abf3ca1109c6bc622aef60dab18ef5e2e3bb1879af2c86f661b15857c",
+    "tldw_chatbook/Chat/console_chat_controller.py": "edfc4af0cffc18869ac309c4ee6b4fe87c88bde30d7fe83497df58ecf49a2849",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "8c466a147e9b34504d12b9615d05333c442beda536521d607a815d01a25c58a8",
+    "tldw_chatbook/Widgets/confirmation_dialog.py": "b3d0f40aafb5c1baefecb98a366542eb1da91dff15716737617a3b1ac6a6cd0f",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "1ea4fd88586f1a141e7df1a064087b7e1d8adcaff80176e592970e8d4a0aac30",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "6392bd59928f9e8bc2ce2fc9e48c60f23cd7d438573f9278531663dd39736d40",
+    "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
+  }
+}

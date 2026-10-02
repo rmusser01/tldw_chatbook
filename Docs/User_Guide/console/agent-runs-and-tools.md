@@ -66,14 +66,12 @@ answer · 12s` for a question, or `Waiting for your confirmation · 12s` for
 a skill/worktree confirm — instead of `Thinking…`, since a decision only
 you can make outranks whatever the model's last step happened to be — and
 the "Run:" status chip above the composer reads the same kind-aware line.
-The Inspector's `Live work` row and the pinned authority summary's `Run`
-fact stay approval-specific, though: they read "Waiting for your approval"
-only while an actual approval card (not a question or confirm) is mounted,
-and otherwise show their ordinary copy — `Generating…`, or no active work —
-even while a question or confirm card is the one genuinely pending. The
-elapsed figure
-advances while you watch. The line is live-only — it vanishes the moment
-the reply's own text arrives, and a conversation you reopen later shows the
+The Inspector's `Live work` row uses the same waiting copy. Its `Approvals`
+count and the pinned authority summary's `Run` fact cover tool-approval rounds
+for the viewed conversation, including approvals queued behind another card.
+Questions and skill/worktree confirmations do not increase that count. The
+elapsed figure advances while you watch. The line is live-only — it vanishes
+the moment the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
 waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
 (the count of running sub-agents and their longest-running tool) instead of
@@ -161,7 +159,8 @@ its rows and actions is unchanged.
 **In the status chips** (above the composer) — "Tools: N ready" counts the
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
-"Approvals: N pending" counts tool calls waiting on you. The Approvals chip is
+"Approvals: N pending" counts outstanding tool-approval rounds in the viewed
+conversation; a round may contain several calls. The Approvals chip is
 clickable: it jumps you to the pending approval card (with nothing pending it
 just says "No approval is pending."). A mutation already in **Finishing** is
 status, not a pending decision, so it no longer contributes to this count.
@@ -274,6 +273,15 @@ cannot be saved, the failed run explains that the checkout is retained for
 manual review. It may be absent from the recovery picker when no ownership row
 was saved. Chatbook does not delete or adopt an unrecorded checkout automatically.
 
+
+### Approval controls in small terminals
+
+When the chat column is narrow or Console uses its short-height layout, the
+existing decision Select sits above the **Approve once** and **Deny** pair.
+The bulk bar puts **Deny all** first, followed by **Approve all** and **Submit**.
+Review details scroll inside the card so those actions stay visible. Tab brings
+the optional denial-reason field into view. Resizing preserves the current
+choice and focus; taller, wider layouts restore the original arrangement.
 
 ### Consecutive tool denials
 

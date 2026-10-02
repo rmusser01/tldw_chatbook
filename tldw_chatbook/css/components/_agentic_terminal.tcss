@@ -492,53 +492,53 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
 #file-notes-action-status,
 #file-notes-git-status,
 #file-notes-git-push-result-reason,
-#file-notes-git-commit-check-again-reason {
-    opacity: 100%;
-    text-opacity: 100%;
-    color: $ds-text-primary;
+#file-notes-git-commit-check-again-reason{
+opacity:100%;
+text-opacity:100%;
+color:$ds-text-primary;
 }
 
-#file-notes-authority {
-    width: $ds-width-full;
-    height: auto;
-    min-height: $ds-size-1;
-    max-height: $ds-size-2;
-    color: $ds-text-muted;
-    text-wrap: wrap;
-    overflow: hidden hidden;
+#file-notes-authority{
+width:$ds-width-full;
+height:auto;
+min-height:$ds-size-1;
+max-height:$ds-size-2;
+color:$ds-text-muted;
+text-wrap:wrap;
+overflow:hidden hidden;
 }
 
-ConsoleTerminalWorkspace Button {
-    width: $ds-width-full;
-    min-width: $ds-size-0;
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    max-height: $ds-size-1;
-    margin: $ds-space-0;
-    padding: $ds-space-0 $ds-space-1;
-    border: none;
-    content-align: center middle;
+ConsoleTerminalWorkspace Button{
+width:$ds-width-full;
+min-width:$ds-size-0;
+height:$ds-size-1;
+min-height:$ds-size-1;
+max-height:$ds-size-1;
+margin:$ds-space-0;
+padding:$ds-space-0 $ds-space-1;
+border:none;
+content-align:center middle;
 }
 
-ConsoleTerminalWorkspace Button:focus {
-    background: $ds-focus-bg;
-    color: $ds-focus-fg;
-    text-style: bold underline;
+ConsoleTerminalWorkspace Button:focus{
+background:$ds-focus-bg;
+color:$ds-focus-fg;
+text-style:bold underline;
 }
 
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
-ConsoleBoundedSection {
-    height: auto;
-    min-height: $ds-size-0;
+ConsoleBoundedSection{
+height:auto;
+min-height:$ds-size-0;
 }
 
-ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
-#agent-history-dialog { width: $ds-percent-90; max-width: $ds-size-110; height: $ds-percent-85; border: round $primary; background: $panel; padding: $ds-space-1 $ds-space-2; }
-#agent-history-state { height: auto; color: $ds-text-muted; margin-bottom: $ds-space-1; }
-#agent-history-table { height: $ds-height-fill; min-height: $ds-size-3; }
-#agent-history-actions { height: $ds-size-3; margin-top: $ds-space-1; align-horizontal: right; }
-#agent-history-actions Button { min-width: $ds-size-12; margin-left: $ds-space-1; }
+ConsoleAgentHistoryModal{align:center middle;background:$background 60%;}
+#agent-history-dialog{width:$ds-percent-90;max-width:$ds-size-110;height:$ds-percent-85;border:round $primary;background:$panel;padding:$ds-space-1 $ds-space-2;}
+#agent-history-state{height:auto;color:$ds-text-muted;margin-bottom:$ds-space-1;}
+#agent-history-table{height:$ds-height-fill;min-height:$ds-size-3;}
+#agent-history-actions{height:$ds-size-3;margin-top:$ds-space-1;align-horizontal:right;}
+#agent-history-actions Button{min-width:$ds-size-12;margin-left:$ds-space-1;}
 
 /* task-32287 review: and so do the sibling cards that share the surface.
    With the surface `auto`, a child left on Textual's `height: 1fr` default
@@ -561,8 +561,8 @@ ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
 #chat-skill-install-card,
 #chat-skill-script-card,
 #skill-install-buttons,
-#skill-script-buttons {
-    height: auto;
+#skill-script-buttons{
+height:auto;
 }
 
 /* task-3401.10: modal full-player screen -- centered panel, frame area above
@@ -1466,8 +1466,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    blank rows between the action bar and the bottom border the 2026-09-10
    live pass reported. */
 #approval-batch-body,
-#approval-batch-actions {
-    height: auto;
+#approval-batch-actions{
+height:auto;
 }
 
 /* The Console MCP batch-approval card's per-row layout
@@ -1498,9 +1498,9 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    type selector (retired in TASK-33003.1) that made the Select claim the
    row's FULL width, overlapping/clipping behind the header and args text
    laid out before it; it now pins the bounded share outright. */
-#approval-batch-rows {
-    height: auto;
-    min-height: $ds-size-0;
+#approval-batch-rows{
+height:auto;
+min-height:$ds-size-0;
     /* TASK-1846: bound the rows so the action bar below them is reachable
        at ANY row count. The card is `height: auto` inside a plain Container
        (`ChatTaskCards`), so before this a long batch simply grew past the
@@ -1510,8 +1510,8 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
        moved that cliff from five rows to four, so the cap fixes the older
        bug rather than inheriting it. 15 leaves room for the header, the
        deadline and the action bar at 24 rows; taller batches scroll. */
-    max-height: $ds-size-15;
-    overflow-y: auto;
+max-height:$ds-size-15;
+overflow-y:auto;
 }
 /* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
    and `.approval-row-controls` each on their own FULL width line (plus, since
@@ -1558,6 +1558,14 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    already keeps these borderless/1-row tall; fixed widths keep them from
    claiming `Button`'s `width: auto` share and squeezing the row. */
 .approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
+/* TASK-33625.2: Deny stays level with approval; compact batch actions
+   share one row so changing the denial scope cannot push Submit off screen. */
+.approval-compact{padding:$ds-space-0 $ds-space-2;}
+.approval-compact #approval-batch-rows{max-height:$ds-size-8;}
+.approval-compact .approval-row-controls{layout:grid;grid-size:$ds-size-2;grid-columns:$ds-width-fill $ds-width-fill;}
+.approval-compact #approval-batch-actions{layout:grid;grid-size:$ds-size-3;grid-columns:$ds-width-fill $ds-width-fill $ds-width-fill;}
+.approval-compact .approval-row-decision{column-span:$ds-size-2;width:$ds-width-fill;}
+.approval-compact #approval-batch-actions Button{width:$ds-width-fill;min-width:$ds-size-0;padding:$ds-space-0;}
 /* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
    legally reach every narrowed row (`ChatApprovalCard._set_all_batch_
    decisions` -- a row whose `options` exclude every bulk candidate is left
@@ -1569,9 +1577,9 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
    `$ds-status-approval-required` token rather than the generic `$ds-
    status-warning` one, since this state literally IS "still needs an
    approval decision." */
-.approval-row.needs-decision {
-    border: solid $ds-status-approval-required;
-    background: $ds-status-approval-required 10%;
+.approval-row.needs-decision{
+border:solid $ds-status-approval-required;
+background:$ds-status-approval-required 10%;
 }
 
 /* ConsoleScopePickerModal (rag-scope-narrowing spec §4, Task 8): RAG
@@ -1598,77 +1606,77 @@ ConsolePromptDraftSaveDialog {
     align: center middle;
 }
 
-#console-prompt-draft-save-dialog {
-    width: $ds-size-60;
-    max-width: $ds-percent-96;
-    height: auto;
-    padding: $ds-space-1 $ds-space-2;
-    border: round $ds-grid-line;
-    background: $ds-surface-panel;
-    color: $ds-text-primary;
+#console-prompt-draft-save-dialog{
+width:$ds-size-60;
+max-width:$ds-percent-96;
+height:auto;
+padding:$ds-space-1 $ds-space-2;
+border:round $ds-grid-line;
+background:$ds-surface-panel;
+color:$ds-text-primary;
 }
 
-#console-prompt-draft-save-copy {
-    width: $ds-width-full;
-    height: auto;
-    margin-bottom: $ds-space-1;
-    color: $ds-text-muted;
+#console-prompt-draft-save-copy{
+width:$ds-width-full;
+height:auto;
+margin-bottom:$ds-space-1;
+color:$ds-text-muted;
 }
 
-#console-prompt-draft-save-actions {
-    width: $ds-width-full;
-    height: auto;
-    align-horizontal: right;
+#console-prompt-draft-save-actions{
+width:$ds-width-full;
+height:auto;
+align-horizontal:right;
 }
 
-#console-prompt-draft-editor {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-12;
+#console-prompt-draft-editor{
+width:$ds-width-full;
+height:$ds-height-fill;
+min-height:$ds-size-12;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status,
-#console-prompt-draft-promote-title {
-    width: $ds-width-full;
-    height: auto;
+#console-prompt-draft-promote-title{
+width:$ds-width-full;
+height:auto;
 }
 
 #console-prompt-draft-editor-copy,
-#console-prompt-draft-status {
-    color: $ds-text-muted;
+#console-prompt-draft-status{
+color:$ds-text-muted;
 }
 
-#console-prompt-draft-status.error {
-    color: $ds-status-error-readable;
+#console-prompt-draft-status.error{
+color:$ds-status-error-readable;
 }
 
-#console-prompt-draft-content {
-    width: $ds-width-full;
-    height: $ds-height-fill;
-    min-height: $ds-size-6;
-    margin-top: $ds-space-1;
+#console-prompt-draft-content{
+width:$ds-width-full;
+height:$ds-height-fill;
+min-height:$ds-size-6;
+margin-top:$ds-space-1;
 }
 
 #console-prompt-draft-actions,
 #console-prompt-draft-promote-fields {
-    width: $ds-width-full;
-    height: auto;
+width: $ds-width-full;
+height: auto;
 }
 
 #console-prompt-draft-promote-title {
-    margin-top: $ds-space-1;
-    text-style: bold;
+margin-top: $ds-space-1;
+text-style: bold;
 }
 
 #console-prompt-draft-library-name,
 #console-prompt-draft-library-collection {
-    width: $ds-width-fill;
+width: $ds-width-fill;
 }
 
 .console-prompts-result.highlighted {
-    border-left: thick $ds-action-focus;
-    background: $ds-focus-bg;
+border-left: thick $ds-action-focus;
+background: $ds-focus-bg;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions,

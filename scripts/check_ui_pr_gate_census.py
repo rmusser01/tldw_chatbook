@@ -75,7 +75,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33661 raised it to 121: Tests/UI/test_console_turn_resend_ui.py pins
 # the Resend action row, its `r` key, the in-flight guard, and a real-Console
 # click and keypress through both Resend paths.
-MINIMUM_FILES = 121
+# TASK-33625.2 / TASK-32367 add compact approval and pending-kind projection
+# regressions; retain those paths with dev's model-switcher, quit-prompt and
+# Resend suites at floor124.
+MINIMUM_FILES = 124
 
 
 def read_census(path: Path) -> list[str]:

@@ -1,0 +1,182 @@
+"""TASK-33625.2: denial controls remain painted with Inspect open."""
+
+from __future__ import annotations
+
+import pytest
+from textual.widgets import Button, Select
+
+from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from Tests.UI.test_destination_shells import _wait_for_selector
+from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
+    ConsoleHarness,
+)
+from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
+from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import ChatApprovalCard
+
+
+def _pending_card(console, round_id="compact-round"):
+    console.set_task_resume_state(
+        TaskResumeState(
+            pending_approval={
+                "round_id": round_id,
+                "timeout_seconds": 0,
+                "calls": [
+                    {
+                        "llm_name": "fs_read",
+                        "call_id": round_id,
+                        "server_label": "Local workspace, web, and Watchlists",
+                        "effects": ["private_read"],
+                        "tool_name": "fs_read",
+                        "arguments": {"path": "notes.md"},
+                        "reason": "ask",
+                    }
+                ],
+            }
+        )
+    )
+
+
+def _assert_painted(host, card, button):
+    region = button.region
+    assert region.width >= len(button.label.plain), (button.id, region)
+    assert region.height > 0, button.id
+    assert card.content_region.contains_region(region), (
+        button.id,
+        region,
+        card.content_region,
+    )
+    assert host.screen.region.contains_region(region), (button.id, region)
+    hit, _ = host.screen.get_widget_at(*region.center)
+    assert hit is button, (
+        button.id,
+        region,
+        card.content_region,
+        button.parent.region,
+        hit,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "size,inspect_open",
+    [
+        ((80, 24), True),
+        ((90, 30), True),
+        ((100, 30), True),
+        ((80, 24), False),
+        ((235, 52), True),
+    ],
+    ids=["80-inspect", "90-inspect", "100-inspect", "80-closed", "235-inspect"],
+)
+@private_profile_test
+async def test_every_approval_action_is_painted_and_focusable(
+    size, inspect_open, request
+):
+    """Fixed-width controls must not leave clipped Deny controls in Tab order."""
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=size) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._set_console_rail_preference(left_open=False, right_open=inspect_open)
+        _pending_card(console)
+        await pilot.pause(0.3)
+        card = console.query_one(ChatApprovalCard)
+        select = card.query_one(".approval-row-decision", Select)
+        assert card.content_region.contains_region(select.region), select.region
+        buttons = list(card.query(Button))
+        assert len(buttons) == 5
+        for button in buttons:
+            _assert_painted(host, card, button)
+        deny = card.query_one(".approval-row-fast-deny", Button)
+        approve = card.query_one(".approval-row-fast-approve", Button)
+        assert deny.region.y <= approve.region.y
+        card.focus_first_decision()
+        focused = set()
+        for _ in range(8):
+            await pilot.press("tab")
+            if host.focused in buttons:
+                _assert_painted(host, card, host.focused)
+                focused.add(host.focused.id)
+        assert deny.id in focused
+        assert "approval-deny-all" in focused
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_reflow_preserves_decision_and_reused_round_controls(request):
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._set_console_rail_preference(left_open=False, right_open=True)
+        _pending_card(console)
+        await pilot.pause(0.3)
+        card = console.query_one(ChatApprovalCard)
+        select = card.query_one(".approval-row-decision", Select)
+        select.value = "deny"
+        await pilot.pause(0.3)
+        for button in card.query(Button):
+            _assert_painted(host, card, button)
+        select.focus()
+        await pilot.resize_terminal(235, 52)
+        await pilot.pause(0.3)
+        assert not card.has_class("approval-compact")
+        assert card.query_one(Select) is select
+        assert select.has_focus and select.value == "deny"
+        assert [
+            child.id for child in card.query_one("#approval-batch-actions").children
+        ] == [
+            "approval-approve-all",
+            "approval-submit",
+            "approval-deny-all",
+        ]
+        for button in card.query(Button):
+            _assert_painted(host, card, button)
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.3)
+        assert select.has_focus and select.value == "deny"
+        _pending_card(console, "next-round")
+        await pilot.pause(0.3)
+        assert card._batch_round_id == "next-round"
+        assert card.query_one(Select) is not select
+        for button in card.query(Button):
+            _assert_painted(host, card, button)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_height_only_resize_reflows_existing_controls(request):
+    """Short terminals must retain painted actions even with Inspect closed."""
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(80, 40)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-native-composer")
+        console._set_console_rail_preference(left_open=False, right_open=False)
+        _pending_card(console)
+        await pilot.pause(0.3)
+        card = console.query_one(ChatApprovalCard)
+        select = card.query_one(Select)
+        select.value = "deny"
+        select.focus()
+        assert not card.has_class("approval-compact")
+        await pilot.resize_terminal(80, 24)
+        await pilot.pause(0.3)
+        assert card.has_class("approval-compact")
+        assert card.query_one(Select) is select and select.has_focus
+        for button in card.query(Button):
+            _assert_painted(host, card, button)
+        await pilot.resize_terminal(80, 40)
+        await pilot.pause(0.3)
+        assert not card.has_class("approval-compact")
+        assert card.query_one(Select) is select and select.value == "deny"

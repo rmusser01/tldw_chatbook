@@ -1,0 +1,24 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console ! │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs… Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────
+ Conversation | Approval review fixture       │
+ ◂    Chat 1         ✕ ◌ Approval review fi…▸ │  ▸ Inspect
+ Each tab runs its own agent — up to 3 in  ✕  │     Choose folder · Project
+ █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │  If I send now? · +4 more
+ █  Approval required                       █ │  Run: Waiting for approval
+ █  Local workspace, web, and Watchlists    █ │ Environment                 ▾
+ █  · fs_read                               █ │   Changes aren't tracked for…
+ █  {"path":"f.txt"}                        █ │   Bind a folder and enable C…
+ █  Effects: may read private local data    █ │            Refresh
+ █  Deny                              ▼     █ │
+ █   Approve once          Deny             █ │  Sources — next send     none
+ █  This call only; the model is told       █ │  No sources attached. Stage
+ █  not to retry.                       ▇▇  █ │ ▼ more sections — scroll
+ █    Deny all   Approve all    Submit      █ │
+────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Mode
+│  Composer ▾  Menu  Ask, command, or paste        Send         Dictate
+  Ctrl+Shift+F focus | Alt+I inspect | F1 · F6 · Ctrl+P · Ctrl+Q

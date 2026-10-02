@@ -17,6 +17,8 @@ config, which the per-test config sandbox refuses locally with
 
 from __future__ import annotations
 
+import asyncio
+import threading
 import time
 
 import pytest
@@ -33,10 +35,16 @@ from Tests.UI.test_console_button_routing import (
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
 )
+from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
+from tldw_chatbook.Agents.run_context import use_run_id
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
+    ConsoleLifecycleImpact,
     ConsoleMessageRole,
+    ConsoleRunMarker,
+    ConsoleRunState,
+    ConsoleRunStatus,
 )
 from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleDispatchCheckpointState,
@@ -53,6 +61,7 @@ from tldw_chatbook.Chat.console_library_policy import (
     ConsoleLibraryPolicySnapshot,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from tldw_chatbook.UI.Console_Modules.session import ConsoleSessionCloseImpact
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 
 #: Wide enough that every tab and its ✕ is mounted and hit-testable.
@@ -642,3 +651,321 @@ async def test_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
             assert failures_left[0] == 0
         finally:
             controller._sync_native_console_chat_ui_fn = real_sync
+
+
+async def _arm_pending_round(controller, kind: str, session_id: str):
+    """Arm a real blocking round without executing the proposed tool."""
+
+    def request():
+        if kind == "approval":
+            return controller.request_mcp_approvals(
+                [
+                    MCPPendingCall(
+                        llm_name="close-call",
+                        server_key="local:fixture",
+                        tool_name="search",
+                        server_label="Close fixture",
+                        arguments={"query": "private close query"},
+                        reason="ask",
+                    )
+                ],
+                session_id=session_id,
+            )
+        if kind == "question":
+            return controller.request_user_questions(
+                [
+                    {
+                        "header": "Choice",
+                        "question": "Private choice?",
+                        "options": [
+                            {"label": "One", "description": "First choice"},
+                            {"label": "Two", "description": "Second choice"},
+                        ],
+                    }
+                ],
+                session_id=session_id,
+            )
+        if kind == "skill_install":
+            return controller.request_skill_install_confirm(
+                "https://example.com/private-skill", session_id=session_id
+            )
+        return controller.request_skill_script_confirm(
+            {
+                "skill_name": "Close fixture",
+                "script_path": "scripts/example.py",
+                "mechanism": "python",
+                "args": [],
+            },
+            session_id=session_id,
+        )
+
+    with use_run_id(f"close-{kind}-{session_id}"):
+        return asyncio.create_task(asyncio.to_thread(request))
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize(
+    ("kind", "consequence", "result"),
+    [
+        ("approval", "Tool approvals: denied; runs cancelled.", {"close-call": "deny"}),
+        (
+            "question",
+            "Questions: cancelled without an answer.",
+            {"answered": False, "reason": "cancelled"},
+        ),
+        (
+            "skill_install",
+            "Skill installs: declined; runs cancelled.",
+            False,
+        ),
+        (
+            "skill_script",
+            "Skill scripts: declined; runs cancelled.",
+            {"allow": False, "remember": False},
+        ),
+    ],
+)
+async def test_background_pending_close_names_consequences_and_cancels_only_its_owner(
+    request,
+    kind,
+    consequence,
+    result,
+):
+    """TASK-33621.16: real background rounds, run cancellation and physical Close."""
+    app = _ready_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        app.call_from_thread = host.call_from_thread
+        store = controller.store
+        keeper = store.active_session_id
+        doomed = controller.new_session(title="Pending [notes]")
+        controller.switch_session(keeper)
+        assistant = store.append_message(
+            doomed.id, role=ConsoleMessageRole.ASSISTANT, content=""
+        )
+        cancelled = asyncio.Event()
+        controller._active_cancel_events[doomed.id] = threading.Event()
+        round_task = await _arm_pending_round(controller, kind, doomed.id)
+
+        async def waiting_run():
+            task = asyncio.current_task()
+            controller._active_stream_tasks[doomed.id] = task
+            controller._active_assistant_message_ids[doomed.id] = assistant.id
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting"),
+                session_id=doomed.id,
+            )
+            try:
+                await asyncio.shield(round_task)
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+            finally:
+                controller._active_stream_tasks.pop(doomed.id, None)
+                controller._active_assistant_message_ids.pop(doomed.id, None)
+                controller._active_cancel_events.pop(doomed.id, None)
+
+        run_task = asyncio.create_task(waiting_run())
+        try:
+            assert await _settle(
+                pilot,
+                lambda: (
+                    kind in controller.pending_round_kinds(doomed.id)
+                    and doomed.id in controller._active_stream_tasks
+                ),
+            ), "the actual pending round and its owning run did not arm"
+            await _show_tabs(console, pilot, {keeper, doomed.id})
+            assert (
+                controller.run_marker_for(doomed.id) is ConsoleRunMarker.NEEDS_APPROVAL
+            )
+            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+            dialog = await _wait_for_confirmation(host)
+            assert "Pending [notes]" in dialog.title
+            assert consequence in dialog.message
+            assert "private close" not in dialog.message
+            for zero_row in (
+                "Unsent draft:",
+                "Pending attachments:",
+                "Delegated agents:",
+                "Unsent queued prompts:",
+            ):
+                assert zero_row not in dialog.message
+            assert await _settle(
+                pilot, lambda: dialog.query_one("#cancel-button").has_focus
+            )
+            await _click(pilot, "#confirm-button")
+            assert await _settle(pilot, lambda: doomed.id not in _session_ids(store))
+            await _await_tabs(console, pilot, {keeper})
+            assert await _settle(
+                pilot, lambda: cancelled.is_set() and round_task.done()
+            )
+            assert await round_task == result
+            assert run_task.cancelled()
+            assert not controller.has_pending_approval_round(doomed.id)
+            assert (
+                controller._interrupt_host.session_round_payloads(kind, doomed.id) == []
+            )
+            assert not controller._interrupt_host.registries[kind]
+            assert store.active_session_id == keeper
+            assert not console._console_runtime().console_needs_attention
+        finally:
+            controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
+            controller._cancel_pending_decisions_for_session(doomed.id)
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+            await asyncio.wait_for(asyncio.shield(round_task), 5)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_background_question_close_releases_round_without_an_active_turn(request):
+    """A closed session's question must not survive when no turn cancel signal exists."""
+    app = _ready_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        app.call_from_thread = host.call_from_thread
+        store = controller.store
+        keeper = store.active_session_id
+        doomed = controller.new_session(title="Question")
+        controller.switch_session(keeper)
+        sibling = await _arm_pending_round(controller, "question", keeper)
+        pending = await _arm_pending_round(controller, "question", doomed.id)
+        try:
+            assert await _settle(
+                pilot, lambda: len(controller.pending_question_ids()) == 2
+            ), "both real question rounds must be armed before closing"
+            await _show_tabs(console, pilot, {keeper, doomed.id})
+            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+            await _wait_for_confirmation(host)
+            await _click(pilot, "#confirm-button")
+            assert await _settle(pilot, lambda: doomed.id not in _session_ids(store))
+            await _await_tabs(console, pilot, {keeper})
+            assert await _settle(pilot, pending.done, timeout=2), (
+                "closed session left its question armed without an owning turn"
+            )
+            assert await pending == {"answered": False, "reason": "cancelled"}
+            assert not sibling.done(), (
+                "closing the background tab answered the viewed tab"
+            )
+            assert len(controller.pending_question_ids()) == 1
+            assert controller.pending_round_kinds(keeper) == {"question"}
+            assert not controller.has_pending_approval_round(doomed.id)
+        finally:
+            for session_id in (keeper, doomed.id):
+                controller.revoke_approval_rounds_for_run(
+                    f"close-question-{session_id}"
+                )
+            await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_failed_confirmed_close_reoffers_confirmation_without_retrying(request):
+    """A refused at-risk close keeps work and offers a fresh, explicit retry."""
+    app = _ready_app()
+    notes = _record_notifications(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        keeper = store.active_session_id
+        doomed = store.create_session(title="Retry notes")
+        store.set_session_draft(doomed.id, "private draft")
+        store.switch_session(keeper)
+        await _show_tabs(console, pilot, {keeper, doomed.id})
+        runtime = console._console_runtime()
+        previous_owner = runtime._voice_promotion_owner
+        owner = _UndrainedVoiceOwner()
+        runtime._voice_promotion_owner = owner
+        try:
+            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+            first = await _wait_for_confirmation(host)
+            await _click(pilot, "#confirm-button")
+            second = await _wait_for_confirmation(host, previous=first)
+            assert notes[-1] == (
+                'Couldn\'t close tab "Retry notes": The close did not finish. Try again in a moment.',
+                "error",
+            )
+            assert owner.aborted == 1, "failure must not retry the close automatically"
+            assert store.session_draft(doomed.id) == "private draft"
+            assert "Retry notes" in second.title
+            assert await _settle(
+                pilot, lambda: second.query_one("#cancel-button").has_focus
+            )
+            runtime._voice_promotion_owner = previous_owner
+            await _click(pilot, "#confirm-button")
+            assert await _settle(pilot, lambda: doomed.id not in _session_ids(store))
+            await _await_tabs(console, pilot, {keeper})
+        finally:
+            runtime._voice_promotion_owner = previous_owner
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("title", ["Pending [notes]", "A" * 60])
+async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80x24(
+    request, title
+):
+    """All loss categories must fit the real dialog at the minimum terminal size."""
+    app = _ready_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(80, 24)) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        store = console._ensure_console_chat_store()
+        session = store.create_session(title=title)
+        impact = ConsoleSessionCloseImpact(
+            session_id=session.id,
+            transcript_message_count=1,
+            lifecycle=ConsoleLifecycleImpact(
+                revision=1,
+                live_run_count=1,
+                queued_session_count=1,
+                unsent_prompt_count=1,
+                delegated_child_count=1,
+            ),
+            has_draft=True,
+            pending_attachment_count=1,
+            pending_round_kinds=frozenset(
+                {"approval", "question", "skill_install", "skill_script"}
+            ),
+        )
+        worker = console.run_worker(
+            console._session._confirm_session_close(impact), exit_on_error=False
+        )
+        dialog = await _wait_for_confirmation(host)
+        assert await _settle(
+            pilot, lambda: dialog.query_one("#cancel-button").has_focus
+        )
+        try:
+            container = dialog.query_one("#confirmation-dialog")
+            viewport = dialog.region
+            assert viewport.intersection(container.region) == container.region, (
+                container.region,
+                viewport,
+            )
+            for selector, text in (
+                (".dialog-title", "Close tab"),
+                ("#cancel-button", "Stay"),
+                ("#confirm-button", "Close"),
+            ):
+                control = dialog.query_one(selector)
+                region, clip = dialog._compositor.visible_widgets[control]
+                assert region.area and region.intersection(clip) == region
+                assert region.intersection(viewport) == region
+                painted = "\n".join(
+                    strip.crop(region.x, region.right).text
+                    for strip in dialog._compositor.render_strips()[
+                        region.y : region.bottom
+                    ]
+                )
+                assert text in painted, (selector, painted)
+            assert title in dialog.title
+        finally:
+            dialog.dismiss(False)
+            assert await worker.wait() is False
