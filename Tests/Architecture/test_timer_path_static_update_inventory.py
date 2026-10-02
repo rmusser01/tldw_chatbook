@@ -363,15 +363,6 @@ CLASSIFIED_SITES: dict[tuple[str, str, str], str] = {
         "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
         "width."
     ),
-    (
-        "tldw_chatbook/Widgets/Console/console_status_chips.py",
-        "ConsoleStatusChips.sync_readiness_chip",
-        "chip",
-    ): (
-        "NEEDS-LAYOUT: chips are width:auto -- the label length IS the "
-        "width; equality-gated, so an unchanged word does not repaint "
-        "(TASK-33005.3)."
-    ),
     # -- tldw_chatbook/Widgets/Console/console_transcript.py
     (
         "tldw_chatbook/Widgets/Console/console_transcript.py",

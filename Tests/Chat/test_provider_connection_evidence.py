@@ -93,7 +93,11 @@ def test_settlement_records_the_local_time_it_was_observed():
 
     token = store.begin_generation(identity)
     assert store.settle_generation(token, ProviderGenerationProbeResult("succeeded"))
-    assert store.evidence_for(identity).observed_at >= observed
+    # TASK-33005.3 review round 1 (rewritten on purpose): the generation fact
+    # has its own time; the listing's time is never restamped by it.
+    settled = store.evidence_for(identity)
+    assert settled.observed_at == observed
+    assert settled.generation_observed_at >= observed
 
 
 def test_rebinding_an_earlier_observation_keeps_its_time():

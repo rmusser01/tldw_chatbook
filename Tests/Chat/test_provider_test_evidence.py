@@ -416,6 +416,8 @@ def test_extended_records_remain_frozen_and_slotted():
         "generation_category",
         # TASK-33005.1 (AC#5): appended last, so positional meanings hold.
         "observed_at",
+        # TASK-33005.3 review round 1 (on purpose): the generation fact's time.
+        "generation_observed_at",
     ]
     assert not hasattr(evidence, "__dict__")
     with pytest.raises(AttributeError):

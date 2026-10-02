@@ -579,10 +579,11 @@ class ConsoleSettingsReadiness:
     generation_category: GenerationFailureCategory | None = None
     subscription_status: Literal["pending", "ready", "expired", "missing"] | None = None
     #: TASK-33005.2: the connection whose shared test evidence this readiness
-    #: read (the Console's one-action retry probes it) and when that evidence
-    #: was observed. Both ``None`` when no current evidence backs it.
+    #: read (the Console's one-action retry probes it) and when its endpoint
+    #: and generation facts were observed. ``None`` when no evidence backs it.
     connection: ProviderDraftIdentity | None = None
     observed_at: datetime | None = None
+    generation_observed_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -628,9 +629,10 @@ class ConsoleSettingsReadiness:
 
     def _validate_structured_state(self) -> None:
         _validate_console_readiness_literals(self)
-        if type(self.connection) not in {ProviderDraftIdentity, type(None)} or type(
-            self.observed_at
-        ) not in {datetime, type(None)}:
+        if type(self.connection) not in {ProviderDraftIdentity, type(None)} or {
+            type(self.observed_at),
+            type(self.generation_observed_at),
+        } - {datetime, type(None)}:
             raise ValueError("Console readiness evidence is invalid.")
         if self.subscription_status is not None and (
             (self.subscription_status == "ready")
@@ -2008,6 +2010,9 @@ def build_console_settings_readiness(
         subscription_status=readiness.subscription_status,
         connection=current_identity if evidence_is_current else None,
         observed_at=evidence.observed_at if evidence_is_current and evidence else None,
+        generation_observed_at=(
+            evidence.generation_observed_at if evidence_is_current and evidence else None
+        ),
     )
 
 
@@ -2641,6 +2646,7 @@ def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
             readiness.credential,
             readiness.generation,
             readiness.observed_at,
+            readiness.generation_observed_at,
         )
     return _not_ready_words(
         readiness.blocker or "readiness_unknown",
@@ -2669,7 +2675,15 @@ def verdict_readiness_words(
     Returns:
         One of the four words.
     """
-    reads = _VERDICT_READINESS[provider_readiness_verdict(snapshot).code]
+    code = provider_readiness_verdict(snapshot).code
+    # AC#8: rank blockers as the Console does (_BLOCKER_PRECEDENCE) --
+    # configuration, then a missing model, then a failed test. The verdict
+    # puts a stale, running or failed test first, which hid them.
+    if snapshot.configuration == "incomplete":
+        code = "incomplete"
+    elif snapshot.model == "missing":
+        code = "model_missing"
+    reads = _VERDICT_READINESS[code]
     connection = getattr(evidence, "identity", None)
     if reads is None:
         return READY_NOT_TESTED
@@ -2680,6 +2694,7 @@ def verdict_readiness_words(
             getattr(evidence, "credential", "not_required"),
             getattr(evidence, "generation", "not_tested"),
             getattr(evidence, "observed_at", None),
+            getattr(evidence, "generation_observed_at", None),
         )
     if reads == "provider_configuration_invalid":
         reads = _CONFIGURATION_ISSUE_BLOCKER.get(snapshot.configuration_issue, reads)
@@ -2692,27 +2707,37 @@ def verdict_readiness_words(
     )
 
 
+_LOCAL_PROVIDER_KEYS = URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+
+
 def _ready_words(
     connection: ProviderDraftIdentity | None,
     endpoint: str,
     credential: str,
     generation: str,
-    observed_at: datetime | None,
+    endpoint_at: datetime | None,
+    generation_at: datetime | None,
 ) -> str:
     """Qualify Ready by what was observed, and when (local HH:MM).
 
-    'verified': a successful paid test, or a cloud key its authenticated
-    listing accepted. 'reachable': a local, URL or custom endpoint answered
-    its listing -- even with a key, since a self-hosted server may ignore it.
-    A public cloud listing (OpenRouter) proves nothing: 'not tested'.
+    'verified': a successful paid test (its time), or a cloud key its
+    authenticated listing accepted (the listing's time). 'reachable': a
+    local, URL or custom endpoint answered its listing -- even with a key,
+    since a self-hosted server may ignore it. A public cloud listing
+    (OpenRouter) proves nothing: 'not tested'.
     """
-    if observed_at is None or connection is None:
+    if connection is None:
         return READY_NOT_TESTED
-    local = connection.custom_endpoint_id is not None or connection.provider_key in (
-        URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+    if generation == "succeeded" and generation_at is not None:
+        return f"Ready · verified {generation_at.astimezone():%H:%M}"
+    if endpoint_at is None:
+        return READY_NOT_TESTED
+    local = (
+        connection.custom_endpoint_id is not None
+        or connection.provider_key in _LOCAL_PROVIDER_KEYS
     )
-    when = observed_at.astimezone().strftime("%H:%M")
-    if generation == "succeeded" or (credential == "listing_accepted" and not local):
+    when = endpoint_at.astimezone().strftime("%H:%M")
+    if credential == "listing_accepted" and not local:
         return f"Ready · verified {when}"
     if endpoint == "reachable" and local:
         return f"Ready · reachable {when}"

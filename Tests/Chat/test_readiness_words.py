@@ -210,8 +210,9 @@ def test_a_successful_paid_test_reads_verified():
     readiness = _console(
         "llama_cpp",
         LLAMA_CONFIG,
+        # Review round 1 (rewritten on purpose): the paid test's own time.
         ProviderTestEvidence(
-            LLAMA, "not_tested", (), generation="succeeded", observed_at=SEEN
+            LLAMA, "not_tested", (), generation="succeeded", generation_observed_at=SEEN
         ),
     )
 
@@ -358,3 +359,121 @@ def test_words_never_claim_generation_success():
         ),
     ):
         assert not re.search(r"generat|sent|works|succe", word, re.IGNORECASE), word
+
+
+# -- Review round 1 -----------------------------------------------------------
+
+
+@pytest.mark.parametrize("category", ["connection_refused", "timeout", "unauthorized"])
+def test_a_missing_model_outranks_a_failed_listing_on_every_surface(category):
+    """AC#8 (review round 1): Settings ranked the failed listing first and the
+    Console the missing model, so one connection read two words. Both now
+    follow the Console's blocker precedence."""
+    evidence = ProviderTestEvidence(LLAMA, "unreachable", (), category, observed_at=SEEN)
+    owner = ProviderConnectionEvidence()
+    owner.publish(evidence, order=1)
+    console = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model=None),
+        app_config=LLAMA_CONFIG,
+        environ={},
+        connection_evidence=owner,
+    )
+    setup = verdict_readiness_words(
+        _snapshot(endpoint="unreachable", category=category, model="missing"), evidence
+    )
+
+    assert console.blocker == "model_missing"
+    assert readiness_words(console) == setup == "Not ready · no model"
+
+
+@pytest.mark.parametrize(
+    ("facets", "word"),
+    [
+        ({"endpoint": "testing", "model": "missing"}, "Not ready · no model"),
+        (
+            {"endpoint": "model_listing_unavailable", "model": "missing"},
+            "Not ready · no model",
+        ),
+        ({"endpoint": "changed_since_test", "model": "missing"}, "Not ready · no model"),
+        (
+            {
+                "endpoint": "changed_since_test",
+                "configuration": "incomplete",
+                "configuration_issue": "credential_missing",
+            },
+            "Not ready · no key",
+        ),
+    ],
+)
+def test_a_blocker_is_never_hidden_by_a_running_or_stale_test(facets, word):
+    """TASK-30011 AC#2: Ready means no known blocker, whatever the test state."""
+    assert verdict_readiness_words(_snapshot(**facets)) == word
+
+
+def test_reachable_keeps_the_listing_time_when_a_later_generation_fails(monkeypatch):
+    """AC#9 (review round 1): a generation settle restamped the one time, so
+    a listing answered at 09:00 read 'reachable 09:30' -- the moment a
+    generation then failed to connect."""
+    times = iter(
+        [datetime(2026, 10, 1, 9, 0).astimezone(), datetime(2026, 10, 1, 9, 30).astimezone()]
+    )
+    monkeypatch.setattr(evidence_module, "_local_now", lambda: next(times))
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(store.begin(LLAMA), ProviderProbeResult("reachable", ("model-a",)))
+    store.settle_generation(
+        store.begin_generation(LLAMA),
+        ProviderGenerationProbeResult("failed", "connection_error"),
+    )
+    shared = provider_connection_evidence(app)
+    console = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=LLAMA_CONFIG,
+        environ={},
+        connection_evidence=shared,
+    )
+    setup = verdict_readiness_words(
+        _snapshot(endpoint="reachable", model="confirmed"), store.evidence_for(LLAMA)
+    )
+
+    assert readiness_words(console) == setup == "Ready · reachable 09:00"
+
+
+def test_verified_by_a_paid_test_reads_the_time_of_that_test(monkeypatch):
+    times = iter(
+        [datetime(2026, 10, 1, 9, 0).astimezone(), datetime(2026, 10, 1, 9, 30).astimezone()]
+    )
+    monkeypatch.setattr(evidence_module, "_local_now", lambda: next(times))
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(store.begin(LLAMA), ProviderProbeResult("reachable", ("model-a",)))
+    store.settle_generation(
+        store.begin_generation(LLAMA), ProviderGenerationProbeResult("succeeded")
+    )
+    console = _console("llama_cpp", LLAMA_CONFIG, store.evidence_for(LLAMA))
+
+    assert readiness_words(console) == "Ready · verified 09:30"
+    assert provider_connection_evidence(app).evidence_for(LLAMA).observed_at.hour == 9
+    assert provider_connection_evidence(app).evidence_for(LLAMA).observed_at.minute == 0
+
+
+def test_a_public_listing_never_records_an_accepted_key():
+    """AC#4 (review round 1): held by the record, not by producer discipline.
+    OpenRouter's /models answers any key, so key_accepted proves nothing."""
+    key = "sk-or-test-readiness-words"
+    identity = _identity("openrouter", "https://openrouter.ai/api/v1", key)
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(
+        store.begin(identity),
+        ProviderProbeResult("reachable", ("model-a",), key_accepted=True),
+    )
+    readiness = _console(
+        "openrouter",
+        {"api_settings": {"openrouter": {"api_key": key}}},
+        store.evidence_for(identity),
+    )
+
+    assert store.evidence_for(identity).credential == "present_unverified"
+    assert readiness.credential == "present_unverified"
+    assert readiness_words(readiness) == "Ready · not tested"

@@ -91,6 +91,10 @@ _PROBE_ENDPOINT_FACETS = frozenset(
 )
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
 _CREDENTIAL_FACETS = frozenset(get_args(CredentialFacet))
+#: Providers whose model listing answers without a valid key, so a listing
+#: never proves the key it was sent (ADR-012 amendment, spec §5): OpenRouter
+#: (ADR-020) and NVIDIA NIM (unauthenticated probe, provider_registry.py).
+PUBLIC_MODEL_LISTING_PROVIDER_KEYS = frozenset({"openrouter", "nvidia"})
 _GENERATION_FACETS = frozenset(
     {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
 )
@@ -483,18 +487,21 @@ class ProviderTestEvidence:
     credential: CredentialFacet = "not_required"
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
-    #: TASK-33005.1: local time of the latest settled observation, for the
-    #: "verified HH:MM" / "reachable HH:MM" words. Not part of equality.
+    #: TASK-33005.1: local time the endpoint fact (the listing) was observed,
+    #: for "reachable HH:MM" and a listing's "verified HH:MM". Not equality.
     observed_at: datetime | None = field(default=None, compare=False)
+    #: TASK-33005.3: local time of the generation fact, so a paid test never
+    #: restamps when the listing answered. Not part of equality.
+    generation_observed_at: datetime | None = field(default=None, compare=False)
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
             raise ValueError("Provider evidence identity is invalid.")
-        if self.observed_at is not None and (
-            type(self.observed_at) is not datetime
-            or self.observed_at.utcoffset() is None
-        ):
-            raise ValueError("Provider evidence observation time is invalid.")
+        for observed in (self.observed_at, self.generation_observed_at):
+            if observed is not None and (
+                type(observed) is not datetime or observed.utcoffset() is None
+            ):
+                raise ValueError("Provider evidence observation time is invalid.")
         if (
             type(self.endpoint) is not str
             or self.endpoint not in _EVIDENCE_ENDPOINT_FACETS
@@ -546,6 +553,11 @@ class ProviderTestEvidence:
             self.generation_category,
             credential_required=self.identity.credential_source != "none",
         )
+        if (
+            normalized_credential == "listing_accepted"
+            and self.identity.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        ):
+            normalized_credential = "present_unverified"  # Spec §5, AC#4.
         object.__setattr__(self, "credential", normalized_credential)
         if normalized_credential == "listing_accepted" and self.endpoint != "reachable":
             raise ValueError("Only a listing that answered can accept a key.")
@@ -829,7 +841,7 @@ class ProviderTestEvidenceStore:
                     generation=generation,
                     category=category,
                 ),
-                observed_at=observed_at or _local_now(),
+                generation_observed_at=observed_at or _local_now(),
             )
             self._evidence = settled
             self._generation_cancel_restore = None
@@ -1308,6 +1320,7 @@ class ProviderConnectionEvidence:
         )
         held_endpoint, held_generation = self._orders.get(key, (0, 0))
         merged = record
+        times: dict[str, datetime] = {}  # Each fact keeps its own time (AC#9).
         if endpoint_order > held_endpoint:
             held_endpoint = endpoint_order
             merged = _replace_endpoint_evidence(
@@ -1318,6 +1331,7 @@ class ProviderConnectionEvidence:
                 category=evidence.category,
                 credential=evidence.credential,
             )
+            times["observed_at"] = evidence.observed_at or _local_now()
         if generation_order > held_generation:
             held_generation = generation_order
             merged = _replace_generation_evidence(
@@ -1326,11 +1340,16 @@ class ProviderConnectionEvidence:
                 generation=evidence.generation,
                 category=evidence.generation_category,
             )
+            times["generation_observed_at"] = (
+                evidence.generation_observed_at or _local_now()
+            )
         if merged is record:
             return False
         self._orders[key] = (held_endpoint, held_generation)
-        merged = replace(merged, observed_at=evidence.observed_at or _local_now())
-        if merged == record and merged.observed_at == record.observed_at:
+        merged = replace(merged, **times)
+        if merged == record and all(
+            getattr(record, name) == value for name, value in times.items()
+        ):
             return False  # Same facts at the same time: nothing for readers.
         self._records[key] = merged
         self._version += 1
@@ -1506,7 +1525,11 @@ def _generation_evidence_from_exact_outcome(
         if outcome.identity != identity:
             raise ValueError("Generation evidence identity does not match the token.")
         _validate_generation_result(outcome.generation, outcome.generation_category)
-        return outcome.generation, outcome.generation_category, outcome.observed_at
+        return (
+            outcome.generation,
+            outcome.generation_category,
+            outcome.generation_observed_at,
+        )
     if type(outcome) is not ProviderGenerationProbeResult:
         raise ValueError("Provider generation result type is invalid.")
     _validate_generation_result(outcome.generation, outcome.category)

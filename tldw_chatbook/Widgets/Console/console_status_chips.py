@@ -375,7 +375,6 @@ class ConsoleStatusChips(Horizontal):
         cost_state: ConsoleCostState | None = None,
         run_copy: str = "",
         collapsed: bool = False,
-        readiness_word: str = "",
         **kwargs: Any,
     ) -> None:
         """Initialize the strip.
@@ -409,8 +408,6 @@ class ConsoleStatusChips(Horizontal):
                 the first frame, not after the next sync tick. ``""``
                 (or any non-active state) renders hidden.
             collapsed: Whether to show the one-line collapsed presentation.
-            readiness_word: The chat's spec §5 readiness word on the first
-                frame (TASK-33005.3, same F1 precedent); ``""`` hides it.
             **kwargs: Additional Textual widget arguments (id/classes).
         """
         classes = kwargs.pop("classes", "")
@@ -424,7 +421,6 @@ class ConsoleStatusChips(Horizontal):
         self.ephemeral = ephemeral
         self._cost_state = cost_state
         self._run_chip_state: tuple[bool, str] = (bool(run_copy), run_copy)
-        self._readiness_word = readiness_word
         self._collapsed = bool(collapsed)
         self.remove_class(*(name for name in self.classes if name.startswith("h-")))
         self.set_styles(height=None)
@@ -504,13 +500,6 @@ class ConsoleStatusChips(Horizontal):
                     id="console-model-chip",
                     chip_class=ConsoleModelChip,
                 )
-                # TASK-33005.3: the pair's readiness word from the first frame,
-                # refreshed by ``sync_readiness_chip``; hidden while empty.
-                readiness_chip = self._chip(
-                    self._readiness_word, id="console-readiness-chip"
-                )
-                readiness_chip.display = bool(self._readiness_word)
-                yield readiness_chip
                 yield self._chip(
                     self.state.system_prompt_label,
                     id="console-system-prompt-chip",
@@ -767,26 +756,6 @@ class ConsoleStatusChips(Horizontal):
                 f"({state.item_count} {_items_word(state.item_count)})."
             )
         return label, tooltip, False, False
-
-    def sync_readiness_chip(self, word: str) -> None:
-        """Show this chat's readiness word (TASK-33005.3, spec §5).
-
-        Pushed with the rail's Model section line from the same settings
-        summary, so both read one derivation; its own cadence like the run,
-        scope and cost chips.
-
-        Args:
-            word: The spec §5 word, or ``""`` to hide the chip.
-        """
-        try:
-            chip = self.query_one("#console-readiness-chip", ConsoleChip)
-        except NoMatches:
-            return
-        if (chip.content, chip.display) == (word, bool(word)):
-            return
-        chip.update(word)
-        chip.tooltip = chip.label_tooltip(word)
-        chip.display = bool(word)
 
     def sync_scope_chip(self, scope_state: ConsoleRetrievalScopeState | None) -> None:
         """Refresh the "Scope" chip from a new snapshot (task-10).

@@ -247,7 +247,8 @@ draft's API key when it has one (a server started with a key is tested with
 it, never without). The result leads with a **Readiness** row in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
-\<reason\>", see [Console](console.md)), then five labelled rows, one fact
+\<reason\>", see [Console](console.md); with no model chosen it reads "Not
+ready · no model" even when the listing failed), then five labelled rows, one fact
 each: **Config** (configured, or not ready), **Key** (saved in config, from
 env var *NAME*, or missing; never the key itself), **Endpoint** (the address
 without any user name, query or fragment, plus the model-listing outcome),

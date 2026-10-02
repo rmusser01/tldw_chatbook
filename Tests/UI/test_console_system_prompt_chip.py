@@ -60,11 +60,8 @@ async def test_system_prompt_chip_mounted_between_model_and_assistant_chips():
 
         model_index = chip_ids.index("console-model-chip")
         assistant_index = chip_ids.index("console-assistant-chip")
-        # TASK-33005.3 (rewritten on purpose): the pair's readiness word sits
-        # right after the Model chip, then System Prompt, then Assistant.
-        assert chip_ids.index("console-readiness-chip") == model_index + 1
-        assert chip_ids.index("console-system-prompt-chip") == model_index + 2
-        assert assistant_index == model_index + 3
+        assert chip_ids.index("console-system-prompt-chip") == model_index + 1
+        assert assistant_index == model_index + 2
 
 
 @pytest.mark.asyncio
@@ -98,40 +95,3 @@ async def test_sync_state_updates_system_prompt_chip_label():
 
         assert str(chip.renderable) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
         assert str(chip.tooltip) == CONSOLE_SYSTEM_PROMPT_LABEL_SET
-
-
-class _ReadinessChipHarness(App):
-    """The strip composed with a first-frame readiness word (TASK-33005.3)."""
-
-    def __init__(self, word: str):
-        super().__init__()
-        self._word = word
-
-    def compose(self) -> ComposeResult:
-        yield ConsoleStatusChips(
-            ConsoleControlState.from_values(),
-            readiness_word=self._word,
-            id="console-status-chips",
-        )
-
-
-@pytest.mark.asyncio
-async def test_readiness_chip_shows_its_word_on_the_first_frame():
-    """TASK-33005.3: live, the chip was blank until some later sync ran; the
-    constructor's word (F1 precedent) paints it on mount, and a sync updates
-    or hides it."""
-    app = _ReadinessChipHarness("Ready · not tested")
-    async with app.run_test(size=(200, 6)) as pilot:
-        chip = app.query_one("#console-readiness-chip")
-        assert chip.display is True
-        assert chip.content == "Ready · not tested"
-
-        strip = app.query_one(ConsoleStatusChips)
-        strip.sync_readiness_chip("Not ready · refused :9099")
-        await pilot.pause()
-        assert chip.content == "Not ready · refused :9099"
-        strip.sync_readiness_chip("")
-        assert chip.display is False
-
-    async with _ReadinessChipHarness("").run_test() as pilot:
-        assert pilot.app.query_one("#console-readiness-chip").display is False

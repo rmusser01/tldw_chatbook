@@ -9782,7 +9782,9 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         )
 
         app.screen._toggle_manual_model_input()
-        await pilot.pause()
+        # TASK-33005.3 review round 1: the readiness line is debounced here too
+        # (task-15476); one bare pause read it before the update, red at base.
+        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
 
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         assert model_select.display is True

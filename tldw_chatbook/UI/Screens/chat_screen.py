@@ -9345,8 +9345,7 @@ class ChatScreen(BaseAppScreen):
             rows = self.query(f"#{section_id} .console-model-section-value")
             if rows:
                 rows.first(Static).update(value or "—")
-        # TASK-33005.3: the rail line and status chip show the one word; the
-        # line turns red only when blocked (the word itself carries the state).
+        # TASK-33005.3: the rail line shows the one word; red only when blocked.
         word = summary_state.readiness_label
         blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
         for recovery in self.query("#console-model-section-recovery").results(Static):
@@ -9354,8 +9353,6 @@ class ChatScreen(BaseAppScreen):
                 recovery.update(word)
             recovery.styles.display = "block" if word else "none"
             recovery.set_class(blocked, "-blocked")
-        for chips in self.query(ConsoleStatusChips):
-            chips.sync_readiness_chip(word)
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
@@ -14943,7 +14940,8 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
-        blocker_copy = self._console_provider_blocker_copy()
+        readiness = self._active_console_settings_readiness()
+        blocker_copy = self._console_provider_blocker_copy(settings_readiness=readiness)
         composer = self._console_composer_or_none()
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
@@ -14983,6 +14981,10 @@ class ChatScreen(BaseAppScreen):
             hook_attention=getattr(
                 getattr(self, "_console_hook_review_snapshot", None), "pending_count", 0
             ),
+            # Single-pane widths keep Ready/Blocked: the word overruns the row.
+            readiness_word=""
+            if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
+            else build_console_readiness_presentation(readiness[1]).primary_label,
         )
 
     def _console_provider_blocker_copy(
@@ -16499,7 +16501,6 @@ class ChatScreen(BaseAppScreen):
                 # run chip -- returning to Console while a background run
                 # is still active must show it before the next sync tick.
                 run_copy=self._console_active_run_copy(),
-                readiness_word=settings_summary_state.readiness_label,
                 id="console-status-chips",
                 classes="ds-panel",
             )
@@ -22347,6 +22348,7 @@ class ChatScreen(BaseAppScreen):
         if band == self._last_console_workspace_width_band:
             return
         self._last_console_workspace_width_band = band
+        self._request_console_control_bar_sync()  # The header word is band-sized.
         try:
             self.query_one("#console-workspace-grid")
         except QueryError:

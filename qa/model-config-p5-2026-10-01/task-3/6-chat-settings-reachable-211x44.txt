@@ -1,43 +1,43 @@
          ╭──────────────╮
  ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
 ────────────────│                                                                                                                                                                                 │────────────────
- Console — Chat,│   Conversation settings                                                                                                                                                         │   ▌     Ready
+ Console — Chat,│   Conversation settings                                                                                                                                                         │eachable 21:04
    New tab     S│                                                                                                                                                                                 │
 ────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
                 │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
-                │                                                                                                                                                                                 │     │
-   Terminal     │  Connection                                                                                                                                                                     │     │
- ───────────────│  Provider               █ llama.cpp                                                                                                                                             │     │
- Workspaces     │                         Selected: llama.cpp                                                                                                                                     │     │
- ───────────────│  Endpoint               │ http://127.0.0.1:9199                                           New endpoint…                                                                         │     │
- Conversations  │  Model                  │ model-a                                                                                                                                               │     │
-        Archive │                         1 model available. Type to filter.                                                                                                                      │     │
-          Archiv│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
-        Search a│                         ▊ Saved fallback                               ▎                                                                                                        │     │
-   Chat 1       │                         ▊ model-a  ● CURRENT                           ▎                                                                                                        │     │
-                │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Saved fallback                                                                                                                                                                 │     │
-  ▊  Filter visi│                            Custom model    Test connection & list models                                                                                                        │     │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
-                │  Ready · reachable 17:41                                                                                                                                                        │     │◂ Inspect
-  Chats         │  A send attempt is permitted with these settings.                                                                                                                               │     │
-   Chat 1       │  Credential · Not required                                                                                                                                                      │     │
-                │  Endpoint · Reachable                                                                                                                                                           │     │
+                │                         ▊ Baidu Qianfan                                ▎                                                                                                        │     │
+   Terminal     │                         ▊ Baseten                                      ▎                                                                                                        │     │
+ ───────────────│                         ▊ ByteDance Seed (BytePlus)                    ▎                                                                                                        │     │
+ Workspaces     │                         ▊ Cerebras                                     ▎                                                                                                        │     │
+ ───────────────│                         ▊ Cloudflare Workers AI                        ▎                                                                                                        │     │
+ Conversations  │                         ▊ Cohere                                       ▎                                                                                                        │     │
+        Archive │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                     ▁  │     │
+          Archiv│  Endpoint               │ http://127.0.0.1:9199                                           New endpoint…                                                                         │     │
+        Search a│  Model                  │ model-a                                                                                                                                               │     │
+   Chat 1       │                         1 model available. Type to filter.                                                                                                                      │     │
+                │                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│                         ▊ Saved fallback                               ▎                                                                                                        │     │
+  ▊  Filter visi│                         ▊ model-a  ● CURRENT                           ▎                                                                                                        │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+                │  Saved fallback                                                                                                                                                                 │     │◂ Inspect
+  Chats         │                            Custom model    Test connection & list models                                                                                                        │     │
+   Chat 1       │  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
+                │  Ready · reachable 21:04                                                                                                                                                        │     │
+                │  A send attempt is permitted with these settings.                                                                                                                               │     │
+ ───────────────│  Credential · Not required                                                                                                                                                      │     │
+ Character · No │  Endpoint · Reachable                                                                                                                                                           │     │
  ───────────────│  Model · Confirmed                                                                                                                                                              │     │
- Character · No │  Generation · Not tested                                                                                                                                                        │     │
- ───────────────│   Test generation                                                                                                                                                               │     │
- Model          │                                                                                                                                                                                 │     │
-  Temperature 0.│   ▶ Advanced generation                                                                                                                                                         │     │
+ Model          │  Generation · Not tested                                                                                                                                                        │     │
+  Temperature 0.│   Test generation                                                                                                                                                               │     │
   Max tokens  40│                                                                                                                                                                                 │     │
-  Streaming   On│   ▶ Conversation identity                                                                                                                                                       │     │
+  Streaming   On│   ▶ Advanced generation                                                                                                                                                         │     │
   Ready · reacha│                                                                                                                                                                                 │     │
-  System: none ▸│   ▶ Request estimate                                                                                                                                                            │     │
+  System: none ▸│   ▶ Conversation identity                                                                                                                                                       │     │
    Change  Alt+M│                                                                                                                                                                                 │     │
- ───────────────│                                                                                                                                                                                 │     │
- ▼ Details      │                                                                                                                                                                                 │     │
+ ▼ Agent · Detai│   ▶ Request estimate                                                                                                                                                            │     │
                 │                                                                                                                                    Used by future conversations for llama.cpp.  │     │
 ────────────────│                                                                                                                                                                                 │────────────────
- Status ▾   Libr│                                                                        Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │ pending     Co
+ Status ▾   Libr│                                                                        Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation   │rrent $0.00 · O
                 │                                                                                                                                                                                 │
 │  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯Dictate
 

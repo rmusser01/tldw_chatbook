@@ -405,6 +405,13 @@ compose-time value into the constructor (`readiness_word`). Whenever a new widge
 refreshed by a sync method, open the screen fresh and capture it before touching
 anything. A test that syncs first cannot see the first frame.
 
+The same captures hid a second defect that only a reviewer saw: the status strip
+already overflowed at 211x44 before the chip existed (it ended "Context 0% · Current
+$0.00 · O…"), so the new chip pushed the Context/cost chip off-screen in every
+capture, and with "Not ready · refused :9199" it vanished entirely. Review round 1
+moved the word into the header badge instead. When you add to a row, diff its last
+visible cells against a base capture at the primary size, not just the new widget.
+
 ---
 
 ## A route-activated geometry test does not prove the untouched startup state

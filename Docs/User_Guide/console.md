@@ -35,8 +35,10 @@ This page is the orientation tour; the details live on the child pages below:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge that reads **Ready**,
-  **Running**, or **Blocked** depending on the active session.
+  live runs, and control actions.", and a status badge with the active
+  chat's readiness word (see **Readiness words** below), or **Running** while
+  a reply is generating. Below 84 columns, where the word does not fit, the
+  badge reads **Ready** or **Blocked**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
@@ -269,8 +271,8 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
-**Readiness words.** Every model surface — the readiness chip after the
-Model chip, the Model section's status line, this card's current step, the
+**Readiness words.** Every model surface — the header's status badge, the
+Model section's status line, this card's current step, the
 Switch model rows, Chat settings and the Settings test result — says the
 same one of four things for the same connection:
 
@@ -279,7 +281,7 @@ same one of four things for the same connection:
 | **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
 | **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. |
 | **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing, or a paid generation test succeeded, at that time. A listing alone never means generation was tested. |
-| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". |
+| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
 
 The words carry the state; colour only repeats it (the Model section line
 turns red when Not ready). A provider whose model list is public, such as
@@ -289,7 +291,7 @@ proves nothing about your key.
 A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
 **Test Provider** in Settings — was refused or timed out, the Console reads,
-for example, "Not ready · refused :9099" (the readiness chip, the Model
+for example, "Not ready · refused :9099" (the header badge, the Model
 section, the Conversation settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the
 connection to continue". **Retry connection** tests that same server again
@@ -383,7 +385,6 @@ fails without playing a truncated file.
 | Chip | What it shows |
 |---|---|
 | **Provider** / **Model** | The active provider and model for this session. The provider shows its display name — "llama.cpp", "OpenAI", or a custom endpoint's own name — never its config key; a long name is shortened with "…" and shows in full when the chip has focus. |
-| **Readiness** | This chat's readiness word, such as "Ready · not tested" or "Not ready · refused :9099" (see Readiness words above). |
 | **Assistant** / **Library** | The active assistant; the Library chip summarizes the two independent conversation controls as **Auto: Never / Automatic** and **Assistant: Blocked / Allowed**. Open it to edit those controls and see whether allowed assistant tools use **Direct / RAG** mode. |
 | **Sources** / **Tools** | Staged source count (e.g. "Sources: 0"); tool readiness (e.g. "Tools: 10 ready" — hidden until tools are counted). |
 | **Approvals** | Pending approvals; press Enter or Space on it to jump to the approval card. |

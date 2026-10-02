@@ -714,7 +714,8 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         console = harness.screen
         await _wait_for_selector(console, pilot, "#console-settings-summary")
         assert console._active_console_settings_readiness()[1].blocker is None
-        assert _rail_text(console, "#workbench-header-status").strip() == "Ready"
+        # Review round 1: the header badge is the status row's word.
+        assert _rail_text(console, "#workbench-header-status") == "Ready · not tested"
 
         await console._open_console_settings(focus_model=False)
         await pilot.pause()
@@ -738,13 +739,12 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         )
         # Model section (left rail), setup card, Inspector and the
         # Conversation settings summary all read the same readiness.
-        # TASK-33005.3 (AC#8): ... in the same word, with the status chip and
-        # the switcher rows; only Not ready paints the rail line red.
+        # TASK-33005.3 (AC#8): ... in the same word, with the header badge
+        # and the switcher rows; only Not ready paints the rail line red.
         recovery = console.query_one("#console-model-section-recovery")
         assert _rail_text(console, "#console-model-section-recovery") == refused
         assert recovery.has_class("-blocked")
         assert _rail_text(console, "#console-settings-readiness-row") == refused
-        assert _rail_text(console, "#console-readiness-chip") == refused
         assert refused in _rail_text(console, "#console-setup-step-1")
         assert switcher_readiness_words(
             console._console_default_readiness("llama_cpp", "model-a")
@@ -756,7 +756,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         assert str(retry.label) == "Retry connection"
         # Review finding 6: the "status row" also covers the header word and
         # the composer's reason strip; Send itself is disabled.
-        assert _rail_text(console, "#workbench-header-status").strip() == "Blocked"
+        assert _rail_text(console, "#workbench-header-status") == refused
         assert console.query_one("#console-send-message", Button).disabled
         assert _rail_text(console, "#console-send-disabled-reason") == (
             "Send blocked — retry the connection to continue ›"
@@ -795,14 +795,13 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         for selector in (
             "#console-model-section-recovery",
             "#console-settings-readiness-row",
-            "#console-readiness-chip",
+            "#workbench-header-status",
         ):
             assert _rail_text(console, selector) == reachable, selector
         assert not recovery.has_class("-blocked")
         assert switcher_readiness_words(
             console._console_default_readiness("llama_cpp", "model-a")
         ) == reachable
-        assert _rail_text(console, "#workbench-header-status").strip() == "Ready"
 
 
 @pytest.mark.asyncio
