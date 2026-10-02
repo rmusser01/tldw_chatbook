@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-10-02 01:52'
+updated_date: '2026-10-02 02:23'
 labels:
   - agents
   - console
@@ -30,13 +30,7 @@ Let committed child progress request a supervisor turn through the existing auto
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Extend existing AgentRuns wake attempt and claim schema to identify completion and progress sources, with migration and installed recovery catalog parity. 2. Pin live-progress claim scope, shared generation budgets, duplicate protection, preacceptance rollback and restart nonreplay. 3. Add metadata-only committed enqueue intake and pending-ID revalidation to the existing scheduler, retaining its coalescing, manual priority and slots. 4. Wake with bounded report IDs and request a fresh read; keep progress claims and completion receipts distinct. 5. Run targeted ledger/scheduler/integration checks, static analysis and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: new automatic wake source sharing existing finite authority.
-
-CI addendum 2026-10-01: extend the existing real automatic-work query-plan test with populated progress claims, pin exact attempt cleanup and register its existing index; run wake/schema and rebase authority checks. ADR required: no; direct qualification of ADR-199.
-
-Final rebase qualification addendum 2026-10-01: repair the unchanged-completion mounted regression to await actual coalesced tab publication rather than assuming an awaited sync or a fixed sleep has painted; verify real completion, the negative disabled-wake-poll control, provider acceptance and existing budget/refusal guards. ADR required: no; test-only evidence correction under existing ADR-199 AC4, with production timing and authority unchanged.
-Observation addendum: unchanged held-control fixture dispatch begins at 9.578s while its 5s first-chunk wait exits at 7.510s during VALIDATING. Qualify pending preparation and use a bounded 15s first-chunk precondition only; retain all 5s action/control waits. Rerun the five failed controls, negative nonstreaming control and unchanged wake admission/UI checks. No provider refusal, new production wait or limit change is intended.
-Apply the same measured 15s preparation precondition to the two wake gateway-entry waits; leave their actual paint, terminal-ledger and idle-poll settle deadlines at 8s. The initial disabled-hook control expired before admission and is not accepted as negative repaint evidence; rerun it only after its streaming precondition is established.
+1. Preserve the existing progress/completion shared claim, generation and budget boundaries. 2. Trace accepted automatic wake attempts through incoming compaction failure, retry latch and exact preflight-block copy ownership. 3. Qualify real automatic compaction, failed-spend disclosure, nonrebilling, exact recovery copy and hook refusal/refund paths. 4. Check startup census, diagnostic guards, changed-code static analysis and independent review. ADR required: no; direct integration under backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Reason: no new service, data or authority boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -65,4 +59,10 @@ Final dev 84247cb843 qualification: the stopped combined selection recorded 138 
 Fresh final affected selection passes 13 cases in 177.22s (four mounted wake cases, both exact hook-refund gateways, CSS budget/bundle and UI census 1031/1033); independent review passes all five originally failing controls in 209.78s and approves both test corrections. A private frozen-terminal-publication control reaches streaming/ledger completion then fails at the exact settled-glyph assertion; a private never-first-chunk control fails at its bounded 15s precondition. The disabled-delivery-hook-only probe passed due to a coalesced tail and is not accepted as necessary-hook evidence. These selections overlap with earlier runs and are not summed.
 
 Final 78-file changed-code fatal/added-line checks, ten new-file Ruff/format checks, owned test-range formatting and whitespace pass. Last predicate formatting preserves the tested AST. Modified only the two mounted test harnesses, task/review/plan/ledger records and the measured testing lesson; production gates, deadlines, budgets, APIs and authority remain unchanged. ADR required: no; direct test-evidence qualification under ADR-199 AC4 and new AC5. All criteria satisfied; Done. Fresh PR-head CI remains required after publishing the rebase; no full suite, live provider, merge or inherited-size/static/resource blanket claim.
+
+Reopened for incoming compaction changes on dev 27e718f01d; accepted compaction failure/nonreplay and exact hook-refund qualification is pending.
+
+Final incoming compaction integration: independent source review finds no actionable wake/compaction overlap. Acceptance precedes compaction, so accepted failures retain generation and nonreplay custody; exact recovery-copy ownership and durable-parent lineage remain intact. Ten real compaction/refund/nonreplay cases pass in 82.63s (/private/tmp/review-pr2918-compaction-wake-rebase.log), including both hook-refund provider paths. Mounted saved reopen/close passes 2 in 18.15s. Startup/CSS/guide guards pass 4 in 51.29s: imports 679/686, UI-ready 1032/1033, original CSS and module pins unchanged. No production timing or authority change.
+
+The preserving Chat 73→74→75 composition and exact recovery gates are qualified under TASK-33431. Final 79-file changed-code/new-file/owned-range static and whitespace checks pass; audited diagnostic inventory verifies 629 owners and 15 sink files. Independent schema review approves 39 overlapping checks. ADR required: no new ADR; existing ADR-199/052. Docs-only dev 922440b93e is the following rebase target and changes no runtime file. All five criteria remain satisfied; Done. Original 13-task burn-down is complete; fresh PR-head remote checks remain required, with no full suite, live provider, Windows or merge claim.
 <!-- SECTION:NOTES:END -->

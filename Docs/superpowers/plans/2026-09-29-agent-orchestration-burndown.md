@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** latest fetched dev 84247cb8435fcf59b6d8e2d97c6b2f0913934dd0.
+**Integration base:** dev 27e718f01d81b7093502c0ea1d2690e07b9f6362 (compaction), followed by docs-only dev 922440b93e83b4dd7086086de21b1276c477fc8e.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -86,3 +86,14 @@ ADR required: no. This is integration of the existing readiness repair with ADR-
 - [x] Prepare the verified rebase for exact-lease publication; confirm the PR head and fresh CI state immediately after the push.
 
 Final evidence: 13 affected checks pass in 177.22s; independent review approves five corrected controls in 209.78s. Frozen terminal painting and never-first-chunk controls fail at their intended assertions. The stopped 138-pass/7-fail selection is retained as diagnostic evidence, not claimed green. Production behavior and limits remain unchanged; all 13 tasks are Done. Fresh GitHub checks remain part of PR delivery.
+
+
+## October 1 compaction migration integration
+
+Dev shipped Chat schema 74 for auxiliary failure reasons before the unmerged durable-progress migration. Preserve the shipped 73→74 method and SQL exactly; compose progress as 74→75 with unchanged DDL and exact current Chat/shared-Subscriptions recovery gates. ADR required: no new ADR; amend ADR-199 and preserve ADR-052. Current-only Chat recovery and frozen AgentRuns 18/21/22 migration policy stay unchanged.
+
+Qualification: genuine 73/74 upgrades retain saved conversations and auxiliary failure reasons; injected failure after progress table creation rolls back table/index/version and allows a clean retry. Exact fresh/core/shared catalogs, both shared stamp gates, durable queues, atomic Save and mounted reopen/close pass. The first affected selection had 29 passed/2 new fixture failures; the final selection passes 31 in 82.20s after using the supported read-only owner and staging immutable recovery candidates through the existing backup API. No production recovery gate was weakened.
+
+Independent verification passes 30 core/dictionary/AgentRuns/standalone-Subscriptions checks and five frozen AgentRuns history checks. Incoming compaction/refund/nonreplay qualification passes 10 cases in 82.63s. Mounted saved reopen/close passes two cases in 18.15s; startup/CSS/guide passes four in 51.29s, imports 679/686 and UI-ready 1032/1033. Selections overlap and are not summed. The audited diagnostic inventory remains verified.
+
+The subsequent dev 922440b93e changes only canonical ADRs, including ADR-210's accepted Console migration plan. Its step 6 retains the current Model/Agent rail sections until their replacement; this patch does not implement that separate redesign. Rebase without changing runtime code, verify its source manifest, then publish PR #2918 for fresh remote checks. No full suite or merge is claimed.

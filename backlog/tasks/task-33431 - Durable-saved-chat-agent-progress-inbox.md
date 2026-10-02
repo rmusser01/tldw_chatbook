@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 01:08'
+updated_date: '2026-10-02 02:23'
 labels:
   - agents
   - console
@@ -29,11 +29,7 @@ Preserve pending child reports across saved-chat closure and application restart
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Trace saved binding and explicit Save through native identity and the existing Console transaction contribution. 2. Add a bounded chat-owned SQLite progress table and leaf repository, retaining process-local sending capability and memory-only temporary reports. 3. Prepare durable loading outside native identity locks and bind only after exact-owner revalidation; commit enqueue and whole-report collection before receipts. 4. Reuse caller-owned Save contribution for atomic pending-report promotion, preserve old queues on rollback/cancel, and add focused reopen, FIFO, limits, owner replacement and privacy checks. 5. Update installed recovery schema and documentation, run targeted/static checks and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: durable report data with atomic chat Save and separate live authority.
-
-CI addendum 2026-10-01: use existing ADR-173 timestamp writer for persisted progress; pin the real bounded FIFO query plan without sqlite_stat1 and register its index in the existing census; run targeted durable/schema checks after latest-dev rebase. ADR required: no; direct corrections under ADR-173/199.
-
-Qodo addendum 2026-10-01: audit global begin_close and deferred physical cleanup callers, verify immutable published membership suffices for deny-only revocation after the global fence, and reproduce a forced interleaving before the minimal snapshot repair. Check real admitted-writer and mounted dispose paths. ADR required: no; preserves ADR-199 authority/owned cleanup.
+1. Trace saved binding and explicit Save through native identity and the existing Console transaction contribution. 2. Preserve dev's shipped 73→74 auxiliary failure-reason migration and compose durable progress as 74→75. 3. Keep exact Chat/shared-Subscriptions recovery catalogs and both stamp gates at version 75, retaining current-only Chat recovery and frozen AgentRuns history. 4. Qualify genuine 73/74 upgrades, retained auxiliary reasons, mid-DDL rollback, durable reopen and atomic Save. 5. Run targeted/static checks and independent review, then update documentation. ADR required: no new ADR; amend backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and respect backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Reason: integration of existing storage and recovery boundaries.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -78,4 +74,12 @@ October 1 CI/integration closeout: ProgressMessage now reuses utc_now_iso under 
 October 1 Qodo review: validate global close membership capture against deferred inbox cleanup; reuse existing immutable published membership if required while preserving the global authority fence and nonblocking revocation under admitted SQL work. Existing ADR-199; no new lifecycle contract.
 
 October 1 Qodo close-membership follow-up complete: begin_close sets the global deny-only latch, then revokes through existing immutable published inbox membership instead of copying the mutable authoritative dictionary. It takes no writer lock. The global latch fences unpublished inboxes; final physical close still settles/drains authoritative membership under its existing lock. Forced yielding-iteration scheduling reproduced RuntimeError during real finish_close_inbox before the change; this does not claim a naturally reproduced CPython3.12/GIL race. All 44 queue cases and 4 actual mounted SQLite disposal/cancelled-disposal/replacement-disposal/durable-reopen checks pass, with independent controlled close/replacement/revocation verification and final 22-check review approval. Final 76-file changed-code static, format, diagnostics and whitespace checks pass. Existing ADR-199; no new snapshot, owner, lock or dependency. Done.
+
+Reopened for the dev 27e718f01d integration: upstream now ships Chat schema 74. Qualification of sequential durable-progress migration 74→75 and exact recovery catalogs is pending.
+
+Final compaction-rebase integration: dev 27e718f01d ships auxiliary failure reasons in Chat schema 74. Its exact 73→74 method and SQL remain unchanged; durable progress now uses a separate guarded 74→75 migration with unchanged fleet DDL. Current Chat/shared-Subscriptions catalogs and both stamp gates use 75; historical AgentRuns policy is unchanged. Genuine 73/74 upgrades retain conversation and auxiliary reasons. Injected failure after CREATE TABLE rolls back table/index/version and allows a clean retry. Exact shared recovery uses staged private backups, preserving all catalog checks.
+
+Final affected selection: 31 passed in 82.20s (/private/tmp/pr2918-compaction-schema-final-green.log); mounted saved reopen/read/discard and promoted-alias close: 2 passed in 18.15s. Independent approval has no remaining findings: 30 complementary recovery/dictionary cases, 5 frozen history cases, 1 exact staged shared candidate/refusal and 3 real linear upgrade/rollback cases. These selections overlap and are not summed. Initial 29 passed/2 failed qualification is retained: test-only connection ownership and live-WAL candidate setup were corrected, with no production validator weakening. The staged candidate independently matches 584 SQL objects, 715 catalog rows and 523 metadata entries.
+
+Final static covers 79 Python files: fatal, added-line/new-file lint, all ten new-file formats, owned migration/test formatting and whitespace pass. The audited diagnostic inventory remains verified. ADR-199 amended; ADR-052 preserved; testing lesson records the WAL staging incident. Docs-only dev 922440b93e is the following rebase target and changes no runtime file. All four criteria remain satisfied; Done. Fresh published-head CI is required, with no full suite or merge claim.
 <!-- SECTION:NOTES:END -->
