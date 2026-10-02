@@ -3,11 +3,14 @@ import io
 import pytest
 from PIL import Image
 
+
 def _png_b64():
     import base64
+
     buf = io.BytesIO()
     Image.new("RGB", (8, 8), (10, 10, 200)).save(buf, "PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
 
 def _fake_fetch_json_factory(calls):
     def fake_fetch_json(method, url, **kw):
@@ -15,17 +18,30 @@ def _fake_fetch_json_factory(calls):
         if url.endswith("/API/GetNewSession"):
             return {"session_id": "sess-1"}
         return {"images": [{"image": _png_b64()}]}
+
     return fake_fetch_json
 
 
 def test_swarmui_generate_happy_path(monkeypatch):
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+
     calls = []
     monkeypatch.setattr(m, "fetch_json", _fake_fetch_json_factory(calls))
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None,
-                          format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     res = m.SwarmUIAdapter().generate(req)
     assert res.content_type.startswith("image/") and res.bytes_len > 0
     assert any("GetNewSession" in c for c in calls)
@@ -38,6 +54,7 @@ def test_swarmui_threads_trusted_origins_for_configured_base_url(monkeypatch):
     # trusted_origins={"127.0.0.1"} or local-backend generation would regress.
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+
     seen_trusted = []
 
     def fake_fetch_json(method, url, **kw):
@@ -47,9 +64,20 @@ def test_swarmui_threads_trusted_origins_for_configured_base_url(monkeypatch):
         return {"images": [{"image": _png_b64()}]}
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None,
-                          format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     m.SwarmUIAdapter().generate(req)
     assert seen_trusted, "fetch_json was never called"
     assert all(trust == frozenset({"127.0.0.1"}) for trust in seen_trusted)
@@ -72,13 +100,25 @@ def test_swarmui_image_fetch_threads_trusted_origins(monkeypatch):
     def fake_fetch_shared_image_bytes(url, **kw):
         seen_kwargs["trusted_origins"] = kw.get("trusted_origins")
         import base64
+
         return base64.b64decode(_png_b64().split(",", 1)[1]), "image/png"
 
     monkeypatch.setattr(m, "fetch_json", fake_fetch_json)
     monkeypatch.setattr(m, "fetch_shared_image_bytes", fake_fetch_shared_image_bytes)
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None,
-                          format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     res = m.SwarmUIAdapter().generate(req)
     assert res.bytes_len > 0
     assert seen_kwargs["trusted_origins"] == frozenset({"127.0.0.1"})
@@ -123,11 +163,23 @@ def test_swarmui_generate_reports_resolved_model_from_configured_default(monkeyp
     from dataclasses import replace as dc_replace
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+
     calls = []
     monkeypatch.setattr(m, "fetch_json", _fake_fetch_json_factory(calls))
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None,
-                          format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     adapter = m.SwarmUIAdapter()
     adapter._config = dc_replace(
         adapter._config,
@@ -145,13 +197,27 @@ def test_swarmui_generate_resolved_model_prefers_explicit_request_model(monkeypa
     from dataclasses import replace as dc_replace
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+
     calls = []
     monkeypatch.setattr(m, "fetch_json", _fake_fetch_json_factory(calls))
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None,
-                          model="custom-checkpoint", format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model="custom-checkpoint",
+        format="png",
+        extra_params={},
+    )
     adapter = m.SwarmUIAdapter()
-    adapter._config = dc_replace(adapter._config, swarmui_default_model="fallback-model")
+    adapter._config = dc_replace(
+        adapter._config, swarmui_default_model="fallback-model"
+    )
     res = adapter.generate(req)
     assert res.resolved_model == "custom-checkpoint"
 
@@ -161,11 +227,23 @@ def test_swarmui_generate_resolved_model_none_when_unconfigured(monkeypatch):
     from dataclasses import replace as dc_replace
     from tldw_chatbook.Image_Generation.adapters import swarmui_adapter as m
     from tldw_chatbook.Image_Generation.adapters.base import ImageGenRequest
+
     calls = []
     monkeypatch.setattr(m, "fetch_json", _fake_fetch_json_factory(calls))
-    req = ImageGenRequest(backend="swarmui", prompt="dragon", negative_prompt=None, width=512,
-                          height=512, steps=20, cfg_scale=7.0, seed=-1, sampler=None, model=None,
-                          format="png", extra_params={})
+    req = ImageGenRequest(
+        backend="swarmui",
+        prompt="dragon",
+        negative_prompt=None,
+        width=512,
+        height=512,
+        steps=20,
+        cfg_scale=7.0,
+        seed=-1,
+        sampler=None,
+        model=None,
+        format="png",
+        extra_params={},
+    )
     adapter = m.SwarmUIAdapter()
     adapter._config = dc_replace(adapter._config, swarmui_default_model=None)
     res = adapter.generate(req)

@@ -7,6 +7,7 @@ from tldw_chatbook.Utils import egress
 @pytest.fixture
 def hc():
     from tldw_chatbook.Image_Generation import http_client as m
+
     return m
 
 
@@ -26,12 +27,14 @@ def _policy_env(monkeypatch):
 
 def test_rejects_non_http_scheme(hc):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise("file:///etc/passwd")
 
 
 def test_rejects_gopher_scheme(hc):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise("gopher://127.0.0.1:70/x")
 
@@ -42,6 +45,7 @@ def test_blocks_local_backend_url_without_trust(hc):
     # is the real SSRF policy (task-498) superseding the old Phase-1 guard,
     # which was permissive for ANY http(s) URL including loopback.
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise("http://127.0.0.1:7801/API/GetNewSession")
 
@@ -55,26 +59,32 @@ def test_allows_local_backend_url_with_trusted_origin(hc):
     )  # no raise
 
 
-@pytest.mark.parametrize("private_url", [
-    "http://10.0.0.5/x",
-    "http://192.168.1.5/x",
-    "http://172.16.0.5/x",
-    "http://127.0.0.1/x",
-])
+@pytest.mark.parametrize(
+    "private_url",
+    [
+        "http://10.0.0.5/x",
+        "http://192.168.1.5/x",
+        "http://172.16.0.5/x",
+        "http://127.0.0.1/x",
+    ],
+)
 def test_blocks_private_ip_ranges_when_untrusted(hc, private_url):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise(private_url)
 
 
 def test_blocks_link_local(hc):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise("http://169.254.10.10/x")
 
 
 def test_blocks_cloud_metadata_ip(hc):
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise("http://169.254.169.254/latest/meta-data/")
 
@@ -83,6 +93,7 @@ def test_metadata_ip_blocked_even_when_trusted(hc):
     # trusted_origins grants private-range access, but cloud metadata is a
     # harder rule: it is blocked regardless (see Utils/egress.py docstring).
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     with pytest.raises(ImageGenerationError):
         hc._validate_egress_or_raise(
             "http://169.254.169.254/latest/meta-data/",
@@ -91,9 +102,13 @@ def test_metadata_ip_blocked_even_when_trusted(hc):
 
 
 def test_evaluate_url_policy_allowlist(hc):
-    r = hc.evaluate_url_policy("https://x.aliyuncs.com/i.png", allowed_hosts={"aliyuncs.com"})
+    r = hc.evaluate_url_policy(
+        "https://x.aliyuncs.com/i.png", allowed_hosts={"aliyuncs.com"}
+    )
     assert r.allowed is True
-    r2 = hc.evaluate_url_policy("https://evil.example/i.png", allowed_hosts={"aliyuncs.com"})
+    r2 = hc.evaluate_url_policy(
+        "https://evil.example/i.png", allowed_hosts={"aliyuncs.com"}
+    )
     assert r2.allowed is False
 
 
@@ -119,16 +134,31 @@ def test_fetch_json_parses(monkeypatch, hc):
     class FakeResp:
         status_code = 200
         is_redirect = False
-        def json(self): return {"ok": True}
-        def raise_for_status(self): pass
+
+        def json(self):
+            return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def request(self, *a, **k): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, *a, **k):
+            return FakeResp()
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     assert hc.fetch_json(
-        "POST", "http://127.0.0.1:7801/API/x", json={"a": 1},
+        "POST",
+        "http://127.0.0.1:7801/API/x",
+        json={"a": 1},
         trusted_origins=frozenset({"127.0.0.1"}),
     ) == {"ok": True}
 
@@ -136,12 +166,20 @@ def test_fetch_json_parses(monkeypatch, hc):
 def test_fetch_json_blocks_untrusted_local_url(monkeypatch, hc):
     # Without trusted_origins, fetch_json must not even reach the transport.
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, *a, **k):
             raise AssertionError("must not reach the transport when the URL is blocked")
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError):
         hc.fetch_json("POST", "http://127.0.0.1:7801/API/x", json={"a": 1})
@@ -156,16 +194,31 @@ def test_fetch_json_revalidates_redirect_hop(monkeypatch, hc):
         is_redirect = True
         headers = {"location": "file:///etc/passwd"}
         url = "http://127.0.0.1:7801/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def request(self, *a, **k): return RedirResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, *a, **k):
+            return RedirResp()
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError):
-        hc.fetch_json("GET", "http://127.0.0.1:7801/x", trusted_origins=frozenset({"127.0.0.1"}))
+        hc.fetch_json(
+            "GET", "http://127.0.0.1:7801/x", trusted_origins=frozenset({"127.0.0.1"})
+        )
 
 
 def test_fetch_json_revalidates_redirect_to_private_ip(monkeypatch, hc):
@@ -178,17 +231,31 @@ def test_fetch_json_revalidates_redirect_to_private_ip(monkeypatch, hc):
         is_redirect = True
         headers = {"location": "http://192.168.1.77/steal"}
         url = "https://api.example.com/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def request(self, *a, **k): return RedirResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def request(self, *a, **k):
+            return RedirResp()
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError):
         hc.fetch_json(
-            "GET", "https://api.example.com/x",
+            "GET",
+            "https://api.example.com/x",
             trusted_origins=frozenset({"api.example.com"}),
         )
 
@@ -203,26 +270,41 @@ def test_fetch_json_strips_authorization_on_cross_origin_redirect(monkeypatch, h
         is_redirect = True
         headers = {"location": "https://attacker.example/steal"}
         url = "https://api.example.com/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
 
     class FinalResp:
         is_redirect = False
         status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
             return RedirResp() if url == "https://api.example.com/x" else FinalResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     result = hc.fetch_json(
-        "GET", "https://api.example.com/x",
+        "GET",
+        "https://api.example.com/x",
         headers={
             "Authorization": "Bearer secret",
             "Accept": "application/json",
@@ -248,26 +330,41 @@ def test_fetch_json_strips_cookies_on_cross_origin_redirect(monkeypatch, hc):
         is_redirect = True
         headers = {"location": "https://attacker.example/steal"}
         url = "https://api.example.com/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
 
     class FinalResp:
         is_redirect = False
         status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, method, url, *, cookies=None, **k):
             seen.append((url, cookies))
             return RedirResp() if url == "https://api.example.com/x" else FinalResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     hc.fetch_json(
-        "GET", "https://api.example.com/x",
+        "GET",
+        "https://api.example.com/x",
         cookies={"session": "abc"},
         trusted_origins=frozenset({"api.example.com"}),
     )
@@ -284,26 +381,41 @@ def test_fetch_json_keeps_authorization_on_same_origin_redirect(monkeypatch, hc)
         is_redirect = True
         headers = {"location": "http://127.0.0.1:7801/y"}
         url = "http://127.0.0.1:7801/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
 
     class FinalResp:
         is_redirect = False
         status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
             return RedirResp() if url.endswith("/x") else FinalResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     result = hc.fetch_json(
-        "GET", "http://127.0.0.1:7801/x",
+        "GET",
+        "http://127.0.0.1:7801/x",
         headers={"Authorization": "Bearer local-token"},
         trusted_origins=frozenset({"127.0.0.1"}),
     )
@@ -322,26 +434,41 @@ def test_fetch_json_strips_authorization_on_same_host_scheme_downgrade(monkeypat
         is_redirect = True
         headers = {"location": "http://127.0.0.1:7801/y"}
         url = "https://127.0.0.1:7801/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
 
     class FinalResp:
         is_redirect = False
         status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
             return RedirResp() if url.endswith("/x") else FinalResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     result = hc.fetch_json(
-        "GET", "https://127.0.0.1:7801/x",
+        "GET",
+        "https://127.0.0.1:7801/x",
         headers={"Authorization": "Bearer local-token"},
         trusted_origins=frozenset({"127.0.0.1"}),
     )
@@ -359,26 +486,41 @@ def test_fetch_json_strips_authorization_on_same_host_different_port(monkeypatch
         is_redirect = True
         headers = {"location": "http://127.0.0.1:9999/y"}
         url = "http://127.0.0.1:7801/x"
-        def raise_for_status(self): pass
-        def json(self): return {}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {}
 
     class FinalResp:
         is_redirect = False
         status_code = 200
-        def raise_for_status(self): pass
-        def json(self): return {"ok": True}
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return {"ok": True}
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def request(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
             return RedirResp() if url.endswith("/x") else FinalResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     result = hc.fetch_json(
-        "GET", "http://127.0.0.1:7801/x",
+        "GET",
+        "http://127.0.0.1:7801/x",
         headers={"Authorization": "Bearer local-token"},
         trusted_origins=frozenset({"127.0.0.1"}),
     )
@@ -430,26 +572,43 @@ def test_create_client_defaults_when_timeout_omitted(hc):
 
 def test_fetch_bytes_via_post_returns_body_and_content_type(monkeypatch, hc):
     """Happy path: POST returns bytes + the content-type header."""
+
     class FakeResp:
         status_code = 200
         is_redirect = False
         headers = {"content-type": "image/png"}
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
         def iter_bytes(self):
             yield b"\x89PNG\r\n\x1a\n"
             yield b"rest-of-file"
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def stream(self, method, url, *, json=None, **k):
             assert method == "POST"
             return FakeResp()
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     body, ctype = hc.fetch_bytes_via_post(
-        "https://api.example.com/gen", json={"prompt": "x"},
+        "https://api.example.com/gen",
+        json={"prompt": "x"},
         trusted_origins=frozenset({"api.example.com"}),
     )
     assert body.startswith(b"\x89PNG") and ctype == "image/png"
@@ -458,18 +617,28 @@ def test_fetch_bytes_via_post_returns_body_and_content_type(monkeypatch, hc):
 def test_fetch_bytes_via_post_validates_egress_first(monkeypatch, hc):
     # Private IP without trusted_origins -> egress error, fake client never called.
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
+
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def stream(self, *a, **k):
             raise AssertionError("must not reach the transport when the URL is blocked")
+
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError):
         hc.fetch_bytes_via_post("http://127.0.0.1:7801/gen", json={"prompt": "x"})
 
 
-def test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect(monkeypatch, hc):
+def test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect(
+    monkeypatch, hc
+):
     # 307 to another host: Authorization absent on hop 2; same-origin keeps it
     # on hop 1 (mirrors test_fetch_json_strips_authorization_on_cross_origin_redirect).
     seen = []
@@ -479,24 +648,43 @@ def test_fetch_bytes_via_post_strips_credentials_on_cross_origin_redirect(monkey
         status_code = 307
         headers = {"location": "https://attacker.example/steal"}
         url = "https://api.example.com/x"
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
 
     class FinalResp:
         is_redirect = False
         status_code = 200
         headers = {"content-type": "application/octet-stream"}
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
         def iter_bytes(self):
             yield b"bytes-payload"
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
         def stream(self, method, url, *, headers=None, **k):
             seen.append((url, dict(headers or {})))
             return RedirResp() if url == "https://api.example.com/x" else FinalResp()
@@ -533,20 +721,34 @@ def test_fetch_bytes_via_post_redirect_to_private_ip_blocked(monkeypatch, hc):
         status_code = 307
         headers = {"location": "http://10.0.0.1/steal"}
         url = "https://api.example.com/x"
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **k): return RedirResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, *a, **k):
+            return RedirResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError):
         hc.fetch_bytes_via_post(
-            "https://api.example.com/x", json={"prompt": "x"},
+            "https://api.example.com/x",
+            json={"prompt": "x"},
             trusted_origins=frozenset({"api.example.com"}),
         )
 
@@ -569,29 +771,49 @@ def test_fetch_bytes_via_post_max_bytes_exceeded_aborts_mid_stream(monkeypatch, 
         status_code = 200
         is_redirect = False
         headers = {"content-type": "application/octet-stream"}  # no Content-Length
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
-        def iter_bytes(self): return chunk_source()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_bytes(self):
+            return chunk_source()
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **k): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, *a, **k):
+            return FakeResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError) as exc_info:
         hc.fetch_bytes_via_post(
-            "https://api.example.com/gen", json={"prompt": "x"},
+            "https://api.example.com/gen",
+            json={"prompt": "x"},
             trusted_origins=frozenset({"api.example.com"}),
             max_bytes=25,  # exceeded partway through chunk 3 (30 > 25)
         )
     assert "25" in str(exc_info.value)
-    assert len(consumed) < 5, "stream must abort as soon as the cap is exceeded, not read to the end"
+    assert len(consumed) < 5, (
+        "stream must abort as soon as the cap is exceeded, not read to the end"
+    )
 
 
-def test_fetch_bytes_via_post_declared_oversize_rejected_without_reading(monkeypatch, hc):
+def test_fetch_bytes_via_post_declared_oversize_rejected_without_reading(
+    monkeypatch, hc
+):
     # A Content-Length that already exceeds max_bytes is rejected before a
     # single chunk is read -- the declared-oversize pre-check.
     from tldw_chatbook.Image_Generation.exceptions import ImageGenerationError
@@ -602,28 +824,45 @@ def test_fetch_bytes_via_post_declared_oversize_rejected_without_reading(monkeyp
         status_code = 200
         is_redirect = False
         headers = {"content-type": "application/octet-stream", "content-length": "1000"}
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
         def iter_bytes(self):
             iter_bytes_started.append(True)
             yield b"x" * 1000
 
     class FakeClient:
-        def __init__(self, *a, **k): pass
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **k): return FakeResp()
+        def __init__(self, *a, **k):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, *a, **k):
+            return FakeResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     with pytest.raises(ImageGenerationError) as exc_info:
         hc.fetch_bytes_via_post(
-            "https://api.example.com/gen", json={"prompt": "x"},
+            "https://api.example.com/gen",
+            json={"prompt": "x"},
             trusted_origins=frozenset({"api.example.com"}),
             max_bytes=100,
         )
     assert "100" in str(exc_info.value)
-    assert iter_bytes_started == [], "declared-oversize body must never be read, not even one chunk"
+    assert iter_bytes_started == [], (
+        "declared-oversize body must never be read, not even one chunk"
+    )
 
 
 def test_fetch_bytes_via_post_respects_explicit_zero_timeout(monkeypatch, hc):
@@ -635,28 +874,46 @@ def test_fetch_bytes_via_post_respects_explicit_zero_timeout(monkeypatch, hc):
         status_code = 200
         is_redirect = False
         headers = {"content-type": "application/octet-stream"}
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def raise_for_status(self): pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def raise_for_status(self):
+            pass
+
         def iter_bytes(self):
             yield b"bytes"
+
     class FakeClient:
         def __init__(self, *a, **k):
             captured.append(k.get("timeout"))
-        def __enter__(self): return self
-        def __exit__(self, *a): return False
-        def stream(self, *a, **k): return FakeResp()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def stream(self, *a, **k):
+            return FakeResp()
 
     monkeypatch.setattr(hc.httpx, "Client", FakeClient)
     hc.fetch_bytes_via_post(
-        "https://api.example.com/gen", json={"prompt": "x"}, timeout=0,
+        "https://api.example.com/gen",
+        json={"prompt": "x"},
+        timeout=0,
         trusted_origins=frozenset({"api.example.com"}),
     )
     assert captured[-1] == 0
 
     captured.clear()
     hc.fetch_bytes_via_post(
-        "https://api.example.com/gen", json={"prompt": "x"}, timeout=None,
+        "https://api.example.com/gen",
+        json={"prompt": "x"},
+        timeout=None,
         trusted_origins=frozenset({"api.example.com"}),
     )
     assert captured[-1] == hc._DEFAULT_TIMEOUT
