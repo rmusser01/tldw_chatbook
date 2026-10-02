@@ -8,6 +8,8 @@ from threading import Event, Thread
 
 import pytest
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 from tldw_chatbook.Agents.agent_models import (
     ContinuationEventContext,
     ToolBatchReady,
@@ -906,8 +908,9 @@ async def test_resume_forwards_only_policy_retained_prior_complete_sidecars(
         assert [item.owner_message_id for item in sidecar] == (
             [prior.id] if expected_prior else []
         )
-        assert captured.get("continuation_history_target") == (
-            captured["restore_provider_target"] if expected_prior else None
+        assert (
+            captured.get("continuation_history_target")
+            == captured["restore_provider_target"]
         )
         provider_rows = captured["provider_messages"]
         assert (

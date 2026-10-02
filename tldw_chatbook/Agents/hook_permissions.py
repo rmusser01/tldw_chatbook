@@ -24,6 +24,7 @@ from tldw_chatbook.Agents.run_hooks import (
     HookInventory,
     HookInventoryRow,
     HookLaunchRefused,
+    HookSpec,
     HookTarget,
     fingerprint_hook,
     inspect_hooks_config,
@@ -225,7 +226,7 @@ class HookPermissions:
         previous = record["observed"]
         inventory = self._inventory(cfg)
         observed = {}
-        for row in inventory.rows:
+        for row in inventory.review_rows:
             if row.spec is None:
                 continue
             fingerprint = fingerprint_hook(row.spec)
@@ -234,7 +235,9 @@ class HookPermissions:
             if prior:
                 change = prior["change"]
                 if prior["fingerprint"] != fingerprint:
-                    change = "Modified" if row.key.startswith("id:") else "New"
+                    change = (
+                        "Modified" if row.key.startswith(("id:", "v2:id:")) else "New"
+                    )
                     record["grants"].pop(row.key, None)
             eligible = inventory.master_enabled is True and row.enabled is True
             if (
@@ -318,7 +321,7 @@ class HookPermissions:
             rows.append(HookReviewRow(None, "recovery"))
             blocked = error
         targets = []
-        for row in inventory.rows:
+        for row in inventory.review_rows:
             change = record["observed"].get(row.key, {}).get("change", "Existing")
             grant = record["grants"].get(row.key)
             if row.spec is None:
@@ -543,6 +546,7 @@ class HookPermissions:
         section = copy.deepcopy(expected.config.section)
         if (
             row is None
+            or row.source != "hook"
             or not isinstance(section, dict)
             or not isinstance(section.get("hook"), list)
         ):
@@ -742,7 +746,7 @@ class HookPermissions:
         )
         for row in snapshot.rows:
             entry = row.entry
-            if entry is None or entry.enabled is False:
+            if entry is None or entry.source != "hook" or entry.enabled is False:
                 continue
             if entry.spec:
                 affects = entry.spec.event == event and (
@@ -787,7 +791,8 @@ class HookPermissions:
         return tuple(
             target
             for target in targets
-            if target.spec.event == event
+            if isinstance(target.spec, HookSpec)
+            and target.spec.event == event
             and (
                 target.spec.matcher is None
                 or tool_name is not None
@@ -812,6 +817,49 @@ class HookPermissions:
             raise HookLaunchRefused(
                 "Hook authority unavailable; dispatch refused."
             ) from None
+
+    def v2_configuration(self) -> tuple[HookReviewSnapshot, tuple[HookTarget, ...]]:
+        """Capture saved v2 definitions and exact grants in one authority read."""
+        with self._current() as (snapshot, _state, _precondition):
+            with self._cache_lock:
+                targets = tuple(
+                    target
+                    for target in self._published_targets
+                    if not isinstance(target.spec, HookSpec)
+                )
+            return snapshot, targets
+
+    def configuration_current(self, expected: HookReviewSnapshot) -> bool:
+        """Check the last worker-refreshed source without Textual-thread I/O."""
+        with self._cache_lock:
+            current = self._published
+            return (
+                not self._closed.is_set()
+                and current is not None
+                and current.config.config_path == expected.config.config_path
+                and current.config.section_stamp == expected.config.section_stamp
+                and current.store_path == expected.store_path
+                and (str(current.store_path), str(current.config.config_path))
+                not in self._refresh_pending
+            )
+
+    def target_current(self, target: HookTarget, *, refresh: bool = True) -> bool:
+        """Check the captured epoch; cached acceptance performs no loop I/O."""
+        if refresh:
+            try:
+                with self.launch_guard(target, tool_name=None):
+                    return True
+            except HookLaunchRefused:
+                return False
+        with self._cache_lock:
+            return (
+                not self._closed.is_set()
+                and target in self._published_targets
+                and (str(self._published.store_path), target.config_scope, target.key)
+                not in self._sealed
+                and (str(self._published.store_path), target.config_scope)
+                not in self._refresh_pending
+            )
 
     def notification_targets(
         self, event: str, tool_name: str | None

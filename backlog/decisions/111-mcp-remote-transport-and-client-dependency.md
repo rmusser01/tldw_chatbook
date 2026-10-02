@@ -1,6 +1,6 @@
 # ADR-111: MCP remote transport and client dependency
 
-Status: **Accepted**
+Status: **Accepted; partially superseded for direct Streamable HTTP by [ADR-162](162-managed-agent-plugins.md).**
 Date: 2026-09-01
 Accepted: 2026-09-02 — **Option C** (see below). An earlier same-day acceptance
 of Option B was withdrawn within hours: it was made without inspecting the
@@ -11,7 +11,34 @@ protocol (connect/list_tools/list_resources/read_resource/call_tool) with stdio
 and fake implementations, missing only the network transports. Hand-rolling a
 parallel transport stack in chatbook (B) would duplicate that seam.
 
-## Option C — the accepted decision
+## Partial supersession for managed plugins (2026-09-17)
+
+[ADR-162](162-managed-agent-plugins.md), implemented by
+[TASK-32682](../tasks/task-32682%20-%20Add-qualified-direct-Streamable-HTTP-MCP-transport.md),
+supersedes Option C only for Chatbook's direct generic Streamable HTTP connection.
+That connection belongs under the existing `MCPClient`, uses core `httpx`, and
+retains the existing registry, permission, definition-hash and audit owners.
+Qualification covers explicitly selected protocol profiles; it does not depend
+on publishing or installing a newer `mcp-unified` release.
+
+The inspected published 0.2.1 source at
+[`9cc8285`](https://github.com/rmusser01/tldw_server/tree/9cc82850f4f6ffdb288189d679ba18c92483cd83/apps/mcp-unified)
+has no HTTP federation transport. The inspected unreleased 0.3.0 source at
+[`27cd0275`](https://github.com/rmusser01/tldw_server/tree/27cd02755563d326d218787ac60e0bc8e0524cb8/apps/mcp-unified)
+implements one legacy session profile, loses structured/error result metadata
+and can replay `tools/call` after a session 404. Its federation manager also
+owns a separate policy/registry/audit plane. Those inspected implementations do
+not satisfy the accepted three-profile, complete-result and no-replay contract.
+A future qualified raw transport may replace the internal connection without
+changing authority ownership. These findings refer to the reviewed revisions,
+not every later release.
+
+The historical Option C decision remains below. This partial supersession does
+not implement or settle generic OAuth, deprecated HTTP+SSE transport, or
+WebSocket support. See the [MCP delivery plan](../../Docs/superpowers/plans/2026-09-15-plugin-mcp.md)
+and [plugin specification](../../Docs/superpowers/specs/2026-09-15-managed-plugins-design.md).
+
+## Option C — the accepted historical decision
 
 Streamable HTTP / SSE (and optionally WebSocket — the mcp-unified GATEWAY
 already serves WebSocket via `gateway/fastapi.py`) are implemented as

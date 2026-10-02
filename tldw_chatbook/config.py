@@ -4024,6 +4024,10 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 # command: argv list, no shell — e.g. ["/usr/local/bin/guard.sh", "--strict"]
 # timeout_s: per-hook ceiling in seconds (default 10); PreToolUse fails closed on timeout
 
+# [[hooks.handler]] entries are explicit v2 declarations, independently validated.
+# id/event/type/effects are required; command type uses argv, env and optional cwd.
+# MCP type uses server, tool and optional typed input template. See ADR-163.
+
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
 # disabled_builtins = []  # built-in skills to hide, e.g. ["character-creator"]
@@ -10760,3 +10764,19 @@ APP_CONFIG_GLOBAL = settings
 #
 # End of tldw_cli/config.py
 #######################################################################################################################
+
+
+def create_mcp_credential_service(data_root: Path | None = None):
+    """Build the MCP-only keyring owner for the active data root.
+
+    No arbitrary HTTP header values enter TOML or provider-account namespaces.
+    Unsupported/insecure keyring backends fail closed on first credential use.
+    """
+    from tldw_chatbook.MCP.credential_bindings import (
+        CredentialBindingService,
+        KeyringCredentialBackend,
+    )
+
+    return CredentialBindingService(
+        KeyringCredentialBackend(data_root or get_user_data_dir())
+    )

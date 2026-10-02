@@ -211,16 +211,26 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     )
                     continue
                 raw_rows = (
-                    self.snapshot.config.section.get("hook", [])
+                    self.snapshot.config.section.get(entry.source, [])
                     if isinstance(self.snapshot.config.section, dict)
                     else []
                 )
-                raw = raw_rows[entry.index] if entry.index < len(raw_rows) else {}
+                raw = (
+                    raw_rows[entry.index]
+                    if isinstance(raw_rows, list) and entry.index < len(raw_rows)
+                    else {}
+                )
                 title = raw.get("name") if isinstance(raw, dict) else None
                 title = (
                     title
                     if isinstance(title, str)
-                    else entry.spec.event + " / " + Path(entry.spec.command[0]).name
+                    else entry.spec.event
+                    + " / "
+                    + (
+                        entry.spec.id
+                        if entry.source == "handler"
+                        else Path(entry.spec.command[0]).name
+                    )
                     if entry.spec
                     else "Invalid hook"
                 )
@@ -228,7 +238,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 title = json.dumps(title, ensure_ascii=True)[1:-1][:48]
                 with Horizontal(classes="hook-review-heading"):
                     yield Checkbox(
-                        Text(f"{entry.index + 1} - {title}"),
+                        Text(f"{index + 1} - {title}"),
                         id=f"hook-review-select-{index}",
                         classes="hook-review-select",
                         disabled=row.state != "pending",
@@ -245,7 +255,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 )
                 if entry.error:
                     yield Static(
-                        entry.error + " Repair in Settings or disable this saved row.",
+                        entry.error + " Repair in Settings or disable Console hooks.",
                         markup=False,
                     )
                 with Horizontal(classes="hook-review-controls"):
@@ -255,7 +265,11 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                             id=f"hook-review-revoke-{index}",
                             classes="hook-review-action",
                         )
-                    if entry.enabled is not False and isinstance(raw, dict):
+                    if (
+                        entry.source == "hook"
+                        and entry.enabled is not False
+                        and isinstance(raw, dict)
+                    ):
                         yield Button(
                             "Disable now",
                             id=f"hook-review-disable-{index}",
@@ -343,7 +357,12 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 entry = self.snapshot.rows[index].entry
                 if entry and entry.spec:
                     spec = entry.spec
-                    details = f"Source: User config\nEvent: {spec.event}\nCommand (argv):\n{command_json(spec)}\nMatcher: {json.dumps(spec.matcher)}\nTimeout: {spec.timeout_s:g}s"
+                    if entry.source == "handler":
+                        details = "Source: User config · v2\n" + json.dumps(
+                            spec.model_dump(mode="json"), ensure_ascii=True, indent=2
+                        )
+                    else:
+                        details = f"Source: User config\nEvent: {spec.event}\nCommand (argv):\n{command_json(spec)}\nMatcher: {json.dumps(spec.matcher)}\nTimeout: {spec.timeout_s:g}s"
                 else:
                     details = "Invalid definition. Open Settings to inspect and repair the saved entry."
                 detail = Static(details, classes="hook-review-detail", markup=False)

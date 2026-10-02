@@ -35,6 +35,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
+# Mounted Console tests retain the configuration admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 DUMMY_OPENAI_API_KEY = "DUMMY_OPENAI_API_KEY"
 
 

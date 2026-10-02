@@ -2085,7 +2085,6 @@ class ConsoleChatStore:
         # Process-local, like the epochs above.
         self._pending_agent_handoff_clears: dict[str, None] = {}
 
-
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
         # armed by the controller (step start / completion) and stamped here
@@ -2380,7 +2379,6 @@ class ConsoleChatStore:
                 "Console active-session subscriber raised (exception_type={})",
                 type(exc).__name__,
             )
-
 
     def _consume_pending_agent_handoff_clear(self, session_id: str) -> None:
         """Clear a restored handoff key when its session first activates.
@@ -5833,6 +5831,9 @@ class ConsoleChatStore:
             "user_content_sha256": hashlib.sha256(
                 acceptance.user_content.encode("utf-8")
             ).hexdigest(),
+            "continuation_receipt": cls._canonical_fingerprint_value(
+                acceptance.continuation_receipt
+            ),
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
             "origin": acceptance.origin,
@@ -21040,6 +21041,10 @@ class ConsoleChatStore:
     def persist_provider_continuation_event(
         self,
         event: ProviderContinuationEvent,
+        *,
+        checkpoint_finalizer: (
+            Callable[..., ProviderContinuationCheckpoint] | None
+        ) = None,
     ) -> None:
         """Commit one runtime continuation event before its next side effect.
 
@@ -21072,6 +21077,17 @@ class ConsoleChatStore:
             )
 
         checkpoint, content = self._continuation_event_value(message, event)
+        if checkpoint_finalizer is not None:
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if not conversation_id:
+                raise RuntimeError("Durable managed continuation owner is unavailable.")
+            checkpoint = checkpoint_finalizer(
+                checkpoint,
+                conversation_id,
+                message.persisted_message_id or message.id,
+                context.run_id,
+            )
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")

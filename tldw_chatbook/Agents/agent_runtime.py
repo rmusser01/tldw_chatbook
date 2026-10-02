@@ -41,6 +41,8 @@ from tldw_chatbook.model_capabilities import (
 from .agent_models import MESSAGE_TOOL_NAMES, READ_AGENT_MESSAGES_TOOL_NAME, REPORT_TO_SUPERVISOR_TOOL_NAME
 from .agent_models import (
     CHECK_AGENTS_TOOL_NAME,
+    PluginContextText,
+    carry_plugin_context,
     DISCARD_AGENT_WORKTREE_TOOL_NAME,
     FENCE_TOOL_RESULT_PREFIX,
     FIND_TOOLS_NAME,
@@ -449,6 +451,12 @@ class LoopDeps:
     )
     # Restriction-only guard runs before approval exemptions; exceptions deny.
     guard_tool_calls: Callable[[list[ToolCall]], dict[str, str]] | None = None
+    # Required v2 effects are load-bearing; legacy observers remain optional.
+    prepare_hook_call: Callable[[ToolCall], ToolCall] | None = None
+    accept_hook_preparation: Callable[[ToolCall], None] | None = None
+    validate_hook_dispatch: Callable[[ToolCall], None] | None = None
+    install_tool_checkpoint: Callable[[ToolCall, ToolResult], None] | None = None
+    await_hook_checkpoints: Callable[[], tuple[dict, ...]] | None = None
     # Optional owner-authenticated exception to the review batch. A True
     # result omits only that exact call from review and approval Trace rows;
     # exceptions fail closed by keeping the call on the ordinary review path.
@@ -662,7 +670,6 @@ class LoopDeps:
     # Append to preserve the positional constructor slots above.
     on_tool_activity: Callable[[AgentStep], None] | None = None
 
-
 def _continuation_calls_match(
     checkpoint: ProviderContinuationCheckpoint,
     calls: list[ToolCall],
@@ -726,13 +733,11 @@ def _same_continuation_target(
     candidate: ProviderContinuationCheckpoint,
 ) -> bool:
     return (
-        current.schema_version,
         current.provider,
         current.protocol,
         current.model,
         current.api_base_url,
     ) == (
-        candidate.schema_version,
         candidate.provider,
         candidate.protocol,
         candidate.model,
@@ -923,6 +928,8 @@ def _truncate_tool_result(
             " Re-issue the call with a narrower query, or use the tool's "
             "offset/limit arguments to read the rest."
         )
+    if isinstance(content, PluginContextText):
+        return "ERROR: plugin context cannot fit whole in the tool result limit"
     full_trailer = (
         f"\n\n[truncated: {tool_name} returned {len(content)} characters.{recovery}]"
     )
@@ -969,7 +976,9 @@ def _append_tool_result(messages: list[dict], call: ToolCall, content: str) -> N
         messages.append(
             {
                 "role": "user",
-                "content": f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}",
+                "content": carry_plugin_context(
+                    f"{FENCE_TOOL_RESULT_PREFIX}{call.name}: {content}", content
+                ),
             }
         )
 
@@ -1403,7 +1412,7 @@ def run_agent_loop(
         final_messages = [
             row
             for row in messages[:coherent_len]
-            if row.get(EPHEMERAL_ORIGIN_KEY) != "project_instructions"
+            if row.get(EPHEMERAL_ORIGIN_KEY) not in {"project_instructions", "hooks_v2"}
         ]
         if status == RUN_DONE:
             final_messages = final_messages + [
@@ -1488,7 +1497,10 @@ def run_agent_loop(
             return False
         return True
 
-    def expand_restore_history(checkpoint: ProviderContinuationCheckpoint) -> bool:
+    def expand_restore_history(
+        checkpoint: ProviderContinuationCheckpoint,
+        live_result: tuple[ToolCall, str] | None = None,
+    ) -> bool:
         nonlocal restore_history_start
         expand = deps.expand_provider_continuation
         if expand is None:
@@ -1499,6 +1511,23 @@ def run_agent_loop(
             return False
         if type(rows) is not list or any(type(row) is not dict for row in rows):
             return False
+        live_contents = {
+            row["tool_call_id"]: row["content"]
+            for row in messages
+            if row.get("tool_call_id")
+            and isinstance(row.get("content"), PluginContextText)
+        }
+        if live_result is not None:
+            live_call, live_content = live_result
+            if isinstance(live_content, PluginContextText):
+                live_contents[live_call.call_id] = live_content
+        for index, row in enumerate(rows):
+            original = live_contents.get(row.get("tool_call_id"))
+            if original is not None:
+                original.checked_origins()
+                if row.get("content") != original:
+                    return False
+                rows[index] = {**row, "content": original}
         if restore_history_start is None:
             restore_history_start = len(messages)
         messages[restore_history_start:] = rows
@@ -1587,7 +1616,13 @@ def run_agent_loop(
             # half-answered native tool_calls pair -- exactly the shape that
             # poisons a provider call (the fleet-continuation coherence
             # property caught this in the first implementation).
+            hook_rows = (
+                deps.await_hook_checkpoints()
+                if deps.await_hook_checkpoints is not None
+                else ()
+            )
             wrap_messages = list(messages[:coherent_len])
+            wrap_messages.extend(hook_rows)
             wrap_messages.append(
                 {
                     "role": "user",
@@ -1643,8 +1678,10 @@ def run_agent_loop(
         )
         if not is_tool_result:
             return
-        newest["content"] = content + BUDGET_WARNING_TEMPLATE.format(
-            percent=int(fraction * 100), kind=kind
+        newest["content"] = carry_plugin_context(
+            content
+            + BUDGET_WARNING_TEMPLATE.format(percent=int(fraction * 100), kind=kind),
+            newest.get("content", ""),
         )
         budget_warning_delivered = True
 
@@ -1666,6 +1703,23 @@ def run_agent_loop(
             return _exhausted("wall-clock")
         if budget.max_total_tokens and total_tokens >= budget.max_total_tokens:
             return _exhausted("token")
+        if deps.await_hook_checkpoints is not None:
+            hook_rows = deps.await_hook_checkpoints()
+
+            existing_hook_blocks = {
+                (str(row.get("content")), row["content"].checked_hook_origins())
+                for row in messages
+                if isinstance(row.get("content"), PluginContextText)
+            }
+            messages.extend(
+                {**row, EPHEMERAL_ORIGIN_KEY: "hooks_v2"}
+                for row in hook_rows
+                if not isinstance(row.get("content"), PluginContextText)
+                or (str(row["content"]), row["content"].checked_hook_origins())
+                not in existing_hook_blocks
+            )
+            if deps.should_cancel():
+                return _outcome(RUN_CANCELLED)
         _maybe_deliver_budget_warning()
 
         restoring_batch = restored_calls is not None and bool(restored_calls)
@@ -2266,6 +2320,22 @@ def run_agent_loop(
         # makes every `.get(name, "proceed")` lookup below resolve to
         # "proceed" -- the exact same dispatch path as before this hook
         # existed, so absent-hook behavior stays byte-identical.
+        hook_preparation_refusals: dict[int, str] = {}
+        if deps.prepare_hook_call is not None:
+            prepared_calls = []
+            for call in calls:
+                try:
+                    prepared = deps.prepare_hook_call(call)
+                    if prepared.name != call.name or prepared.call_id != call.call_id:
+                        raise ValueError("hook changed tool identity")
+                except Exception:  # noqa: BLE001 -- transformation is controlling
+                    prepared = call
+                    hook_preparation_refusals[id(prepared)] = (
+                        "hook: preparation refused"
+                    )
+                prepared_calls.append(prepared)
+            calls = prepared_calls
+
         call_trace: dict[int, dict[str, AgentStep | str]] = {}
         reserved_correlations = {call.call_id for call in calls if call.call_id}
         used_correlations: set[str] = set()
@@ -2309,7 +2379,11 @@ def run_agent_loop(
                 else call
             )
 
-        guard_refusals: dict[str, str] = {}
+        guard_refusals: dict[str, str] = {
+            review.call_id: hook_preparation_refusals[id(call)]
+            for call, review in zip(calls, review_calls)
+            if id(call) in hook_preparation_refusals
+        }
         if deps.guard_tool_calls is not None:
             try:
                 guarded = deps.guard_tool_calls(review_calls)
@@ -2325,6 +2399,17 @@ def run_agent_loop(
                     call.call_id: "hook: tool guard failed; failing closed"
                     for call in review_calls
                 }
+
+        if deps.accept_hook_preparation is not None:
+            for call, review_call in zip(calls, review_calls):
+                if review_call.call_id in guard_refusals:
+                    continue
+                try:
+                    deps.accept_hook_preparation(call)
+                except Exception:  # noqa: BLE001 -- fail closed
+                    guard_refusals[review_call.call_id] = (
+                        "hook: effect acceptance refused"
+                    )
 
         preauthorized_call_ids: set[int] = set()
         if deps.is_tool_call_preauthorized is not None:
@@ -2677,12 +2762,22 @@ def run_agent_loop(
                 output_observer = (
                     publish_output if deps.on_tool_activity is not None else None
                 )
-                if call.name == SPAWN_TOOL_NAME:
+                dispatch_refused = False
+                if deps.validate_hook_dispatch is not None:
+                    try:
+                        deps.validate_hook_dispatch(call)
+                    except Exception:  # noqa: BLE001 -- fail closed
+                        dispatch_refused = True
+                if dispatch_refused:
+                    result = ToolResult.blocked("hook: final dispatch identity refused")
+                elif call.name == SPAWN_TOOL_NAME:
                     if SPAWN_TOOL_NAME not in config.allowed_tools:
                         # Q6: refuse before dispatch — no budget consumption,
                         # no STEP_SPAWN, deps.spawn never called.
                         result = ToolResult(
-                            ok=False, error=f"Tool not permitted: {SPAWN_TOOL_NAME}"
+                            ok=False,
+                            error=f"Tool not permitted: {SPAWN_TOOL_NAME}",
+                            dispatch_state="not_started",
                         )
                     else:
                         task = str(call.args.get("task", "")).strip()
@@ -2712,11 +2807,15 @@ def run_agent_loop(
                             # G4: an empty task is refused with no budget
                             # consumption and no STEP_SPAWN.
                             result = ToolResult(
-                                ok=False, error="Task description cannot be empty"
+                                ok=False,
+                                error="Task description cannot be empty",
+                                dispatch_state="not_started",
                             )
                         elif spawned >= budget.max_subagents:
                             result = ToolResult(
-                                ok=False, error="sub-agent budget exhausted"
+                                ok=False,
+                                error="sub-agent budget exhausted",
+                                dispatch_state="not_started",
                             )
                         else:
                             spawn_step = add(
@@ -2880,13 +2979,19 @@ def run_agent_loop(
                         if call.name == REPORT_TO_SUPERVISOR_TOOL_NAME
                         else deps.read_agent_messages
                     )
-                    result = callback(call.args) if callback is not None else refused()
+                    result = (
+                        callback(call.args)
+                        if callback is not None
+                        else replace(refused(), dispatch_state="not_started")
+                    )
                 elif (
                     call.name == SEND_TO_AGENT_TOOL_NAME and deps.send_to_agent is None
                 ):
                     add(STEP_TOOL_CALL, tool_name=call.name, args={})
                     result = ToolResult(
-                        False, error="Tool not permitted: send_to_agent"
+                        False,
+                        error="Tool not permitted: send_to_agent",
+                        dispatch_state="not_started",
                     )
                 elif call.name == FIND_TOOLS_NAME:
                     add(STEP_TOOL_CALL, tool_name=call.name, args=display_call_arguments)
@@ -2898,6 +3003,7 @@ def run_agent_loop(
                         result = ToolResult(
                             ok=False,
                             error="call load_tools alone in its own tool batch",
+                            dispatch_state="not_started",
                         )
                     else:
                         # A bare string is one id, never a sequence of chars.
@@ -3026,6 +3132,9 @@ def run_agent_loop(
                 )
                 content = result.content if result.ok else f"ERROR: {result.error}"
 
+            if verdict == "proceed" and deps.install_tool_checkpoint is not None:
+                deps.install_tool_checkpoint(call, result)
+
             if verdict == "proceed":
                 trace_state = call_trace[id(call)]
                 proposal_step = trace_state["proposal"]
@@ -3119,7 +3228,7 @@ def run_agent_loop(
                 if not transition_call(
                     call,
                     target_state,
-                    ContinuationResult(continuation_content),
+                    ContinuationResult(str(continuation_content)),
                 ):
                     return continuation_error()
                 _emit_record(
@@ -3198,7 +3307,7 @@ def run_agent_loop(
                 ),
             )
             if restoring_batch and continuation_checkpoint is not None:
-                if not expand_restore_history(continuation_checkpoint):
+                if not expand_restore_history(continuation_checkpoint, (call, content)):
                     return continuation_error()
             else:
                 _append_tool_result(messages, call, content)

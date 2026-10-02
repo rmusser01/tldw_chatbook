@@ -79,6 +79,9 @@ from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
 from Tests.Agents.conftest import join_fleet_children
 
+# Every real-config test keeps the same explicitly selected private source.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def fence(name, args):
     return f"```tool_call\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -2525,6 +2528,7 @@ def test_run_turn_reuses_planned_runtime_schema_set_verbatim(db):
     ]
 
 
+# Real config getters retain the collection-time source authority.
 def test_run_turn_reuses_planned_agent_roster_without_db_reread(db):
     definition = AgentDefinition(
         name="researcher",
@@ -3538,14 +3542,21 @@ def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
     """The should_cancel seam threaded through _make_invoke_tool (the
     production wiring in _run_one) must let a Stop during a hung tool call
     return promptly instead of waiting out max_tool_call_seconds."""
+
     def chat(**kwargs):  # pragma: no cover - unused by this test
         return {"choices": [{"message": {"content": "unused"}}]}
 
     service = _service_with_chat(db, chat)
 
+    started, release, finished = threading.Event(), threading.Event(), threading.Event()
+
     def slow_invoke_by_name(name, args):
-        time.sleep(2.0)
-        return ToolResult(ok=True, content="too late")
+        started.set()
+        try:
+            assert release.wait(5)
+            return ToolResult(ok=True, content="too late")
+        finally:
+            finished.set()
 
     monkeypatch.setattr(service.registry, "invoke_by_name", slow_invoke_by_name)
     cfg = AgentConfig(
@@ -3560,13 +3571,18 @@ def test_make_invoke_tool_wraps_slow_custom_tool_cancellable(db, monkeypatch):
     invoke_tool = service._make_invoke_tool(
         cfg,
         disclosed_names={"calculator"},
-        should_cancel=lambda: True,
+        should_cancel=started.is_set,
         run_id="run-1",
     )
     from tldw_chatbook.Agents.agent_models import ToolCall
+
     t0 = time.monotonic()
-    result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
-    elapsed = time.monotonic() - t0
+    try:
+        result = invoke_tool(ToolCall(name="calculator", args={"expression": "2+2"}))
+        elapsed = time.monotonic() - t0
+    finally:
+        release.set()
+        assert finished.wait(5)
     assert result.ok is False
     assert "cancelled" in result.error and "calculator" in result.error
     assert elapsed < 1.5
@@ -4124,6 +4140,7 @@ def _seed_definition(db, defn=RESEARCHER_DEFN):
     db.create_agent_definition(defn)
 
 
+# Real config getters retain the collection-time source authority.
 def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
     _seed_definition(db)
     # PR2a Task 6.5: addressed script (the child is on its own thread).
@@ -4152,6 +4169,7 @@ def test_named_spawn_appends_instructions_and_keeps_identity_prefix(db):
     assert "Always cite sources" in child_system["content"]
 
 
+# Real config getters retain the collection-time source authority.
 def test_named_spawn_intersects_allowlist_never_grants(db):
     _seed_definition(
         db,
@@ -4236,6 +4254,7 @@ def test_starter_preset_spawn_respects_parent_tool_authority(
         assert tool_name not in child_names
 
 
+# Real config getters retain the collection-time source authority.
 def test_named_spawn_model_override_same_endpoint(db):
     _seed_definition(
         db,
@@ -4304,6 +4323,7 @@ def test_unknown_agent_refused_without_burning_budget(db):
     )
 
 
+# Real config getters retain the collection-time source authority.
 def test_named_spawn_records_audit_fields(db):
     _seed_definition(db)
     service, _ = make_service(
@@ -4330,6 +4350,7 @@ def test_named_spawn_records_audit_fields(db):
     )
 
 
+# Real config getters retain the collection-time source authority.
 def test_definitions_load_once_per_turn_roster_in_protocol(db):
     _seed_definition(db)
     service, chat = make_service(db, ["no tools needed"])
@@ -4345,6 +4366,7 @@ def test_definitions_load_once_per_turn_roster_in_protocol(db):
     assert "researcher" in json.dumps(chat.calls[0], default=str)
 
 
+# Real config getters retain the collection-time source authority.
 def test_no_definitions_spawn_unchanged(db):
     # Guard the identity path: with an empty definitions table the primary
     # system prompt must NOT mention an 'agent' parameter.

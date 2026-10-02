@@ -14981,7 +14981,11 @@ class ChatScreen(BaseAppScreen):
             is not None
         )
         can_stop = image_edit_active or bool(
-            getattr(run_state, "is_stop_allowed", False)
+            getattr(
+                controller,
+                "is_stop_allowed",
+                getattr(run_state, "is_stop_allowed", False),
+            )
         )
         run_allows_send = (
             bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
@@ -22117,11 +22121,8 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Refresh Console composer action priority from draft, run, and artifact state.
 
-        F1 (task-9 review): the composer bar's own Save Chatbook button is a
-        second door onto the same write the workbench action already gates
-        -- reads ``_console_active_session_is_ephemeral()`` directly here so
-        both doors consult the same accessor without a caller having to
-        remember to thread it through.
+        Both composer and workbench Save Chatbook actions consult the same
+        ephemeral-session accessor (task-9 review F1).
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -22143,12 +22144,9 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
-                # TASK-22000 (owner decision, 2026-08-24): for a session with
-                # a live queue projection the PRESENTATION is the authority on
-                # whether Send accepts a draft -- not the raw run state. That
-                # was ADR-098's original shape (an assignment here, not an
-                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
-                # alongside the new recovery predicate, and since
+                # TASK-22000/ADR-098: queue presentation owns Send availability.
+                # Recombining it with raw run status regressed live-turn Queue:
+                # since
                 # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
                 # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
                 # presentation` already reads as `occupies_slot`, the only
@@ -22224,6 +22222,8 @@ class ChatScreen(BaseAppScreen):
         composer.sync_action_state(
             has_draft=bool(composer.draft_text().strip()) or pending is not None,
             run_active=run_active,
+            stop_available=run_active
+            or bool(getattr(controller, "is_stop_allowed", False)),
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,

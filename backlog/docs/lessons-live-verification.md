@@ -359,6 +359,23 @@ top-to-bottom — no unit test would ever say so.
 **What to do.** For anything user-facing, run the app and look at it. Ask: does the
 screen read correctly top-to-bottom, and does the affordance actually lead somewhere?
 
+**TASK-32680, pending Stop hooks, 2026-09-17.** The initial mounted test called
+`_stop_console_generation_from_visible_action` directly during streaming; the
+91-test core run passed. Review then reproduced Stop failing while a completed
+parent's Stop hook was still running. Fixing the callable controller entry still
+left both composer Stop buttons hidden because visibility followed the completed
+parent's generation state. Two actual-button tests failed on `display=False`.
+The final fix projects pending-hook Stop separately from generation/Redirect and
+keeps the original cancellation Event through that exact settlement. Four mounted
+actual Send/Stop cases at 80x24 and 120x35 verify cancellation, once-only Interrupt,
+retained process cleanup and a fresh Send. These targeted checks do not resolve
+the separately recorded aggregate descriptor warning or predecessor UI failures.
+
+**Add to the check.** Exercise the visible action in each lifecycle phase where
+users need it, including after generation ends while follow-up work is pending.
+A mounted app plus direct handler invocation proves neither button reachability
+nor transfer of cancellation ownership across that phase boundary.
+
 Headless recipe (no repo tooling required):
 
 ```bash
@@ -2620,6 +2637,31 @@ clean worker exit in addition to generated audio and model-owner counters.
 Resolve the loaded native library path and hash when comparing environments;
 the Python package version alone does not identify the native implementation.
 
+## Native imports can change fork safety when a test leaves the sandbox
+
+**TASK-32675, 2026-09-16.** Native APFS root tests needed a narrowly elevated
+`kern.bootsessionuuid` read. Their covering run then warned at an existing real
+`os.fork()` ownership test. Python thread enumeration showed only MainThread
+both before fork and after lifecycle teardown, but that did not establish a
+single-threaded process: a native sample showed CoreAudio
+`caulk.messenger.shared` threads through libportaudio.
+
+Fresh isolated controls distinguished the cause. With only stdlib imports,
+fork produced no warning; adding only `import sounddevice` reproduced the
+warning under elevation, still with only MainThread visible to Python. Neither
+arm warned in the normal sandbox. Attribute such differences with a minimal
+import control and native sampling before blaming a new service's teardown or
+calling a warning unchanged baseline. Python enumeration cannot see all native
+library threads.
+
+The resolution preserved the real inherited-owner and replaced-lock refusal
+assertions in `Tests/Plugins/test_runtime_owner.py`, running them in a fresh
+`-I -W error::DeprecationWarning` subprocess with a 20-second bound, exact
+worktree provenance, isolated profile, null keyring and network refusal. No
+warning filter or ownership assertion was removed. The final covering run
+passed 440 tests without warnings; native test elevation remained limited to
+the OS API that required it.
+
 ## Wheel identity includes deleted files, and dependency checks can open profiles
 
 **PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
@@ -3492,3 +3534,13 @@ a scratch HOME, XDG dirs, `TLDW_CONFIG_PATH` and `[paths].data_dir`, all set **b
 the first `tldw_chatbook` import. A `--rootdir` flag or a `sys.path` insert gives no
 isolation. Check afterwards: the real `config.toml` sha256 and the mtimes under
 `~/.local/share/tldw_cli/default_user` must be unchanged.
+
+
+## Finite native Console readers must retire their own worker connections
+
+**TASK-32680, 2026-09-30.** H5 mounted qualification accumulated native SQLite
+leases despite passing visible Send/Stop assertions. Registration stacks traced
+fresh handles to archive, hook configuration, run-log selection and fleet history
+reads. Reusing operation-owned connection retirement fixed the actual workers;
+closing only the main-thread database or collecting Python objects did not.
+The final 105-case run passed without resource warnings or raised FD thresholds.

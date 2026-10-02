@@ -542,6 +542,9 @@ class LifecycleMixin:
             )
             self._console_runtime_shutdown_task = task
         await asyncio.shield(task)
+        plugin_service = getattr(self, "_plugin_service", None)
+        if plugin_service is not None:
+            await plugin_service.aclose()
 
     async def _shutdown_raw_cli_runtime(self) -> None:
         """Disarm and boundedly drain the app-owned raw CLI runtime once."""

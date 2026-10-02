@@ -251,6 +251,10 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
     runtime.set_chat_store(store)
 
     class SuccessfulController:
+        prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda _request, *, origin: None
+        )
+
         async def run_prompt_chain(self, *, session_id, initial_turn):
             assert session_id == session.id
             return await initial_turn()
@@ -1924,7 +1928,9 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
 
     class BlockingController:
         fleet_wake = SimpleNamespace(delivering_session_ids=lambda: ())
-        prompt_queue_coordinator = SimpleNamespace()
+        prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda _request, *, origin: None
+        )
 
         async def run_prompt_chain(self, *, session_id, initial_turn):
             return await initial_turn()
@@ -1965,7 +1971,7 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
             ),
         )
     )
-    await started.wait()
+    await asyncio.wait_for(started.wait(), 2)
     dead_screen = weakref.ref(screen)
 
     assert runtime.detach_view(screen, generation)

@@ -1,0 +1,6 @@
+---
+description: Conditional rule.
+alwaysApply: false
+globs: ["**/*.py"]
+---
+CURSOR_CONDITIONAL_RULE_BODY

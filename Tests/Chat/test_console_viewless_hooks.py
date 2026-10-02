@@ -63,7 +63,7 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
 )
 
 
-pytestmark = pytest.mark.bootstrap_profile
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 hook_file = _hook_file
 
@@ -152,7 +152,11 @@ async def test_a_wake_delivered_with_no_view_keeps_the_unseen_mark(tmp_path):
             "the user has no way to learn the supervisor turn ever ran"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -176,7 +180,11 @@ async def test_a_wake_delivered_to_the_attached_view_still_clears_the_mark(
             "a wake the attached view reported as in-view must still clear"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +229,11 @@ async def test_a_wake_is_not_deferred_by_a_user_claim_once_the_view_is_gone(
             "that is gone -- with no composer there is no user to lose to"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -279,7 +291,11 @@ async def test_a_delivery_started_with_no_view_re_arms_at_the_next_attach(
     finally:
         gateway.stream_gate.set()
         await _settle(lambda: not wake.delivering_conversation_ids())
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -298,7 +314,11 @@ async def test_attaching_with_no_delivery_in_flight_arms_nothing(tmp_path):
         runtime.attach_view(_mounted_view(delivery_ui_hook=armed.append))
         assert armed == []
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 # ---------------------------------------------------------------------------
@@ -341,7 +361,11 @@ async def test_a_whole_turn_runs_with_no_view_attached(tmp_path):
         ]
         assert replies, "the viewless turn produced no assistant reply"
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -393,7 +417,11 @@ async def test_a_viewless_turn_calls_none_of_the_departed_views_hooks(tmp_path):
         )
         assert history_calls == ["attached", "detached"]
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -422,7 +450,11 @@ async def test_the_display_name_slot_is_never_cleared_to_none(tmp_path):
         assert controller._global_user_display_name is app_owned_display_name
         assert controller._presentation_context_for(session.id).user_name == "User"
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -520,7 +552,11 @@ async def test_skill_confirms_armed_viewless_wait_and_remount_without_denial(
             "script": {"allow": True, "remember": False},
         }
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -587,7 +623,11 @@ async def test_an_approval_round_armed_with_no_view_is_not_lost(tmp_path):
         worker.join(timeout=10)
         assert decisions == {"write_file": "deny"}, decisions
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
@@ -621,7 +661,11 @@ async def test_a_runtime_that_never_had_a_view_answers_viewless(tmp_path):
             "could have seen"
         )
     finally:
-        chacha.close()
+        await runtime.dispose()
+        rig[2].close()
+        from Tests.conftest import _close_database_instance
+
+        _close_database_instance(chacha)
 
 
 @pytest.mark.asyncio
