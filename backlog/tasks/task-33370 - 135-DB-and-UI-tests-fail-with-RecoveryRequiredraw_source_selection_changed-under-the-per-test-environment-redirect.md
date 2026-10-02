@@ -5,7 +5,7 @@ title: 135 DB and UI tests fail with RecoveryRequired('raw_source_selection_chan
 status: In Progress
 assignee: []
 created_date: 2026-09-28 20:12
-updated_date: 2026-10-02 17:01
+updated_date: 2026-10-02 18:43
 labels:
 - testing
 - backup-recovery
@@ -68,6 +68,11 @@ PR2955 scoped Qodo followup at BASE176126644f3cbf81ecdc4a2c069a40cf8d6cc502: rep
 Evidence retained: RED /private/tmp/backup2955-qodo-red-1hi88cxg/summary.json (runner /private/tmp/backup-followup-check-ar2o28ry); focused GREEN15 /private/tmp/backup2955-qodo-green-regressions-jdmdix6d/summary.json (runner /private/tmp/backup-followup-check-uryoocjh). Final affected GREEN432 /private/tmp/backup2955-qodo-green-affected-fi3c9tru/summary.json (runner /private/tmp/backup-followup-check-0iipx0vg): all top-level config modules, helper5, benchmark72 and worker13, zero failures/errors/skips/undrained parent network attempts. All 7,627 tracked Python/SQL hashes stable; final changed sources match tested pins and retained test-source copies. The focused15 retains its own earlier doc/format identity; final432 is the final source identity. Fresh private HOME/USERPROFILE/XDG/config, Null keyring and network guard preceded application imports; original test/CLI budgets preserved.
 
 Final paired static /private/tmp/backup2955-qodo-final-static-3n3y_mz7/summary.json: six files compile, diff-check passes, Ruff25 existing findings unchanged, Bandit6 existing non-test-assert findings unchanged (only pytest B101 excluded; benchmark B101 retained), identical preexisting format debt, zero new findings. AST checks preserve executable benchmark code, teardown body, root isolation policy and every original assertion. This is bounded affected verification, not a full-suite/native/admission-probe rerun or all-child network claim. Production guards/resources, registries and all budgets/deadlines unchanged. Normal scoped commit and independent review follow; tasks remain In Progress.
+2026-10-02 final followup qualification: shared helper restoration now includes exact helper-owned config exception classes, with owned mutating Console/fast-path profiles. The original four semantic regressions failed before correction; focused15 and affected432 passed at exact7d19f2af with 0fail/error/skip. Independent SPEC and QUALITY reviews passed all seven Qodo items; paired static checks add zero findings and retain documented prior debt. Original/ corrected reports and transcript-derived operation evidence retain their explicit limits.
+
+Normal rebases preserved the six reviewed Python files byte/mode-identically: 7d19→c9ec20aa on dev30ca (30PASS), then c9→d61613af16d1aef9d50cfc5143df2c41614187a3 on deve92b01515f9547aab2cfb14cd4d93a7a07419775. Each13-patch range-diff has12equal patches and one document-context-only change; official document editor preserved both lessons sections and LF. Fresh42 actual cases passed at exactd616, 0fail/error/skip, with7,736 tracked Python/SQL byte/stat pins stable and zero undrained parent network attempts. This includes schema75 upgrade/rollback, backup validation, mounted Console continuations and benchmark/dependency controls. Independent /private/tmp/backup2955-expanded-final-independent-review.json (SHA8437e129dcee05d264a37203456799da32d5169afc308b4daa649aad4b92cf33) joined all7,736 pins to immutableGit and all20selectors to42JUnit cases; no actionable findings. Source-stat/network history remain receipt limits; no numeric, idle or native qualification is inferred.
+
+Evidence: /private/tmp/backup2955-qodo-independent-spec-review.md; /private/tmp/backup2955-qodo-independent-quality-review.md; /private/tmp/backup2955-expanded-rebase-proof-ddziepmo/summary.json; /private/tmp/backup2955-expanded-rebase-check-h0terovr/summary.json. PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains pending publication of this reviewed source, exact-current-head required CI, review resolution and protected integration. Historical phases retain their own identities and unsuccessful results.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
