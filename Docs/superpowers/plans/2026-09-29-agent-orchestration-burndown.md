@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** dev ab4df99959545e37d8d2048c1c1ce15fd914721d (PERF-06), following the qualified compaction and docs-only integrations below.
+**Integration base:** dev 185c845fe836bf452e4beaaf8853162ce49b1e8d (shared provider readiness), preserving the qualified compaction, hook, Resend and recovery integrations below.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -222,9 +222,10 @@ ADR required: no
 ADR path: backlog/decisions/163-expanded-console-hook-runtime.md; backlog/decisions/197-console-hook-configuration-review.md; existing ADR-097/126/199 apply.
 Reason: restore accepted authority/lifecycle admission and defer existing module loading without a new owner, dependency, schema or gate.
 
-- [ ] Implement and qualify the two existing task plans with retained RED/GREEN and focused independent immutable review.
-- [ ] Preserve incoming TASK-33662 and earlier TASK-33648 as separate limits; preserve upstream documented TASK-33621.28 Done without claiming new real-app Ctrl+Q verification.
-- [ ] Record all static/startup/artifact evidence and exact reviewed bytes; close both tasks via CLI, publish with exact observed 003a7bc lease and require fresh Qodo and all four jobs.
+- [x] Implement and qualify the two existing task plans with retained RED/GREEN and focused independent immutable review.
+- [x] Preserve incoming TASK-33662 and earlier TASK-33648 as separate limits; preserve upstream documented TASK-33621.28 Done without claiming new real-app Ctrl+Q verification.
+- [x] Record all static/startup/artifact evidence and exact reviewed bytes; close both tasks via CLI.
+- [ ] Publish with exact observed003a7bc lease; require fresh exact-head Qodo and all four jobs before protected merge.
 
 
 ### Remaining verified replay integration regressions
@@ -237,9 +238,9 @@ ADR required: no
 ADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md; backlog/decisions/163-expanded-console-hook-runtime.md; existing ADR-126/197/199 apply.
 Reason: restore accepted queue capacity and presentation lifetime contracts; task33663 criteria and plan updated before source.
 
-- [ ] Retain both real probes as durable targeted RED regressions before the narrow shared predicate fixes.
-- [ ] Qualify queued scheduled hook behavior and mounted incremental publication, neighboring authority/capacity/idle controls and immutable independent reviews.
-- [ ] Run original performance/static/artifact guards after reviewers finish; retain all non-green evidence and qualify final bytes before task closure/publication.
+- [x] Retain both real probes as durable targeted RED regressions before the narrow shared predicate fixes.
+- [x] Qualify queued scheduled hook behavior and mounted incremental publication, neighboring authority/capacity/idle controls and immutable independent reviews.
+- [x] Run original performance/static/artifact guards after reviewers finish; retain all non-green evidence and qualify final bytes before task closure/publication.
 
 
 ### Required provider-readiness merge-base update
@@ -268,3 +269,8 @@ Reason: reuse existing readiness and activity refusal owners at text-generation 
 1. Add a real mounted refusal/unchanged-rows/permitted-retry regression using the exact shared connection identity and explicit private profile.
 2. Wire the existing provider-blocker callable with the existing controller activity check at the shared message-controller generation admission seam. Cover Retry/Resend/Continue/text Regenerate/edit-resend; preserve separate image/video generation paths.
 3. Run affected message actions/ports, mounted readiness/replay and idle/poll/custody controls; obtain final immutable independent review, then original budgets and static/artifacts. Preserve every prior green/non-green result without summing selections.
+
+
+### Final Resend/readiness source closure
+
+Independent runtime and UI reviews approve immutable2cfbb01c76ab174cb3963a75dd75a1d5e66cb88f. Final original tested/untested storage, import, UI-ready and boot-CSS selection passes5cases85.975s, with681/686imports and1033/1033UI-ready and unchanged incoming performance sources. Final94-file fatal/added-line and ten-new-file Ruff/format, worker/diagnostic/index/UI/timestamp/CSS checks pass. Task33663/64 criteria and notes close through CLI; documentation closure preserves the exact reviewed source manifest. The final review records all positive and non-green evidence, scratch fixture adaptations and separate limits. Fresh publication, Qodo/all four jobs and protected merge remain. ADR required:no new ADR; existing ADR012/033/097/098/126/163/197/199 apply.
