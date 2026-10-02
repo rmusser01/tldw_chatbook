@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 17:06'
+updated_date: '2026-10-02 17:12'
 labels:
   - plugins
   - implementation
@@ -48,6 +48,8 @@ The complete first-send file reproduces eleven matching admission-profile failur
 Review-Send repair integration onto live dev 30ca4552b3 (merged PR #2945): ADR required: no. ADR path: N/A; existing ADR-163/197/210 apply. Reason: integrate the independently reviewed upstream modal-result and worker-handoff owners without introducing new behavior or custody. Preserve modal-owned answer/dismiss/unmount settlement, task-identity/eager-factory handoff, awaiting_review diagnostics and truthful acceptance. Rebase current verified head, retain v2 hook rows and exact consent, compare upstream owners/affected ASTs, and run the complete ordinary Send-freeze, admission/handoff, mounted review, draft-snapshot, scoped consent and boot controls. Reproduce required artifacts, document limitations and complete the owned task after qualification. Publish only with the verified c2d41d4aa9 lease; normal merge waits for fresh exact-head Qodo/CI and independently read dev.
 
 The targeted draft-snapshot file has 28 raw_source_selection_changed setup failures before its UI mounts; all 28 reproduce identically on immutable 30ca4552b3 and an isolated Enter node. Use the existing bootstrap_profile module marker for these real-config Console mounts, retaining all keypress capture, custody, draft, recovery and session-race assertions. Re-run the complete file after the profile correction. Do not change production admission, send code, doubles or deadlines to mask a failure.
+
+Final latest-dev integration onto 52620c3a08 (independently merged PR #2920 / TASK-33560): ADR required: no. ADR path: N/A; existing ADR-126/163/197/210 apply. Reason: retain the upstream 1 Hz native maintenance probe and its cancellation/off-loop contracts without changing feature behavior. Rebase the qualified hook candidate, verify all patches replay identically and both maintenance files remain byte-exact, run the complete native-poll file plus ordinary review-Send controls and required artifacts, then update closeout evidence. Preserve the previously verified baseline exclusions. Publish with only the verified c2d41d4aa9 lease; final exact-head CI/Qodo/live-dev remain required.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
