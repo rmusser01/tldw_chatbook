@@ -21,6 +21,31 @@ recovery. A directory path alone does not prove which repository Git will mutate
 
 ---
 
+## A stale premise can be fixed by a predecessor while its enumerated tests re-break for newer reasons (TASK-22280, 2026-10-02)
+
+**Incident.** TASK-22280 was filed 2026-08-24 against dev `983aa5878` for 12
+red migration tests caused by `add_message` writing v48's
+`assistant_generation_state` into pre-v48 historical-bootstrap fixtures. The
+next day TASK-21441 (PR #2082) landed the per-schema
+`_messages_insert_statement` fix and measured those files red-to-green. Five
+weeks later, verifying the task at dev `e92b01515f` found 8 of them red again
+— every failure traced to LATER drift, none to the filed mechanism: seeding
+now died in `soft_delete_message`/`update_message` on the v56
+`console_trace_graph_epoch` table, and the hot-writer interleave/static-guard
+tests went blind after `add_message` became a thin wrapper. Both successor
+defects were already filed (TASK-33371, TASK-33621.36). Fixing either under
+TASK-22280 would have put three tasks' hands on the same reds.
+
+**What to do.** When a task's named cause no longer reproduces at your base,
+attribute EACH enumerated red to a mechanism before designing anything: a red
+test is not evidence the filed bug is alive. Sweep the board for the defects
+you do find — if later drift already has an owner, close your task with the
+attribution and the measured timeline instead of re-fixing under a dead
+premise; the AC's "tests pass" clause gets annotated with when it was true and
+who owns the re-breakage, not silently re-ticked or left as a zombie.
+
+---
+
 ## Task IDs collide constantly — sweep every remote, not just dev
 
 **What happened.** This has recurred **ten-plus times**. Most recently, in one session:
