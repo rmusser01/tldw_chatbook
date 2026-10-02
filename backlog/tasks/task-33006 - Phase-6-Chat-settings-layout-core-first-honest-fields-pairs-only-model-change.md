@@ -81,6 +81,6 @@ Constraints:
 - [ ] #9 No binding from ADR-031 rule 2 (Ctrl+C, V, X, S, D, Z, A, R or W) is added, and every key the modal advertises works
 - [ ] #10 Every existing test that pinned the old layout is rewritten on purpose and listed in the PR description, and the Context and memory view's tests pass unchanged
 - [ ] #11 Live evidence: tmux captures at 211x44 and 235x52 from a scratch profile (TLDW_CONFIG_PATH), using the production stylesheet and real keypresses. They cover an Anthropic chat, a Not-ready chat and a chat using 'Use saved defaults'
-- [ ] #12 Docs/User_Guide pages updated: console.md (Chat settings) and settings.md (the Console-modal reference near :373), with Verified-against stamps
+- [ ] #12 Docs/User_Guide pages updated: console.md (Chat settings) and settings.md (the Console-modal reference near :373) (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md)
 - [ ] #13 ./scripts/preflight.sh passes
 <!-- AC:END -->
