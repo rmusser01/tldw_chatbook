@@ -255,3 +255,16 @@ Reason: preserving accepted readiness evidence and existing replay/publication o
 1. Preserve the clean qualified local repair while rebasing onto the observed185c base; compare the pre-update code/CSS manifest and both lesson tails.
 2. Qualify actual shared-readiness and replay/queue/hook/polling consumers and unchanged schema76/current gates/AgentRuns history; independent immutable runtime/UI review of final source.
 3. Run the incoming original storage census (both variants), unchanged import/UI/CSS budgets, source/static/artifact checks after reviewers finish. Record exact bytes, evidence and limits; close33663/64 via CLI and publish once with observed003 exact lease, then fresh-head Qodo and four jobs before protected merge.
+
+
+### Verified incoming shared-readiness replay gap
+
+Independent mounted b887 probe is RED13.85s: exact shared connection-refused evidence makes Send disabled but persisted transcript Resend still dispatches a second provider call and replaces the failed reply. Exact185c incoming source reproduces the identical gap (RED22.67s); earlier hard-coded identity and missing refresh failures are retained as fixture/probe failures, not production findings. This is inherited readiness/replay integration, now covered by task33663 AC8 before implementation.
+
+ADR required: no
+ADR path: backlog/decisions/012-provider-credential-settings-boundary.md; backlog/decisions/033-application-session-state-ownership.md; existing message-controller callable wiring and ADR126/199 apply.
+Reason: reuse existing readiness and activity refusal owners at text-generation worker admission; no new provider/evidence owner, permission, persistence or architecture.
+
+1. Add a real mounted refusal/unchanged-rows/permitted-retry regression using the exact shared connection identity and explicit private profile.
+2. Wire the existing provider-blocker callable with the existing controller activity check at the shared message-controller generation admission seam. Cover Retry/Resend/Continue/text Regenerate/edit-resend; preserve separate image/video generation paths.
+3. Run affected message actions/ports, mounted readiness/replay and idle/poll/custody controls; obtain final immutable independent review, then original budgets and static/artifacts. Preserve every prior green/non-green result without summing selections.

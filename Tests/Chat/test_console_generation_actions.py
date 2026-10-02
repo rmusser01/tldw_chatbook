@@ -218,6 +218,7 @@ def _bare_generation_screen(store: ConsoleChatStore) -> ChatScreen:
         current_chat_store_accessor=lambda: screen._console_chat_store,
         ensure_console_chat_controller=_unreached,
         current_chat_controller_accessor=lambda: None,
+        generation_refusal_copy=_unreached,
         sync_native_console_chat_ui=screen._sync_native_console_chat_ui,
         active_session_is_ephemeral=(
             lambda: screen._session._console_active_session_is_ephemeral()
