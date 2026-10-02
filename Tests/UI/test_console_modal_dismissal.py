@@ -306,7 +306,11 @@ def _workspace_files_factory() -> ConsoleWorkspaceFilesModal:
         active_workspace_name="Workspace",
         bindings=(
             WorkspaceFilesBinding(
-                "binding", "Folder", None, available=False, availability_copy="Unavailable"
+                "binding",
+                "Folder",
+                None,
+                available=False,
+                availability_copy="Unavailable",
             ),
         ),
     )
@@ -545,7 +549,8 @@ TASK2_MODAL_CONTRACTS = (
     _Task2ModalContract(
         ConsoleRunLogModal,
         lambda: ConsoleRunLogModal(
-            run_id="run-1", first_page=RunLogPage((), RunLogPageCursor(0, 0), None, 0),
+            run_id="run-1",
+            first_page=RunLogPage((), RunLogPageCursor(0, 0), None, 0),
             page_loader=lambda cursor: None,
         ),
         "#console-run-log-modal",
@@ -1196,9 +1201,7 @@ def _constructed_modal_types(
                         # omits it from ``__getattr__``/``__all__``. Mirror
                         # Python's import semantics instead of assuming every
                         # imported name is already a package attribute.
-                        bound = importlib.import_module(
-                            f"{imported_name}.{alias.name}"
-                        )
+                        bound = importlib.import_module(f"{imported_name}.{alias.name}")
                     bindings[alias.asname or alias.name] = bound
 
         class _ConstructorVisitor(ast.NodeVisitor):
@@ -1414,9 +1417,12 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
     # The current dev baseline grows to 49 when TASK-26042's Workspace Files
     # owner seam joins the explicit Console launch graph.
     assert len(reachable_modal_types) == 49
-    all_contract_types = console_contract_types | {
-        contract.modal_type for contract in TASK4_MODAL_CONTRACTS
-    } | inventory_only_types | {TrajectoryScreen}
+    all_contract_types = (
+        console_contract_types
+        | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}
+        | inventory_only_types
+        | {TrajectoryScreen}
+    )
     assert reachable_modal_types == all_contract_types
     assert {EnhancedFileOpen, EnhancedFileSave} <= reachable_modal_types
     assert CancelConfirmationDialog in reachable_modal_types
@@ -1580,8 +1586,7 @@ def test_task2_modal_contract_table_is_complete_and_adopted() -> None:
     expected_guards = {
         "ConsoleImageViewerModal": "intentional click-anywhere cancel",
         "ConsoleReviewNotesModal": (
-            "mid-edit escape closes the open editor before the second "
-            "cancel dismisses"
+            "mid-edit escape closes the open editor before the second cancel dismisses"
         ),
     }
     for contract in TASK2_MODAL_CONTRACTS:

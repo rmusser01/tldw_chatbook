@@ -50,6 +50,7 @@ CONSOLE_RAG_SOURCE_TOGGLE_ID_PREFIX = "console-rag-settings-source-"
 CONSOLE_RAG_SOURCE_TOGGLE_CLASS = "console-rag-settings-source-toggle"
 _SOURCE_TYPE_LABELS = dict(LIBRARY_RAG_SOURCE_TYPES)
 
+
 def normalize_console_rag_source_types(value: Any) -> tuple[str, ...]:
     """Return a usable Console RAG source-type selection from loose input.
 

@@ -422,9 +422,7 @@ class ConsoleSetupModal(Vertical):
             except Exception:
                 continue
         try:
-            staged_widget = self.query_one(
-                "#console-setup-modal-staged-notice", Static
-            )
+            staged_widget = self.query_one("#console-setup-modal-staged-notice", Static)
         except Exception:
             pass
         else:

@@ -119,7 +119,9 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
             save_variant = "default"
 
         with Vertical(id="video-capacity-dialog"):
-            yield Static("Generated video", classes="console-modal-header", markup=False)
+            yield Static(
+                "Generated video", classes="console-modal-header", markup=False
+            )
             yield Static(
                 "Generated size: "
                 f"{_format_bytes(self._size_bytes)} · Configured capacity: "
