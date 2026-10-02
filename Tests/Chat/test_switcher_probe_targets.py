@@ -18,7 +18,11 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderConnectionEvidence,
     ProviderTestEvidence,
 )
-from tldw_chatbook.UI.Console_Modules.connection_probe import switcher_probe_plan
+from tldw_chatbook.UI.Console_Modules import connection_probe
+from tldw_chatbook.UI.Console_Modules.connection_probe import (
+    switcher_connection_prober,
+    switcher_probe_plan,
+)
 
 _ENTRY = {
     "display_name": "Vale endpoint",
@@ -120,3 +124,11 @@ def test_the_probed_connection_is_the_one_readiness_reads(provider, settings):
 
     assert readiness.connection == identity
     assert readiness.endpoint_category == "connection_refused"
+
+
+def test_no_test_directory_opens_switch_model_onto_the_network():
+    """The autouse guard in Tests/conftest.py, not one directory's conftest,
+    shuts the switcher's probe seam: Tests/ProductionApp opens the real Switch
+    model from the palette on the shipped profile, which lists eight localhost
+    servers. The real seam is reached only by a by-name import, as here."""
+    assert connection_probe.switcher_connection_prober is not switcher_connection_prober

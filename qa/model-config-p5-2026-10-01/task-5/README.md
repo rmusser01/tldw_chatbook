@@ -56,3 +56,30 @@ Captures:
 
 Reading note: "Agent blocked" in the status strip is the Library access
 policy chip, unrelated to provider readiness.
+
+## Re-run for the request-count claim (review fix round 1, 2026-10-02)
+
+Capture 5's "one GET per window" rested on Ollama's log, which was not
+committed. It was re-run with the same setup: a fresh scratch profile
+(`users_name = "verify_t33005_5fix"`, `[model_catalog] auto_refresh_enabled
+= false`, `[first_run]` marked complete, null keyring), a real `ollama serve`
+on `127.0.0.1:11435` as this chat's provider (`qwen2.5:0.5b`), llama.cpp at
+`127.0.0.1:9199` with nothing listening, and a separate tmux server at 211x44.
+The real `~/.config/tldw_cli/config.toml` (15c6cb224a6a51c7) and the
+`~/.local/share/tldw_cli` name listing (db7e7faf5bff92d2) were the same before
+and after.
+
+8. `8-ollama-request-log.txt`: every `[GIN]` line Ollama logged in the
+   session, unedited. 03:10:55 is a `curl` readiness check made before the
+   app started. Alt+M at 03:12:15 produced the GET at 03:12:16. Esc, then
+   Alt+M again at 03:12:21, 6 s later and inside the 10 s window, produced
+   none. Esc, then Alt+M at 03:12:36, past the window, produced the GET at
+   03:12:36. The app sent nothing else to Ollama.
+9. `9-switcher-reopened-inside-window-211x44.txt`: the second open
+   (03:12:21). The rows read the first probe's result: Ollama "Ready ·
+   reachable 03:12" and llama.cpp "Not ready · refused :9199". The other
+   Ollama model rows come from the shipped `[providers]` list, not from the
+   server.
+10. `10-switcher-reopened-after-window-211x44.txt`: the third open
+    (03:12:36), after the re-probe. The minute is unchanged, so the words
+    are unchanged.

@@ -807,6 +807,27 @@ def _no_local_server_probes(
 
     monkeypatch.setattr(llm_screen, "_probe_local_server", _no_ollama)
 
+    # TASK-33005.5: opening Switch model probes each keyless local server it
+    # lists. The shipped default profile lists eight on localhost (llama.cpp,
+    # Ollama, Aphrodite, TabbyAPI, the custom slots, ...), so every full-app
+    # test that opens it -- Alt+M in Tests/UI, the palette in
+    # Tests/ProductionApp -- made real loopback connects and failed the egress
+    # guard at teardown (15 Tests/UI failures on first run). The probe goes
+    # through `probe_settings_endpoint`, not `_get_models_payload` above, so it
+    # gets its own chokepoint: `open_model_switcher` resolves this module
+    # attribute at call time. The probe's own tests bind the real function by
+    # name at import (`Tests/UI/test_console_switcher_local_probe.py`).
+    from tldw_chatbook.UI.Console_Modules import connection_probe
+
+    async def _no_switcher_probe(_targets, _settled) -> None:
+        return None
+
+    monkeypatch.setattr(
+        connection_probe,
+        "switcher_connection_prober",
+        lambda _app, _app_config: _no_switcher_probe,
+    )
+
 
 @pytest.fixture(autouse=True)
 def _console_gateway_http_client_is_offline(

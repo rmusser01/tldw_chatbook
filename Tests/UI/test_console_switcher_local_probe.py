@@ -390,7 +390,7 @@ async def test_a_refused_active_llama_cpp_reaches_the_console_status_row(
 
     servers = Servers()
     _stub_network(monkeypatch, servers)
-    # Tests/UI/conftest.py shuts this seam for every other Alt+M test.
+    # Tests/conftest.py shuts this seam for every other test that opens it.
     monkeypatch.setattr(
         connection_probe, "switcher_connection_prober", switcher_connection_prober
     )
