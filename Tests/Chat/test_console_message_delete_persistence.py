@@ -445,3 +445,171 @@ def test_a_delete_refused_after_its_tombstone_write_rolls_back(monkeypatch):
         "c2",
         "c3",
     ]
+
+
+# --- TASK-33628.6: legacy flat conversations ----------------------------------
+#
+# Before branching, every Console row was saved with parent_message_id NULL.
+# The store chains those roots into one spine IN MEMORY only
+# (``ConsoleChatStore._chain_legacy_flat_roots``), so Delete's prompt, receipt
+# and transcript all follow that chain. The DB delete followed parent links
+# instead and tombstoned only the selected row, leaving the "later messages"
+# the prompt counted live in reopen, search and export.
+
+_FLAT = [
+    ("f0", "user", None),
+    ("f1", "assistant", None),
+    ("f2", "user", None),
+    ("f3", "assistant", None),
+]
+
+#: A flat prefix with a post-feature tail parented at the last flat row.
+_FLAT_PREFIX = [
+    ("m0", "user", None),
+    ("m1", "assistant", None),
+    ("m2", "user", "m1"),
+    ("m3", "assistant", "m2"),
+]
+
+
+def _tree_ids(store, session_id: str) -> set[str]:
+    """Every persisted id the store loaded, on or off the active path."""
+    return {
+        node.persisted_message_id
+        for node in store._nodes_by_session[session_id].values()
+    }
+
+
+@pytest.mark.parametrize(
+    ("rows", "target", "removed"),
+    [
+        pytest.param(_FLAT, "f1", ["f1", "f2", "f3"], id="flat"),
+        pytest.param(_FLAT_PREFIX, "m0", ["m0", "m1", "m2", "m3"], id="flat-prefix"),
+    ],
+)
+def test_flat_conversation_delete_tombstones_exactly_what_it_showed(
+    rows, target, removed
+):
+    """AC#1/#2: the durable delete matches the prompt and the transcript."""
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        export_conversation_to_text,
+    )
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, rows)
+    ids = [message_id for message_id, _role, _parent in rows]
+    kept = [message_id for message_id in ids if message_id not in removed]
+    store, session_id, native = _open_store(db, conversation_id)
+    # Precondition: the store really chained the roots into one transcript.
+    assert [m for m, _role in _visible(store, session_id)] == ids
+    assert db.search_messages_by_content(removed[-1], conversation_id=conversation_id)
+
+    scope = console_delete_scope(store, native[target])
+    deleted, _held = delete_subtree_for_undo(store, native[target])
+
+    assert scope.removed_count == deleted.count == len(removed)
+    assert [m for m, _role in _visible(store, session_id)] == kept
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == removed
+    # Reopen loads only what the transcript kept -- on or off the active path.
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == set(kept)
+    # Search and export agree.
+    for message_id in removed:
+        assert not db.search_messages_by_content(
+            message_id, conversation_id=conversation_id
+        )
+    exported = export_conversation_to_text(db, conversation_id) or ""
+    assert [m for m in ids if f"{m} text" in exported] == kept
+
+
+def test_flat_conversation_undo_restores_every_deleted_row():
+    """AC#3: Undo puts back every row the flat delete tombstoned."""
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    ids = [message_id for message_id, _role, _parent in _FLAT]
+    store, session_id, native = _open_store(db, conversation_id)
+    before = _visible(store, session_id)
+
+    _delete_then_undo(store, native["f1"])
+
+    assert _deleted(db, ids) == [0, 0, 0, 0]
+    assert _visible(store, session_id) == before
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == before
+
+
+def test_flat_delete_keeps_parent_link_descent_under_a_chained_root():
+    """A later flat root's hidden parent-linked rows go too, and come back.
+
+    ``ht`` is a tool row under ``h3``: never a store node, and reachable from
+    ``h1`` only through the in-memory chain ``h1 -> h2``. So the store cannot
+    name it -- only the DB's own parent-link descent from a seeded row can.
+    """
+    from tldw_chatbook.Chat.console_message_delete import (
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    rows = [
+        ("h0", "user", None),
+        ("h1", "assistant", None),
+        ("h2", "user", None),
+        ("h3", "assistant", "h2"),
+        ("ht", "tool", "h3"),
+        ("h4", "assistant", "ht"),
+    ]
+    ids = [message_id for message_id, _role, _parent in rows]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, rows)
+    store, session_id, native = _open_store(db, conversation_id)
+    assert "ht" not in native  # precondition: the store never names it
+
+    deleted, _held = delete_subtree_for_undo(store, native["h1"])
+
+    assert _deleted(db, ids) == [0, 1, 1, 1, 1, 1]
+    assert not db.search_messages_by_content("ht", conversation_id=conversation_id)
+    restore_deleted_subtree(store, deleted)
+    assert _deleted(db, ids) == [0] * len(ids)
+
+
+def test_genuine_root_fork_delete_keeps_the_other_root_branch():
+    """An un-chained root-level fork must not be swept into the delete."""
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [
+        ("u1", "user", None),
+        ("a1", "assistant", "u1"),
+        ("u1b", "user", None),
+        ("a1b", "assistant", "u1b"),
+    ]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, rows)
+    store, _session_id, native = _open_store(db, conversation_id)
+
+    delete_subtree_for_undo(store, native["u1"])
+
+    assert _deleted(db, ["u1", "a1", "u1b", "a1b"]) == [1, 1, 0, 0]
+
+
+def test_subtree_delete_seeds_stay_in_the_conversation_and_on_live_rows():
+    """Caller-resolved ids never reach another conversation or a tombstone."""
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    _seed(db, _FLAT)
+    _seed(db, [("elsewhere", "user", None)])
+    service = ChatPersistenceService(db)
+    f3 = db.get_message_by_id("f3")
+    db.soft_delete_message("f3", f3["version"])
+    f3_tombstone_version = db.get_message_tombstones(["f3"])[0]["version"]
+
+    rows = service.delete_message_subtree(
+        message_id="f1", subtree_message_ids=("f1", "f2", "f3", "elsewhere")
+    )
+
+    assert sorted(row["message_id"] for row in rows) == ["f1", "f2"]
+    assert _deleted(db, ["f0", "f1", "f2", "f3", "elsewhere"]) == [0, 1, 1, 1, 0]
+    assert db.get_message_tombstones(["f3"])[0]["version"] == f3_tombstone_version

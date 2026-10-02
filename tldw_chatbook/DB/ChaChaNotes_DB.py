@@ -16028,7 +16028,11 @@ UPDATE db_schema_version
             raise
 
     def soft_delete_message_subtree(
-        self, message_id: str, expected_version: int
+        self,
+        message_id: str,
+        expected_version: int,
+        *,
+        subtree_message_ids: Sequence[str] = (),
     ) -> List[Dict[str, Any]]:
         """Atomically soft-delete an active message and all active descendants.
 
@@ -16036,8 +16040,30 @@ UPDATE db_schema_version
         project the exact entity versions to another outbox after this local
         transaction succeeds. Provider-visible bytes and semantic lineage are
         retained unchanged; deletion changes only visibility and ownership.
+
+        Args:
+            message_id: The selected message; its version is the fence.
+            expected_version: The version the caller expects it to hold.
+            subtree_message_ids: Further ids the caller shows beneath the
+                selected message without a ``parent_message_id`` link -- a
+                legacy flat conversation (every parent NULL) that the Console
+                chains in memory (TASK-33628.6). They seed the same descent as
+                the selected message; ids outside its conversation, or already
+                deleted, are never touched.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            committed tombstone, carrying its new version.
+
+        Raises:
+            ConflictError: The selected message is missing or at another
+                version.
         """
         now = self._get_current_utc_timestamp_iso()
+        seeds = json.dumps(
+            [message_id, *(str(extra) for extra in subtree_message_ids if extra)],
+            separators=(",", ":"),
+        )
         # IMMEDIATE: hot messages writer; see add_message's scoping comment.
         with self.transaction(immediate=True) as conn:
             current = conn.execute(
@@ -16060,12 +16086,13 @@ UPDATE db_schema_version
                     entity="messages",
                     entity_id=message_id,
                 )
-
+            scope = (seeds, current["conversation_id"], current["conversation_id"])
             rows = conn.execute(
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
@@ -16077,7 +16104,7 @@ UPDATE db_schema_version
                   FROM messages
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (message_id, current["conversation_id"], current["conversation_id"]),
+                scope,
             ).fetchall()
             delete_proofs = self._capture_chat_delete_base_hashes(
                 conn, tuple(row["id"] for row in rows)
@@ -16086,7 +16113,8 @@ UPDATE db_schema_version
                 """
                 WITH RECURSIVE subtree(id) AS (
                     SELECT id FROM messages
-                     WHERE id = ? AND conversation_id = ? AND deleted = 0
+                     WHERE id IN (SELECT value FROM json_each(?))
+                       AND conversation_id = ? AND deleted = 0
                     UNION
                     SELECT child.id
                       FROM messages AS child
@@ -16101,13 +16129,7 @@ UPDATE db_schema_version
                        client_id = ?
                  WHERE id IN (SELECT id FROM subtree)
                 """,
-                (
-                    message_id,
-                    current["conversation_id"],
-                    current["conversation_id"],
-                    now,
-                    self.client_id,
-                ),
+                (*scope, now, self.client_id),
             )
             self._attach_chat_delete_base_hashes(conn, delete_proofs)
             if rows:

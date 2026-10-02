@@ -13813,11 +13813,10 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
+        nodes = self._nodes_by_session.get(session_id, {})
         if self.persistence is None or message.persisted_message_id is None:
             with self._dispatch_branch_mutation(session_id):
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
+                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
                     raise ValueError("Resolve pending dispatch before deleting this message.")
         tombstones: list[dict[str, Any]] = []
         if self.persistence is not None and message.persisted_message_id is not None:
@@ -13825,16 +13824,17 @@ class ConsoleChatStore:
             if not callable(deleter):
                 raise RuntimeError("Message deletion could not be persisted.")
             with self._dispatch_branch_mutation(session_id):
-                tombstones = deleter(message_id=message.persisted_message_id)
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
+                # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
+                tombstones = deleter(
+                    message_id=message.persisted_message_id,
+                    subtree_message_ids=[nodes[n].persisted_message_id for n in subtree_ids],
+                )
+                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
                     raise ValueError("Resolve pending dispatch before deleting this message.")
             self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
         children_map = self._children_by_parent.get(session_id, {})
-        nodes = self._nodes_by_session.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
         siblings = children_map.get(parent_native_id)
         if siblings is not None and message_id in siblings:
