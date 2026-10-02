@@ -18,7 +18,9 @@ its text and attachments go back through the normal send path.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+import asyncio
+
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from tldw_chatbook.Chat.attachment_core import PendingAttachment, vision_block_reason
@@ -91,8 +93,9 @@ async def resend_turn(
     path, with its own gates). A failed reply's trailing rows are cleared and
     it is retried in place; otherwise the empty reply and the rows after the
     user message are tombstoned and the turn re-runs from the user message.
-    Readiness, skill refusal and the thinking preflight run inside
-    ``retry_message``/``continue_from_message``, after that clear: a refusal
+    Hook review, required initialization/input and readiness run under the
+    normal submission owner before clearing. Skill refusal and the thinking
+    preflight run in the Retry/Continue bodies after the clear: a refusal
     there leaves the turn still broken (Resend stays on offer) but the cleared
     rows stay cleared. In a temporary chat nothing is persisted, so a cleared
     empty reply is simply gone.
@@ -156,14 +159,148 @@ async def _resend_turn(
         ),
         None,
     )
-    in_place = reply is not None and reply.status == "failed"
-    anchor_id = reply.id if in_place else message_id
-    refusal = _delete_rows_after(store, session_id, anchor_id)
-    if refusal:
-        return ConsoleSubmitResult(False, False, refusal)
-    if in_place:
-        return await controller.retry_message(reply.id)
-    return await controller.continue_from_message(message_id, resend=True)
+    snapshot = tuple((row.id, row.status, row.content) for row in messages)
+
+    async def replay(resolution, context, hook_rows):
+        current = store.messages_for_session(session_id)
+        if (
+            resend_target_id(current) != message_id
+            or tuple((row.id, row.status, row.content) for row in current) != snapshot
+        ):
+            return ConsoleSubmitResult(False, False, RESEND_NOT_BROKEN_COPY)
+        in_place = reply is not None and reply.status == "failed"
+        anchor_id = reply.id if in_place else message_id
+        refusal = _delete_rows_after(store, session_id, anchor_id)
+        if refusal:
+            return ConsoleSubmitResult(False, False, refusal)
+        if in_place:
+            return await controller._retry_message_body(
+                reply.id, resolution, context, hook_rows
+            )
+        return await controller._continue_from_message_body(
+            message_id, resolution, context, hook_rows, resend=True
+        )
+
+    return await _replay_message(controller, message_id, replay, prompt=user.content)
+
+
+async def _replay_message(
+    controller, message_id, operation, *, queue_authorization=None, prompt=None
+):
+    """Run an in-place replay under normal Send's exact submission owner."""
+    from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
+    from tldw_chatbook.Chat.console_chat_controller import (
+        ConsoleRunState,
+        ConsoleRunStatus,
+        ConsoleSubmissionOrigin,
+        ConsoleSubmitResult,
+    )
+
+    session_id = controller.store.session_id_for_message(message_id)
+    origin = (
+        ConsoleSubmissionOrigin.QUEUED
+        if controller.prompt_queue_coordinator.authorizes(
+            queue_authorization, session_id
+        )
+        else ConsoleSubmissionOrigin.MANUAL
+    )
+    if prompt is None:
+        rows = controller.store.messages_for_session(session_id)
+        position = next(i for i, row in enumerate(rows) if row.id == message_id)
+        prompt = next(
+            (
+                row.content
+                for row in reversed(rows[: position + 1])
+                if row.role is ConsoleMessageRole.USER
+            ),
+            "",
+        )
+
+    def refused(copy):
+        controller._set_run_state(ConsoleRunState.blocked(copy), session_id=session_id)
+        return ConsoleSubmitResult(
+            False, False, copy, session_id=session_id, origin=origin
+        )
+
+    async def replay():
+        with manual_work_scope():
+            rejection = controller._active_run_rejection(
+                session_id=session_id, queue_authorization=queue_authorization
+            )
+            if rejection is not None:
+                return rejection
+            if origin is ConsoleSubmissionOrigin.MANUAL and (
+                controller.store.active_session_id != session_id
+            ):
+                return ConsoleSubmitResult(False, False, RESEND_OTHER_SESSION_COPY)
+            session = next(
+                row for row in controller.store.sessions() if row.id == session_id
+            )
+            configuration = controller.resolve_turn_configuration_snapshot(session_id)
+            rejection = await controller._prepare_submission_hooks(
+                session, configuration, origin, queue_authorization
+            )
+            if rejection is not None:
+                return rejection
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
+                session_id=session_id,
+            )
+            (
+                resolution,
+                context,
+            ) = await controller._capture_and_resolve_turn_execution_context(
+                session_id, configuration
+            )
+            if not getattr(resolution, "ready", False):
+                return controller._block(
+                    session_id,
+                    controller._blocked_visible_copy(
+                        getattr(resolution, "visible_copy", "")
+                    ),
+                )
+            try:
+                hook_rows = await controller._submission_hook_input(prompt, origin)
+            except Exception:  # noqa: BLE001 -- same required input boundary as Send
+                return refused("Required hook input failed.")
+            if origin is ConsoleSubmissionOrigin.MANUAL:
+                outcome = await controller._legacy_submission_hook_input(
+                    prompt, session_id
+                )
+                if outcome is not None and outcome.blocked:
+                    return refused(f"Blocked by hook: {outcome.reason}")
+                if outcome is not None and outcome.context:
+                    hook_rows = [
+                        *hook_rows,
+                        {"role": "user", "content": outcome.context},
+                    ]
+            reason = await controller.hook_admission_reason()
+            if reason is not None:
+                return refused(reason)
+            task = asyncio.current_task()
+            owner = getattr(controller, "_hooks_v2_submissions", {}).get(task)
+            if (
+                controller._submit_task_session(task) != session_id
+                or controller.run_state_for(session_id).status
+                is not ConsoleRunStatus.VALIDATING
+                or (
+                    origin is ConsoleSubmissionOrigin.MANUAL
+                    and controller.store.active_session_id != session_id
+                )
+                or (
+                    owner is not None
+                    and (
+                        owner[2] != session_id
+                        or (owner[0] is not None and not owner[0].current())
+                    )
+                )
+            ):
+                return refused("Turn changed before replay; try again.")
+            return await operation(resolution, context, hook_rows)
+
+    return await controller._submit_draft_lifecycle(
+        prompt, session_id=session_id, origin=origin, _operation=replay
+    )
 
 
 def _matching_recovery(runtime: Any, session_id: str, echo: ConsoleChatMessage) -> Any:
