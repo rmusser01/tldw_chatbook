@@ -154,7 +154,10 @@ async def test_evaluation_dataset_crud_routes_wire_and_return_typed_models(monke
 
 
 @pytest.mark.asyncio
-async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
+@pytest.mark.parametrize("case_sensitive", [True, False])
+async def test_evaluation_crud_routes_wire_and_return_typed_models(
+    monkeypatch, case_sensitive
+):
     client = TLDWAPIClient("http://localhost:8000")
     mocked = AsyncMock(
         side_effect=[
@@ -164,7 +167,11 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
                 "name": "demo_eval",
                 "description": "Demo evaluation",
                 "eval_type": "exact_match",
-                "eval_spec": {"metrics": ["accuracy"], "threshold": 0.8},
+                "eval_spec": {
+                    "metrics": ["accuracy"],
+                    "threshold": 0.8,
+                    "case_sensitive": case_sensitive,
+                },
                 "dataset_id": "dataset_123",
                 "created": 1713571200,
                 "created_at": 1713571200,
@@ -182,7 +189,11 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
                         "name": "demo_eval",
                         "description": "Demo evaluation",
                         "eval_type": "exact_match",
-                        "eval_spec": {"metrics": ["accuracy"], "threshold": 0.8},
+                        "eval_spec": {
+                            "metrics": ["accuracy"],
+                            "threshold": 0.8,
+                            "case_sensitive": case_sensitive,
+                        },
                         "dataset_id": "dataset_123",
                         "created": 1713571200,
                         "created_at": 1713571200,
@@ -202,7 +213,11 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
                 "name": "demo_eval",
                 "description": "Demo evaluation",
                 "eval_type": "exact_match",
-                "eval_spec": {"metrics": ["accuracy"], "threshold": 0.8},
+                "eval_spec": {
+                    "metrics": ["accuracy"],
+                    "threshold": 0.8,
+                    "case_sensitive": case_sensitive,
+                },
                 "dataset_id": "dataset_123",
                 "created": 1713571200,
                 "created_at": 1713571200,
@@ -217,7 +232,11 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
                 "name": "demo_eval",
                 "description": "Updated evaluation",
                 "eval_type": "exact_match",
-                "eval_spec": {"metrics": ["accuracy"], "threshold": 0.9},
+                "eval_spec": {
+                    "metrics": ["accuracy"],
+                    "threshold": 0.9,
+                    "case_sensitive": case_sensitive,
+                },
                 "dataset_id": "dataset_123",
                 "created": 1713571200,
                 "created_at": 1713571200,
@@ -236,7 +255,9 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
             name="demo_eval",
             description="Demo evaluation",
             eval_type="exact_match",
-            eval_spec=EvaluationSpec(metrics=["accuracy"], threshold=0.8),
+            eval_spec=EvaluationSpec(
+                metrics=["accuracy"], threshold=0.8, case_sensitive=case_sensitive
+            ),
             dataset_id="dataset_123",
             metadata={"project": "demo"},
         )
@@ -249,13 +270,17 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
         "eval_123",
         UpdateEvaluationRequest(
             description="Updated evaluation",
-            eval_spec=EvaluationSpec(metrics=["accuracy"], threshold=0.9),
+            eval_spec=EvaluationSpec(**{**created.eval_spec, "threshold": 0.9}),
             metadata={"project": "demo", "phase": "updated"},
         ),
     )
     await client.delete_evaluation("eval_123")
 
     assert mocked.await_args_list[0].args[:2] == ("POST", "/api/v1/evaluations")
+    assert (
+        mocked.await_args_list[0].kwargs["json_data"]["eval_spec"]["case_sensitive"]
+        is case_sensitive
+    )
     assert mocked.await_args_list[1].args[:2] == ("GET", "/api/v1/evaluations")
     assert mocked.await_args_list[1].kwargs["params"] == {
         "limit": 15,
@@ -266,6 +291,10 @@ async def test_evaluation_crud_routes_wire_and_return_typed_models(monkeypatch):
     assert mocked.await_args_list[3].args[:2] == (
         "PATCH",
         "/api/v1/evaluations/eval_123",
+    )
+    assert (
+        mocked.await_args_list[3].kwargs["json_data"]["eval_spec"]["case_sensitive"]
+        is case_sensitive
     )
     assert mocked.await_args_list[4].args[:2] == (
         "DELETE",
