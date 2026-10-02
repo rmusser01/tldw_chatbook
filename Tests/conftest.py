@@ -1220,6 +1220,15 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_provision_fetch.py",
             "test_source_map.py",
             "test_credentials_and_boundaries.py",
+            # TASK-19642.12: the preflight/install/crash-recovery suites
+            # drive the same real acquisition hot path (preflight probe and
+            # install/finalize fetches reach egress._config_enabled ->
+            # get_cli_setting on the guarded config loader); same admission
+            # signature as the class above. They fake the HTTP transport,
+            # not the config getters, so they keep the bootstrap profile.
+            "test_preflight.py",
+            "test_provision_install.py",
+            "test_provision_crash_recovery.py",
         }
     )
     test_data_dir = (
