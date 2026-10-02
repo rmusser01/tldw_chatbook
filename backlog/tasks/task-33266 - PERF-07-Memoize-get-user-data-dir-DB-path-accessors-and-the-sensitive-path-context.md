@@ -45,6 +45,7 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
   - every component from `/` to each candidate user dir (conventional and fallback, or the configured base);
   - the conventional root, the fallback root and the root lock file, which are the default-root ambiguity inputs.
 - Any mismatch runs `_resolve_user_data_dir`, the unmodified body and the only place that creates, hardens or refuses.
+- A path that cannot be stamped (not a directory, unsearchable ancestor) makes the memo step aside, so the resolution reports it as before.
 - A result is recorded only when stamps taken before and after that resolution are identical, every component of the resolved chain was stamped (it is one of the candidates), and none is a symlink.
 - The memo is guarded by a lock (free-threading safe).
 
@@ -61,7 +62,7 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
 - `resolve_sensitive_context`: 237 -> 3.5 ms, 6,738 -> 360 opens.
 - Before `_ui_ready`: 40 main-thread calls now make 2 resolutions instead of 40 (AC #5).
 
-**Tests.** `Tests/test_user_data_dir_memo_perf07.py` runs 10 private-profile tests: warm reuse, a re-permissioned leaf, a replaced leaf, a group-writable ancestor (refused as before), a config reload, a working-directory change during resolution, an environment override, an override switched while the inputs build, raw-input reuse until the key moves, and a relative database override after a directory change. With the per-call stamp check removed, the three filesystem tests fail; with the raw-input memo hit removed, the reuse test fails.
+**Tests.** `Tests/test_user_data_dir_memo_perf07.py` runs 11 private-profile tests: warm reuse, a re-permissioned leaf, a replaced leaf, a group-writable ancestor (refused as before), a config reload, a working-directory change during resolution, a data dir that cannot be stamped (the resolution's own PrivatePathError still surfaces), an environment override, an override switched while the inputs build, raw-input reuse until the key moves, and a relative database override after a directory change. With the per-call stamp check removed, the three filesystem tests fail; with the raw-input memo hit removed, the reuse test fails.
 
 **Remote worker bundle.** It embeds `sensitive_paths.py`, so it was regenerated. `_raw_inputs` and `_raw_inputs_key` join the laptop-only stub allowlist: it is reached only through `resolve_sensitive_context`, and it fails closed exactly where that function's own `config` import did.
 

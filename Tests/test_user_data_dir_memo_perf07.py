@@ -283,3 +283,48 @@ def test_a_directory_change_during_resolution_is_not_memoized(request, monkeypat
     os.chdir(first)
 
     assert Path(memoized()).is_relative_to(first)
+
+
+@private_profile_test
+def test_an_unstampable_data_dir_reaches_the_resolutions_own_error(request, monkeypatch, tmp_path):
+    """A configured data dir that is a regular file cannot be stamped
+    (``NotADirectoryError``). The memo must step aside so the resolution
+    reports it as before -- a ``PrivatePathError`` the CLI turns into a
+    friendly message -- not leak a raw ``OSError`` first (Qodo, #2924).
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: Configures the data dir and stands in for the resolution.
+        tmp_path: Holds the regular file named as the data dir.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Utils.private_paths import (
+        PrivatePathError,
+        PrivatePathResult,
+        PrivatePathStatus,
+    )
+
+    not_a_directory = tmp_path / "data"
+    not_a_directory.write_text("")
+    real_setting = config.get_cli_setting
+
+    def file_data_dir(section, key, default=None):
+        if (section, key) == ("paths", "data_dir"):
+            return str(not_a_directory)
+        return real_setting(section, key, default)
+
+    def refusing_resolution():
+        raise PrivatePathError(
+            PrivatePathResult(
+                not_a_directory,
+                PrivatePathStatus.LINK_OR_NON_REGULAR,
+                reason="the resolution's own refusal",
+            )
+        )
+
+    monkeypatch.setattr(config, "get_cli_setting", file_data_dir)
+    monkeypatch.setattr(config, "_resolve_user_data_dir", refusing_resolution)
+    monkeypatch.setattr(config, "_USER_DATA_DIR_MEMO", None)
+
+    with pytest.raises(PrivatePathError, match="own refusal"):
+        config.get_user_data_dir.__wrapped__()  # the memo, not the admission layer

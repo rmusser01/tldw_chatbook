@@ -10104,10 +10104,19 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
     return key, tuple(dict.fromkeys(paths))
 
 
-def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple:
+def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
+    """Posture-stamp every path, or None if one cannot be observed.
+
+    A path that is not a directory, or sits under one the user cannot search,
+    raises here; the memo then steps aside so the resolution reports it as it
+    always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
+    """
     from tldw_chatbook.Backup_Recovery.storage_admission import _posture
 
-    return tuple(_posture(path) for path in paths)
+    try:
+        return tuple(_posture(path) for path in paths)
+    except OSError:
+        return None
 
 
 @_config_participants.guarded
@@ -10154,7 +10163,7 @@ def get_user_data_dir() -> Path:
     walked = set(_chain(result))
     # The result must be one of the stamped candidates: a working directory
     # changed mid-resolution makes a relative data dir resolve elsewhere.
-    if before == after and walked <= set(stamped) and all(
+    if before is not None and before == after and walked <= set(stamped) and all(
         stamp is not None and not stat.S_ISLNK(stamp[2])
         for path, stamp in zip(stamped, after)
         if path in walked
