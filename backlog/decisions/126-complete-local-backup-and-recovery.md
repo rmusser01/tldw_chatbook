@@ -261,6 +261,39 @@ implementation checks, not runtime evidence claimed by this documentation change
 
 ## Alternatives considered
 
+### 2026-10-01 ordinary admission amendment (TASK-33267)
+
+The requester approved the [ordinary admission design](../../Docs/superpowers/specs/2026-10-01-task33267-admission-amortization-design.md).
+The existing native hold may retain verified directory chains and immutable
+parsed records for its own lifetime. Reuse is an optimization, never authority:
+before dependent I/O, fresh pathname-to-object checks cover every predecessor,
+current ownership and permissions/ACLs, exact source selection, native gates,
+registry publication and pending recovery. Current bounded bytes must match
+before a parsed control record or MCP JSON payload is reused. Metadata, timers
+and local events alone cannot establish freshness. Uncertainty fails closed.
+
+Warm borrowers reserve a live hold under brief bookkeeping, validate outside the
+global coordinator mutex, and recheck selection and liveness before I/O. Cold
+initialization remains single-flight. Accepted borrowers and native resources
+must retire positively before retained descriptors close; failed retirement
+stays visible. Fork, source/group change, pause, maintenance and failed
+validation invalidate reuse. Capture, preview, restore, publication and arbitrary
+materializer paths keep their fully checked contracts.
+
+The app monitor keeps a cross-process native probe at most one second apart
+when its prior probe has settled, plus immediate relevant local lifecycle
+probes. Existing cancellation joining, refusal behavior and deadlines remain.
+The four MCP JSON stores may reuse immutable parsed payloads after fresh byte
+reads, returning detached data and preserving each store's read-failure and
+mutation rules. Execution-log and credential/backend discovery caches are
+excluded. No dependency, platform bypass or persistent authority is added.
+
+The existing <0.5 ms ChaChaNotes admission-overhead and at least 80% boot-open
+reduction goals remain qualification gates, not claimed results. September's
+probe scripts were lost; comparisons must disclose their reconstruction and run
+identical inputs on historical and current source. macOS, Linux and Windows
+security and product paths require appropriate targeted evidence.
+
 | Alternative | Reason not selected |
 | --- | --- |
 | Extend selective Chatbook export into total recovery | Requires every data domain to maintain a lossless logical serializer and still leaves settings, assets, device state, and exact rollback unsolved. |
