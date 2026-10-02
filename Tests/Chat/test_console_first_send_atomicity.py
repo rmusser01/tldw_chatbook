@@ -64,6 +64,10 @@ from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
 from Tests.private_profile import private_profile_test
 
 
+# Real controller sends use the configuration admitted at collection time.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 _POSTCOMMIT_EFFECTS = (
     "identity_publication",
     "durable_owner_publication",

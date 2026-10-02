@@ -1324,3 +1324,57 @@ review object still references the original head. The latest independently read
 dev remains `eba4305d83`. Fresh checks and comments on the final published head
 must pass before the authorized normal head-pinned merge; the approved ten-minute
 heartbeat remains active to complete it and pause after confirmed merge.
+
+
+### Inspector/keep-alive dev 6958e8dfa9 and review-Send gate
+
+Independently read live dev advances to `6958e8dfa99a66680b1aec09fed65df0f1a91955`
+(PR #2944). All **31 patches** replay identically, including the integration plan
+recorded before this rebase (`hooks-pr2946-695-range-diff.txt`). Eleven relevant
+upstream persistence, Inspector, keep-alive, worker-checker, census and fixture
+owners are byte-identical. All six changed store/protocol methods and the
+lifecycle error handler retain their qualified upstream ASTs. The branch's
+existing three-line plugin shutdown remains separate from that handler.
+Evidence: `hooks-pr2946-695-owner-evidence.json`. ADR required: **no**; existing
+ADR-069/097/126/163/197/210 govern, with no new runtime or authority owner.
+
+Initial targeted first-send/compaction/v75 invocation: **43 passed, 11 failed in
+91.64s** (`hooks-pr2946-695-first-send.xml`). The complete first-send file on
+immutable exact dev independently reproduces the same eleven assertion signatures
+(after normalization of process-specific object addresses), with **18 passed,
+11 failed in 48.02s** (`hooks-pr2946-695-upstream-first-send-v2.xml`); an isolated
+branch node also fails. These controller tests reselect a per-test sandbox after
+collection-time configuration admission, so they refuse with `Hooks unavailable`
+before the intended persistence boundary. Keep the file on its admitted private
+profile using the existing `bootstrap_profile` marker; the dedicated private
+profile children and all transaction, rollback, cancellation and provider-entry
+assertions remain intact. The full repaired file passes **29 cases in 34.81s**,
+without skips (`hooks-pr2946-695-first-send-fixed.xml`). The unchanged compaction
+and genuine v75 receipt files account for **25 passes** in the initial invocation.
+No production guard, assertion or timeout is weakened.
+
+Mounted hook review, actual project picker, full dead-pump recovery/teardown and
+boot controls: **42 passed, three strict expected freezes in 340.31s**, with one
+existing headroom warning (`hooks-pr2946-695-mounted-boot.xml`). The three freezes
+are real upstream Send-button, Workbench and Enter review deadlocks, accepted
+only when `FreezeObserved` is raised. They are **not** passing UI qualification
+for those routes. Preserve these tests and their census rows until the
+independently owned repair **PR #2945** lands; it is now rebased onto this dev.
+Do not duplicate, cherry-pick or merge that owner's PR. **PR #2946 remains
+unmerged until the repair is integrated and these routes pass as ordinary tests.**
+The full W003 checker file passes **93 cases**, with two unchanged strict xfails
+for split-function future recall (`hooks-pr2946-695-worker-checker.xml`).
+
+All **eleven exact artifact commands** pass (`hooks-pr2946-695-local-artifacts.json`).
+Diagnostic inventory reproduces at **634 owners / 1427 TASK-492 / 56 TASK-31551 /
+7597 TASK-494 / 16 sinks**. All **198 branch-changed Python files** parse and
+whitespace checks pass. The repaired fixture formats cleanly; its five inherited
+Ruff diagnostics match immutable dev, with no added diagnostic. Budgets and
+snapshots remain unchanged. Previous published `69e8226712` completes all
+applicable hosted checks, including both fast lanes, required artifacts, all
+native GGUF/wheel jobs and unsigned structural qualification; it does not include
+this newly advanced base and is not merged. Fresh published-head CI, Qodo and
+live-dev checks remain necessary, in addition to the concrete review-Send gate.
+Earlier unrelated semantic-inventory, pet/recovery and interrupted stress
+limitations remain explicitly retained. The approved heartbeat continues quietly
+while the upstream repair and fresh checks are pending.
