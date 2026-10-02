@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-10-02 05:59'
+updated_date: '2026-10-02 14:59'
 labels:
   - agents
   - console
@@ -67,4 +67,6 @@ Final incoming compaction integration: independent source review finds no action
 The preserving Chat 73→74→75 composition and exact recovery gates are qualified under TASK-33431. Final 79-file changed-code/new-file/owned-range static and whitespace checks pass; audited diagnostic inventory verifies 629 owners and 15 sink files. Independent schema review approves 39 overlapping checks. ADR required: no new ADR; existing ADR-199/052. Docs-only dev 922440b93e is the following rebase target and changes no runtime file. All five criteria remain satisfied; Done. Original 13-task burn-down is complete; fresh PR-head remote checks remain required, with no full suite, live provider, Windows or merge claim.
 
 Requested merge qualification on dev ab4df99959: 79 previously qualified patch Python files unchanged. Incoming settings/census/wake selection passes 19 in74.62s; startup/CSS 3 in20.64s (imports679/686, UI1032/1033); independent warm-config consumer/fallback review approves5 in8.91s. 79-file changed-code/new-file/format/whitespace and unchanged audited diagnostic guards pass. Qodo marks all four findings resolved on8136542ce4; that head passed all GitHub jobs. User authorized merge after fresh published-head review/checks; pending merge is not claimed. No new ADR or functional edit; task criteria remain satisfied.
+
+October 2 merge qualification: rebased onto dev 113e435ab0 after queue, logging, maintenance and heap-freeze changes. Existing ADR-126/199/200 contracts preserved; no new runtime fix or ADR. Root checks passed 11 wake/Save/close cases, four schema cases and five startup/CSS/freeze cases; independent checks passed 14 queue and 25 logging/maintenance cases. Final admission base passes seven recovery/close/wake consumers and 16 independent evidence-reuse cases; all 79 patch Python bytes preserved. Static checks cover 79 files and ten new files; bundles and the 630-owner diagnostic inventory match. Failed pre-import setup and absent optional pydub warning assertion are retained; separate original freeze-order and actual freeze observations pass. Selections overlap; targeted-only limits remain. Published 79f3 passed all four CI jobs and Qodo resolved all four findings; the new head requires fresh review/checks. Approved five-minute heartbeat stops after verified merge; no merge claimed.
 <!-- SECTION:NOTES:END -->
