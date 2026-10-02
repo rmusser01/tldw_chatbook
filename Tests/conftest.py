@@ -1195,6 +1195,15 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-21233: the subscriptions FTS-backfill collision canary
+            # drives the real SubscriptionsDB from a worker thread; the
+            # thread-local connection created there resolves config through
+            # the guarded loader, and under the per-test env redirect the
+            # bound config selection no longer matches (same admission
+            # signature as test_hosted_chat.py above). The file's other
+            # tests are tmp_path DB-level tests that do not depend on the
+            # redirect.
+            "test_fts_backfill.py",
         }
     )
     test_data_dir = (
