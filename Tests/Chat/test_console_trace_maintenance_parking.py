@@ -114,8 +114,9 @@ async def test_an_exchange_write_signal_wakes_parked_maintenance(
 async def test_one_signal_wakes_every_parked_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Two parked runtimes both wake on one signal; neither consumes the
-    other's (Qodo, #2914).
+    """Two parked runtimes both wake on one exchange-write signal.
+
+    Neither consumes the other's wake (Qodo, #2914).
 
     Args:
         monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
