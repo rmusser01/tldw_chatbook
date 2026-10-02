@@ -416,7 +416,9 @@ missing when the Console opened. It appeared only after an unrelated rail toggle
 happened to run the sync, because nothing runs that sync after the first mount
 when readiness has not changed. The fix was the existing F1 precedent in
 `ConsoleStatusChips` (`ephemeral`, `cost_state`, `run_copy`): pass the
-compose-time value into the constructor (`readiness_word`). Whenever a new widget is
+compose-time value into the constructor (`readiness_word`). Review round 1 then
+deleted the chip and `sync_readiness_chip` (the word moved to the header badge, see
+below), so neither name exists any more; the lesson stands. Whenever a new widget is
 refreshed by a sync method, open the screen fresh and capture it before touching
 anything. A test that syncs first cannot see the first frame.
 
