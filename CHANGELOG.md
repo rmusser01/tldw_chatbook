@@ -13,6 +13,8 @@ Includes committed development changes since 0.2.2 and retains the evaluation
 case-sensitivity fix from `main`.
 
 ### Added
+- Console Resend reruns eligible broken last turns in place, without creating
+  another user message or a new branch.
 - Local workflow authoring and session runs with file inputs, prompts,
   llama.cpp inference, editable human review, and saved Library notes.
 - Managed plugin installation, trust review, recovery, and removal, with
@@ -60,6 +62,10 @@ case-sensitivity fix from `main`.
 - SSH workspaces: quitting with several remote bindings closes their sessions in parallel within 5 s, and no ControlMaster is left running after exit.
 - SSH workspaces: a session start that stalls after the host has answered no longer marks the binding unreachable; the run falls back to the slower path instead (and when a call's own time budget runs out first, only that call times out).
 - SSH workspaces: a tool call whose session was closed (idle, run end or app exit) just before it was sent now gets a fresh session (or the slower path after run end or app exit) instead of an error.
+
+### Known issues
+- Dispatch-recovery actions after a full app relaunch can remain unavailable
+  (TASK-33662); Resend does not bypass an unresolved recovery card.
 
 ## [0.2.2] - 2026-09-14
 

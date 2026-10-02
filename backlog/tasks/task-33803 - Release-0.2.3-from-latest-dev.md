@@ -54,3 +54,17 @@ evaluation checks exposed three failures caused by the deleted generated
 Console stylesheet. Replaced its stale digest entry with the current two
 Console source sheets; the same 268 checks then passed. Builds, installed-package
 checks, required CI, index publication, and final provenance are pending.
+
+### Refresh after dev advanced
+
+Preparation e6bb9c06ad8f1b55c4ceefd8dd6bb8cec7b33b0b passed the committed build,
+268 focused tests, 184 installed-distribution tests, and a fresh dependency-resolved
+wheel install with both CLI help commands. Required CI run 37052989900 passed:
+922 UI tests; PR phases of 1183 and 123 passes; and derived-artifact contracts.
+The protected merge correctly refused because dev advanced to
+bb865f5cfeae4c9d8c068f588ee0d85ff28a0e13 while these checks ran.
+
+Merged the additional Console Resend commits without conflicts, retained both
+sets of testing lessons, and added Resend plus the documented, pre-existing
+TASK-33662 relaunch-recovery limitation to the changelog. Refreshed affected
+checks, installed boot probes, required CI, and publication remain pending.
