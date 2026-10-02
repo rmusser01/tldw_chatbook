@@ -118,10 +118,17 @@ class ChatModelUnavailableError(ChatProviderError):
 
     def __init__(
         self,
-        message="The requested model is unavailable.",
-        provider=None,
-        status_code=404,
-    ):
+        message: str = "The requested model is unavailable.",
+        provider: str | None = None,
+        status_code: int | None = 404,
+    ) -> None:
+        """Initialize the provider's explicit model-unavailable classification.
+
+        Args:
+            message: Content-free diagnostic description.
+            provider: Provider identity, when known.
+            status_code: Original HTTP status, or None before HTTP dispatch.
+        """
         super().__init__(message, status_code=status_code, provider=provider)
 
 
@@ -141,8 +148,20 @@ def project_provider_error(exc: BaseException, provider: str) -> ChatAPIError | 
     return None
 
 
-def model_unavailable_error(provider: str, status: int, payload: object):
-    """Map documented machine codes only; status and prose never suffice."""
+def model_unavailable_error(
+    provider: str, status: int, payload: object
+) -> ChatModelUnavailableError | None:
+    """Map documented machine codes only; status and prose never suffice.
+
+    Args:
+        provider: Provider or execution identity for the response.
+        status: Original HTTP response status.
+        payload: Decoded provider response to classify without copying its body.
+
+    Returns:
+        A content-free model-unavailable error for an explicit supported code,
+        otherwise None.
+    """
     if status not in {400, 404} or not isinstance(payload, dict):
         return None
     error = payload.get("error")

@@ -1114,7 +1114,14 @@ class PeerMessenger:
         return siblings
 
     def list(self) -> list[dict[str, str]]:
-        """Return body-free attached siblings under exact live owner authority."""
+        """Return body-free attached siblings under exact live owner authority.
+
+        Returns:
+            Handle IDs, agent names and status for eligible live siblings.
+
+        Raises:
+            MessageError: The bound sender or coordinator authority is revoked.
+        """
         fleet = self._coordinator
         store = self._sender._inbox._store
         while True:
@@ -1136,7 +1143,19 @@ class PeerMessenger:
             store.wait_for_writer()
 
     def send(self, handle_id: object, message: object) -> str:
-        """Admit peer steering and sender allowance atomically, without eviction."""
+        """Admit peer steering and sender allowance atomically, without eviction.
+
+        Args:
+            handle_id: Exact live sibling handle returned by list().
+            message: Nonblank untrusted text within the existing message limit.
+
+        Returns:
+            Generated message ID acknowledging queued delivery, not consumption.
+
+        Raises:
+            MessageError: Invalid or oversized text, unavailable sibling or
+                sender authority, full recipient queue, or exhausted allowance.
+        """
         from .fleet_messages import (
             MAX_ENVELOPE_CHARS,
             MAX_IDENTITY_CHARS,

@@ -262,7 +262,8 @@ class MessageStore:
     def begin_close(self) -> None:
         """Permanently revoke admission without waiting for an owned SQL leaf."""
         self._revoked.set()
-        for inbox in tuple(self._inboxes.values()):
+        # Membership is immutable; the store latch also fences unpublished inboxes.
+        for inbox, _ in self._published[0].values():
             inbox._revoked.set()
 
     def close(self) -> None:

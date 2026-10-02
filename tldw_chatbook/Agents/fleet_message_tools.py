@@ -6,6 +6,14 @@ import json
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    ValidationError,
+    ValidationInfo,
+    field_validator,
+)
+
 from .agent_models import (
     LIST_PEER_AGENTS_TOOL_NAME,
     READ_AGENT_MESSAGES_TOOL_NAME,
@@ -165,6 +173,30 @@ def list_peers(messenger: PeerMessenger, args: dict) -> MessageToolResult:
     )
 
 
+class _PeerMessageArguments(BaseModel):
+    """Strict tool payload; shared text rules preserve existing refusal codes."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+    handle_id: str
+    message: str
+
+    @field_validator("handle_id", "message", mode="before")
+    @classmethod
+    def _text(cls, value: object, info: ValidationInfo) -> str:
+        from .fleet_messages import (
+            MAX_IDENTITY_CHARS,
+            MAX_MESSAGE_CHARS,
+            _validate_text,
+        )
+
+        is_message = info.field_name == "message"
+        return _validate_text(
+            value,
+            MAX_MESSAGE_CHARS if is_message else MAX_IDENTITY_CHARS,
+            size_code="message_too_large" if is_message else "invalid_message",
+        )
+
+
 def send_peer(messenger: PeerMessenger, args: dict) -> MessageToolResult:
     """Return generated IDs and queued status, never claiming consumption."""
     from .fleet_messages import MessageError
@@ -172,7 +204,14 @@ def send_peer(messenger: PeerMessenger, args: dict) -> MessageToolResult:
     if type(args) is not dict or set(args) != {"handle_id", "message"}:
         return refused("invalid_message")
     try:
-        message_id = messenger.send(args["handle_id"], args["message"])
+        arguments = _PeerMessageArguments.model_validate(args)
+    except ValidationError as exc:
+        cause = exc.errors(include_input=False)[0].get("ctx", {}).get("error")
+        return refused(
+            cause.code if isinstance(cause, MessageError) else "invalid_message"
+        )
+    try:
+        message_id = messenger.send(arguments.handle_id, arguments.message)
     except MessageError as exc:
         return refused(exc.code)
     return MessageToolResult(
@@ -181,13 +220,13 @@ def send_peer(messenger: PeerMessenger, args: dict) -> MessageToolResult:
             {
                 "status": "queued",
                 "message_id": message_id,
-                "target_handle_id": args["handle_id"],
+                "target_handle_id": arguments.handle_id,
                 "notice": "Queued does not mean consumed. No wake or run continuation.",
             },
             separators=(",", ":"),
         ),
         message_id=message_id,
-        target_handle_id=args["handle_id"],
+        target_handle_id=arguments.handle_id,
     )
 
 
