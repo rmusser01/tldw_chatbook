@@ -1012,5 +1012,7 @@ def test_nav_properties_read_the_library_fields_without_becoming_fields() -> Non
     ):
         names = {field.name for field in fields(dataclass_type)}
         assert not names & {"nav_open", "nav_width"}, dataclass_type
-    with pytest.raises(AttributeError):
-        layout.nav_open = False  # type: ignore[misc]
+        for prop_name in ("nav_open", "nav_width"):
+            prop = getattr(dataclass_type, prop_name)
+            assert isinstance(prop, property), (dataclass_type, prop_name)
+            assert prop.fset is None, (dataclass_type, prop_name)
