@@ -344,11 +344,16 @@ def test_a_regular_file_data_dir_fails_with_a_private_path_error(request, monkey
         tmp_path: Holds the regular file named as the data dir.
     """
     from tldw_chatbook import config
+    from tldw_chatbook.Utils.path_validation import validate_path
     from tldw_chatbook.Utils.private_paths import PrivatePathError
 
     not_a_directory = tmp_path / "data-file"
     not_a_directory.write_text("")
-    config_file = Path(os.environ["TLDW_CONFIG_PATH"])
+    # Only ever write the private profile's own config: the runner selects it
+    # under TLDW_TEST_CONFIG_ROOT, and validate_path refuses anything outside.
+    config_file = validate_path(
+        os.environ["TLDW_CONFIG_PATH"], os.environ["TLDW_TEST_CONFIG_ROOT"]
+    )
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(f'[paths]\ndata_dir = "{not_a_directory}"\n')
     monkeypatch.setattr(config, "_USER_DATA_DIR_MEMO", None)
