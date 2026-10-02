@@ -1983,5 +1983,59 @@
     "real_profile": "Both native runs preserve21configentries/533datafilemtimes and zeroegress; process/socket cleanup0. Root verifies pins/origins current.",
     "current_source_pin_count": 230,
     "limits": "Only65freshscopedcases on newbase; preceding230case/native receipts retained at original identity. Nine regrouped scenario bodies/signatures/63asserts and fiveheavybodies unchanged. One paired grouping time95.55\u219266.86s is not a hostedCI deadline guarantee. Native covers described decisions/Close/geometry only; no AX/provider requests/widerhook/plugin/MCP handlers/Resend execution or forcedworkerDB/UI/rollbackrace claim; existingfocused regressions retain their explicit prior-base/source-equivalence limits. PERF-07 memo mutation contracts covered by12freshupstream tests; natural import of remote_worker_bundle does not mean worker execution. No fullsuite/dependency/CI cap/census relaxation. External shell temp-file capacity error happened after native completion, preserved separately; later3.7GiBavailable without pruning or rerun. Final published-head allfour CI gates/freshcleanresolvedQodo/normalmerge still required."
+  },
+  "outcome_kind_release_followup": {
+    "base": "f3aeb32fb3d230c0774c7fc349729d9f75c96366",
+    "prior_head": "c814dbcdb409a760a0a9960c8d26765c1d894b50",
+    "candidate_head": "e1a84281bc44d7746fb5ef9c6c217aefbe9293c7",
+    "controller_ast_equivalent_after_literal_substitution": true,
+    "constant_references": 3,
+    "original_controller_sha256": "bcf62e63cdf88edc6fecf7d990035dcea15906d48b44fbb898aa3f677ad10c18",
+    "current_controller_sha256": "c026799a6447aace0f7801367fdc29cb032dad601121ca2800bc55623c84fb6d",
+    "prior_source_pins": 230,
+    "unchanged_prior_pins": 227,
+    "changed_pins": [
+      "pyproject.toml",
+      "tldw_chatbook/Chat/console_chat_controller.py",
+      "Tests/Performance/test_ui_ready_module_census.py"
+    ],
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "pytest_asyncio.plugin",
+      "-p",
+      "pytest_timeout",
+      "-p",
+      "no:cacheprovider",
+      "-q",
+      "--basetemp=/tmp/console-tool-ux-outcome-check-xc075hf7/pytest",
+      "--junitxml=/tmp/console-tool-ux-outcome-check-xc075hf7/pytest.xml",
+      "Tests/Chat/test_console_chat_create_integration.py",
+      "Tests/Performance/test_ui_ready_module_census.py"
+    ],
+    "exit_code": 0,
+    "cases": 46,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "seconds": 45.04,
+    "log": "/tmp/console-tool-ux-outcome-check-xc075hf7/pytest.log",
+    "junit": "/tmp/console-tool-ux-outcome-check-xc075hf7/pytest.xml",
+    "limits": "Prior native receipts retain their original head/byte pins; the controller is semantically equivalent after constant substitution, not byte-identical. Upstream release changes and the new census guard are separately identified. No native/performance replay beyond the affected actual warm-census test; fresh published-head CI remains required.",
+    "qualification_worktree_had_constant_edit": true,
+    "rebase_range_diff": "/tmp/console-tool-ux-release-rebase-range-diff.txt",
+    "rebase_patch_evidence": "25 of 26 patches unchanged; one differs only in context/blank-line placement while preserving both appended lesson entries.",
+    "new_ruff_diagnostics": 0,
+    "changed_python_files": 34,
+    "preflight": "/tmp/console-tool-ux-outcome-preflight.txt",
+    "preflight_pass": true,
+    "changed_pin_sha256": {
+      "pyproject.toml": "5da3235e8cba334a49a99e9ef47b6cd23e7629a7ef854efe56d2db2450ef4b26",
+      "tldw_chatbook/Chat/console_chat_controller.py": "c026799a6447aace0f7801367fdc29cb032dad601121ca2800bc55623c84fb6d",
+      "Tests/Performance/test_ui_ready_module_census.py": "c3eb3f9def8a7b0e76085ac47d854dbaf41ab8eb3149ca8ff5c6d16a0a8a7109"
+    },
+    "upstream_release_changes": "dev f3aeb32 includes the 0.2.3 version/source-list/docs changes, the additional Resend-absent warm-census assertion and unrelated evaluation case sensitivity. Their production contents remain upstream-owned."
   }
 }

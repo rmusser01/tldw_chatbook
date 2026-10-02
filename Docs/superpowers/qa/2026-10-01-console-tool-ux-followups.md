@@ -633,3 +633,29 @@ races remain outside scope; naturally loaded remote-worker code is import
 evidence only. No full local suite. QA `path_memo_base_final_followup` records
 exact identity, receipts and limits. Final published-head CI/Qodo and
 protected normal merge remain required.
+
+
+Final Qodo outcome-kind correction and release-base integration (2026-10-02)
+
+Qodo247e7df5 now uses one private `_CHAT_CREATE_SESSION_GONE` constant in
+all three executor refusal returns. The full controller AST matches the
+preceding published c814 head after substituting that constant's literal and
+removing its sole assignment; creation, admission and cleanup are unchanged.
+Existing chat-create integration/race and real warm-census checks: **46 pass**,
+zero failures/errors/skips. No additional test or runtime abstraction.
+
+Rebased onto dev f3aeb32fb3d230c0774c7fc349729d9f75c96366 (release0.2.3).
+All26 patches retain their code;25 are range-diff unchanged and one only shifts
+an appended lesson's context/blank line, preserving both entries. Of230 prior
+source pins,227 are unchanged. The three differences are the private outcome
+constant, upstream pyproject version and upstream Resend-absent census guard.
+Upstream package-version and unrelated evaluation changes remain upstream-owned.
+Zero-new Ruff34, constant-range format, diff check and fresh full preflight pass.
+
+Prior native27/29 and65/230-case receipts retain their original identities.
+The new controller has semantic equivalence, not byte identity; release version
+and census changes are identified separately. Native was not replayed for this
+literal extraction. Current qualification and limits are recorded under
+`outcome_kind_release_followup` in the combined QA JSON and
+/tmp/console-tool-ux-outcome-qualified.json. Final published-head gates and fresh
+resolved Qodo remain required before protected normal merge in PR2953.

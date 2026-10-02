@@ -813,6 +813,7 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: for `request_chat_create_confirm`'s own wait loop (fallback used when no
 #: `chat_create_confirm_timeout_seconds` seam is injected).
 _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
+_CHAT_CREATE_SESSION_GONE = "session_gone"
 #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
@@ -19287,14 +19288,14 @@ class ConsoleChatController:
         if session_id in self._session_close_generations:
             return {
                 "ok": False,
-                "kind": "session_gone",
+                "kind": _CHAT_CREATE_SESSION_GONE,
                 "error": "source session is closing",
             }
         session = next(
             (s for s in self.store.sessions() if s.id == session_id), None
         )
         if session is None:
-            return {"ok": False, "kind": "session_gone",
+            return {"ok": False, "kind": _CHAT_CREATE_SESSION_GONE,
                     "error": "source session not found"}
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
@@ -19634,7 +19635,7 @@ class ConsoleChatController:
             self._discard_chat_create_orphan(db, new_conv)
             return {
                 "ok": False,
-                "kind": "session_gone",
+                "kind": _CHAT_CREATE_SESSION_GONE,
                 "error": "source session closed before chat completion",
             }
         return {
