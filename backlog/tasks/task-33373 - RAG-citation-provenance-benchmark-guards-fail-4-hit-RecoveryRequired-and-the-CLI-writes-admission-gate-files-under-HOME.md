@@ -5,7 +5,7 @@ title: 'RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired an
 status: In Progress
 assignee: []
 created_date: 2026-09-28 20:12
-updated_date: 2026-10-02 14:45
+updated_date: 2026-10-02 15:51
 labels:
 - testing
 - rag
@@ -45,11 +45,16 @@ Post-rebase integration: normal commit 5ffd78a967125c024a2741829aa548b28342f5c4 
 Independent latest-dev rebase assessment /private/tmp/backup-followup-rebase-independent-review-er5zsq_e/report.md passed with no actionable findings. All 23 reviewed source pins match exact 70152 HEAD; the reviewer independently counted current JUnit at 707 PASS, including 72 benchmark, 46 Personas and 18 v74 cases. No application/native tests were run by that reviewer. Only Task tracking text changes after the qualified application/test bytes.
 Draft PR #2955: https://github.com/rmusser01/tldw_chatbook/pull/2955, against dev 922440b93e83b4dd7086086de21b1276c477fc8e. Published evidence head 7fef82e2f0fbc165487673bbda19dfdfc7ef8927 changes only Task records after tested runtime 70152bb3dc534cb278b8f84b755248ed9dfbbccc; all 7611 tested Python/SQL bytes remain identical. Pending current-head CI and PR integration. The admission-performance proposal remains unapproved and has no implementation in this PR.
 Latest logging-dev rebase source d18e990586a8b193a3fbf12248bf1b266e6eca85 on dev92a95170: the actual finite phase /private/tmp/backup-followup-check-01o7b3nc/summary.json collected106, passed94, failed12,0errors/skips/undrainednetwork. All72 original benchmark cases PASS including original CLI host-state/redaction/budget assertions; new logging17, adapted config3 and installed ChaChaNotes schema1 PASS. All12 distinct failures are worker-event tests refused at real app construction before assertions with raw_source_selection_changed; TASK-33370 owns their scoped source-lifetime diagnosis/correction. Prior720-case717/3 and corrected3-case phases retain original identities, not one all-green phase. No production/admission/deadline changes or original native reruns. The admission performance design is now requester-approved and proceeds separately.
+Current-dev rebase qualification at06165659/dev eba4305: original benchmark module72/72PASS within finite777 phase(776PASS0FAIL0ERROR1inapplicable upstream oracle SKIP), zero undrained parent network and7622 tracked Python/SQL pins unchanged. Receipts /private/tmp/backup2955-final-rebase-o7vk5h6b/summary.json and /private/tmp/backup-followup-check-d1aocb76; no numeric/input/corpus/privacy/selection-lifetime/deadline changes or full sweep. Exact upstream source applicability /private/tmp/backup2955-upstream-delete-review.md: ChaChaNotesv74 and exercised constructor/transaction/migration methods unchanged; real ChatPersistenceService constructor gains only thread-local release holder, new Delete methods are not called by benchmark or reconstructed probe. Actual added ready census/modal CSS source-wiring nodes pass. Earlier92-source72PASS and113-source72PASS are separate, retained; current phase supplies new source identity. Shared config-consumer cleanup independently reviewed underTASK33370. PR2955 publication/current requiredCI/integration pending; performance amendment remains separately trackedTASK33560.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Validation imports and every measured benchmark group share one private HOME/USERPROFILE/config/data lifetime. Direct callers must select it before work. On latest logging dev92a, all72 original benchmark cases pass, including the unchanged CLI host-snapshot, redaction and budget assertions. The combined106-case phase has94PASS/12 distinct worker setup refusals owned by TASK-33370; it is not all green. Earlier707-pass evidence and budget misses retain their original identities. Production admission and deadlines remain unchanged. Pending scoped rebase review, current-head required CI and PR integration.
+The citation benchmark uses one private HOME/USERPROFILE/config/data lifetime through validation and all original groups, including repository storage and migrations. Direct callers require a private profile; original budgets, inputs and host/privacy assertions remain intact.
+
+The original benchmark module passed72/72 on current source06165659cdf72f947554cf23ec1cd44f9ba430e2/dev eba4305 inside the777-case finite phase(776 passed,0 failed/errors,1 inapplicable upstream oracle skip). All7622 Python/SQL source pins remained stable, with private environment/Null keyring/network guard established before app imports. Evidence /private/tmp/backup2955-final-rebase-o7vk5h6b and /private/tmp/backup-followup-check-d1aocb76. Static upstream assessment confirms ChaChaNotes remainsv74; exercised transaction/migration methods are unchanged, and only the actual readiness/modal CSS checks were added.
+
+PR #2955 current-head required CI and protected integration remain pending. These are benchmark-followup checks, not new admission-performance qualification; Task33560 retains the approved performance work.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
