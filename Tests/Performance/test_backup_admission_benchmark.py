@@ -192,6 +192,40 @@ def test_abrupt_zero_exit_cannot_reuse_an_old_success_receipt(tmp_path):
     assert result["error_type"] == "MissingReceipt" and "stale" not in result
 
 
+@pytest.mark.parametrize("measured_status", [0, -15, 23])
+def test_main_reports_any_measured_failure_and_keeps_raw_status(
+    tmp_path, monkeypatch, capsys, measured_status
+):
+    module = probe()
+    selected = source(module, tmp_path / "source")
+    receipt_file = tmp_path / "receipt.json"
+    statuses = iter((0, measured_status))
+    monkeypatch.setattr(
+        module, "run_child", lambda *args: {"exit_code": next(statuses)}
+    )
+    monkeypatch.setattr(
+        module.sys,
+        "argv",
+        [
+            "probe",
+            "--source",
+            str(selected),
+            "--phase",
+            "transaction",
+            "--iterations",
+            "1",
+            "--receipt",
+            str(receipt_file),
+        ],
+    )
+    status = module.main()
+    receipt = json.loads(receipt_file.read_text())
+    assert status == receipt["exit_code"] == int(measured_status != 0)
+    assert receipt["seed"]["exit_code"] == 0
+    assert receipt["runs"][0]["exit_code"] == measured_status
+    assert json.loads(capsys.readouterr().out) == receipt
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX child group ownership")
 def test_timeout_terminates_the_owned_child_group(tmp_path, monkeypatch):
     import signal

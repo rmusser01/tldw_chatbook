@@ -599,9 +599,7 @@ def main():
             "seed": seed,
             "warmup": warmup,
             "runs": runs,
-            "exit_code": max(
-                [prerequisite["exit_code"], *[r["exit_code"] for r in runs]]
-            ),
+            "exit_code": int(any(r["exit_code"] != 0 for r in [prerequisite, *runs])),
         }
     args.receipt.write_text(json.dumps(receipt, sort_keys=True) + "\n")
     args.receipt.chmod(0o600)
