@@ -506,6 +506,7 @@ def run_child(source, profile, phase, iterations):
     environment = private_environment(profile.resolve())
     environment["TLDW_PROBE_SOURCE"] = str(source)
     result_file = profile / f"{phase}-child.json"
+    result_file.unlink(missing_ok=True)
     command = [
         sys.executable,
         "-I",

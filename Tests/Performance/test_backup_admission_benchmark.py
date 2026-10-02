@@ -173,6 +173,25 @@ def test_child_preserves_explicit_nonzero_exit_code(tmp_path):
     assert result["exit_code"] == 23
 
 
+def test_abrupt_zero_exit_cannot_reuse_an_old_success_receipt(tmp_path):
+    module = probe()
+    selected = source(module, tmp_path / "source")
+    (selected / "tldw_chatbook/DB/ChaChaNotes_DB.py").write_text(
+        "import os\nos._exit(0)\n"
+    )
+    manifest = json.loads((selected / module.MANIFEST).read_text())
+    manifest["content_sha256"] = module.source_digest(selected)
+    (selected / module.MANIFEST).write_text(json.dumps(manifest))
+    profile = tmp_path / "profile"
+    module.private_environment(profile)
+    (profile / "transaction-child.json").write_text(
+        json.dumps({"exit_code": 0, "retired": True, "stale": True})
+    )
+    result = module.run_child(selected, profile, "transaction", 1)
+    assert result["exit_code"] != 0
+    assert result["error_type"] == "MissingReceipt" and "stale" not in result
+
+
 @pytest.mark.skipif(os.name == "nt", reason="POSIX child group ownership")
 def test_timeout_terminates_the_owned_child_group(tmp_path, monkeypatch):
     import signal
