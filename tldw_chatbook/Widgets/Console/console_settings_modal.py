@@ -164,6 +164,10 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # module imports ConsoleSettingsInput only lazily (inside compose) so this
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
+from .console_settings_field_row import (
+    CONNECTION_DISCLOSURE_ID, CONNECTION_FOCUS_IDS, CORE_FIELDS, SAMPLING_DISCLOSURE_ID,
+    SAMPLING_FIELDS, SAMPLING_FOCUS_IDS, ConsoleSettingsFieldRowsMixin, connection_blocked,
+)
 from .console_settings_summary import build_console_readiness_presentation
 from .console_settings_unsaved import (
     ConsoleSettingsUnsavedGuardMixin,
@@ -229,7 +233,6 @@ CurrentMemoryResetter = Callable[[], tuple[str, int] | None]
 CurrentMemoryUndo = Callable[[str, int], bool]
 AllMemoryResetter = Callable[[], int]
 ContextCompactor = Callable[[], Awaitable[tuple[bool, str]]]
-STREAMING_TOGGLE_WIDTH = 12
 PROVIDER_CHOICE_INPUT_MAX_LENGTH = 64
 COMPACTION_CLOSE_WARNING = "Provider work may continue and may still be billed."
 _MODEL_PROVENANCE_COPY = {
@@ -839,21 +842,6 @@ PROVIDER_CHOICE_INPUTS = tuple(
     (label, input_id, ", ".join(_SNAPSHOT_SETTING_CHOICE_DOMAINS[control]))
     for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
 )
-_ADVANCED_GENERATION_FOCUS_IDS = frozenset(
-    {
-        "console-settings-temperature",
-        "console-settings-top-p",
-        "console-settings-min-p",
-        "console-settings-top-k",
-        "console-settings-max-tokens",
-        "console-settings-seed",
-        "console-settings-presence-penalty",
-        "console-settings-frequency-penalty",
-        "console-settings-streaming",
-        *_PROVIDER_CHOICE_VALUES,
-        "console-settings-thinking-budget-tokens",
-    }
-)
 PROVIDER_CHOICE_NO_EFFECT_SUFFIX = " (no effect on this provider)"
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
 _GENERATION_CONTROL_INPUTS: tuple[tuple[str, ConsoleGenerationControl], ...] = (
@@ -863,8 +851,6 @@ _GENERATION_CONTROL_INPUTS: tuple[tuple[str, ConsoleGenerationControl], ...] = (
     ("console-settings-thinking-effort", "thinking_effort"),
     ("console-settings-thinking-budget-tokens", "thinking_budget_tokens"),
 )
-STREAMING_ON_LABEL = "On"
-STREAMING_OFF_LABEL = "Off"
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Use: this conversation only. Defaults: future provider conversations."
 )
@@ -878,8 +864,6 @@ CONSOLE_SETTINGS_SCOPE_COPY = CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 #: re-validates it, which must not happen on every keystroke (task-15476).
 CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS = 0.2
 _FOCUS_REVEAL_SETTLE_DELAY_SECONDS = 0.06
-# Draft fields persisted under [api_settings.<provider>] by Save as default.
-STREAMING_INHERIT_LABEL = "Inherit"
 _GENERATION_FIELD_BY_INPUT_ID = {
     "console-settings-temperature": "temperature",
     "console-settings-top-p": "top_p",
@@ -1030,6 +1014,7 @@ class ConsoleSettingsRecoveryButton(Button):
 
 
 class ConsoleSettingsModal(
+    ConsoleSettingsFieldRowsMixin,
     ConsoleSettingsUnsavedGuardMixin,
     SafeModalDismissMixin,
     ModalScreen[
@@ -1248,22 +1233,15 @@ class ConsoleSettingsModal(
         self._memory_reset_token: tuple[str, int] | None = None
         self._confirm_reset_all = False
         self._context_overrides_reset = False
-        targeted_advanced_control = bool(
-            suspended_draft is not None
-            and suspended_draft.focus_control_id in _ADVANCED_GENERATION_FOCUS_IDS
-        )
+        # A restored target inside a disclosure opens it; "advanced_generation"
+        # is the Sampling disclosure's snapshot key (TASK-33006.1).
+        target = suspended_draft.focus_control_id if suspended_draft else None
+        disclosed = suspended_draft.disclosure_state if suspended_draft else {}
         self._advanced_generation_disclosed = bool(
-            targeted_advanced_control
-            or (
-                suspended_draft.disclosure_state["advanced_generation"]
-                if suspended_draft is not None
-                else False
-            )
+            target in SAMPLING_FOCUS_IDS or disclosed.get("advanced_generation")
         )
         self._connection_details_disclosed = bool(
-            suspended_draft.disclosure_state["connection_details"]
-            if suspended_draft is not None
-            else False
+            target in CONNECTION_FOCUS_IDS or disclosed.get("connection_details")
         )
         self._invalid_generation_choice_drafts: dict[str, str] = {}
         if suspended_draft is not None:
@@ -1700,11 +1678,31 @@ class ConsoleSettingsModal(
                     id="console-settings-provider-model-section",
                     classes="console-settings-model-view",
                 ):
+                    yield self._model_row()
+                    for name in CORE_FIELDS:
+                        yield self._field_row(name)
+                with Collapsible(
+                    title="Sampling",
+                    collapsed=not self._advanced_generation_disclosed,
+                    id=SAMPLING_DISCLOSURE_ID,
+                    classes="console-settings-model-view",
+                ):
+                    for name in SAMPLING_FIELDS:
+                        yield self._field_row(name)
+                with Collapsible(
+                    title="Connection",
+                    collapsed=not (
+                        self._connection_details_disclosed
+                        or self._focus_model
+                        or connection_blocked(readiness)
+                    ),
+                    id=CONNECTION_DISCLOSURE_ID,
+                    classes="console-settings-model-view",
+                ):
                     with Vertical(
                         id="console-settings-connection",
                         classes=self._provider_model_section_classes(),
                     ):
-                        yield Static("Connection", classes="destination-section")
                         with Horizontal(classes="console-settings-modal-row"):
                             yield self._modal_label("Provider")
                             yield ConsoleProviderPicker(
@@ -1937,198 +1935,10 @@ class ConsoleSettingsModal(
                         yield generation_status
 
                 with Collapsible(
-                    title="Advanced generation",
-                    collapsed=not self._advanced_generation_disclosed,
-                    id="console-settings-generation-advanced",
-                    classes=(
-                        "console-settings-modal-section console-settings-model-view"
-                    ),
-                ):
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["temperature"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.temperature),
-                            id="console-settings-temperature",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["top_p"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.top_p),
-                            id="console-settings-top-p",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["min_p"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.min_p),
-                            id="console-settings-min-p",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["top_k"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.top_k),
-                            id="console-settings-top-k",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["max_tokens"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.max_tokens),
-                            id="console-settings-max-tokens",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["seed"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.seed),
-                            id="console-settings-seed",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["presence_penalty"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.presence_penalty),
-                            id="console-settings-presence-penalty",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["frequency_penalty"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(self._settings.frequency_penalty),
-                            id="console-settings-frequency-penalty",
-                            classes="console-settings-control",
-                        )
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label(MODEL_FIELD_LABELS["streaming"])
-                        streaming_toggle = Button(
-                            self._streaming_toggle_label(),
-                            id="console-settings-streaming",
-                        )
-                        streaming_toggle.tooltip = (
-                            "Toggle streaming on or off for this session"
-                        )
-                        streaming_toggle.remove_class(*(name for name in streaming_toggle.classes if name.startswith("w-")))
-                        streaming_toggle.set_styles(width=None)
-                        streaming_toggle.add_class("w-12")
-                        streaming_toggle.styles.min_width = STREAMING_TOGGLE_WIDTH
-                        streaming_toggle.styles.max_width = STREAMING_TOGGLE_WIDTH
-                        yield streaming_toggle
-                    with Horizontal(
-                        id="console-settings-reasoning-effort-row",
-                        classes="console-settings-modal-row",
-                    ):
-                        yield self._modal_label(MODEL_FIELD_LABELS["reasoning_effort"])
-                        yield self._generation_choice_select(
-                            "console-settings-reasoning-effort",
-                            self._settings.reasoning_effort,
-                        )
-                        yield Label(
-                            GENERATION_CONTROL_UNKNOWN_COPY,
-                            id="console-settings-reasoning-effort-support",
-                            classes="console-settings-control-support",
-                        )
-                        yield self._generation_choice_validation("console-settings-reasoning-effort")
-                    with Horizontal(
-                        id="console-settings-reasoning-summary-row",
-                        classes="console-settings-modal-row",
-                    ):
-                        yield self._modal_label(MODEL_FIELD_LABELS["reasoning_summary"])
-                        yield self._generation_choice_select(
-                            "console-settings-reasoning-summary",
-                            self._settings.reasoning_summary,
-                        )
-                        yield Label(
-                            GENERATION_CONTROL_UNKNOWN_COPY,
-                            id="console-settings-reasoning-summary-support",
-                            classes="console-settings-control-support",
-                        )
-                        yield self._generation_choice_validation("console-settings-reasoning-summary")
-                    with Horizontal(
-                        id="console-settings-verbosity-row",
-                        classes="console-settings-modal-row",
-                    ):
-                        yield self._modal_label(MODEL_FIELD_LABELS["verbosity"])
-                        yield self._generation_choice_select(
-                            "console-settings-verbosity",
-                            self._settings.verbosity,
-                        )
-                        yield Label(
-                            GENERATION_CONTROL_UNKNOWN_COPY,
-                            id="console-settings-verbosity-support",
-                            classes="console-settings-control-support",
-                        )
-                        yield self._generation_choice_validation("console-settings-verbosity")
-                    with Horizontal(
-                        id="console-settings-thinking-effort-row",
-                        classes="console-settings-modal-row",
-                    ):
-                        yield self._modal_label(MODEL_FIELD_LABELS["thinking_effort"])
-                        yield self._generation_choice_select(
-                            "console-settings-thinking-effort",
-                            self._settings.thinking_effort,
-                        )
-                        yield Label(
-                            GENERATION_CONTROL_UNKNOWN_COPY,
-                            id="console-settings-thinking-effort-support",
-                            classes="console-settings-control-support",
-                        )
-                        yield self._generation_choice_validation("console-settings-thinking-effort")
-                    with Horizontal(
-                        id="console-settings-thinking-budget-tokens-row",
-                        classes="console-settings-modal-row",
-                    ):
-                        yield self._modal_label(MODEL_FIELD_LABELS["thinking_budget_tokens"])
-                        yield ConsoleSettingsInput(
-                            value=self._format_value(
-                                self._settings.thinking_budget_tokens
-                            ),
-                            id="console-settings-thinking-budget-tokens",
-                            classes="console-settings-control",
-                        )
-                        yield Label(
-                            GENERATION_CONTROL_UNKNOWN_COPY,
-                            id="console-settings-thinking-budget-tokens-support",
-                            classes="console-settings-control-support",
-                        )
-
-                with Collapsible(
-                    title="Conversation identity",
-                    collapsed=True,
-                    id="console-settings-identity-advanced",
-                    classes=(
-                        "console-settings-modal-section console-settings-model-view"
-                    ),
-                ):
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Your name in this chat")
-                        yield ConsoleSettingsInput(
-                            value=self._user_display_name_override or "",
-                            placeholder=self._global_user_display_name,
-                            id="console-settings-user-display-name",
-                            classes="console-settings-control",
-                        )
-                    yield Static(
-                        "Leave blank to use the global default.",
-                        id="console-settings-user-display-name-help",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Current         {self._identity_current_label()}",
-                        id="console-settings-identity-current",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-
-                with Collapsible(
                     title="Request estimate",
                     collapsed=True,
                     id="console-settings-request-estimate",
-                    classes=(
-                        "console-settings-modal-section console-settings-model-view"
-                    ),
+                    classes="console-settings-model-view",
                 ):
                     yield Static(
                         f"Current         {self._context_label()}",
@@ -2146,6 +1956,32 @@ class ConsoleSettingsModal(
                         "Estimate only; no truncation changes in this version. "
                         "Open Context and memory to manage the conversation budget.",
                         id="console-settings-context-note",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                with Collapsible(
+                    title="Your name in this chat",
+                    collapsed=True,
+                    id="console-settings-identity-advanced",
+                    classes="console-settings-model-view",
+                ):
+                    with Horizontal(classes="console-settings-modal-row"):
+                        yield self._modal_label("Your name in this chat")
+                        yield ConsoleSettingsInput(
+                            value=self._user_display_name_override or "",
+                            id="console-settings-user-display-name",
+                            classes="console-settings-control",
+                        )
+                    yield Static(
+                        "Leave blank to use the global default: "
+                        f"{self._global_user_display_name}.",
+                        id="console-settings-user-display-name-help",
+                        classes="console-settings-modal-row",
+                        markup=False,
+                    )
+                    yield Static(
+                        f"Current         {self._identity_current_label()}",
+                        id="console-settings-identity-current",
                         classes="console-settings-modal-row",
                         markup=False,
                     )
@@ -2636,48 +2472,6 @@ class ConsoleSettingsModal(
         self._initial_feedback_sync = False
         self._capture_unsaved_baseline()
 
-    def _focus_highest_priority_connection(self) -> None:
-        """Focus the first actionable blocker, or Provider when ready."""
-        if not self.is_mounted or not self.query("#console-settings-provider"):
-            return
-        readiness = build_console_settings_readiness(
-            self._build_draft(),
-            app_config=self._app_config,
-            active_run=self._active_run,
-        )
-        if readiness.recovery_action == "configure_credential":
-            credential = self.query_one(
-                "#console-settings-configure-credential", Button
-            )
-            if self._is_effectively_focusable(credential):
-                credential.focus()
-                credential.scroll_visible(animate=False)
-                return
-        if readiness.recovery_action in {"configure_endpoint", "save_endpoint"}:
-            endpoint = self.query_one("#console-settings-base-url", Input)
-            if self._is_effectively_focusable(endpoint):
-                endpoint.focus()
-                endpoint.scroll_visible(animate=False)
-                return
-        if readiness.recovery_action == "select_model":
-            self._focus_model_control()
-            return
-        self._focus_connection_fallback()
-
-    @on(Collapsible.Expanded, "#console-settings-generation-advanced")
-    def _advanced_generation_expanded(self, event: Collapsible.Expanded) -> None:
-        """Retain this Console session's explicit Advanced disclosure state."""
-        event.stop()
-        self._advanced_generation_disclosed = True
-        self.call_after_refresh(self._sync_fold_hint)
-
-    @on(Collapsible.Collapsed, "#console-settings-generation-advanced")
-    def _advanced_generation_collapsed(self, event: Collapsible.Collapsed) -> None:
-        """Retain this Console session's explicit Advanced disclosure state."""
-        event.stop()
-        self._advanced_generation_disclosed = False
-        self.call_after_refresh(self._sync_fold_hint)
-
     @on(ConsoleProviderPickerInput.EscapePressed)
     def _provider_picker_escape_unhandled(
         self, event: ConsoleProviderPickerInput.EscapePressed
@@ -2739,9 +2533,7 @@ class ConsoleSettingsModal(
             self._streaming_draft = snapshot.raw_values.get(  # type: ignore[assignment]
                 "console-settings-streaming", self._streaming_draft
             )
-            self.query_one("#console-settings-streaming", Button).label = (
-                self._streaming_toggle_label()
-            )
+            self._show_streaming_value()
         finally:
             self._restoring_suspended_draft = False
         self._synchronize_restored_provider_state()
@@ -2764,7 +2556,7 @@ class ConsoleSettingsModal(
         try:
             control_id = snapshot.focus_control_id
             if control_id is None:
-                self._focus_connection_fallback()
+                self._focus_highest_priority_connection()
                 return
             if control_id == "console-settings-provider-picker":
                 try:
@@ -2794,7 +2586,7 @@ class ConsoleSettingsModal(
                         return
                 except (NoMatches, QueryError):
                     pass
-            self._focus_connection_fallback()
+            self._focus_highest_priority_connection()
         finally:
             self._suppress_focus_reveal = False
             body.scroll_to(y=snapshot.scroll_anchor, animate=False)
@@ -2920,7 +2712,7 @@ class ConsoleSettingsModal(
         """Capture the raw modal state before a credential-setup handoff."""
         try:
             self._advanced_generation_disclosed = not self.query_one(
-                "#console-settings-generation-advanced", Collapsible
+                f"#{SAMPLING_DISCLOSURE_ID}", Collapsible
             ).collapsed
         except (NoMatches, QueryError):
             pass
@@ -3259,6 +3051,7 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-context-view", Vertical).display = (
             self._active_view == "context" and not recovery_active
         )
+        self.query_one("#console-settings-modal").set_class(not model_selected, "-context-view")
         model_tab = self.query_one("#console-settings-view-model", Button)
         context_tab = self.query_one("#console-settings-view-context", Button)
         model_tab.label = (
@@ -3802,21 +3595,13 @@ class ConsoleSettingsModal(
         hint.display = body.scroll_y < body.max_scroll_y
 
     def _sync_responsive_layout(self) -> None:
-        """Derive the compact and wide layout tiers from measured widths."""
+        """Derive the compact layout tier from the measured width."""
         try:
             container = self.query_one("#console-settings-modal", Vertical)
         except NoMatches:
             return
         compact = container.size.width < 100
         self.set_class(compact, "-conversation-settings-compact")
-        # The wide tier keys off the app viewport, never the container's own
-        # width: sizing the container from the container would oscillate.
-        # A >= 150-column viewport implies a >= 120-column container, so the
-        # compact tier (container < 100) can never co-occur with wide.
-        container.set_class(
-            self.app.size.width >= 150,
-            "-conversation-settings-wide",
-        )
         label_width = 16 if compact else MODAL_LABEL_WIDTH
         for label in self.query(".console-settings-modal-label"):
             label.remove_class(*(name for name in label.classes if name.startswith("w-")))
@@ -3957,7 +3742,7 @@ class ConsoleSettingsModal(
         )
 
     def _provider_model_section_classes(self) -> str:
-        classes = "console-settings-modal-section console-settings-model-view"
+        classes = "console-settings-model-view"
         if self._is_model_setup_mode():
             classes += " console-settings-primary-section"
         return classes
@@ -4058,27 +3843,18 @@ class ConsoleSettingsModal(
                 recovery_targets.append(cancel)
             return recovery_targets
 
-        provider_input = self.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
         body = self.query_one("#console-settings-body", ScrollableContainer)
         excluded_ids = {
             "console-settings-provider-picker-results",
             "model-search-picker-results",
             "console-settings-primary-disabled-reason",
         }
-        targets: list[Widget] = []
-
-        if self._is_effectively_focusable(provider_input):
-            targets.append(provider_input)
-        for control in body.query("*"):
-            if control is provider_input or control.id in excluded_ids:
-                continue
-            if self._is_effectively_focusable(control):
-                targets.append(control)
+        targets = [
+            control
+            for control in (*self.query("#console-settings-view-tabs Button"), *body.query("*"))
+            if control.id not in excluded_ids and self._is_effectively_focusable(control)
+        ]
         for selector in (
-            "#console-settings-view-model",
-            "#console-settings-view-context",
             "#console-settings-save-default",
             "#console-settings-make-default",
             "#console-settings-save",
@@ -4155,9 +3931,9 @@ class ConsoleSettingsModal(
                 for sibling in parent.children:
                     if sibling is control:
                         break
-                    if isinstance(sibling, Static) and sibling.has_class(
-                        "console-settings-modal-label"
-                    ):
+                    if isinstance(sibling, Static) and sibling.classes & {
+                        "console-settings-modal-label", "console-settings-field-label"
+                    }:
                         label = str(sibling.renderable).strip()
             if label:
                 verb = "Choose" if isinstance(control, Select) else "Edit"
@@ -4872,25 +4648,15 @@ class ConsoleSettingsModal(
         if copy:
             error.scroll_visible()
 
-    @on(Button.Pressed, "#console-settings-streaming")
-    def _toggle_streaming(self, event: Button.Pressed) -> None:
-        """Cycle the profile draft through Inherit, On, and Off."""
-        event.stop()
+    @on(Select.Changed, "#console-settings-streaming")
+    def _streaming_changed(self, event: Select.Changed) -> None:
+        """A pick makes the draft On or Off; until then it stays Inherit (R15)."""
+        if self._updating_controls or self._restoring_suspended_draft:
+            return
         self._cancel_generation_test()
         self._remember_generation_test_became_stale()
-        self._streaming_draft = {
-            None: True,
-            True: False,
-            False: None,
-        }[self._streaming_draft]
-        event.button.label = self._streaming_toggle_label()
+        self._streaming_draft = event.value == "on"
         self._sync_readiness_display()
-        self._sync_completion_actions()
-
-    def _streaming_toggle_label(self) -> str:
-        if self._streaming_draft is None:
-            return STREAMING_INHERIT_LABEL
-        return STREAMING_ON_LABEL if self._streaming_draft else STREAMING_OFF_LABEL
 
     def _effective_streaming_value(self) -> bool:
         return (
@@ -5036,7 +4802,7 @@ class ConsoleSettingsModal(
             if support == "unknown":
                 note.update(GENERATION_CONTROL_UNKNOWN_COPY)
         if hid_focused_control:
-            self.call_after_refresh(self._focus_connection_fallback)
+            self.call_after_refresh(self._focus_highest_priority_connection)
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -5236,9 +5002,7 @@ class ConsoleSettingsModal(
                 )
                 else bool(state.settings.streaming)
             )
-            self.query_one(
-                "#console-settings-streaming", Button
-            ).label = self._streaming_toggle_label()
+            self._show_streaming_value()
             self._edited_generation_fields.clear()
             self._sync_model_discover_controls(state.settings.provider)
             self._sync_provider_choice_placeholders()
@@ -6648,6 +6412,7 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-readiness", Static).update(
             self._readiness_copy(readiness)
         )
+        self._sync_model_row(readiness)
         try:
             self.query_one(
                 "#console-settings-configure-credential", Button

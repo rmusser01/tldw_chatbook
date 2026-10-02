@@ -113,6 +113,10 @@ from tldw_chatbook.Widgets.Console.console_context_controls import (
 from tldw_chatbook.Widgets.Console.console_provider_picker import (
     ConsoleProviderPicker,
 )
+from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    CONNECTION_DISCLOSURE_ID,
+    SAMPLING_DISCLOSURE_ID,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
     MODEL_DISCOVER_BUTTON_ID,
@@ -2103,7 +2107,7 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         original.query_one("#console-settings-provider", Select).value = "llama_cpp"
         await pilot.pause()
         original.query_one(
-            "#console-settings-generation-advanced", Collapsible
+            f"#{SAMPLING_DISCLOSURE_ID}", Collapsible
         ).collapsed = False
         original._connection_details_disclosed = True
         original.query_one(ModelSearchPicker).focus_input()
@@ -2377,9 +2381,9 @@ async def test_suspended_focus_falls_back_to_connection_provider_when_target_hid
                 suspended_draft=snapshot,
             )
         )
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        # TASK-33006.1 (R13): an unavailable restored target falls back to
+        # where the view opens, Temperature for a ready chat.
+        await _wait_for_focused_id(app, pilot, "console-settings-temperature")
 
 
 @pytest.mark.asyncio
@@ -2415,9 +2419,8 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
             "#console-settings-provider-picker-input", Input
         ).focusable
         modal._restore_suspended_scroll_and_focus(snapshot)
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        # TASK-33006.1 (R13): the view's open target, Temperature.
+        await _wait_for_focused_id(app, pilot, "console-settings-temperature")
 
 
 @pytest.mark.asyncio
@@ -2428,7 +2431,12 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
 async def test_suspended_context_missing_or_transient_focus_reveals_connection_fallback(
     focus_control_id: str | None,
 ) -> None:
-    """Unavailable Context focus restores a usable visible Connection target."""
+    """Unavailable Context focus restores the Context view's own first control.
+
+    Rewritten on purpose by TASK-33006.1 (R13): one helper per view decides
+    where focus opens, so the view the user left stays shown instead of
+    jumping to Connection.
+    """
     app = ModalHarness()
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
@@ -2453,13 +2461,10 @@ async def test_suspended_context_missing_or_transient_focus_reveals_connection_f
             suspended_draft=snapshot,
         )
         await app.push_screen(modal)
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        await _wait_for_focused_id(app, pilot, "console-context-budget-mode")
 
-        assert modal._active_view == "model"
-        assert all(section.display for section in modal.query(".console-settings-model-view"))
-        assert modal.query_one("#console-settings-context-view").display is False
+        assert modal._active_view == "context"
+        assert modal.query_one("#console-settings-context-view").display is True
 
 
 @pytest.mark.asyncio
@@ -4741,23 +4746,18 @@ async def test_console_settings_focused_one_row_field_paints_value_and_focus_edg
 
     Removing a field's border box exposes it to the global ``*:focus``
     outline (lessons-testing-evidence.md, task-17651), which reading
-    ``.value`` cannot see. Real key presses open Advanced generation, move to
-    Temperature and type; the compositor row must then show the typed value
-    behind the thick focus edge, with no outline glyphs, while the unfocused
-    field below keeps the thin rest edge and a different fill.
+    ``.value`` cannot see. Temperature has focus on open (TASK-33006.1: core
+    first) and real key presses type into it; the compositor row must then
+    show the typed value behind the thick focus edge, with no outline glyphs,
+    while the unfocused field below keeps the thin rest edge and a different
+    fill.
     """
     app = StyledModalHarness()
     async with app.run_test(size=(211, 44)) as pilot:
         await app.push_screen(_one_row_settings_modal(app.app_config))
         await pilot.pause()
+        await pilot.pause()
         screen = app.screen
-        screen.query_one(
-            "#console-settings-generation-advanced CollapsibleTitle"
-        ).focus()
-        await pilot.press("enter")
-        await pilot.pause()
-        await pilot.press("tab")
-        await pilot.pause()
         temperature = screen.query_one("#console-settings-temperature", Input)
         assert screen.focused is temperature
         await pilot.press("end", "backspace", "backspace", "backspace")
@@ -4767,8 +4767,8 @@ async def test_console_settings_focused_one_row_field_paints_value_and_focus_edg
 
         strips = screen._compositor.render_strips()
         focused_region = temperature.region
-        top_p = screen.query_one("#console-settings-top-p", Input)
-        rest_region = top_p.region
+        max_tokens = screen.query_one("#console-settings-max-tokens", Input)
+        rest_region = max_tokens.region
         assert focused_region.height == rest_region.height == 1
         focused = strips[focused_region.y].text[
             focused_region.x : focused_region.right
@@ -5097,7 +5097,7 @@ def _field_paint(screen, field) -> tuple:
 @pytest.mark.parametrize("theme", ["textual-dark", "agentic_terminal", "textual-light"])
 @pytest.mark.asyncio
 async def test_console_settings_disclosure_fields_read_as_sized(theme) -> None:
-    """TASK-33003.3: a number field inside Advanced generation shows its width.
+    """TASK-33003.3: a number field inside a disclosure (Sampling) shows its width.
 
     The global `Collapsible > Contents` rule painted the disclosure $surface,
     the fields' own fill, so a 12-column field read as a full row behind a
@@ -5111,16 +5111,14 @@ async def test_console_settings_disclosure_fields_read_as_sized(theme) -> None:
         await app.push_screen(_one_row_settings_modal(app.app_config))
         await pilot.pause()
         screen = app.screen
-        screen.query_one(
-            "#console-settings-generation-advanced CollapsibleTitle"
-        ).focus()
+        screen.query_one(f"#{SAMPLING_DISCLOSURE_ID} CollapsibleTitle").focus()
         await pilot.press("enter")
         await pilot.pause()
         await pilot.pause()
         body = screen.query_one("#console-settings-body")
         fields = [
             field
-            for field in screen.query("#console-settings-generation-advanced Input")
+            for field in screen.query(f"#{SAMPLING_DISCLOSURE_ID} Input")
             if field.region.area and body.region.contains_region(field.region)
         ]
         assert len(fields) >= 5, [field.id for field in fields]
@@ -5173,7 +5171,7 @@ def _assert_choice_row_paints(screen, control_id: str, shown: str) -> None:
     select = screen.query_one(f"#{control_id}", Select)
     row = screen.query_one(f"#{control_id}-row", Horizontal)
     validation = screen.query_one(f"#{control_id}-validation", Static)
-    label = row.query_one(".console-settings-modal-label", Static)
+    label = row.query_one(".console-settings-field-label", Static)
     painted = _painted_rows(screen)[select.region.y]
     assert str(label.render()).strip() in painted, (control_id, painted)
     cell = painted[select.region.x : select.region.right]
@@ -5201,8 +5199,7 @@ async def test_console_settings_choice_rows_paint_their_select(chat, size) -> No
         await app.push_screen(_one_row_settings_modal(app.app_config, settings))
         await pilot.pause()
         screen = app.screen
-        screen.query_one("#console-settings-generation-advanced", Collapsible).collapsed = False
-        await pilot.pause()
+        await pilot.pause()  # TASK-33006.1: the choice rows are CORE rows now
         shown = [
             control_id
             for control_id in _CHOICE_IDS
@@ -5251,8 +5248,14 @@ async def test_console_settings_obsolete_choice_copy_paints_beside_its_select(
         # Beside the Select and its support note, wrapping inside the row.
         assert validation.region.x >= select.region.right, validation.region
         assert validation.region.right <= row.region.right, (validation.region, row.region)
+        # Each wrapped line starts with the error edge glyph; read the copy
+        # without it (TASK-33006.1: the 150-column frame wraps it in two).
         copy = "".join(
-            painted[y][validation.region.x : validation.region.right].strip() + " "
+            painted[y][validation.region.x : validation.region.right]
+            .strip()
+            .removeprefix("█")
+            .strip()
+            + " "
             for y in range(validation.region.y, validation.region.bottom)
         )
         assert "Saved value is unavailable." in painted[select.region.y], painted[
@@ -6143,11 +6146,13 @@ async def test_console_settings_modal_escape_dismisses_none() -> None:
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        # First Escape belongs to the focused searchable picker and restores
-        # its committed value; the next one dismisses the modal.
+        await pilot.pause()
+        # TASK-33006.1: focus opens on Temperature, not the searchable
+        # provider picker, so one Escape dismisses the unedited modal.
+        assert app.focused.id == "console-settings-temperature"
         await pilot.press("escape")
-        assert app.screen.query_one(ConsoleProviderPicker).value == "llama_cpp"
-        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, ConsoleSettingsModal)
 
     assert app.saved_settings is None
 
@@ -6361,18 +6366,25 @@ async def test_console_settings_modal_renders_current_chat_identity() -> None:
         identity_help = app.screen.query_one(
             "#console-settings-user-display-name-help", Static
         )
+        # TASK-33006.1 (AC#1/#4): the disclosure is "Your name in this chat",
+        # and the global name is help copy, not a placeholder.
         assert identity.value == "Captain Rowan"
-        assert identity.placeholder == "Default Name"
-        assert "Conversation identity" in _visible_text(app)
+        assert identity.placeholder == ""
+        title = app.screen.query_one("#console-settings-identity-advanced CollapsibleTitle")
+        assert "Your name in this chat" in str(title.render())
         assert app.screen._is_effectively_focusable(identity) is False
         assert identity_help.region.height == 0
 
-        await pilot.click("#console-settings-identity-advanced CollapsibleTitle")
+        title.focus()
+        await pilot.press("enter")
         await pilot.pause()
 
         assert app.screen._is_effectively_focusable(identity) is True
         assert identity_help.region.height > 0
-        assert "Leave blank to use the global default." in _visible_text(app)
+        assert (
+            "Leave blank to use the global default: Default Name."
+            in _visible_text(app)
+        )
 
 
 @pytest.mark.asyncio
@@ -6801,14 +6813,8 @@ async def test_console_settings_modal_saves_replaced_temperature_input() -> None
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        app.screen.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        ).collapsed = False
-        await pilot.pause()
-        # TASK-33003.8: close the focused provider picker's open list first.
-        # Otherwise the mouse-down's blur collapses it mid-click and the
-        # click lands on whatever row moved under the pointer.
-        await pilot.press("escape")
+        # TASK-33006.1: Temperature is a CORE row with focus on open, so no
+        # disclosure or open picker list stands between it and the click.
         await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
@@ -6849,14 +6855,8 @@ async def test_console_settings_modal_replaces_focused_sampling_input() -> None:
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        app.screen.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        ).collapsed = False
-        await pilot.pause()
-        # TASK-33003.8: close the focused provider picker's open list first.
-        # Otherwise the mouse-down's blur collapses it mid-click and the
-        # click lands on whatever row moved under the pointer.
-        await pilot.press("escape")
+        # TASK-33006.1: Temperature is a CORE row with focus on open, so no
+        # disclosure or open picker list stands between it and the click.
         await pilot.pause()
         temperature = app.screen.query_one("#console-settings-temperature", Input)
         body = app.screen.query_one("#console-settings-body")
@@ -6913,7 +6913,7 @@ async def test_console_settings_modal_accepts_keyboard_edited_sampling_inputs(
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        await pilot.click("#console-settings-generation-advanced CollapsibleTitle")
+        await pilot.click(f"#{SAMPLING_DISCLOSURE_ID} CollapsibleTitle")
         await pilot.pause()
         target_input = app.screen.query_one(f"#{field_id}", Input)
         body = app.screen.query_one("#console-settings-body")
@@ -7004,7 +7004,7 @@ async def test_console_settings_modal_preserves_provider_specific_generation_con
         )
         await pilot.pause()
         app.screen.query_one(
-            "#console-settings-generation-advanced", Collapsible
+            f"#{SAMPLING_DISCLOSURE_ID}", Collapsible
         ).collapsed = False
         await pilot.pause()
 
@@ -8956,10 +8956,8 @@ async def test_console_settings_modal_inputs_keep_visible_content_row_when_unfoc
             )
         )
         await pilot.pause()
-        app.screen.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        ).collapsed = False
-        await pilot.pause()
+        await _open_disclosure(pilot, app.screen, SAMPLING_DISCLOSURE_ID)
+        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
 
         for selector in (
             "#console-settings-base-url",
@@ -9353,6 +9351,7 @@ async def test_console_settings_modal_opens_provider_picker_click_after_input_ed
         )
         await pilot.pause()
 
+        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
@@ -9394,6 +9393,7 @@ async def test_console_settings_modal_opens_screen_routed_provider_picker_click_
         )
         await pilot.pause()
 
+        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
@@ -9480,6 +9480,7 @@ async def test_console_settings_modal_opens_provider_picker_from_redirected_inpu
         )
         await pilot.pause()
 
+        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
         temperature = app.screen.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
@@ -10123,6 +10124,13 @@ async def test_console_settings_modal_provider_round_trip_ignores_none_model_sen
         assert model_select.disabled is False
         assert model_select.value == "model-a"
         assert "None" not in _select_values(model_select)
+        # The switch re-reads readiness after the model picker settles; Apply
+        # is briefly disabled until then, so the click must not race it.
+        save = app.screen.query_one("#console-settings-save", Button)
+        for _ in range(20):
+            if not save.disabled:
+                break
+            await pilot.pause(0.05)
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -12921,6 +12929,14 @@ def _basic_modal(
     )
 
 
+async def _open_disclosure(pilot, modal, disclosure_id: str) -> None:
+    """Open one Model view disclosure (TASK-33006.1: Sampling and Connection
+    follow the core fields closed)."""
+    modal.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+    await pilot.pause()
+    await pilot.pause()
+
+
 def test_console_settings_modal_exposes_ctrl_enter_primary_binding() -> None:
     """The documented Apply accelerator must remain visible and deterministic."""
     binding = next(
@@ -12935,8 +12951,13 @@ def test_console_settings_modal_exposes_ctrl_enter_primary_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_focus_order_starts_provider_ends_cancel_and_skips_collapsed() -> None:
-    """Tab order is logical and never enters undisclosed advanced fields."""
+async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel_and_skips_collapsed() -> None:
+    """Tab order is logical and never enters a closed disclosure.
+
+    Rewritten on purpose by TASK-33006.1 (AC#8/#13): focus opens on
+    Temperature, not the provider picker; the view tabs come first and Cancel
+    last; Sampling, Connection and the name stay closed until opened.
+    """
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
@@ -12945,10 +12966,11 @@ async def test_console_settings_modal_focus_order_starts_provider_ends_cancel_an
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await pilot.pause()
 
-        assert app.focused.id == "console-settings-provider-picker-input"
+        assert app.focused.id == "console-settings-temperature"
         await pilot.press("shift+tab")
-        assert app.focused.id == "console-settings-cancel"
+        assert app.focused.id == "console-settings-view-context"
 
         focused_ids: list[str | None] = []
         for _ in range(40):
@@ -12957,9 +12979,14 @@ async def test_console_settings_modal_focus_order_starts_provider_ends_cancel_an
             if app.focused.id == "console-settings-cancel":
                 break
 
+        assert focused_ids[0] == "console-settings-temperature"
         assert "console-settings-save" in focused_ids
-        assert "console-settings-temperature" not in focused_ids
-        assert "console-settings-user-display-name" not in focused_ids
+        for hidden in (
+            "console-settings-top-p",
+            "console-settings-base-url",
+            "console-settings-user-display-name",
+        ):
+            assert hidden not in focused_ids
 
 
 @pytest.mark.asyncio
@@ -12972,6 +12999,11 @@ async def test_console_settings_keyboard_tab_leaves_provider_results_in_logical_
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)
+        await pilot.pause()
+        # TASK-33006.1 (AC#13): Connection follows the core fields closed and
+        # focus opens on Temperature; open it and enter the picker first.
+        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
+        modal.query_one(ConsoleProviderPicker).focus_input()
         await pilot.pause()
         await pilot.press("down")
         assert app.focused.id == "console-settings-provider-picker-results"
@@ -13434,9 +13466,10 @@ async def test_stale_or_cancelled_verification_has_no_announcement(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_streaming_cycles_inherit_and_boolean_values() -> (
-    None
-):
+async def test_console_settings_modal_streaming_is_an_on_off_choice() -> None:
+    """TASK-33006.1 rewrite (AC#6, R15): chat-scope Streaming is one On/Off
+    Select (ADR-095:75-81), not an Inherit/On/Off cycling button; the pick
+    reaches Apply."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp", model="model-a", streaming=False
@@ -13447,16 +13480,14 @@ async def test_console_settings_modal_streaming_cycles_inherit_and_boolean_value
             _basic_modal(settings, app), callback=app.capture_saved_settings
         )
         await pilot.pause()
-        toggle = app.screen.query_one("#console-settings-streaming", Button)
-        assert str(toggle.label) == "Off"
-
-        toggle.press()
         await pilot.pause()
-        assert str(toggle.label) == "Inherit"
+        streaming = app.screen.query_one("#console-settings-streaming", Select)
+        assert [str(label) for label, _value in streaming._options] == ["On", "Off"]
+        assert streaming.value == "off"
 
-        toggle.press()
+        streaming.value = "on"
         await pilot.pause()
-        assert str(toggle.label) == "On"
+        assert app.screen._streaming_draft is True
 
         await pilot.click("#console-settings-save")
 
@@ -13522,7 +13553,7 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         )
         response_control = app.screen.query_one("#console-settings-max-tokens", Input)
         response_label = response_control.parent.query_one(
-            ".console-settings-modal-label",
+            ".console-settings-field-label",  # TASK-33006.1 row grammar
             Static,
         )
         assert str(response_label.renderable) == "Max tokens"  # TASK-33002.1
@@ -14195,7 +14226,8 @@ async def test_generation_edit_preserves_active_connection_probe_and_settlement(
         assert token is not None
 
         if edit_kind == "streaming":
-            modal.query_one("#console-settings-streaming", Button).press()
+            _flip = modal.query_one("#console-settings-streaming", Select)
+            _flip.value = "off" if _flip.value == "on" else "on"
         elif edit_kind == "choice":
             assert control_id is not None and new_value is not None
             modal.query_one(f"#{control_id}", Select).value = new_value
@@ -14881,8 +14913,14 @@ def _task_30012_suspended_modal_draft(
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_connection_first_hierarchy_and_title() -> None:
-    """Moving connection controls below tuning would break setup scanning order."""
+async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
+    """The Model view is core first: MODEL and CORE rows, then disclosures.
+
+    Rewritten on purpose by TASK-33006.1 (AC#1/#13). It pinned TASK-30012's
+    connection-first order; Connection now follows the tuning fields as a
+    one-row disclosure (blocked chats still open it, see the next test), and
+    its own internal order is unchanged.
+    """
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
@@ -14896,17 +14934,22 @@ async def test_console_settings_modal_connection_first_hierarchy_and_title() -> 
             str(modal.query_one(".console-modal-header", Static).renderable)
             == "Conversation settings"
         )
-        section_ids = [
-            section.id
-            for section in modal.query(".console-settings-modal-section")
-            if section.id is not None
-        ]
-        assert section_ids[:4] == [
-            "console-settings-connection",
-            "console-settings-generation-advanced",
-            "console-settings-identity-advanced",
+        body = modal.query_one("#console-settings-body")
+        assert [child.id for child in body.children][:5] == [
+            "console-settings-provider-model-section",
+            SAMPLING_DISCLOSURE_ID,
+            CONNECTION_DISCLOSURE_ID,
             "console-settings-request-estimate",
+            "console-settings-identity-advanced",
         ]
+        core = modal.query_one("#console-settings-provider-model-section")
+        assert [child.id for child in core.children][:4] == [
+            "console-settings-model-row",
+            "console-settings-temperature-row",
+            "console-settings-max-tokens-row",
+            "console-settings-streaming-row",
+        ]
+        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
 
         connection = modal.query_one("#console-settings-connection")
         connection_ids = [
@@ -14930,8 +14973,14 @@ async def test_console_settings_modal_connection_first_hierarchy_and_title() -> 
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_new_and_blocked_disclosures_start_closed() -> None:
-    """First-run tuning must not compete with the incomplete connection path."""
+async def test_console_settings_modal_blocked_chat_opens_connection_others_closed() -> None:
+    """First-run tuning must not compete with the incomplete connection path.
+
+    Rewritten on purpose by TASK-33006.1 (AC#13, R6/R13): the core fields are
+    no longer behind a disclosure, so a blocked chat opens Connection itself
+    and focuses its recovery action; Sampling, Request estimate and the name
+    stay closed.
+    """
     app = ModalHarness()
     app.app_config["api_settings"]["openai"] = {}
     modal = _basic_modal(
@@ -14944,21 +14993,18 @@ async def test_console_settings_modal_new_and_blocked_disclosures_start_closed()
         await app.push_screen(modal)
         await pilot.pause()
 
+        for closed in (
+            SAMPLING_DISCLOSURE_ID,
+            "console-settings-identity-advanced",
+            "console-settings-request-estimate",
+        ):
+            assert modal.query_one(f"#{closed}", Collapsible).collapsed is True
         assert modal.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        ).collapsed is True
-        assert modal.query_one(
-            "#console-settings-identity-advanced", Collapsible
-        ).collapsed is True
-        assert modal.query_one(
-            "#console-settings-request-estimate", Collapsible
-        ).collapsed is True
+            f"#{CONNECTION_DISCLOSURE_ID}", Collapsible
+        ).collapsed is False
         assert app.focused is modal.query_one(
             "#console-settings-configure-credential", Button
         )
-        assert modal._is_effectively_focusable(
-            modal.query_one("#console-settings-temperature", Input)
-        ) is False
 
 
 @pytest.mark.asyncio
@@ -15000,77 +15046,74 @@ async def test_console_settings_modal_setup_emphasis_clears_on_connection_when_r
 async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_children() -> (
     None
 ):
-    """Both traversal directions reach headers, never hidden descendants."""
+    """Both traversal directions reach disclosure titles, never hidden contents.
+
+    Rewritten on purpose by TASK-33006.1 (AC#8/#13): from Temperature, Tab
+    walks the shown CORE rows, then the Sampling, Connection, Request
+    estimate and name titles, then the footer to Apply and Cancel; opening
+    Sampling from its title puts its first field next in the order.
+    """
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
     )
+    disclosures = [
+        SAMPLING_DISCLOSURE_ID,
+        CONNECTION_DISCLOSURE_ID,
+        "console-settings-request-estimate",
+        "console-settings-identity-advanced",
+    ]
 
     async with app.run_test(size=(140, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        discover.focus()
+        await pilot.pause()
+        assert app.focused is modal.query_one("#console-settings-temperature", Input)
 
-        forward_parents: list[str | None] = []
+        forward: list[str | None] = []
+        for _ in range(30):
+            await pilot.press("tab")
+            focused = app.focused
+            assert focused is not None
+            # A disclosure title is recorded as its disclosure.
+            title_of = focused.parent if isinstance(focused.parent, Collapsible) else None
+            forward.append(title_of.id if title_of is not None else focused.id)
+            if focused.id == "console-settings-cancel":
+                break
+        titles = [entry for entry in forward if entry in disclosures]
+        assert titles == disclosures
+        footer = forward[forward.index(disclosures[-1]) + 1 :]
+        assert footer[-2:] == ["console-settings-save", "console-settings-cancel"]
+        assert "console-settings-make-default" in footer
+        assert "console-settings-top-p" not in forward
+
+        for _ in range(len(footer)):
+            await pilot.press("shift+tab")
+        reverse: list[str | None] = []
         for _ in range(4):
-            await pilot.press("tab")
-            assert app.focused is not None
-            forward_parents.append(getattr(app.focused.parent, "id", None))
-        assert forward_parents == [
-            "console-settings-connection",
-            "console-settings-generation-advanced",
-            "console-settings-identity-advanced",
-            "console-settings-request-estimate",
-        ]
-        for control_id in (
-            "console-settings-view-model",
-            "console-settings-view-context",
-            "console-settings-save-default",
-            "console-settings-make-default",
-            "console-settings-save",
-            "console-settings-cancel",
-        ):
-            await pilot.press("tab")
-            assert app.focused is modal.query_one(f"#{control_id}")
-
-        for control_id in (
-            "console-settings-save",
-            "console-settings-make-default",
-            "console-settings-save-default",
-            "console-settings-view-context",
-            "console-settings-view-model",
-        ):
+            reverse.append(getattr(app.focused.parent, "id", None))
             await pilot.press("shift+tab")
-            assert app.focused is modal.query_one(f"#{control_id}")
+        assert reverse == list(reversed(disclosures))
 
-        reverse_parents: list[str | None] = []
-        for _ in range(3):
-            await pilot.press("shift+tab")
-            assert app.focused is not None
-            reverse_parents.append(getattr(app.focused.parent, "id", None))
-        assert reverse_parents == [
-            "console-settings-request-estimate",
-            "console-settings-identity-advanced",
-            "console-settings-generation-advanced",
-        ]
-
-        advanced = modal.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        )
+        title = modal.query_one(f"#{SAMPLING_DISCLOSURE_ID} CollapsibleTitle")
+        title.focus()
         await pilot.press("enter")
         await pilot.pause()
-        assert advanced.collapsed is False
+        assert modal.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible).collapsed is False
         await pilot.press("tab")
-        assert app.focused is modal.query_one("#console-settings-temperature", Input)
+        assert app.focused is modal.query_one("#console-settings-top-p", Input)
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_targeted_advanced_control_opens_disclosure() -> None:
-    """A deep-linked advanced target must never restore into hidden content."""
+async def test_console_settings_modal_targeted_sampling_control_opens_disclosure() -> None:
+    """A deep-linked Sampling target must never restore into hidden content.
+
+    Rewritten on purpose by TASK-33006.1 (AC#13): Advanced generation is
+    gone and Reasoning effort is a CORE row; Top P sits behind Sampling.
+    """
     app = ModalHarness()
     snapshot = _task_30012_suspended_modal_draft(
-        focus_control_id="console-settings-reasoning-effort",
+        focus_control_id="console-settings-top-p",
         advanced_generation=False,
     )
     modal = _basic_modal(
@@ -15084,17 +15127,19 @@ async def test_console_settings_modal_targeted_advanced_control_opens_disclosure
         await app.push_screen(modal)
         await pilot.pause()
 
-        advanced = modal.query_one(
-            "#console-settings-generation-advanced", Collapsible
-        )
-        target = modal.query_one("#console-settings-reasoning-effort", Select)
-        assert advanced.collapsed is False
+        sampling = modal.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible)
+        target = modal.query_one("#console-settings-top-p", Input)
+        assert sampling.collapsed is False
         assert app.focused is target
 
 
 @pytest.mark.asyncio
 async def test_console_settings_modal_restores_non_targeted_disclosure_snapshot() -> None:
-    """Returning users keep the disclosure state they explicitly chose."""
+    """Returning users keep the disclosure state they explicitly chose.
+
+    Rewritten on purpose by TASK-33006.1 (AC#13): the snapshot's
+    ``advanced_generation`` key now carries the Sampling disclosure.
+    """
     app = ModalHarness()
     snapshot = _task_30012_suspended_modal_draft(
         focus_control_id="console-settings-provider-picker",
@@ -15112,7 +15157,7 @@ async def test_console_settings_modal_restores_non_targeted_disclosure_snapshot(
         await pilot.pause()
 
         assert modal.query_one(
-            "#console-settings-generation-advanced", Collapsible
+            f"#{SAMPLING_DISCLOSURE_ID}", Collapsible
         ).collapsed is False
 
 
@@ -15533,6 +15578,7 @@ async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
         identity = modal._begin_model_discovery_identity(
             "llama_cpp", "http://127.0.0.1:9099"
         )
@@ -16340,6 +16386,13 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
     async with app.run_test(size=terminal_size) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        # TASK-33006.1: Connection follows the core fields as a closed
+        # disclosure; open it the way a user reaches it.
+        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
+        modal.query_one("#console-settings-connection").scroll_visible(
+            animate=False, immediate=True
+        )
+        await pilot.pause()
 
         frame = modal.query_one("#console-settings-modal")
         body = modal.query_one("#console-settings-body", ScrollableContainer)
@@ -16540,7 +16593,8 @@ async def test_implicit_generation_cancellation_keeps_billing_warning_and_fences
                 "http://127.0.0.1:9199"
             )
         elif change_path == "generation":
-            modal.query_one("#console-settings-streaming", Button).press()
+            _flip = modal.query_one("#console-settings-streaming", Select)
+            _flip.value = "off" if _flip.value == "on" else "on"
         else:
             modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
         await pilot.pause()
@@ -16983,7 +17037,8 @@ async def test_generation_edit_marks_changed_without_invalidating_endpoint(
                 break
 
         if edit_kind == "streaming":
-            modal.query_one("#console-settings-streaming", Button).press()
+            _flip = modal.query_one("#console-settings-streaming", Select)
+            _flip.value = "off" if _flip.value == "on" else "on"
         elif edit_kind == "temperature":
             modal.query_one("#console-settings-temperature", Input).value = "0.3"
         else:

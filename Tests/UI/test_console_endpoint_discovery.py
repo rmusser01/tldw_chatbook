@@ -118,11 +118,13 @@ async def test_create_endpoint_returns_to_responsive_settings_with_settled_evide
             modal.query_one("#console-settings-model-discover-status", Static).content
         )
         assert "report-probe" in app.app_config["custom_endpoints"]
-        before = str(modal.query_one("#console-settings-streaming", Button).label)
-        modal.query_one("#console-settings-streaming", Button).press()
+        # TASK-33006.1: Streaming is an On/Off Select; it still responds.
+        streaming = modal.query_one("#console-settings-streaming", Select)
+        before = streaming.value
+        streaming.value = "off" if before == "on" else "on"
         await pilot.pause()
-        assert (
-            str(modal.query_one("#console-settings-streaming", Button).label) != before
+        assert modal._streaming_draft is (streaming.value == "on") and (
+            streaming.value != before
         )
 
 

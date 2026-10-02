@@ -46,6 +46,7 @@ import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401
 deferred = (
     "tldw_chatbook.UI.Screens.settings_endpoint_probe",
     "tldw_chatbook.Widgets.Console.console_provider_picker",
+    "tldw_chatbook.Widgets.Console.console_settings_field_row",
     "tldw_chatbook.Widgets.Console.console_settings_modal",
 )
 resident = [name for name in deferred if sys.modules.get(name) is not None]

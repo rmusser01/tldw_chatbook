@@ -1,16 +1,19 @@
-"""Responsive geometry contracts for the Console Conversation Settings modal."""
+"""Responsive geometry contracts for the Console Chat settings modal."""
 
 from __future__ import annotations
 
 import pytest
 from textual import events
 from textual.containers import ScrollableContainer
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Collapsible, Input, Static
 
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+)
+from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    CONNECTION_DISCLOSURE_ID,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     MODEL_DISCOVER_BUTTON_ID,
@@ -21,6 +24,18 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
 
 
 GEOMETRY_SIZES = ((80, 24), (100, 30), (160, 40), (200, 50))
+#: TASK-33006.1 (spec §6, mock (b)): $ds-size-150 by $ds-size-22, each
+#: capped at $ds-percent-95 of the viewport. The 196-column wide tier is gone.
+MODAL_WIDTH, MODAL_HEIGHT, VIEWPORT_CAP_PERCENT = 150, 22, 95
+
+
+def expected_modal_size(viewport: tuple[int, int]) -> tuple[int, int]:
+    """The modal's width and height at ``viewport`` under the production CSS."""
+    width, height = viewport
+    return (
+        min(MODAL_WIDTH, int(width * VIEWPORT_CAP_PERCENT / 100)),
+        min(MODAL_HEIGHT, int(height * VIEWPORT_CAP_PERCENT / 100)),
+    )
 LONG_CONNECTION_STATUS = (
     "Testing connection to a configured private endpoint by listing models; "
     "this does not generate text or verify model generation."
@@ -75,14 +90,21 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
         container = modal.query_one("#console-settings-modal")
         body = modal.query_one("#console-settings-body", ScrollableContainer)
         compact = container.size.width < 100
-        wide = app.size.width >= 150
 
         assert modal.has_class("-conversation-settings-compact") is compact
-        assert container.has_class("-conversation-settings-wide") is wide
-        if wide:
-            assert container.region.width == min(196, int(app.size.width * 85 / 100))
-        else:
-            assert container.region.width == min(120, int(app.size.width * 95 / 100))
+        assert not container.has_class("-conversation-settings-wide")
+        assert (container.region.width, container.region.height) == (
+            expected_modal_size(size)
+        )
+        # A ready chat opens Connection closed (TASK-33006.1); open it to
+        # measure its actions. A blocked chat already opens it.
+        connection_disclosure = modal.query_one(
+            f"#{CONNECTION_DISCLOSURE_ID}", Collapsible
+        )
+        assert connection_disclosure.collapsed is ready
+        connection_disclosure.collapsed = False
+        await pilot.pause()
+        await pilot.pause()
         assert 0 < container.region.width <= app.size.width
         assert 0 < container.region.height <= app.size.height
         assert body.virtual_size.width <= body.container_size.width
@@ -144,9 +166,7 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
         status.display = True
         status.update(LONG_CONNECTION_STATUS)
         await pilot.pause()
-        # Enough wrapped lines to hold the text at its measured width: two
-        # lines at base/compact widths, one once the wide tier's extra room
-        # lets the status fit without wrapping.
+        # Enough wrapped lines to hold the text at its measured width.
         assert status.region.height >= -(-len(LONG_CONNECTION_STATUS) // status.region.width)
 
         readiness_text = str(
@@ -160,29 +180,23 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
 
 
 @pytest.mark.parametrize(
-    ("size", "expect_wide"),
-    (((120, 24), False), ((150, 40), True), ((235, 50), True)),
-    ids=["below-threshold", "at-threshold", "capped"],
+    "size",
+    ((120, 24), (150, 40), (211, 44), (235, 52)),
+    ids=["narrow", "below-token", "full-screen", "wide-full-screen"],
 )
 @pytest.mark.asyncio
-async def test_conversation_settings_wide_tier_engages_at_150_viewport_columns(
+async def test_chat_settings_size_is_the_150x22_token_capped_to_the_viewport(
     size: tuple[int, int],
-    expect_wide: bool,
 ) -> None:
-    """The wide tier keys off the viewport width, not the modal's own width.
+    """The modal is 150x22, capped at 95% of the viewport; no wide tier.
 
-    Removing the ``-conversation-settings-wide`` toggle (or the tier's CSS)
-    fails this test: at 150 columns the container must outgrow the fixed
-    120-column base width (85% of the viewport, capped at 196), while just
-    below the threshold the base geometry (``width: 120; max-width: 95%``)
-    is unchanged and neither tier engages.
+    Rewritten on purpose by TASK-33006.1 (AC#13): it pinned the 85%/196
+    wide tier, which mock (b)'s 150-column frame replaces. Restoring the tier
+    (or a percentage width) fails the full-screen cases: at 211 and 235
+    columns the frame must stay exactly 150 wide and 22 tall.
 
     Args:
         size: Terminal size (columns, rows) the harness app runs at.
-        expect_wide: Whether ``#console-settings-modal`` must carry
-            ``-conversation-settings-wide``: True at >= 150 viewport
-            columns, False below, where the fixed base geometry must hold
-            and no tier class may be set.
     """
     app = GeometryHarness()
     modal = build_geometry_modal(app, ready=True)
@@ -193,44 +207,32 @@ async def test_conversation_settings_wide_tier_engages_at_150_viewport_columns(
         await pilot.pause()
 
         container = modal.query_one("#console-settings-modal")
-        assert container.has_class("-conversation-settings-wide") is expect_wide
-        if expect_wide:
-            assert container.region.width == min(196, int(app.size.width * 85 / 100))
-            assert container.region.width <= app.size.width
-        else:
-            assert container.region.width == min(120, int(app.size.width * 95 / 100))
-            assert not modal.has_class("-conversation-settings-compact")
+        assert not container.has_class("-conversation-settings-wide")
+        assert (container.region.width, container.region.height) == (
+            expected_modal_size(size)
+        )
+        assert not modal.has_class("-conversation-settings-compact")
 
 
 @pytest.mark.parametrize(
-    ("start_size", "end_size", "expect_wide_after_resize"),
-    (
-        ((140, 40), (200, 50), True),
-        ((200, 50), (120, 40), False),
-    ),
-    ids=["grow-past-threshold", "shrink-below-threshold"],
+    ("start_size", "end_size"),
+    (((140, 40), (211, 44)), ((235, 52), (120, 40))),
+    ids=["grow-to-full-screen", "shrink-below-the-token"],
 )
 @pytest.mark.asyncio
-async def test_conversation_settings_wide_tier_tracks_live_resize_across_threshold(
+async def test_chat_settings_size_tracks_live_resize(
     start_size: tuple[int, int],
     end_size: tuple[int, int],
-    expect_wide_after_resize: bool,
 ) -> None:
-    """An open modal re-syncs its width tier when the terminal is resized.
+    """An open modal re-derives its capped 150x22 frame on resize.
 
-    Skipping the responsive layout sync in ``on_resize`` fails this test:
-    the ``-conversation-settings-wide`` class (and the 85%-width geometry
-    it drives) would stay frozen at the mount-time tier instead of
-    following the viewport across the 150-column boundary in either
-    direction.
+    Rewritten on purpose by TASK-33006.1 (AC#13): it followed the retired
+    wide-tier class across the 150-column boundary. Now the frame must follow
+    the viewport cap in both directions with no tier class at all.
 
     Args:
         start_size: Terminal size (columns, rows) the modal is mounted at.
-        end_size: Terminal size (columns, rows) resized to while the modal
-            stays open.
-        expect_wide_after_resize: Whether ``#console-settings-modal`` must
-            carry ``-conversation-settings-wide`` once the resize settles;
-            the container width must follow the matching tier's formula.
+        end_size: Terminal size (columns, rows) resized to while it stays open.
     """
     app = GeometryHarness()
     modal = build_geometry_modal(app, ready=True)
@@ -241,8 +243,8 @@ async def test_conversation_settings_wide_tier_tracks_live_resize_across_thresho
         await pilot.pause()
 
         container = modal.query_one("#console-settings-modal")
-        assert container.has_class("-conversation-settings-wide") is (
-            start_size[0] >= 150
+        assert (container.region.width, container.region.height) == (
+            expected_modal_size(start_size)
         )
 
         await pilot.resize_terminal(*end_size)
@@ -250,17 +252,10 @@ async def test_conversation_settings_wide_tier_tracks_live_resize_across_thresho
         await pilot.pause()
 
         assert app.size.width == end_size[0]
-        assert container.has_class("-conversation-settings-wide") is (
-            expect_wide_after_resize
+        assert not container.has_class("-conversation-settings-wide")
+        assert (container.region.width, container.region.height) == (
+            expected_modal_size(end_size)
         )
-        if expect_wide_after_resize:
-            assert container.region.width == min(
-                196, int(end_size[0] * 85 / 100)
-            )
-        else:
-            assert container.region.width == min(
-                120, int(end_size[0] * 95 / 100)
-            )
 
 
 @pytest.mark.parametrize("size", GEOMETRY_SIZES)

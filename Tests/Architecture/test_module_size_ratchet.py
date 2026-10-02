@@ -103,7 +103,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7764,
+    # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
+    # words and open focus moved to console_settings_field_row.py.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7516,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

@@ -11,7 +11,7 @@ text the compositor actually painted, so a field that paints its placeholder
 from typing import ClassVar
 
 import pytest
-from textual.widgets import Input
+from textual.widgets import Collapsible, Input
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
@@ -19,6 +19,9 @@ from Tests.UI.test_console_session_settings import StyledModalHarness
 from Tests.UI.test_destination_shells import DestinationHarness, _build_test_app
 from Tests.UI.test_settings_configuration_hub import _open_settings_category
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    CONNECTION_DISCLOSURE_ID,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsModal,
@@ -95,10 +98,15 @@ async def test_conversation_settings_fields_keep_committed_value_on_focus():
         committed = {field.id: field.value for field in screen.query(Input)}
         assert committed["model-search-picker-input"] == "model-a"
         assert committed["console-settings-provider-picker-input"] == "llama.cpp"
+        # TASK-33006.1: Connection follows the core fields as a closed
+        # disclosure; open it so Tab reaches its fields too.
+        screen.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible).collapsed = False
+        await pilot.pause()
 
-        probed = await _tab_through(app, pilot, screen, committed, presses=20)
+        probed = await _tab_through(app, pilot, screen, committed, presses=30)
 
     assert {
+        "console-settings-temperature",
         "console-settings-provider-picker-input",
         "console-settings-base-url",
         "model-search-picker-input",
