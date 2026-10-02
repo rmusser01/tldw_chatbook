@@ -29,7 +29,9 @@ def _source(db: SubscriptionsDB, name: str) -> int:
 
 def _watchlist(db: SubscriptionsDB, name: str) -> int:
     with db.transaction() as conn:
-        return int(conn.execute("INSERT INTO watchlists (name) VALUES (?)", (name,)).lastrowid)
+        return int(
+            conn.execute("INSERT INTO watchlists (name) VALUES (?)", (name,)).lastrowid
+        )
 
 
 def _link(db: SubscriptionsDB, watchlist_id: int, subscription_id: int) -> None:
@@ -109,7 +111,9 @@ def test_reader_traverses_descending_ties_then_null_date_sink_and_projects_effec
 
     assert [row["id"] for row in page.items] == [tied_two, tied_one]
     assert all("effective_date" in row for row in page.items)
-    assert page.next_cursor == WatchlistItemCursor(page.items[-1]["effective_date"], tied_one)
+    assert page.next_cursor == WatchlistItemCursor(
+        page.items[-1]["effective_date"], tied_one
+    )
     assert _all_ids(db, limit=2) == [tied_two, tied_one, oldest, null_two, null_one]
 
 
@@ -132,7 +136,9 @@ def test_reader_first_page_captures_matching_watermark_count_lookahead_and_never
     assert page.snapshot_count == 3
     assert [row["id"] for row in page.items] == [newest, middle]
     assert page.has_more is True
-    assert page.next_cursor == WatchlistItemCursor(page.items[-1]["effective_date"], middle)
+    assert page.next_cursor == WatchlistItemCursor(
+        page.items[-1]["effective_date"], middle
+    )
     assert all("OFFSET" not in statement.upper() for statement in statements)
 
 
@@ -206,7 +212,9 @@ def test_reader_snapshot_excludes_later_inserts_and_survives_deleted_mounted_row
     first = _page(db, limit=2)
     late = _item(db, source_id, "late", published="2030-01-01T00:00:00Z")
     with db.transaction() as conn:
-        conn.execute("DELETE FROM subscription_items WHERE id = ?", (first.items[0]["id"],))
+        conn.execute(
+            "DELETE FROM subscription_items WHERE id = ?", (first.items[0]["id"],)
+        )
 
     second = _page(
         db,
@@ -228,19 +236,84 @@ def test_reader_intersects_every_existing_query_dimension(db: SubscriptionsDB) -
     _link(db, watchlist_id, in_scope)
     _link(db, other_watchlist_id, other)
     wanted = _item(
-        db, in_scope, "wanted", title="needle", status="new", run_id=7,
-        flagged=True, published="2026-08-15T12:00:00Z",
+        db,
+        in_scope,
+        "wanted",
+        title="needle",
+        status="new",
+        run_id=7,
+        flagged=True,
+        published="2026-08-15T12:00:00Z",
     )
-    _item(db, in_scope, "wrong-status", title="needle", status="ignored", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
-    _item(db, in_scope, "wrong-run", title="needle", status="new", run_id=8, flagged=True, published="2026-08-15T12:00:00Z")
-    _item(db, in_scope, "wrong-flag", title="needle", status="new", run_id=7, flagged=False, published="2026-08-15T12:00:00Z")
-    _item(db, in_scope, "wrong-search", title="other", status="new", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
-    _item(db, in_scope, "wrong-since", title="needle", status="new", run_id=7, flagged=True, published="2026-08-14T12:00:00Z")
-    _item(db, other, "wrong-watchlist", title="needle", status="new", run_id=7, flagged=True, published="2026-08-15T12:00:00Z")
+    _item(
+        db,
+        in_scope,
+        "wrong-status",
+        title="needle",
+        status="ignored",
+        run_id=7,
+        flagged=True,
+        published="2026-08-15T12:00:00Z",
+    )
+    _item(
+        db,
+        in_scope,
+        "wrong-run",
+        title="needle",
+        status="new",
+        run_id=8,
+        flagged=True,
+        published="2026-08-15T12:00:00Z",
+    )
+    _item(
+        db,
+        in_scope,
+        "wrong-flag",
+        title="needle",
+        status="new",
+        run_id=7,
+        flagged=False,
+        published="2026-08-15T12:00:00Z",
+    )
+    _item(
+        db,
+        in_scope,
+        "wrong-search",
+        title="other",
+        status="new",
+        run_id=7,
+        flagged=True,
+        published="2026-08-15T12:00:00Z",
+    )
+    _item(
+        db,
+        in_scope,
+        "wrong-since",
+        title="needle",
+        status="new",
+        run_id=7,
+        flagged=True,
+        published="2026-08-14T12:00:00Z",
+    )
+    _item(
+        db,
+        other,
+        "wrong-watchlist",
+        title="needle",
+        status="new",
+        run_id=7,
+        flagged=True,
+        published="2026-08-15T12:00:00Z",
+    )
 
     page = _page(
-        db, status=None, statuses=["new", "reviewed"], run_id=7,
-        watchlist_id=watchlist_id, is_flagged=True, search="needle",
+        db,
+        status=None,
+        statuses=["new", "reviewed"],
+        run_id=7,
+        watchlist_id=watchlist_id,
+        is_flagged=True,
+        search="needle",
         since="2026-08-15T00:00:00Z",
     )
 
@@ -341,7 +414,9 @@ def test_reader_metadata_and_arrivals_exclude_historical_orphan_items(
     assert db.count_reader_item_arrivals(snapshot_max_item_id=visible_id) == 0
 
 
-def test_reader_validates_inputs_and_empty_first_page_is_safe(db: SubscriptionsDB) -> None:
+def test_reader_validates_inputs_and_empty_first_page_is_safe(
+    db: SubscriptionsDB,
+) -> None:
     with pytest.raises(ValueError, match="at least 1"):
         _page(db, limit=0)
     with pytest.raises(ValueError, match="either status or statuses"):
@@ -365,10 +440,18 @@ def test_reader_fts_and_like_fallback_have_complete_snapshot_and_arrival_parity(
 ) -> None:
     source_id = _source(db, "search")
     _item(db, source_id, "old", title="needle old", published="2026-01-01T00:00:00Z")
-    _item(db, source_id, "new", content="needle newest", published="2026-01-02T00:00:00Z")
+    _item(
+        db, source_id, "new", content="needle newest", published="2026-01-02T00:00:00Z"
+    )
     _item(db, source_id, "decoy", title="not it", published="2026-01-03T00:00:00Z")
     fts = _page(db, search="needle", limit=1)
-    _item(db, source_id, "arrival", title="needle arrival", published="2030-01-01T00:00:00Z")
+    _item(
+        db,
+        source_id,
+        "arrival",
+        title="needle arrival",
+        published="2030-01-01T00:00:00Z",
+    )
     fts_arrivals = db.count_reader_item_arrivals(
         search="needle", snapshot_max_item_id=fts.snapshot_max_item_id
     )
@@ -400,9 +483,14 @@ def test_reader_arrivals_use_same_scope_and_only_new_rows(db: SubscriptionsDB) -
     _item(db, source_id, "out-of-scope", status="reviewed")
     db.mark_item_status(initial, "reviewed")
 
-    assert db.count_reader_item_arrivals(
-        subscription_id=source_id, status="new", snapshot_max_item_id=first.snapshot_max_item_id
-    ) == 1
+    assert (
+        db.count_reader_item_arrivals(
+            subscription_id=source_id,
+            status="new",
+            snapshot_max_item_id=first.snapshot_max_item_id,
+        )
+        == 1
+    )
     assert matching_later > first.snapshot_max_item_id
 
 
@@ -421,7 +509,11 @@ def test_reader_sqlite_order_and_cursor_boundaries_match_python_item_dates(
 
     def python_key(row: dict) -> tuple[int, datetime, int]:
         date = effective_date(row)
-        return (date is not None, date or datetime.min.replace(tzinfo=timezone.utc), row["id"])
+        return (
+            date is not None,
+            date or datetime.min.replace(tzinfo=timezone.utc),
+            row["id"],
+        )
 
     expected = [row["id"] for row in sorted(rows, key=python_key, reverse=True)]
     assert [row["id"] for row in rows] == expected

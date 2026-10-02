@@ -717,7 +717,7 @@ COMMIT;
             )
             write_conn.execute(
                 "INSERT OR IGNORE INTO schema_version (version) VALUES (2)"
-                )
+            )
 
         if needs_v3:
             self._migrate_v2_to_v3()

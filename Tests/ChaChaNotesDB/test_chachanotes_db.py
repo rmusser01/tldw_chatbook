@@ -258,9 +258,7 @@ class TestDBInitialization:
                 "conversations_sync_delete",
                 "conversations_sync_undelete",
             }
-            assert all(
-                "system_prompt" not in sql for sql in trigger_sql.values()
-            )
+            assert all("system_prompt" not in sql for sql in trigger_sql.values())
             table_names = {
                 row["name"]
                 for row in conn.execute(
@@ -275,9 +273,7 @@ class TestDBInitialization:
             ).fetchone()
             assert version_before["version"] == 17
 
-        migrated = open_current_chachanotes_from_legacy(
-            db_path, client_id=client_id
-        )
+        migrated = open_current_chachanotes_from_legacy(db_path, client_id=client_id)
         migrated_conn = migrated.get_connection()
 
         version_row = migrated_conn.execute(
@@ -832,9 +828,7 @@ class TestConversationsAndMessages:
         ] == [kept_conv]
         # Scoping to the deleted conversation must not reopen the hole.
         assert (
-            db_instance.search_messages_by_content(
-                needle, conversation_id=dropped_conv
-            )
+            db_instance.search_messages_by_content(needle, conversation_id=dropped_conv)
             == []
         )
 
@@ -1010,9 +1004,7 @@ class TestNotesAndKeywords:
 
         with db_instance.transaction() as cursor:
             keyword_id = db_instance.add_keyword("Cursor keyword", cursor=cursor)
-            assert db_instance.link_note_to_keyword(
-                note_id, keyword_id, cursor=cursor
-            )
+            assert db_instance.link_note_to_keyword(note_id, keyword_id, cursor=cursor)
 
         assert db_instance.get_keyword_by_id(keyword_id)["keyword"] == "Cursor keyword"
         assert [row["id"] for row in db_instance.get_keywords_for_note(note_id)] == [
@@ -1123,13 +1115,15 @@ class TestKeywordCollections:
                 )
                 raise RuntimeError("rollback")
 
-        assert db_instance.get_keyword_collection_by_name("Rolled back collection") is None
+        assert (
+            db_instance.get_keyword_collection_by_name("Rolled back collection") is None
+        )
 
         collection_id = db_instance.add_keyword_collection("Committed collection")
         assert db_instance.link_collection_to_keyword(collection_id, keyword_id)
-        assert [row["id"] for row in db_instance.get_keywords_for_collection(collection_id)] == [
-            keyword_id
-        ]
+        assert [
+            row["id"] for row in db_instance.get_keywords_for_collection(collection_id)
+        ] == [keyword_id]
 
 
 class TestGetAllNoteIds:
@@ -1243,9 +1237,7 @@ class TestListDeletedNotes:
             db_instance.list_deleted_notes(limit=1, offset=1)["items"][0]["id"] == first
         )
 
-    def test_no_deleted_notes_returns_an_empty_page(
-        self, db_instance: CharactersRAGDB
-    ):
+    def test_no_deleted_notes_returns_an_empty_page(self, db_instance: CharactersRAGDB):
         db_instance.add_note("Still here", "body")
 
         assert db_instance.list_deleted_notes() == {"items": [], "total": 0}

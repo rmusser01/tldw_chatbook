@@ -232,9 +232,7 @@ def test_real_v57_reopen_backfills_stable_unique_uuid4_ids(tmp_path: Path) -> No
 
 
 def test_fresh_v58_schema_matches_migration_constraints() -> None:
-    with chachanotes_db_at_version(
-        ":memory:", 58, client_id="fresh-v58"
-    ) as db:
+    with chachanotes_db_at_version(":memory:", 58, client_id="fresh-v58") as db:
         connection = db.get_connection()
         assert _schema_version(connection) == 58
         for table in RESOURCE_TABLES:
@@ -296,13 +294,14 @@ def test_fresh_v58_schema_matches_migration_constraints() -> None:
 def test_notes_organization_indexes_have_stats_free_query_plans(
     index_name: str, statement: str, params: tuple[object, ...]
 ) -> None:
-    with chachanotes_db_at_version(
-        ":memory:", 58, client_id="v58-query-plans"
-    ) as db:
+    with chachanotes_db_at_version(":memory:", 58, client_id="v58-query-plans") as db:
         connection = db.get_connection()
-        assert connection.execute(
-            "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
-        ).fetchone() is None
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name = 'sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
 
         details = [
             str(row[3])
@@ -431,11 +430,10 @@ def test_real_v57_reopen_matches_fresh_v58_intent_schema(tmp_path: Path) -> None
     path = tmp_path / "v57-equivalence.db"
     _seed_real_v57(path)
 
-    with chachanotes_db_at_version(
-        path, 58, client_id="v58-migrated-shape"
-    ) as migrated, chachanotes_db_at_version(
-        ":memory:", 58, client_id="v58-fresh-shape"
-    ) as fresh:
+    with (
+        chachanotes_db_at_version(path, 58, client_id="v58-migrated-shape") as migrated,
+        chachanotes_db_at_version(":memory:", 58, client_id="v58-fresh-shape") as fresh,
+    ):
         assert _intent_columns(migrated.get_connection()) == _intent_columns(
             fresh.get_connection()
         )

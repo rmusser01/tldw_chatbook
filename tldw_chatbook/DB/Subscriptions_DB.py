@@ -31,7 +31,18 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterator, List, Dict, Any, Literal, Mapping, Optional, Sequence, TYPE_CHECKING, Union
+from typing import (
+    Iterator,
+    List,
+    Dict,
+    Any,
+    Literal,
+    Mapping,
+    Optional,
+    Sequence,
+    TYPE_CHECKING,
+    Union,
+)
 from urllib.parse import urlparse, urlunparse
 from urllib.parse import urlsplit, urlunsplit
 
@@ -645,8 +656,10 @@ class SubscriptionsDB(BaseDB):
         _core_access(self)
         if self._read_only:
             conn = connect_private_sqlite(
-                "db.subscriptions.agent_read", self.db_path_str,
-                read_only=True, must_exist=True,
+                "db.subscriptions.agent_read",
+                self.db_path_str,
+                read_only=True,
+                must_exist=True,
             )
         else:
             conn = super()._get_connection()
@@ -654,7 +667,9 @@ class SubscriptionsDB(BaseDB):
             _register_core_connection(self, conn)
             _core_access(self)
             conn.row_factory = sqlite3.Row
-            conn.create_function("unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True)
+            conn.create_function(
+                "unicode_casefold", 1, _sqlite_unicode_casefold, deterministic=True
+            )
             conn.execute("PRAGMA foreign_keys = ON;")
             conn.execute(f"PRAGMA busy_timeout = {BUSY_TIMEOUT_MS};")
             if self._read_only:
@@ -749,7 +764,10 @@ class SubscriptionsDB(BaseDB):
                 "SELECT 1 FROM sqlite_schema WHERE type = 'table' AND name = 'schema_version'"
             ).fetchone()
             if has_version_table:
-                versions = [int(row[0]) for row in conn.execute("SELECT version FROM schema_version")]
+                versions = [
+                    int(row[0])
+                    for row in conn.execute("SELECT version FROM schema_version")
+                ]
                 # Every version this build can open: the current one and the one
                 # it knows how to migrate from. Anything else -- a FUTURE version
                 # above all -- must reach the refusal below with the database
@@ -1148,14 +1166,17 @@ class SubscriptionsDB(BaseDB):
 
             # Add columns to subscription_items
             items_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(subscription_items)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(subscription_items)")
             }
             if "queued_for_briefing" not in items_cols:
                 cursor.execute(
                     "ALTER TABLE subscription_items ADD COLUMN queued_for_briefing BOOLEAN DEFAULT 0"
                 )
             if "run_id" not in items_cols:
-                cursor.execute("ALTER TABLE subscription_items ADD COLUMN run_id INTEGER")
+                cursor.execute(
+                    "ALTER TABLE subscription_items ADD COLUMN run_id INTEGER"
+                )
             if "alert_matches" not in items_cols:
                 cursor.execute(
                     "ALTER TABLE subscription_items ADD COLUMN alert_matches TEXT"
@@ -1163,7 +1184,8 @@ class SubscriptionsDB(BaseDB):
 
             # Add columns to subscription_filters
             filters_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(subscription_filters)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(subscription_filters)")
             }
             if "priority" not in filters_cols:
                 cursor.execute(
@@ -1365,7 +1387,8 @@ class SubscriptionsDB(BaseDB):
             # same probe: an explicit INSERT/UPDATE naming it raises), so there
             # is no data-migration step for a crash to catch mid-way at all.
             items_xcols = {
-                row[1] for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_xinfo(subscription_items)")
             }
             if "effective_date" not in items_xcols:
                 cursor.execute(
@@ -1645,10 +1668,13 @@ class SubscriptionsDB(BaseDB):
             # this method. Only the column needs checking, for databases created
             # before batch_id existed.
             run_cols = {
-                row[1] for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
+                row[1]
+                for row in cursor.execute("PRAGMA table_info(local_watchlist_runs)")
             }
             if "batch_id" not in run_cols:
-                cursor.execute("ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT")
+                cursor.execute(
+                    "ALTER TABLE local_watchlist_runs ADD COLUMN batch_id TEXT"
+                )
             cursor.execute(
                 "CREATE INDEX IF NOT EXISTS idx_local_watchlist_runs_batch "
                 "ON local_watchlist_runs(batch_id)"
@@ -2202,9 +2228,7 @@ class SubscriptionsDB(BaseDB):
             ]
 
         tags = [
-            tag.strip()
-            for tag in str(row.get("tags") or "").split(",")
-            if tag.strip()
+            tag.strip() for tag in str(row.get("tags") or "").split(",") if tag.strip()
         ]
         return {
             "id": f"local:subscription:{source_id}",
@@ -2262,7 +2286,8 @@ class SubscriptionsDB(BaseDB):
         # still refuses a pause that arrives after the settings read.
         default_threshold = (
             _default_auto_pause_threshold()
-            if "auto_pause_threshold" not in kwargs else None
+            if "auto_pause_threshold" not in kwargs
+            else None
         )
 
         with self.transaction() as conn:
@@ -2364,7 +2389,9 @@ class SubscriptionsDB(BaseDB):
 
         with self.connection() as conn:
             cursor = conn.cursor()
-            cursor.execute("SELECT * FROM subscriptions WHERE id = ?", (subscription_id,))
+            cursor.execute(
+                "SELECT * FROM subscriptions WHERE id = ?", (subscription_id,)
+            )
             row = cursor.fetchone()
             result = dict(row) if row else None
 
@@ -3448,7 +3475,9 @@ class SubscriptionsDB(BaseDB):
         next_cursor = None
         if has_more and visible_rows:
             last_row = visible_rows[-1]
-            next_cursor = WatchlistItemCursor(last_row["effective_date"], last_row["id"])
+            next_cursor = WatchlistItemCursor(
+                last_row["effective_date"], last_row["id"]
+            )
         return WatchlistItemPage(
             items=tuple(visible_rows),
             has_more=has_more,
@@ -4190,6 +4219,7 @@ class SubscriptionsDB(BaseDB):
             "item_created_at, item_effective_date, source_id, source_name, "
             "source_type, source_url, provenance_version"
         )
+
         def page(
             conn: sqlite3.Connection,
             *,
@@ -4298,9 +4328,7 @@ class SubscriptionsDB(BaseDB):
                 (after_created_at, after_created_at, after_kind, after_kind, after_id)
             )
         briefing_where = (
-            f"WHERE {' AND '.join(briefing_predicates)}"
-            if briefing_predicates
-            else ""
+            f"WHERE {' AND '.join(briefing_predicates)}" if briefing_predicates else ""
         )
         with self.transaction() as conn:
             runs = conn.execute(
@@ -4330,11 +4358,8 @@ class SubscriptionsDB(BaseDB):
                 """,
                 (*briefing_params, limit + 1),
             ).fetchall()
-        combined = [
-            {"kind": "source_check", "row": dict(row)} for row in runs
-        ] + [
-            {"kind": "briefing_generation", "row": dict(row)}
-            for row in briefings
+        combined = [{"kind": "source_check", "row": dict(row)} for row in runs] + [
+            {"kind": "briefing_generation", "row": dict(row)} for row in briefings
         ]
         combined.sort(key=lambda item: int(item["row"]["id"]), reverse=True)
         combined.sort(key=lambda item: item["kind"])
@@ -6475,7 +6500,9 @@ class SubscriptionsDB(BaseDB):
                 filter_dict = dict(row)
                 filter_dict["conditions"] = json.loads(filter_dict["conditions"])
                 if filter_dict["action_params"]:
-                    filter_dict["action_params"] = json.loads(filter_dict["action_params"])
+                    filter_dict["action_params"] = json.loads(
+                        filter_dict["action_params"]
+                    )
                 filters.append(filter_dict)
 
             return filters
@@ -6796,6 +6823,5 @@ class SubscriptionsDB(BaseDB):
                 self._local.conn = None
             with self._connections_lock:
                 self._connections.pop(threading.get_ident(), None)
-
 
     # End of Subscriptions_DB.py

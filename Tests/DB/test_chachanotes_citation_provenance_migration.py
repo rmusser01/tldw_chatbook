@@ -914,9 +914,7 @@ def test_citation_failure_after_dev_migrations_leaves_clean_v24(
     monkeypatch.undo()
     db = _fresh_db(path)
     try:
-        assert (
-            _version(db.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
-        )
+        assert _version(db.get_connection()) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
     finally:
         db.close_connection()
 

@@ -991,7 +991,9 @@ def test_reconcile_skips_memory_db():
     assert ":memory:" not in AgentRunsDB._swept_paths
 
 
-def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(request, tmp_path, monkeypatch):
+def test_reconcile_failed_sweep_leaves_path_unregistered_for_retry(
+    request, tmp_path, monkeypatch
+):
     """A transient failure (e.g. a locked DB) during the sweep must NOT
     register the path -- otherwise no later AgentRunsDB(path) construction
     in this process ever retries, silently defeating AC#2's crash-recovery
@@ -1043,7 +1045,9 @@ def test_file_db_uses_wal_and_busy_timeout(request, tmp_path):
         assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 5000
 
 
-def test_memory_db_skips_wal(request, ):
+def test_memory_db_skips_wal(
+    request,
+):
     # :memory: cannot use WAL; must not raise and must stay 'memory'
     db = AgentRunsDB(":memory:")
     request.addfinalizer(db.close)
@@ -1642,9 +1646,7 @@ def test_pre_v11_db_gains_resumed_from_run_id_and_opens_twice(request, tmp_path)
     # Open TWICE (the plan's wording): the guarded ALTER must be a no-op.
     second = AgentRunsDB(path, client_id="test")
     request.addfinalizer(second.close)
-    second_id = second.create_run(
-        conversation_id="c", agent_kind="subagent", task="t2"
-    )
+    second_id = second.create_run(conversation_id="c", agent_kind="subagent", task="t2")
     assert second.get_run(second_id)["resumed_from_run_id"] is None
     assert second.get_run(run_id)["resumed_from_run_id"] == "prior-run"
 
@@ -2044,9 +2046,7 @@ def test_schema_v21_definition_columns(db):
     with db.connection() as conn:
         cols = {
             row[1]
-            for row in conn.execute(
-                "PRAGMA table_info(agent_definitions)"
-            ).fetchall()
+            for row in conn.execute("PRAGMA table_info(agent_definitions)").fetchall()
         }
     assert {"provider", "params_json"} <= cols
 
@@ -2054,8 +2054,7 @@ def test_schema_v21_definition_columns(db):
 def test_schema_v21_run_snapshot_columns(db):
     with db.connection() as conn:
         cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
     assert {
         "resolved_provider",
@@ -2179,14 +2178,11 @@ def test_pre_v21_db_gains_v21_columns_on_open(tmp_path):
     db = AgentRunsDB(path, client_id="test")  # open runs the ALTER guards
     with db.connection() as conn:
         run_cols = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
+            row[1] for row in conn.execute("PRAGMA table_info(agent_runs)").fetchall()
         }
         def_cols = {
             row[1]
-            for row in conn.execute(
-                "PRAGMA table_info(agent_definitions)"
-            ).fetchall()
+            for row in conn.execute("PRAGMA table_info(agent_definitions)").fetchall()
         }
     assert {
         "resolved_provider",
@@ -2223,7 +2219,12 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
     with database.connection() as conn:
         for column in ("provider", "params_json"):
             conn.execute(f"ALTER TABLE agent_definitions DROP COLUMN {column}")
-        for column in ("resolved_provider", "resolved_model", "resolved_base_url", "resolved_params_json"):
+        for column in (
+            "resolved_provider",
+            "resolved_model",
+            "resolved_base_url",
+            "resolved_params_json",
+        ):
             conn.execute(f"ALTER TABLE agent_runs DROP COLUMN {column}")
         conn.execute("DELETE FROM schema_version WHERE version > 20")
         before = _snapshot_v18_data(conn)
@@ -2234,7 +2235,9 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
     for _ in range(2):
         database = AgentRunsDB(path)
         try:
-            assert database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5
+            assert (
+                database.get_agent_definition(definition_id)["max_wall_seconds"] == 12.5
+            )
             assert database.get_agent_definition(definition_id)["provider"] == ""
             assert database.get_run_resolved_target(run_id) is None
             with database.connection() as conn:
@@ -2242,8 +2245,18 @@ def test_v20_routing_upgrade_preserves_wall_caps_worktrees_and_owner_data(tmp_pa
                 # The new snapshot columns append to the historical run shape.
                 after["agent_runs"] = [row[:-4] for row in after["agent_runs"]]
                 assert after == before
-                assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'").fetchone()[0] == worktree_schema
-                assert conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[0] == 21
+                assert (
+                    conn.execute(
+                        "SELECT sql FROM sqlite_master WHERE name = 'agent_worktrees'"
+                    ).fetchone()[0]
+                    == worktree_schema
+                )
+                assert (
+                    conn.execute("SELECT MAX(version) FROM schema_version").fetchone()[
+                        0
+                    ]
+                    == 21
+                )
                 assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         finally:
             database.close()

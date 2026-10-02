@@ -563,8 +563,7 @@ class LibraryCollectionsDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
@@ -775,9 +774,7 @@ class LibraryCollectionsDB(BaseDB):
             }
             capture_item_columns = {
                 str(row[1])
-                for row in conn.execute(
-                    "PRAGMA table_info(collection_capture_items)"
-                )
+                for row in conn.execute("PRAGMA table_info(collection_capture_items)")
             }
         tables = {name for kind, name in objects if kind in {"table", "view"}}
         triggers = {name for kind, name in objects if kind == "trigger"}
@@ -798,8 +795,7 @@ class LibraryCollectionsDB(BaseDB):
         with self.connection() as conn:
             for table, required_columns in self._LEGACY_REQUIRED_COLUMNS.items():
                 columns = {
-                    str(row[1])
-                    for row in conn.execute(f"PRAGMA table_info({table})")
+                    str(row[1]) for row in conn.execute(f"PRAGMA table_info({table})")
                 }
                 if not required_columns <= columns:
                     return False
