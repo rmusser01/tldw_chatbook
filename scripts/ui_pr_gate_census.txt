@@ -94,6 +94,7 @@ Tests/UI/test_product_maturity_phase39_library_collections.py
 Tests/UI/test_product_maturity_phase6_release_closeout.py
 Tests/UI/test_profile_owned_settings_paths.py
 Tests/UI/test_prompt_review_docstrings.py
+Tests/UI/test_quit_prompt_vanish.py
 Tests/UI/test_research_mode_strip.py
 Tests/UI/test_research_source_inspector.py
 Tests/UI/test_research_source_receipt.py

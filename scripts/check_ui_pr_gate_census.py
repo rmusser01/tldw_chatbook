@@ -70,7 +70,9 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33621.15 raised it to 119: Tests/UI/test_console_session_tab_close.py
 # (8 private-profile tests, ~90 s serial) guards the Console tab close that
 # stayed broken for three weeks because no PR gate ran its routing tests.
-MINIMUM_FILES = 119
+# TASK-33622.10 raised it to 120: Tests/UI/test_quit_prompt_vanish.py gates
+# the Ctrl+Q orphaned-prompt hang, which no other PR-gated test would catch.
+MINIMUM_FILES = 120
 
 
 def read_census(path: Path) -> list[str]:

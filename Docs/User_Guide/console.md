@@ -479,6 +479,12 @@ so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A
 pending memory reset or a running compaction still asks first, and the
 footer says so ("Esc close (asks: memory reset)", "Esc close (asks:
 compaction running)"); once you answer that, the unsaved prompt follows.
+**Ctrl+Q** stops at the same three, naming each one that applies. With
+unapplied edits it asks **Discard changes and quit?** (**Keep editing**
+leaves the modal as it was). With only a pending memory reset or a running
+compaction nothing you typed is lost, so it asks **Quit now?** instead:
+**Quit anyway** keeps the reset (Undo is no longer available) or abandons the
+compaction, and **Stay** returns to the modal.
 
 Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:

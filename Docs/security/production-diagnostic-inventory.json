@@ -4111,6 +4111,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "31412d08d548e0d275d3",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/confirmation_dialog.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "73c73f28d3be7ed8a406",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/conversation_selection_dialog.py",
@@ -4149,6 +4156,13 @@
       "diagnostic_digest": "886acbd53a6db54b57e1",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Widgets/file_picker_dialog.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "6be9710c2a349e71ddf3",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Widgets/modal_dismissal.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {

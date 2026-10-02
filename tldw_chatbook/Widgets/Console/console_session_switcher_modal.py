@@ -591,6 +591,12 @@ class ConsoleSessionSwitcherModal(
         generation = int(generation)
         receipt_state = str(receipt_state or "ready")
         if profile != self._profile_authority or token != self._authority_token:
+            if self.app.screen is not self:
+                # Screen.dismiss pops the app's TOP screen. Under the quit
+                # prompt (Ctrl+Q is live under modals, TASK-33622.10) that
+                # would pop the prompt instead; this poll repeats, so close
+                # once on top again (ADR-031).
+                return
             self._query_pending = False
             self.dismiss(None)
             return

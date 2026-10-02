@@ -619,6 +619,26 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 "Use current now adopts that reviewed version."
             )
 
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards an unsaved queue edit (TASK-33622.10).
+
+        The Console quit prompt counts queued prompts, not this edit's text,
+        and the count can be 0 while the edit is the user's only copy (see
+        ``has_unsaved_edit``) -- so ask here, before that prompt.
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        if not self.has_unsaved_edit():
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self, "Your edit to a queued prompt is not saved."
+        )
+
     def has_unsaved_edit(self) -> bool:
         """Report whether the open edit view holds text the queue does not.
 

@@ -115,6 +115,8 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         self._frame_static_id = "video-player-frame"
         self._started_wall: float | None = None
         self._last_frame_wall: float | None = None
+        #: A one-shot close (and its notice) asked for while covered.
+        self._pending_close: tuple[str, str] | None = None
 
     # -- layout -------------------------------------------------------------
 
@@ -370,6 +372,12 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         return True
 
     def _notify_and_dismiss(self, message: str, *, severity: str) -> None:
+        if self._is_covered():
+            # Covered (the quit prompt, under the priority Ctrl+Q): the dismiss
+            # would be refused, and a failure asks only once -- so keep the
+            # close, and the notice that explains it, for when this is on top.
+            self._pending_close = (message, severity)
+            return
         try:
             self.app.notify(message, severity=severity)
         except Exception as exc:
@@ -378,6 +386,24 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
             self.dismiss(None)
         except Exception as exc:
             _log_failure("cleanup", exc)
+
+    def _is_covered(self) -> bool:
+        """Whether another screen is on top of this one (TASK-33622.10)."""
+        try:
+            return self.app.screen is not self
+        except Exception:  # no running app: nothing covers it
+            return False
+
+    def on_screen_resume(self) -> None:
+        """Run a close that was asked for while another screen covered this."""
+        if self._pending_close is not None:
+            self.call_next(self._run_pending_close)
+
+    def _run_pending_close(self) -> None:
+        pending, self._pending_close = self._pending_close, None
+        if pending is not None:
+            message, severity = pending
+            self._notify_and_dismiss(message, severity=severity)
 
     # -- status ---------------------------------------------------------------
 
@@ -389,6 +415,11 @@ class VideoPlayerScreen(SafeModalDismissMixin, ModalScreen[None]):
         if self._max_seconds is not None and self._started_wall is not None:
             elapsed = time.monotonic() - self._started_wall
             if elapsed > self._max_seconds:
+                if self._is_covered():
+                    # Covered (the quit prompt, under the priority Ctrl+Q):
+                    # a dismiss now would be refused, and this tick repeats
+                    # every 0.25 s -- close on the first one back on top.
+                    return
                 self.app.notify(
                     f"Stream session hit the {int(self._max_seconds // 60)}-minute time box.",
                     severity="information",
