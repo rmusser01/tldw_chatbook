@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 15:14'
-updated_date: '2026-10-02 16:15'
+updated_date: '2026-10-02 16:57'
 labels:
   - ci
   - performance
@@ -40,4 +40,6 @@ Reuse the existing core repository operation for the legacy completion probe and
 Preserving rebase onto dev eba4305d8389a2112c99ac19fa804e9abea394ba retains the reviewed production/test bytes. Nine targeted Delete/Undo persistence/Save/native-close/cold-admission cases pass in 26.72s; unchanged storage/startup/CSS guards pass four cases in 56.00s; independent mounted Delete/Undo and accepted completion nonreplay pass two cases in 11.62s. The 81-file static scan, ten new-file Ruff/format checks, whitespace and generated bundles pass. Incoming diagnostic inventory verifies 632 owners and 15 sinks. No new ADR; existing ADR-126 and ADR-199 apply. Published 68646eeeaa has three passing CI jobs and the repaired latency failure; its Qodo summary resolves all four findings. Fresh publication and all current-head remote gates remain before merge.
 
 Required clean rebase onto dev 6958e8dfa99a66680b1aec09fed65df0f1a91955 after published e8474 passes all four jobs/Qodo and GitHub reports BEHIND under strict protection. Only upstream store bytes change among the 81 qualified patch Python files; TASK-33647 bytes remain unchanged. Ten first-send/Save/close/nonreplay/cold-admission cases pass in 45.18s, four unchanged storage/startup/CSS guards in 55.02s, and independent persistence/Inspector plus lifecycle review approve four and six cases in 3.90s and 3.34s. Final 81-file/new-file static, worker-contract and 633-owner diagnostic guards pass. CSS/schema/recovery/runtime bytes remain unchanged. Existing ADR-069/126/199 apply, no new ADR or runtime repair. Original pins retained at 680/686 imports and 1033/1033 UI-ready. Fresh published-head gates and protected merge remain; earlier qualification limits persist.
+
+Required rebase onto dev 30ca4552b3b881bee6c077db08c44233e5e97e6a after all four jobs/Qodo pass on published 64d770 and upstream hook-review changes cause an actual conflict. Only testing-lesson appends conflict; both entire blocks are preserved exactly. Only upstream ChatScreen changes among 81 patch Python files; TASK-33647, runtime, schema/recovery and CSS bytes stay unchanged. Twelve real hook-refund/prepared-close/Save/native-close/nonreplay/readiness/cold-admission cases pass in 72.48s; four unchanged storage/startup/CSS guards pass in 58.06s. Independent controller and mounted modal/diagnostic reviews approve six and nine cases in 3.82s and 40.38s. Final static/new-file, worker-contract and 634-owner diagnostic guards pass. No new ADR/runtime fix; ADR-148/126/199 preserved. Original 680/686 and 1033/1033 pins retained. Fresh published-head gates and protected merge remain. Separate upstream TASK33621.28 stays open; no global live-app Ctrl+Q claim. Earlier qualification limits persist.
 <!-- SECTION:NOTES:END -->
