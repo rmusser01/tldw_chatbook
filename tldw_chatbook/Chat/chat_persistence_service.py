@@ -1543,12 +1543,18 @@ class ChatPersistenceService:
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn.
 
         The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
         returns only durable values and never mutates the live Console session;
         publication is a postcommit store/controller responsibility.
+
+        ``project_context_json`` is the new chat's local project-instruction
+        controls, stored with the conversation it creates -- the same
+        transaction, like promotion and fork bundles (TASK-33621.13). It is
+        ignored for a conversation that already exists.
         """
 
         self.validate_workspace_target(**conversation_kwargs)
@@ -1587,6 +1593,10 @@ class ChatPersistenceService:
                         raise RuntimeError(
                             "Console context settings could not be committed with turn."
                         )
+                if project_context_json is not None:
+                    self.db.set_conversation_console_project_context(
+                        acceptance.conversation_id, project_context_json
+                    )
             else:
                 if conversation["deleted"]:
                     raise RuntimeError("Durable conversation is unavailable.")

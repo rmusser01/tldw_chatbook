@@ -384,6 +384,11 @@ class ConsoleProjectInstructionSourceRow:
     warning_code: str = ""
 
 
+#: ``ConsoleProjectInstructionState.locator_match`` before the chosen folder's
+#: locator was validated in this run (the Inspector resolves that state early).
+PROJECT_LOCATOR_NOT_CHECKED = "not checked"
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleProjectInstructionState:
     """Pure display state for the Inspector and Context surfaces."""
@@ -444,7 +449,7 @@ def build_console_project_instruction_state(
         if locator_matches is True
         else "mismatch"
         if locator_matches is False
-        else "not checked"
+        else PROJECT_LOCATOR_NOT_CHECKED
     )
     recovery_actions = (
         ("enable",)

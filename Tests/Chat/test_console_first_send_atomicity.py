@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
+import threading
+import time
 from pathlib import Path
 from threading import Event
 from types import SimpleNamespace
@@ -36,6 +39,10 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
     ConsoleEgressClass,
     ConsoleResolvedDestination,
 )
+from tldw_chatbook.Chat.console_project_instructions import (
+    ProjectInstructionControlState,
+    encode_project_context_json,
+)
 from tldw_chatbook.Chat.console_generation_settings_metadata import (
     ConsoleGenerationSettingsReadStatus,
     ConsoleGenerationSettingsWriteResult,
@@ -54,6 +61,7 @@ from tldw_chatbook.Chat.console_turn_preparation import (
 from tldw_chatbook.Chat.prompt_history import PromptHistory
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_durable_turn_acceptance import _ready_store
+from Tests.private_profile import private_profile_test
 
 
 _POSTCOMMIT_EFFECTS = (
@@ -633,6 +641,319 @@ async def test_first_send_persists_revision_zero_new_chat_default(
         persisted.snapshot.streaming,
     ) == ("anthropic", "saved-global-model", pytest.approx(0.42), False)
     assert session.generation_durable_snapshot == persisted.snapshot
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_first_send_persists_a_project_folder_chosen_before_the_chat_was_saved(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """TASK-33621.13 review: a folder chosen for project instructions in a new,
+    unsaved chat lived only in memory -- the write is skipped while there is
+    no conversation id -- and the first send's durable commit never wrote it
+    either, so the reopened chat showed 'Off'. It must survive a restart.
+
+    A private profile: the send reads model capabilities from config, which
+    trips ``RecoveryRequired`` under the per-test sandbox otherwise."""
+    db, store, controller, _gateway = _controller(tmp_path)
+    chosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-7",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", chosen)
+    session = store.sessions()[0]
+    assert session.persisted_conversation_id is None
+
+    result = await controller.submit_draft("keep my folder", session_id="session-1")
+
+    assert result.accepted is True
+    conversation_id = session.persisted_conversation_id
+    assert conversation_id is not None
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(chosen)
+    )
+    conversation = db.get_conversation_by_id(conversation_id)
+    reopened = ConsoleChatStore(
+        persistence=ChatPersistenceService(db)
+    ).restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+    )
+    assert reopened.project_instruction_state == chosen
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stop_after_commit", ["trace_provenance_pause", "identity_publication_failure"]
+)
+async def test_project_folder_survives_a_first_send_that_stops_after_its_commit(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    stop_after_commit: str,
+) -> None:
+    """TASK-33621.13 live re-verification: the first send in a new named
+    workspace committed the chat and then stopped as 'Blocked' ~5 ms later,
+    before identity publication ever ran. The folder was written only at
+    publication, so the saved chat's column stayed NULL and after a restart
+    the chat read 'Off · Project'. Both ways a send can stop after its
+    durable commit -- a paused turn that never reaches publication, and a
+    publication that fails -- must leave the folder saved with that chat, as
+    must a folder chosen again while the turn is still stopped."""
+    db, store, controller, gateway = _controller(tmp_path)
+    if stop_after_commit == "trace_provenance_pause":
+
+        def refuse_trace_request(**_kwargs: Any) -> None:
+            raise RuntimeError("trace provenance unavailable")
+
+        monkeypatch.setattr(
+            controller, "_build_durable_trace_request", refuse_trace_request
+        )
+    else:
+
+        def fail_publication(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("identity publication failed")
+
+        monkeypatch.setattr(store, "publish_durable_turn_identity", fail_publication)
+    chosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-7",
+        working_folder_locator_fingerprint="f" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", chosen)
+
+    result = await controller.submit_draft("keep my folder", session_id="session-1")
+
+    # The send stopped after its commit: the chat exists, identity was never
+    # published to the session, and the provider was never called.
+    assert result.accepted is True
+    assert result.provider_started is False
+    assert gateway.calls == 0
+    assert store.sessions()[0].persisted_conversation_id is None
+    rows = (
+        db.get_connection()
+        .execute("SELECT id FROM conversations WHERE deleted = 0")
+        .fetchall()
+    )
+    assert len(rows) == 1
+    conversation_id = rows[0]["id"]
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(chosen)
+    )
+
+    rechosen = ProjectInstructionControlState(
+        project_instructions_enabled=True,
+        working_folder_binding_id="binding-8",
+        working_folder_locator_fingerprint="e" * 64,
+        project_instruction_notice_key="notice-key",
+    )
+    store.set_session_project_instruction_state("session-1", rechosen)
+    assert db.get_conversation_console_project_context(conversation_id) == (
+        encode_project_context_json(rechosen)
+    )
+
+    # A restart: a fresh connection and a fresh store over the same file.
+    reopened_db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="restart")
+    conversation = reopened_db.get_conversation_by_id(conversation_id)
+    reopened = ConsoleChatStore(
+        persistence=ChatPersistenceService(reopened_db)
+    ).restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=conversation_id,
+        all_nodes=(),
+    )
+    assert reopened.project_instruction_state == rechosen
+
+
+_FOLDER_7 = ProjectInstructionControlState(
+    project_instructions_enabled=True,
+    working_folder_binding_id="binding-7",
+    working_folder_locator_fingerprint="f" * 64,
+    project_instruction_notice_key="notice-key",
+)
+_FOLDER_8 = ProjectInstructionControlState(
+    project_instructions_enabled=True,
+    working_folder_binding_id="binding-8",
+    working_folder_locator_fingerprint="e" * 64,
+    project_instruction_notice_key="notice-key",
+)
+
+
+def _restored_project_state(
+    tmp_path: Path,
+) -> tuple[str, ProjectInstructionControlState]:
+    """Reopen the only saved chat the way a restart does: new connection, new
+    store. Returns its id and the project controls it comes back with."""
+    reopened_db = CharactersRAGDB(tmp_path / "controller.sqlite", client_id="restart")
+    rows = (
+        reopened_db.get_connection()
+        .execute("SELECT id FROM conversations WHERE deleted = 0")
+        .fetchall()
+    )
+    assert len(rows) == 1, rows
+    conversation = reopened_db.get_conversation_by_id(rows[0]["id"])
+    reopened = ConsoleChatStore(
+        persistence=ChatPersistenceService(reopened_db)
+    ).restore_persisted_session(
+        title=str(conversation["title"]),
+        workspace_id=conversation.get("workspace_id"),
+        persisted_conversation_id=rows[0]["id"],
+        all_nodes=(),
+    )
+    return rows[0]["id"], reopened.project_instruction_state
+
+
+class _WriteLockHolder:
+    """A second connection holding the database write lock, as a busy
+    background writer does, so a durable commit waits inside its thread."""
+
+    def __init__(self, db_path: Path) -> None:
+        self._db_path = db_path
+        self._acquired, self._release = threading.Event(), threading.Event()
+        self._thread = threading.Thread(target=self._hold, daemon=True)
+
+    def _hold(self) -> None:
+        connection = sqlite3.connect(self._db_path, timeout=5)
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            self._acquired.set()
+            self._release.wait(timeout=10)
+            connection.commit()
+        finally:
+            connection.close()
+
+    def __enter__(self) -> _WriteLockHolder:
+        self._thread.start()
+        assert self._acquired.wait(timeout=5)
+        return self
+
+    def release(self) -> None:
+        self._release.set()
+        self._thread.join(timeout=5)
+
+    def __exit__(self, *_exc: object) -> None:
+        self.release()
+
+
+async def _until(predicate, *, timeout: float = 10.0) -> bool:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and not predicate():
+        await asyncio.sleep(0.01)
+    return bool(predicate())
+
+
+@private_profile_test
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "chosen", [_FOLDER_7, None], ids=["folder-chosen", "no-folder-chosen"]
+)
+async def test_first_send_saves_project_controls_inside_its_off_loop_commit(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    chosen: ProjectInstructionControlState | None,
+) -> None:
+    """TASK-33621.13 review: the first send saved the project controls with a
+    second write on the event loop once its commit had returned -- an on-loop
+    stall under write-lock contention (TASK-22205 moved the commit itself off
+    the loop for exactly that). They now commit in the durable transaction,
+    on its thread. A chat with no folder chosen reopens as it was (enabled,
+    no folder), the way a promoted chat already does -- not as 'Off'."""
+    db, store, controller, _gateway = _controller(tmp_path)
+    writes: list[tuple[bool, bool]] = []
+    original_write = db.set_conversation_console_project_context
+
+    def recording_write(conversation_id: str, project_context_json: str | None) -> None:
+        writes.append(
+            (
+                db.get_connection().in_transaction,
+                threading.current_thread() is threading.main_thread(),
+            )
+        )
+        original_write(conversation_id, project_context_json)
+
+    monkeypatch.setattr(db, "set_conversation_console_project_context", recording_write)
+    if chosen is not None:
+        store.set_session_project_instruction_state("session-1", chosen)
+    expected = chosen or ProjectInstructionControlState.new_session()
+
+    result = await controller.submit_draft("keep my controls", session_id="session-1")
+
+    assert result.accepted is True
+    # One write, inside the commit's transaction, never on the event loop.
+    assert writes == [(True, False)]
+    conversation_id, restored = _restored_project_state(tmp_path)
+    assert conversation_id == store.sessions()[0].persisted_conversation_id
+    assert restored == expected
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_project_folder_survives_a_first_send_cancelled_during_its_commit(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """TASK-33621.13 review: Ctrl+Q (or closing the tab) while a new chat's
+    first commit waits on a locked database cancels the send, but the commit
+    thread still finishes -- ``to_thread`` survives cancellation. The folder
+    was written only after the await returned, so the chat was saved without
+    it and read 'Off · Project' after a restart."""
+    db, store, controller, gateway = _controller(tmp_path)
+    store.set_session_project_instruction_state("session-1", _FOLDER_7)
+
+    with _WriteLockHolder(tmp_path / "controller.sqlite"):
+        task = asyncio.create_task(
+            controller.submit_draft("cancelled mid-commit", session_id="session-1")
+        )
+        assert await _until(lambda: bool(store._durable_commit_in_flight)), (
+            "the durable commit never started; the cancel would land too early"
+        )
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+    # The lock is released; the orphaned commit thread finishes on its own.
+    # Nothing to wait for after this: the cancel never discards the
+    # reservation here, so the flag clears only once the commit has landed.
+    assert await _until(lambda: not store._durable_commit_in_flight)
+
+    assert gateway.calls == 0
+    _conversation_id, restored = _restored_project_state(tmp_path)
+    assert restored == _FOLDER_7
+
+
+@private_profile_test
+@pytest.mark.asyncio
+async def test_a_folder_rechosen_while_the_first_commit_runs_is_the_one_saved(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
+    """The commit stores the controls it snapshotted when it began. A folder
+    chosen again while that commit waits cannot be written yet -- there is no
+    saved chat to write it to -- so the commit must store the newer choice
+    once it lands, or the chat reopens with the folder the user replaced."""
+    _db, store, controller, _gateway = _controller(tmp_path)
+    store.set_session_project_instruction_state("session-1", _FOLDER_7)
+
+    with _WriteLockHolder(tmp_path / "controller.sqlite") as lock:
+        task = asyncio.create_task(
+            controller.submit_draft("rechosen mid-commit", session_id="session-1")
+        )
+        assert await _until(lambda: bool(store._durable_commit_in_flight))
+        store.set_session_project_instruction_state("session-1", _FOLDER_8)
+        lock.release()
+        result = await asyncio.wait_for(task, timeout=15)
+
+    assert result.accepted is True
+    _conversation_id, restored = _restored_project_state(tmp_path)
+    assert restored == _FOLDER_8
 
 
 @pytest.mark.asyncio

@@ -36,6 +36,7 @@ from textual import work
 from textual.message_pump import active_message_pump
 from textual.worker import Worker, WorkerCancelled, WorkerState
 
+from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
@@ -910,20 +911,14 @@ class LifecycleMixin:
                 for module, function, _line in frames
             )
         )
-        if keep_alive:
-            if site[0].startswith("tldw_chatbook."):
-                where = site[1]
-            elif pump is not None:
-                pump_id = getattr(pump, "id", None)
-                where = type(pump).__name__ + (f"#{pump_id}" if pump_id else "")
-            else:
-                where = site[1] or type(raised).__name__
+        # TASK-33621.13 (GAP4-01): a pump whose loop the error ENDED must not
+        # stay in charge of input: `retire_dead_pump` pops a dead SCREEN (and
+        # above), or refocuses off a dead widget; None (nothing live left) exits.
+        if keep_alive and (kind := retire_dead_pump(self, pump, frames)) is not None:
             try:
                 self.bell()
                 self.notify(
-                    f"Something went wrong in {where} — the screen was kept open. "
-                    "That panel may stop responding or disappear until you "
-                    "reopen it; details are in the log file.",
+                    keep_alive_notice(site, pump, raised, kind),
                     severity="error",
                     timeout=12,
                     markup=False,
