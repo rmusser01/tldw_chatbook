@@ -61,7 +61,7 @@ def selection(source, route, target):
         return selected, installed, False
     if route == "config_data_lock":
         lock_path = profile_paths.lexical_path(
-            profile_paths.default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock"
+            profile_paths.default_base_data_dir().parents[2] / profile_paths.DATA_ROOT_LOCK_NAME
         )
         if target is not None and profile_paths.lexical_path(target) != lock_path:
             raise bootstrap.RecoveryRequired("config_directory_selection_changed")

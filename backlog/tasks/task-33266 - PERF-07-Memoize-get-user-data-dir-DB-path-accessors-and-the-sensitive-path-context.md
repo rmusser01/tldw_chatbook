@@ -64,7 +64,7 @@ Owner decision D2 is recorded in the approved ADR-126 amendment (PR #2911, "D2 c
 
 **Tests.** `Tests/test_user_data_dir_memo_perf07.py` runs 12 private-profile tests: warm reuse, a re-permissioned leaf, a replaced leaf, a group-writable ancestor (refused as before), a config reload, a working-directory change during resolution, a data dir that cannot be stamped (the resolution's own PrivatePathError still surfaces, isolated and end to end through load_settings with a real regular file), an environment override, an override switched while the inputs build, raw-input reuse until the key moves, and a relative database override after a directory change. With the per-call stamp check removed, the three filesystem tests fail; with the raw-input memo hit removed, the reuse test fails.
 
-**Remote worker bundle.** It embeds `sensitive_paths.py`, so it was regenerated. `_raw_inputs` and `_raw_inputs_key` join the laptop-only stub allowlist: it is reached only through `resolve_sensitive_context`, and it fails closed exactly where that function's own `config` import did.
+**Remote worker bundle.** It embeds `sensitive_paths.py`, so it was regenerated. `_raw_inputs_key` (which holds the stubbed `config` import) joins the laptop-only stub allowlist: it is reached only through `resolve_sensitive_context`, and it fails closed exactly where that function's own `config` import did.
 
 **Not covered.** The bound-profile branch (`verified_user_data_directory`) is unchanged; it returns before the memo and was never the lock-and-walk path.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

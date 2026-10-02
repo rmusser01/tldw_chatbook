@@ -9885,7 +9885,7 @@ def _selected_default_base_data_dir() -> Path:
 def _default_data_root_lock() -> Iterator[None]:
     """Serialize root selection and profile creation across starts (ADR-127)."""
     lock_path = validate_path_simple(
-        _default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock",
+        _default_base_data_dir().parents[2] / profile_paths.DATA_ROOT_LOCK_NAME,
         require_exists=False,
         probe_existing=False,
     )
@@ -10096,7 +10096,7 @@ def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
         entries = (
             conventional,
             fallback,
-            conventional.parents[2] / ".tldw_cli-data-root.lock",
+            conventional.parents[2] / profile_paths.DATA_ROOT_LOCK_NAME,
         )
         base = str(conventional)
     key = (_CONFIG_CACHE, _CONFIG_GENERATION, _CONFIG_CACHE_SOURCE, user_folder, base)
