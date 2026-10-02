@@ -3,11 +3,11 @@ id: TASK-33660
 title: >-
   Server audio: STT health and streaming status probes report auth_required on
   401
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-01 23:30'
-updated_date: '2026-10-02 02:27'
+updated_date: '2026-10-02 05:55'
 labels:
   - audio
   - server-parity
@@ -78,4 +78,12 @@ Resolved both original-head Qodo findings: document the streaming-status return/
 Negative control against unchanged current-dev production source: 7 expected AuthenticationError failures and 1 passing API-mapping control. Restoring the PR source: 85 passed in 4.37s across Tests/tldw_api/test_audio_client.py, Tests/Audio_Services/, Tests/tldw_api/test_client_error_classification.py, Tests/RuntimePolicy/test_unsupported_capabilities.py and Tests/tldw_api/test_client_redirect_credential_leak.py. Ruff lint and format, production-source Bandit (zero findings), diff checks and both Backlog guards pass. Independent read-only review found no actionable issues. Existing ADR-178 remains applicable; no new ADR is needed. Hosted review/gates for the forthcoming updated head remain pending, so this task is In Progress until qualification finishes.
 
 Scope limits: no full local suite, paid provider request, real server request, microphone capture, extension setup or native permission workaround. The broader Buddy human-speech/audibility, native-interaction and historical reload-trigger work remains open. Prior UAT receipts retain their original attribution; their server checkout and the main checkouts were not edited.
+
+**2026-10-01 integration qualification:** All hosted checks, including required Derived Artifacts, passed on 092ed65e1c30; matching-head Qodo reported zero bugs, rule violations and cross-repo conflicts, with both review threads resolved. Dev then advanced to ab4df9995954 through the config warm-path change. Rebase completed without conflicts or overlapping PR paths; both reviewed commits are patch-identical by range-diff. The same 85 targeted tests pass on the new base (2.83s); Ruff lint/format, production-source Bandit, diff checks and both Backlog guards pass (4759 tasks). Implementation acceptance criteria are complete and the task is Done. Fresh hosted review and gates must qualify the final integration head before normal merge; prior-head green results do not authorize bypassing those gates. Existing ADR-178 applies. This closes only the Chatbook audio-probe implementation, not broader Buddy UAT.
 <!-- SECTION:NOTES:END -->
+
+## Final Summary
+
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+Both server audio probes return the existing auth_required refusal on HTTP 401, with independent missing/rejected-credential coverage and Settings recovery copy. Existing HTTP authentication mapping, server protection, 403 administrator handling and redirect safety are preserved. PR #2954 carries the implementation; 85 targeted tests pass after current-dev rebase. Broader Buddy UAT remains open.
+<!-- SECTION:FINAL_SUMMARY:END -->
