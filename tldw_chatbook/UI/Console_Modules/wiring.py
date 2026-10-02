@@ -70,6 +70,7 @@ from tldw_chatbook.Constants import (
 )
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
+from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
 from tldw_chatbook.Widgets.Console.console_auto_speak_consent import (
     ConsoleAutoSpeakCoordinator,
 )
@@ -298,6 +299,21 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
         raise
     record_send_stage("ui_submit", "accepted")
     return turn_id
+
+
+async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
+    """TASK-33661: re-send a refused echo through the normal send path."""
+    store = screen._ensure_console_chat_store()
+    visible = screen._console_visible_draft_session_id == store.active_session_id
+    return await resend_refused_echo(
+        echo,
+        store=store,
+        runtime=screen._console_runtime(),
+        composer=screen._console_composer_or_none() if visible else None,
+        dispatch=lambda draft, stash, session_id: screen._dispatch_console_draft_send(
+            draft, stash, session_id=session_id
+        ),
+    )
 
 
 def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> None:
@@ -1933,6 +1949,7 @@ def build_console_controllers(
         prefill_canvas_repair=(
             lambda repair: screen._prefill_console_canvas_repair(repair)
         ),
+        resend_refused_echo=lambda echo: _resend_refused_console_echo(screen, echo),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(

@@ -1620,6 +1620,7 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
             snapshot=lambda: SimpleNamespace(pending=int(live_reason == "review"))
         )
     )
+    runtime.has_custodied_turns = lambda: live_reason == "custody"
     screen._task_resume_state = SimpleNamespace(followed_watchlists_operations=())
     screen._resume_navigation_startup_in_progress = False
     screen._pending_character_return_focus_id = None
@@ -1708,7 +1709,9 @@ def test_idle_reconciled_view_does_not_admit_transcript_poll(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize("live_reason", ("viewed", "other", "wake", "review"))
+@pytest.mark.parametrize(
+    "live_reason", ("viewed", "other", "wake", "review", "custody")
+)
 def test_reconciled_view_keeps_each_live_poll_reason_and_one_timer(
     monkeypatch, live_reason
 ):
