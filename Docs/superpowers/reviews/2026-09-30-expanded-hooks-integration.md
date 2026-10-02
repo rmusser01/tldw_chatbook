@@ -958,3 +958,72 @@ evidence. A new remote run and Qodo review must assess the repaired head.
 Qualification remains targeted Darwin Console/SQLite/subprocess behavior.
 No full-suite, full GUI, real Keychain/OAuth, foreign-host or Windows/Linux
 runtime certification is claimed.
+
+
+## Rebase onto dev 84247cb843 (2026-10-01)
+
+Dev advanced while the repaired `fa988be533` head was qualifying and the PR
+became conflicting. Rebased all 23 branch commits onto
+`84247cb8435fcf59b6d8e2d97c6b2f0913934dd0`. The only conflict was duplicate
+`cached_context_window` documentation in the wake gateway double; retained
+dev's complete docstring and identical implementation. Range comparison shows
+21 identical commits and two changed only by this duplicate/surrounding context;
+the Qodo repair commit replays identically. AST comparison retains dev's provider
+selection/default and resolved-system-prompt builders exactly.
+
+The follow-up changes are test fixtures, not production policy: configuration
+cases retain the existing collection-time private profile; the custody double
+supplies the real coordinator's no-chain binding contract; custody and wake
+assertions compare the complete frozen snapshot with the runtime-owned
+`plugin_turn_id`. Acceptance-worker tests now wait on their real entry event
+with a bounded 30-second hold rather than three-second polling. The mounted
+pending-Stop command uses the existing permitted 60-second timeout so its
+controlled process remains pending through actual tab navigation.
+
+Interrupt remains an optional one-second observation under ADR-163. Tests pin
+exactly one host emission/cancellation, suppression after revocation, settled
+resource ownership and no replay during fresh Send. If the optional command
+cannot execute, only one fixed `event_deadline` or `cancelled` diagnostic is
+accepted; any body that executes must have the exact parent ID and occur once.
+The separate mounted Interrupt execution control still requires an actual
+child-written file. No runtime deadline, budget, authority gate or CI ratchet
+was changed. Existing ADR-162/163/197 and ADR-097 apply; no new ADR is required.
+
+New-base evidence:
+
+- Exact affected boot selection: **22 passed in 132.923s**, no skips,
+  three intentional headroom warnings. Census is **1,031/1,033**;
+  pre-import **557/557** and boot **680/686**, with unchanged limits
+  (`hooks-pr2946-current-dev-boot.xml`).
+- Diagnostic inventory, timestamp sources and all generated CSS reproduce
+  without tracked changes (`hooks-pr2946-current-dev-derived.log`).
+- Complete Console overlap: **201 passed / two failures in 711.588s**,
+  no skips (`hooks-pr2946-current-dev-console-final.xml`). The scheduled
+  wake passes in the isolated 10-case wake/Interrupt run; the remaining wake
+  failure was the stale snapshot-identity assertion, corrected and passing
+  through the actual survivor/provider path in the sequential mounted run.
+- Sequential wake/composer/full teardown: **17 passed / one optional-observer
+  assertion failure in 557.778s**, no skips
+  (`hooks-pr2946-current-dev-ui-sequential.xml`). Actual composer collapse,
+  all three resize variants, mandatory mounted Interrupt execution and all
+  four pending-Stop size/collapse controls pass. The final teardown assertions
+  use the existing best-effort contract as above: **13 passed in 431.771s**, no skips (`hooks-pr2946-current-dev-teardown-final.xml`).
+- All **192 branch Python files** parse; four fixture corrections add no Ruff
+  diagnostics and authored ranges are formatted; whitespace checks pass.
+  Shared inherited formatting is preserved.
+
+Retained earlier aggregate failures are not represented as successful full
+qualification: the first Console attempt was interrupted after 157 recorded
+cases, and the concurrent UI run was interrupted with 22 recorded cases
+(11 passing). Concurrent mounted startup exceeded existing five-second harness
+waits and observer deadlines; the exact composer controls then passed
+sequentially without changing those waits. The isolated wake/Interrupt run
+passes nine of ten cases in 49.510s and produces four actual Interrupt payload
+files; its one stale snapshot assertion is corrected as recorded above.
+
+All applicable remote checks on published repair head `fa988be533` completed
+successfully, including both fast lanes, derived artifacts and UI latency
+(`36948561724`, `36948561739`). Expected skipped platform/signing jobs and
+neutral/skipped code reviews are not runtime/review evidence. Qodo still has
+only its original review of `17c4734241`; fresh checks and review must assess
+the newly rebased head. The platform and scope limits above remain unchanged.

@@ -17484,3 +17484,16 @@ original result when text is unchanged fixed it without relaxing exact evidence
 consumption. The connected approval initializer plus normal MCP/strict hook
 neighbors passed 140 cases. Exercise both persisted Allow and actual Ask/approval
 when verifying result projections across an identity-bound evidence boundary.
+
+
+## Optional Interrupt execution is not a guaranteed mounted callback
+
+**PR #2946, 2026-10-01.** During latest-dev qualification, mounted navigation
+outlived a controlled Stop process's default ten-second timeout, and UI repaint
+exhausted Interrupt's one-second observation window. The run cancelled correctly
+while the optional child marker was absent with a fixed `event_deadline` or
+`cancelled` diagnostic. Keep the controlled process pending within its permitted
+60-second limit, then assert exact host emission, cancellation, resource settlement
+and no later replay. Preserve a separate control requiring real command execution;
+when an optional observer does execute, assert its exact parent and single payload.
+Do not extend production deadlines to make mounted tests guarantee best effort.

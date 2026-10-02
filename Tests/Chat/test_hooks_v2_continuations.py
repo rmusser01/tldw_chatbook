@@ -558,17 +558,13 @@ async def test_human_arrival_while_acceptance_worker_waits(stop_case, interrupti
         if acceptance.continuation_receipt is not None and not once:
             once = True
             entered.set()
-            assert release.wait(5)
+            assert release.wait(30)
         return commit(acceptance)
 
     case.store.commit_durable_turn = held
     _, pending = case.submit()
     try:
-        for _ in range(600):
-            if entered.is_set():
-                break
-            await asyncio.sleep(0.005)
-        assert entered.is_set()
+        assert await asyncio.to_thread(entered.wait, 30)
         if interruption in {"human", "context"}:
             snapshot = case.coordinator.registry.snapshot(case.session.id)
             assert (

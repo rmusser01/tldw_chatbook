@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 00:50'
+updated_date: '2026-10-02 02:03'
 labels:
   - plugins
   - implementation
@@ -48,4 +48,6 @@ Reused reviewed H4 session/child/compaction producers and shared checkpoint/cont
 PR #2946 rebase onto dev 83c2c9810d5d09406c85e1f027541b846ead93aa reuses its exact committed user-parent field and updates two runtime test doubles to the required coordinator binding contract. Admission group: 123 passes and one retained upstream TASK-32873 xfail; mounted composer/fork/Stop integration: 15 passes. New timestamp writes reuse ADR-173 canonical UTC helper; no production admission guard was weakened.
 
 PR #2946 Qodo review: initial context authority collection runs on a worker with the existing operation-owned connection; session/disposal fences are rechecked after the await. Actual accepted Console-turn evidence verifies off-UI-thread collection. Complete lifecycle/continuation group: 80 passes with no skips. No exact-currentness gate was removed. ADR-163 applies; evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture controls retain the collection-time private profile, real coordinator binding, full immutable snapshots plus owned turn attribution and bounded worker entry. All 203 selected Console cases pass across retained/isolated corrected runs; final teardown passes 13 cases in 431.771s with no skips, preserving exact cancellation, revocation, resource settlement and no replay under the existing best-effort observer deadline. Mounted collapse/resize and all four pending-Stop size variants pass; boot 22 passes at census 1031/1033 with unchanged limits. ADR-162/163/197 apply; no new ADR. Exact failed-run dispositions, artifacts and scope limits are in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

@@ -100,16 +100,26 @@ async def test_interrupt_once_after_seal_and_revocation(
     try:
         await asyncio.wait_for(started.wait(), 3)
         authority[0] = not revoked
+        cancellation = controller._active_cancel_events[session.id]
         assert controller.stop_active_run()
         controller.stop_active_run()
-        assert controller._active_cancel_events[session.id].is_set()
+        assert cancellation.is_set()
+        assert controller._interrupt_host._hook_interrupts == {cancellation}
         await runtime.wait_for_turn(turn)
         for _ in range(100):
             if marker.exists():
                 break
             await asyncio.sleep(0.01)
-        assert marker.exists() is (not revoked)
-        if not revoked:
+        # The host emits once; optional command execution keeps its one-second bound.
+        observed = marker.exists()
+        notification_failures = dict(engine.notification_failures)
+        assert not revoked or not observed
+        if not revoked and not observed:
+            assert notification_failures in (
+                {"event_deadline": 1},
+                {"cancelled": 1},
+            )
+        if observed:
             events = [json.loads(line) for line in marker.read_text().splitlines()]
             assert len(events) == 1
             assert events[0]["event"] == "Interrupt"
@@ -126,8 +136,12 @@ async def test_interrupt_once_after_seal_and_revocation(
         followup = runtime.accept_turn(next_request)
         assert (await runtime.wait_for_turn(followup)).accepted
         assert gateway.payloads
-        if not revoked:
+        assert controller._interrupt_host._hook_interrupts == {cancellation}
+        if observed:
             assert len(marker.read_text().splitlines()) == 1
+        else:
+            assert not marker.exists()
+            assert dict(engine.notification_failures) == notification_failures
         if slow and not revoked:
             for _ in range(2):
                 waiter = asyncio.create_task(runtime.close_hooks_v2())
@@ -270,6 +284,8 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
         'print(\'{"version":2,"decision":"pass","continuation":{"message":"late proposal"}}\')',
         name="Stop",
         effects=["continuation"],
+        # Keep the controlled process pending through mounted tab navigation.
+        timeout_seconds=60,
     )
     notifications = tmp_path / "pending-notifications.jsonl"
     observe = (
@@ -287,6 +303,15 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
     )
     original_stream = gateway.stream_chat
     cancellation = []
+    interrupts = []
+    notify = engine.notify_teardown
+
+    def capture_interrupt(event):
+        if event.event == "Interrupt":
+            interrupts.append((event.event, event.turn_id))
+        return notify(event)
+
+    engine.notify_teardown = capture_interrupt
 
     async def capture_cancel(*args, **kwargs):
         cancellation.append(controller._active_cancel_events[session.id])
@@ -372,12 +397,23 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
                 if notifications.exists() and not engine.cleanup_pending:
                     break
                 await pilot.pause(0.02)
-            observed = [
-                json.loads(line) for line in notifications.read_text().splitlines()
-            ]
-            assert [(event["event"], event["turn_id"]) for event in observed] == [
-                ("Interrupt", parent_turn_id)
-            ]
+            assert interrupts == [("Interrupt", parent_turn_id)]
+            # Interrupt observers are best effort within one second. Expiry can
+            # precede dispatch or cancel delivery; emission/cancellation stay exact.
+            notification_failures = dict(engine.notification_failures)
+            observer_ran = notifications.exists()
+            if observer_ran:
+                observed = [
+                    json.loads(line) for line in notifications.read_text().splitlines()
+                ]
+                assert [(event["event"], event["turn_id"]) for event in observed] == [
+                    ("Interrupt", parent_turn_id)
+                ]
+            else:
+                assert notification_failures in (
+                    {"event_deadline": 1},
+                    {"cancelled": 1},
+                )
             assert settlement.hook_cancel_event is None
             assert settlement.pending_stop_task is None
             assert settlement.pending_stop_key is None
@@ -405,7 +441,11 @@ async def test_mounted_stop_button_cancels_pending_stop_proposal(
             assert 2 <= len(gateway.payloads) <= 5
             assert not controller.prompt_queue_coordinator._chains
             assert all(not event.is_set() for event in cancellation[1:])
-            assert len(notifications.read_text().splitlines()) == 1
+            assert interrupts == [("Interrupt", parent_turn_id)]
+            assert dict(engine.notification_failures) == notification_failures
+            assert notifications.exists() is observer_ran
+            if observer_ran:
+                assert len(notifications.read_text().splitlines()) == 1
     finally:
         release.touch()
         await runtime.close_hooks_v2()

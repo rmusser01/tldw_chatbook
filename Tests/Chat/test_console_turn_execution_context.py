@@ -64,6 +64,10 @@ from tldw_chatbook.Workspaces import SkippedReviewRoot
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 
 
+# Runtime/config authority must retain the profile selected during collection.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 class ConsoleChatStore(_ConsoleChatStore):
     """Test store whose intentionally db-less sessions are explicitly ephemeral."""
 
@@ -131,6 +135,10 @@ class _PausedGateway:
 class _CustodyController:
     def __init__(self, *, fail_before_acceptance: bool = False) -> None:
         self.fail_before_acceptance = fail_before_acceptance
+        # This custody double has no prompt chain for the request to update.
+        self.prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda *_args, **_kwargs: None
+        )
         self.calls: list[dict[str, object]] = []
 
     async def run_prompt_chain(self, *, session_id, initial_turn):
@@ -261,7 +269,14 @@ async def test_runtime_custody_transfers_exact_attachments_and_frozen_inputs():
     assert store.pending_attachments(session.id) == []
     await runtime.wait_for_turn(turn_id)
     call = controller.calls[0]
-    assert call["configuration"] is configuration
+    assert call["configuration"] == replace(
+        configuration,
+        skill_context_maximum={
+            **configuration.skill_context_maximum,
+            "plugin_turn_id": request.turn_id,
+        },
+    )
+    assert request.configuration is configuration
     assert call["accepted_attachments"] == (first, second)
     assert call["accepted_attachments"][0] is first
     assert call["staged_evidence_launch"] is launch

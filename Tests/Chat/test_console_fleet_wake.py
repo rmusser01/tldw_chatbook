@@ -40,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import threading
 import time
+from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
@@ -544,7 +545,13 @@ async def test_a_survivor_settle_wakes_the_supervisor_with_a_machine_notice(
             assert len(submit_calls) == 1
             assert submit_calls[0]["draft"] == request.draft
             assert submit_calls[0]["origin"] is ConsoleSubmissionOrigin.AGENT_WAKE
-            assert submit_calls[0]["configuration"] is request.configuration
+            assert submit_calls[0]["configuration"] == replace(
+                request.configuration,
+                skill_context_maximum={
+                    **request.configuration.skill_context_maximum,
+                    "plugin_turn_id": request.turn_id,
+                },
+            )
             authorization = submit_calls[0]["wake_authorization"]
             assert isinstance(authorization, AgentWakeAuthorization)
             assert controller.fleet_wake.authorizes(authorization, session.id)

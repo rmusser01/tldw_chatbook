@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:25'
-updated_date: '2026-10-01 23:07'
+updated_date: '2026-10-02 02:03'
 labels:
   - plugins
   - implementation
@@ -51,4 +51,6 @@ Reason: implements accepted scheduler continuation admission, durable deduplicat
 Implemented bounded Stop scheduling through existing queue/runtime owners, atomic v74 deduplication receipts, inherited budgets, untrusted machine input and fixed Interrupt/SessionEnd observation windows. Preserved actual cancellation and maintenance custody; reused finite worker connection retirement. Final targeted H5 qualification: 105 passed in 453.52s, no warnings/skips; 133 queue/dispatch/maintenance controls passed and 1,000 real turns passed in 465.05s. Additional archive/fleet/log controls: 85 passed, two failures reproduced on frozen pre-H5 production; pre-existing dispatch/Stop fixture failures also recorded without weakening guards. New hooks/tests Ruff+format, parse, whitespace and shared diagnostic comparison pass; exact v74 wheel resource verified. ADR-162/163/063 apply. Evidence and platform limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 
 PR #2946 derived-artifact repair registers the existing continuation table in the SQL identifier allowlist and pins the actual populated conversation DELETE cascade query plan without ANALYZE. Migration/runtime ownership is unchanged; the focused repaired-runtime plus migration group passes 7 cases. Existing ADR-163 applies; exact evidence is in the integration report.
+
+PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture controls retain the collection-time private profile, real coordinator binding, full immutable snapshots plus owned turn attribution and bounded worker entry. All 203 selected Console cases pass across retained/isolated corrected runs; final teardown passes 13 cases in 431.771s with no skips, preserving exact cancellation, revocation, resource settlement and no replay under the existing best-effort observer deadline. Mounted collapse/resize and all four pending-Stop size variants pass; boot 22 passes at census 1031/1033 with unchanged limits. ADR-162/163/197 apply; no new ADR. Exact failed-run dispositions, artifacts and scope limits are in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->
