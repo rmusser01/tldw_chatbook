@@ -456,21 +456,41 @@ The **Console Settings** modal (**Chat settings**) is the one place provider,
 model, and generation settings live. Open it with **Ctrl+O** from anywhere in
 Console, `/settings`, the palette's "Console: Chat settings…", the control
 bar's **Settings** button, or the **Session Settings** action in the
-Inspector. Inside:
+Inspector. It is 150 columns by 22 rows, and the **Model and generation**
+view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
-- A readiness line up top (e.g. "custom is ready. No API key is required.").
-- **Provider and model** — Provider and Model selects, **Custom model** for
-  a name the list doesn't offer, **Discover models** to list what an
-  endpoint serves, and the **Endpoint** field for local/self-hosted servers.
-- **Sampling** (Temperature, Top P, Min P, Top K, Max tokens, Seed, and
-  related knobs), then **Provider-specific**, **Context**, and **Identity**.
-  Each field has the same label as in Settings — for example **Thinking
-  budget**, and **Budget strategy** and **When limit nears** under Context.
-  The modal still shows every sampling field, but a field the selected
-  provider's request does not carry is dropped: for Anthropic, Min P, Seed,
-  Presence penalty and Frequency penalty are accepted without error, never sent, and not
-  written by **Save as model default**. A value saved for such a field earlier
-  stays in `config.toml` untouched.
+- **Model**: the chat's model, its provider and its readiness word (e.g.
+  "model-a · llama.cpp · Ready · not tested").
+- The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
+  and the reasoning or thinking controls the model takes. Controls the
+  provider never uses are hidden, not shown dimmed.
+- Then four closed one-row disclosures: **Sampling** (Top P, Min P, Top K,
+  Seed, Presence penalty, Frequency penalty), **Connection**, **Request
+  estimate** and **Your name in this chat**. **Enter** on a title opens it.
+  **Connection** holds the Provider and Model pickers, the **Endpoint** field,
+  **Test connection & list models**, the paid generation test and the
+  readiness detail. When the chat is not ready (a missing key, an endpoint
+  to set, no model), Chat settings opens with **Connection** already open and
+  the fix focused.
+
+Every field row reads the same way: the label, the value, a word saying
+where the value comes from, and one line of help. The words are the ones
+**Switch model** uses: *edited \** (changed in this open), *this chat*,
+*model default*, *Console Behavior*, *provider* and *built-in*. A blank field
+says what a blank sends: "blank = provider default" (nothing is sent, so the
+provider's own default applies). A blank **Temperature** or **Top P** shows
+its range instead, because Apply needs a value. Labels match Settings, for
+example **Thinking budget**, and **Budget strategy** and **When limit nears**
+under Context. A field the selected provider's request does not carry is
+dropped: for Anthropic, Min P, Seed, Presence penalty and Frequency penalty
+are accepted without error, never sent, and not written by **Save as model
+default**. A value saved for such a field earlier stays in `config.toml`
+untouched.
+
+Focus opens on **Temperature**. **Tab** walks the core fields, the four
+disclosure titles and the footer to **Use for this conversation**, never into
+a closed disclosure; **Shift+Tab** from Temperature reaches the view tabs.
+The **Context and memory** view keeps its taller frame and scrolls.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
   applies to this session only. Save as default also writes provider +
   streaming defaults to config."
@@ -503,9 +523,11 @@ Closing never throws edits away without asking. Left of **Cancel**, the
 footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
 unsaved)" once something is, counting edits in both tabs and any carried in
 from the **Alt+M** popover. Changing a value back to what the chat already
-uses is not an edit. Clearing **Temperature** or **Top P** is one, and so is
-moving **Streaming** between Inherit, On and Off, even to the value Inherit
-already gives; switching model can move it to Inherit, which counts too.
+uses is not an edit. Clearing **Temperature** or **Top P** is one. A chat
+whose **Streaming** follows its default shows the value it inherits and where
+it comes from; picking On or Off pins it for this chat, which counts as an
+edit even when it matches the inherited value. Switching model can return it
+to following its default, which counts too.
 With edits, **Esc**, a click outside the modal, and
 **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**

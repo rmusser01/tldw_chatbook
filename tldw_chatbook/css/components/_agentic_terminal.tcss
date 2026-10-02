@@ -2121,9 +2121,8 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * nothing here applies and base geometry is untouched.
  *
  * Cap ladder by base width: >= 104 -> 170, 84-96 -> 150,
- * <= 80 -> 120; the Conversation settings modal keeps its
- * shipped 196 cap (PR #2670) and the Alt+M model popover its
- * own per-surface tier (PR #2672). Surfaces skipped as
+ * <= 80 -> 120; Chat settings (TASK-33006.1) and the Alt+M
+ * model popover are fixed width tokens instead. Surfaces skipped as
  * tiny-by-design or imperative-geometry (e.g. the session
  * switcher's inline width) are listed in
  * .superpowers/modal-inventory.md, and every ModalScreen
@@ -2142,12 +2141,6 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
  * gap; the skills passphrase dialogs moved to per-class skips
  * (PasswordDialog family, base width 64).
  * ============================================================ */
-
-/* --- cap 196 -- the shipped Conversation settings cap (PR #2670), unchanged --- */
-App.-wide-viewport #console-settings-modal {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
-}
 
 /* --- cap 170 -- base width >= 104 columns --- */
 App.-wide-viewport #console-inspector-modal {

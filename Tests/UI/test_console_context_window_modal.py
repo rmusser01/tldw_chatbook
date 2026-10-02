@@ -3,7 +3,7 @@
 import asyncio
 
 import pytest
-from textual.widgets import Button, Select, Static
+from textual.widgets import Select, Static
 
 from Tests.UI.test_console_session_settings import ModalHarness
 from tldw_chatbook.Chat.console_context_window import ContextWindowResolution
@@ -51,7 +51,8 @@ async def test_full_modal_refreshes_capacity_and_ignores_late_previous_model(fin
         async with app.run_test(size=(160, 48)) as pilot:
             await app.push_screen(modal)
             await asyncio.wait_for(entered.wait(), 2)
-            modal.query_one("#console-settings-streaming", Button).press()
+            # TASK-33006.1: Streaming is an On/Off Select.
+            modal.query_one("#console-settings-streaming", Select).value = "off"
             await pilot.pause()
             assert modal._streaming_draft is False
             modal.query_one("#console-settings-provider", Select).value = "anthropic"

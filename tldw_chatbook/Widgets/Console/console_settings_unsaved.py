@@ -409,7 +409,10 @@ class ConsoleSettingsUnsavedGuardMixin:
             if self._memory_reset_token is not None
             else "compaction running" if self._compaction_is_active() else None
         )
-        hint.update(esc_hint_copy(len(self._unsaved_field_labels()), pending=pending))
+        labels = self._unsaved_field_labels()
+        hint.update(esc_hint_copy(len(labels), pending=pending))
+        # The same edited set marks each Model view row "edited *" (TASK-33006.1).
+        self._sync_field_rows(labels)
 
     async def _perform_safe_cancel(self, *, source: str) -> None:
         """Route Esc, backdrop and Cancel; in the prompt they keep editing."""

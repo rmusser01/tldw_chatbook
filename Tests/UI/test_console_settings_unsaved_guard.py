@@ -221,9 +221,12 @@ async def test_prompt_labels_match_the_labels_the_modal_renders() -> None:
     async with app.run_test(size=(211, 44)) as pilot:
         modal = _modal()
         await _open(app, pilot, modal)
+        # TASK-33006.1: Model view rows label with .console-settings-field-label.
         rendered = {
             str(label.renderable)
-            for label in modal.query(".console-settings-modal-label")
+            for label in modal.query(
+                ".console-settings-modal-label, .console-settings-field-label"
+            )
         }
     assert _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} <= rendered, sorted(
         _BASELINE_LABELS - {_CONTEXT_INVALID_LABEL} - rendered
@@ -323,7 +326,7 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
         # The route a user takes: committing a catalog row.
         modal.query_one(ModelSearchPicker)._commit_catalog_model("model-b")
     elif edit == "streaming":
-        modal.query_one("#console-settings-streaming", Button).press()
+        _flip_streaming(modal)
     for _ in range(4):
         await pilot.pause()
 
@@ -833,18 +836,23 @@ async def test_credential_round_trip_keeps_the_restored_edit_unsaved(
         assert store.session_settings(session.id) == committed
 
 
-async def _cycle_streaming_to_inherit(pilot, modal: ConsoleSettingsModal) -> None:
-    """Press Streaming until the draft says Inherit (no per-chat override)."""
-    for _ in range(3):
-        if modal._streaming_draft is None:
-            break
-        modal.query_one("#console-settings-streaming", Button).press()
-        await pilot.pause()
-    assert modal._streaming_draft is None
+def _flip_streaming(modal: ConsoleSettingsModal) -> None:
+    """Pick the other Streaming choice (TASK-33006.1: an On/Off Select)."""
+    select = modal.query_one("#console-settings-streaming", Select)
+    select.value = "off" if select.value == "on" else "on"
 
 
 def _streaming_label(modal: ConsoleSettingsModal) -> str:
-    return str(modal.query_one("#console-settings-streaming", Button).label)
+    """The choice the Streaming Select shows: always On or Off (R15)."""
+    return {"on": "On", "off": "Off"}[
+        modal.query_one("#console-settings-streaming", Select).value
+    ]
+
+
+def _shows_effective_streaming(modal: ConsoleSettingsModal) -> bool:
+    return _streaming_label(modal) == (
+        "On" if modal._effective_streaming_value() else "Off"
+    )
 
 
 @pytest.mark.asyncio
@@ -855,10 +863,12 @@ async def test_inherit_streaming_survives_the_suspended_draft_round_trip() -> No
     it with ``ValueError``; the reopened modal also coerced it to Off.
     """
     app = _GuardHarness()
-    first = _modal()
+    # TASK-33006.1 rewrite: the On/Off Select cannot pick Inherit, so the
+    # draft arrives at Inherit the way it does in use (a transfer/rebase).
+    first = _inherit_streaming_modal()
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, first)
-        await _cycle_streaming_to_inherit(pilot, first)
+        assert first._streaming_draft is None
         snapshot = first.capture_suspended_draft()
         assert snapshot.raw_values["console-settings-streaming"] is None
         restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
@@ -870,7 +880,7 @@ async def test_inherit_streaming_survives_the_suspended_draft_round_trip() -> No
         modal = _modal(suspended_draft=restored)
         await _open(app, pilot, modal)
         assert modal._streaming_draft is None
-        assert _streaming_label(modal) == "Inherit"
+        assert _shows_effective_streaming(modal)
 
 
 
@@ -986,7 +996,7 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         await pilot.pause()
         # The provider switch alone lands on Inherit (the task's repro).
         assert first._streaming_draft is None
-        assert _streaming_label(first) == "Inherit"
+        assert _shows_effective_streaming(first)
         await pilot.click("#console-settings-configure-credential")
 
         settings = None
@@ -1024,7 +1034,7 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         assert app.is_running
         assert returned._active_provider == "openai"
         assert returned._streaming_draft is None
-        assert _streaming_label(returned) == "Inherit"
+        assert _shows_effective_streaming(returned)
 
 
 @pytest.mark.asyncio
@@ -1125,30 +1135,32 @@ def _inherit_streaming_modal() -> ConsoleSettingsModal:
 
 
 @pytest.mark.parametrize(
-    ("opened_at_inherit", "presses", "unsaved"),
+    ("opened_at_inherit", "picks", "unsaved"),
     [
-        (True, 1, True),  # Inherit -> On, the inherited default On
-        (False, 2, True),  # On -> Off -> Inherit, whose default is On
-        (True, 3, False),  # all the way round, back to Inherit
+        (True, 2, True),  # Inherit -> Off -> On: an explicit On over its default
+        (False, 2, False),  # On -> Off -> On: back to the committed explicit On
     ],
-    ids=["inherit-to-on", "on-to-inherit", "round-trip"],
+    ids=["inherit-to-explicit-on", "explicit-round-trip"],
 )
 @pytest.mark.asyncio
 async def test_streaming_inherit_changes_count_as_edits(
-    opened_at_inherit: bool, presses: int, unsaved: bool
+    opened_at_inherit: bool, picks: int, unsaved: bool
 ) -> None:
     """Qodo #2937: the guard compared the effective bool, so a change between
     Inherit and the value Inherit resolves to closed without asking and lost
-    the override. Inherit is a draft value of its own (TASK-33003.10)."""
+    the override. Inherit is a draft value of its own (TASK-33003.10).
+
+    Rewritten on purpose by TASK-33006.1: Streaming is an On/Off Select
+    (ADR-095:75-81), so Inherit is never picked; the draft keeps it until a
+    pick, and a pick that lands back on the inherited value still pins it."""
     app = _GuardHarness()
     modal = _inherit_streaming_modal() if opened_at_inherit else _modal()
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, modal)
         assert modal._streaming_draft is (None if opened_at_inherit else True)
-        toggle = modal.query_one("#console-settings-streaming", Button)
-        toggle.focus()
-        for _ in range(presses):
-            toggle.press()
+        assert _streaming_label(modal) == "On"
+        for _ in range(picks):
+            _flip_streaming(modal)
             await pilot.pause()
         await pilot.pause()
         # The effective value never moved; only the Inherit/On/Off draft did.

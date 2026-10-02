@@ -285,12 +285,14 @@ async def test_conversation_settings_modal_labels_come_from_the_field_table():
     settings = ConsoleSessionSettings(
         provider="llama_cpp", model="model-a", base_url="http://127.0.0.1:9099"
     )
-    controls = {
+    # TASK-33006.1: Model view field rows label with their own 18-cell
+    # class; Connection and the Context view keep the shared 23-cell one.
+    field_rows = {
         f"console-settings-{suffix}": name
         for suffix, name in _GENERATION_CONTROL_IDS.items()
     }
-    controls |= {
-        "console-settings-streaming": "streaming",
+    field_rows["console-settings-streaming"] = "streaming"
+    controls = {
         "console-settings-base-url": "endpoint",
         "console-context-budget-mode": "conversation_budget_mode",
         "console-context-compaction-mode": "compaction_mode",
@@ -300,6 +302,7 @@ async def test_conversation_settings_modal_labels_come_from_the_field_table():
     async with app.run_test(size=(211, 44)) as pilot:
         await app.push_screen(_basic_modal(settings, app))
         await pilot.pause()
+        assert _label_drift(app.screen, field_rows, "console-settings-field-label") == []
         assert _label_drift(app.screen, controls, "console-settings-modal-label") == []
         assert (
             _select_options(app.screen, "console-context-carry-forward")
