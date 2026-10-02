@@ -567,50 +567,7 @@ class ChunkingInteropService:
             logger.error(f"Error fetching document config: {e}")
             raise ChunkingTemplateError(f"Failed to fetch document config: {str(e)}")
 
-    def set_document_config(self, media_id: int, config: Dict[str, Any]) -> None:
-        """
-        Set chunking configuration for a document.
 
-        Args:
-            media_id: Media document ID
-            config: Configuration dictionary
-        """
-        try:
-            config_json = json.dumps(config)
-
-            with self.media_db.transaction() as conn:
-                conn.execute(
-                    "UPDATE Media SET chunking_config = ? WHERE id = ?",
-                    (config_json, media_id),
-                )
-
-            log_counter("document_chunking_config_set", 1)
-            logger.info(f"Set chunking config for media {media_id}")
-
-        except Exception as e:
-            logger.error(f"Error setting document config: {e}")
-            raise ChunkingTemplateError(f"Failed to set document config: {str(e)}")
-
-    def clear_document_config(self, media_id: int) -> None:
-        """
-        Clear chunking configuration for a document.
-
-        Args:
-            media_id: Media document ID
-        """
-        try:
-            with self.media_db.transaction() as conn:
-                conn.execute(
-                    "UPDATE Media SET chunking_config = NULL WHERE id = ?",
-                    (media_id,),
-                )
-
-            log_counter("document_chunking_config_cleared", 1)
-            logger.info(f"Cleared chunking config for media {media_id}")
-
-        except Exception as e:
-            logger.error(f"Error clearing document config: {e}")
-            raise ChunkingTemplateError(f"Failed to clear document config: {str(e)}")
 
     def get_documents_using_template(self, template_name: str) -> List[Dict[str, Any]]:
         """

@@ -67,17 +67,17 @@ here is the guard, not a schema change.
 - [ ] Evals optimistic locking either works — `expected_version` supplied and
       `AND version = ?` on the UPDATEs, with a conflict test — or the `version`
       columns and their appearance of protection are removed
-- [ ] The chatbook importer goes through the versioned write path: version
+- [x] The chatbook importer goes through the versioned write path: version
       bump, `client_id`, `last_modified` set on every row it touches
-- [ ] `deleted` is never set on an existing row from archive-supplied data; an
+- [x] `deleted` is never set on an existing row from archive-supplied data; an
       imported chatbook cannot mark a user's existing conversation deleted
-- [ ] A guard (trigger or test) fails if a ChaChaNotes UPDATE bypasses
+- [x] A guard (trigger or test) fails if a ChaChaNotes UPDATE bypasses
       versioning, matching the protection Media already has
-- [ ] The two Media UPDATEs are resolved as **wire-or-retire** with the
+- [x] The two Media UPDATEs are resolved as **wire-or-retire** with the
       decision recorded — repaired *and* reachable, or deleted
-- [ ] `Library_Ingest_Jobs_DB` and `RAG_Indexing_DB` enable `foreign_keys`, or
+- [x] `Library_Ingest_Jobs_DB` and `RAG_Indexing_DB` enable `foreign_keys`, or
       a comment records why they deliberately do not
-- [ ] A test fails if a hard `DELETE` of a character card becomes reachable
+- [x] A test fails if a hard `DELETE` of a character card becomes reachable
       from production code, so the cascade cannot be armed unnoticed
 
 ## Implementation Plan
@@ -99,3 +99,13 @@ here is the guard, not a schema change.
 **Remaining for this task:** F8, F9, F6 per the plan above — not started; reserved for the next session on this branch.
 
 ADR required: no (so far) — pragma enablement and a census guard implement existing policy; revisit if F8/F9's wire-or-retire decisions change a storage contract.
+
+## Implementation Notes (update 2026-10-01, second session — F6 and F9 landed; F8 remaining)
+
+**F6 — both unreachable Media UPDATEs RETIRED (decision: retire).** `Client_Media_DB_v2.mark_media_as_processed` (module-level helper) and `ChunkingInteropLibrary.set_document_config`/`clear_document_config` (the two `UPDATE Media SET chunking_config ...` writers) had ZERO callers anywhere in production or tests (verified by repo-wide grep before deletion). Per this task's own framing — "do not repair dead code and leave it dead" — all three were deleted rather than fixed. Verification: `Tests/UI/test_chunking_lab_screen.py` + `Tests/RAG_Admin/test_chunking_lab_service.py` run identically before and after the deletion (13 failed / 5 passed / 26 errors both sides — pre-existing red mass, zero delta). Observed residue, deliberately NOT touched: `get_document_config` (the read side of the same dead seam) is also callerless but was outside the task's named scope.
+
+**F9 — chatbook importer graph patches are now versioned writes.** The two raw UPDATEs in `Chatbooks/chatbook_importer.py` (variant metadata on `messages`, `active_leaf_message_id` on `conversations`) now carry `version = version + 1, last_modified = ?, client_id = ?`, matching the repo's established versioned-write idiom (`ChaChaNotes_DB.py` attachment-append path). New pin test `test_graph_import_patching_is_a_versioned_write` (in `Tests/Chatbooks/test_chatbook_thinking_round_trip.py`) drives the real export->import round trip and asserts version==2, last_modified, and client_id on every graph-patched message row and the conversation row. That suite also gained a `keep_bootstrap_profile` enrollment (admission signature, established precedent) and is now **21/21 passed**; `test_import_transactions.py` shows an identical 3-failed A/B before/after this change (pre-existing). On the `deleted`-from-archive clause: at current dev both UPDATEs bind only ids created inside the import transaction itself (`add_message`/`add_conversation` inserts), so an archive cannot mark a pre-existing user row deleted — held by construction and pinned by the round-trip test's WHERE shapes; the older hazard this task described no longer exists in this code path. Guard scope, recorded honestly: the versioning-bypass guard is test-shaped and scoped to the importer seam, not a repo-wide trigger like Media's — a ChaChaNotes-wide BEFORE UPDATE trigger would currently fail many legitimate writers (e.g. the feedback UPDATE at `ChaChaNotes_DB.py` ~13101 bumps no version); a writer-compliance sweep is the prerequisite and is noted as follow-up material.
+
+**F8 — REMAINING (the only open AC).** Evals optimistic locking is confirmed inert at this base (six `version INTEGER NOT NULL DEFAULT 1` columns; `expected_version` appears zero times; no UPDATE carries `AND version = ?`). The update surfaces are `update_task`, `update_dataset`, `update_run_status`, `update_run`, `update_ab_test_status`, `update_ab_test_results` (`DB/Evals_DB.py`). Recommendation for the next session: for a single-user local benchmark store with no caller able to supply an expected version today, REMOVE the inert columns (with an Evals schema migration) unless a multi-writer surface is found — implementing real locking means threading `expected_version` through every caller of six methods, and optional-but-unused parameters would preserve exactly the false-appearance-of-protection problem this finding names.
+
+**Verification commands (this session).** `pytest Tests/Chatbooks/test_chatbook_thinking_round_trip.py` -> 21 passed; `pytest Tests/UI/test_chunking_lab_screen.py Tests/RAG_Admin/test_chunking_lab_service.py` -> identical pre/post-deletion A/B; `pytest Tests/DB/test_library_ingest_jobs_db.py Tests/DB/test_rag_indexing_db.py Tests/Architecture/test_character_card_hard_delete_census.py` -> 50 passed.

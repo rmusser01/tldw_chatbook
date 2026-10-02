@@ -9396,47 +9396,7 @@ def get_unprocessed_media(db_instance: MediaDatabase) -> List[Dict]:
         raise DatabaseError("Failed get unprocessed media") from e
 
 
-def mark_media_as_processed(db_instance: MediaDatabase, media_id: int):
-    """
-    Marks a media item's vector processing status as complete (`vector_processing = 1`).
 
-    Important: This function ONLY updates the `vector_processing` flag. It DOES NOT
-    update the `last_modified` timestamp, increment the sync `version`, or log a
-    sync event. It's intended for internal state tracking after a potentially long
-    vector processing task, assuming a separate mechanism handles the main media
-    updates and sync logging if content/vectors were added.
-
-    Args:
-        db_instance (MediaDatabase): An initialized Database instance.
-        media_id (int): The ID of the media item to mark as processed.
-
-    Raises:
-        TypeError: If `db_instance` is not a Database object.
-        DatabaseError: For database query errors.
-    """
-    if not isinstance(db_instance, MediaDatabase):
-        raise TypeError("db_instance required.")
-    logger.debug(
-        f"Marking media {media_id} vector_processing=1 on DB '{db_instance.db_path_str}'."
-    )
-    try:
-        cursor = db_instance.execute_query(
-            "UPDATE Media SET vector_processing = 1 WHERE id = ? AND deleted = 0",
-            (media_id,),
-            commit=True,
-        )
-        if cursor.rowcount == 0:
-            logger.warning(
-                f"Attempted mark media {media_id} processed, but not found/deleted."
-            )
-    except (DatabaseError, sqlite3.Error) as e:
-        logger.error(
-            f"Error marking media {media_id} processed '{db_instance.db_path_str}': {e}"
-        )
-        raise DatabaseError(f"Failed mark media {media_id} processed") from e
-
-
-# Ingestion wrappers call instance methods
 def ingest_article_to_db_new(
     db_instance: MediaDatabase,
     *,

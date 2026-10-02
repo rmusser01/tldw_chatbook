@@ -718,3 +718,52 @@ def test_chatbook_v2_invalid_conversation_does_not_block_valid_neighbor(
         assert len(destination.get_conversation_by_name("Valid neighbor")) == 1
     finally:
         destination.close_connection()
+
+
+def test_graph_import_patching_is_a_versioned_write(
+    tmp_path: Path, chachanotes_template_db: Path
+) -> None:
+    """task-19566 F9: the importer's graph-field UPDATEs (variant metadata on
+    messages, active_leaf on conversations) must ride the versioned-write
+    contract -- version bump, last_modified, client_id -- instead of raw
+    UPDATEs that silently desynchronise the rows from the sync log."""
+    source_paths, conversation_id, ids = _source_graph(
+        tmp_path, chachanotes_template_db
+    )
+    archive_path, result = _create_export(tmp_path, source_paths, conversation_id)
+    assert result[0], result[1]
+
+    destination_path = tmp_path / "versioned-destination.db"
+    shutil.copyfile(chachanotes_template_db, destination_path)
+    success, message, status = _import(archive_path, destination_path, tmp_path)
+    assert success, message
+    assert status.failed_items == 0
+
+    destination = CharactersRAGDB(destination_path, "versioned-assert")
+    try:
+        imported_conv = destination.get_conversation_by_name("Thinking graph")[0]["id"]
+        conv_row = destination.execute_query(
+            "SELECT version, last_modified, client_id FROM conversations "
+            "WHERE id = ?",
+            (imported_conv,),
+        ).fetchone()
+        # add_conversation inserted at version 1; the active_leaf graph patch
+        # must have bumped it rather than leaving a stale version counter.
+        assert conv_row["version"] == 2, conv_row
+        assert conv_row["last_modified"] is not None
+        assert conv_row["client_id"]
+
+        msg_rows = destination.execute_query(
+            "SELECT id, version, last_modified, client_id FROM messages "
+            "WHERE conversation_id = ? ORDER BY timestamp",
+            (imported_conv,),
+        ).fetchall()
+        assert len(msg_rows) == 3  # user + base + selected variant
+        for row in msg_rows:
+            # add_message inserted at version 1; the variant-graph patch must
+            # have bumped every row it touched.
+            assert row["version"] == 2, row
+            assert row["last_modified"] is not None
+            assert row["client_id"], row
+    finally:
+        destination.close_connection()

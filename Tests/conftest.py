@@ -1195,6 +1195,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-19566 F9: the chatbook thinking round-trip suite drives the
+            # real importer (which constructs CharactersRAGDB); under the
+            # per-test env redirect the guarded config loader fails closed
+            # with RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs -- same admission signature as the suites above.
+            "test_chatbook_thinking_round_trip.py",
         }
     )
     test_data_dir = (
