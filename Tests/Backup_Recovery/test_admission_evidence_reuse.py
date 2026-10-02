@@ -292,8 +292,8 @@ def test_warm_observation_rechecks_selection_and_cancellation_before_io(
                 pass
         original = storage._Evidence.observe
 
-        def changed(evidence):
-            result = original(evidence)
+        def changed(evidence, *args, **kwargs):
+            result = original(evidence, *args, **kwargs)
             monkeypatch.setattr(storage._Evidence, "observe", original)
             if change == "pause":
                 pauses.append(storage._begin_local_pause())
@@ -631,7 +631,9 @@ def test_an_absence_proved_root_is_never_served_from_evidence(
 
 
 def test_a_failed_recheck_after_counting_closes_the_reused_lease(
-    local_scope, reuse_switch, monkeypatch  # noqa: F811
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
 ):
     """An observation that raises after reuse counted its lease closes the lease,
     as the derivation's own failure path does, so the hold can still drain
@@ -652,7 +654,7 @@ def test_a_failed_recheck_after_counting_closes_the_reused_lease(
             assert _verdict(target)[0] == "allowed"
         held = sum(hold.count for hold in storage._holds.values())
 
-        def unreadable(self):
+        def unreadable(self, *args, **kwargs):
             raise PermissionError("an admitted directory became unreadable")
 
         monkeypatch.setattr(storage._Evidence, "observe", unreadable)
@@ -836,10 +838,10 @@ def test_counted_borrower_retains_predecessors_until_positive_close(
         assert descriptors
         original = storage._Evidence.observe
 
-        def observe(evidence):
+        def observe(evidence, *args, **kwargs):
             blocked.set()
             assert release.wait(5)
-            return original(evidence)
+            return original(evidence, *args, **kwargs)
 
         monkeypatch.setattr(storage._Evidence, "observe", observe)
 
@@ -966,3 +968,407 @@ def test_cold_scope_cannot_continue_a_retired_incumbent(
         assert not target.exists()
     finally:
         startup.close()
+
+
+@pytest.mark.parametrize(
+    "closed_first", [False, True], ids=["left-open", "closed-unknown"]
+)
+@pytest.mark.parametrize(
+    "seam",
+    [
+        "registry.lock",
+        "registry.json",
+        "registry.pending.json",
+        "gate",
+        "lease",
+        "content-file",
+        "content-directory",
+        "fallback-directory",
+        "qualification",
+    ],
+)
+def test_temporary_unknown_close_fences_actual_hold(local_scope, seam, closed_first):  # noqa: F811
+    """Unknown temporary closes must not disappear when the borrower unwinds."""
+    _temporary_close_case(local_scope, seam, closed_first)
+
+
+def _temporary_close_case(local_scope, seam, closed_first, fault="normal"):  # noqa: F811
+    import textwrap
+
+    root, _config, _data, _ = local_scope
+    _in_subprocess(
+        textwrap.dedent("""
+        from pathlib import Path
+        import os, time
+        from Tests import network_guard
+        network_guard.install()
+        import keyring
+        from keyring.backends.null import Keyring
+        keyring.set_keyring(Keyring())
+        from tldw_chatbook.Backup_Recovery import storage_admission as s, bootstrap
+        from tldw_chatbook.Backup_Recovery.admission import Admission, AdmissionTimeout
+        bootstrap.default_bootstrap_root = lambda: Path(values['root'])
+        s._EVIDENCE_SETTLE_NS = 0
+        owner = s.acquire_storage()
+        for _ in range(3):
+            with s.acquire_storage():
+                pass
+        hold = s._holds[owner._key]
+        seam = values['seam']
+        dependent_path = Path(values['root']).parent / 'temporary-close-foreign.txt'
+        dependent_path.write_bytes(b'foreign')
+        original_open, original_close = os.open, os.close
+        selected, calls, custody = [], [], []
+        def opened(path, flags, *args, **kwargs):
+            fd = original_open(path, flags, *args, **kwargs)
+            name = Path(path).name
+            match = name == seam
+            if seam in ('gate', 'lease'):
+                match = name.endswith('.' + seam)
+            if seam == 'content-file':
+                match = name == 'unbound-owner'
+            if seam == 'content-directory':
+                match = name == Path(values['root']).name
+            if seam == 'fallback-directory':
+                match = str(path) == Path(values['root']).anchor
+            if seam == 'qualification':
+                match = name == 'native_qualification.json'
+            if match and not selected:
+                selected.append(fd)
+            return fd
+        def closing(fd):
+            if selected and fd == selected[0]:
+                calls.append(fd)
+                custody.append(any(fd in getattr(r, 'descriptors', ()) for r in hold.resources))
+                if values['closed_first'] == 'yes':
+                    original_close(fd)
+                raise OSError('injected_temporary_close_unknown')
+            original_close(fd)
+        if seam == 'registry.pending.json':
+            intent = Path(values['root']) / 'admission' / seam
+            # Inject after candidate checking, at the real mandatory intent reader.
+            original_read = Admission._read_intent
+            def intent_read(self, parent, *args, **kwargs):
+                intent.write_text('{}')
+                intent.chmod(0o600)
+                return original_read(self, parent, *args, **kwargs)
+            Admission._read_intent = intent_read
+        if seam == 'fallback-directory':
+            hold.predecessor = lambda path: None
+        original_read_bytes, original_stamp = os.read, s._content_stamp
+        if values['fault'] == 'read':
+            def read_bytes(fd, size):
+                if selected and fd == selected[0]:
+                    raise OSError('injected_content_read_failed')
+                return original_read_bytes(fd, size)
+            os.read = read_bytes
+        if values['fault'] == 'validation':
+            def stamp(info):
+                if selected:
+                    raise OSError('injected_content_validation_failed')
+                return original_stamp(info)
+            s._content_stamp = stamp
+        os.open, os.close = opened, closing
+        dependent = False
+        try:
+            if values['fault'] == 'optional':
+                assert s._selector_evidence(Path(values['root']), bootstrap.effective_config_path(), hold.names, None, hold) is None
+            with s.acquire_storage():
+                dependent_path.write_bytes(b'forbidden')
+                dependent = True
+        except bootstrap.RecoveryRequired:
+            pass
+        finally:
+            os.open = original_open
+            os.read, s._content_stamp = original_read_bytes, original_stamp
+        assert selected, 'fault seam not reached'
+        assert not dependent, 'dependent I/O admitted after unknown close'
+        assert dependent_path.read_bytes() == b'foreign'
+        assert custody == [True], 'temporary descriptor had no actual Hold custody'
+        assert hold.error is not None, 'unknown close was swallowed'
+        recycled = original_open('/dev/null', os.O_RDONLY) if values['closed_first'] == 'yes' else None
+        owner.close()
+        if recycled is not None:
+            os.fstat(recycled)
+            original_close(recycled)
+        assert hold in s._retiring_holds and hold.native_context is not None
+        # A frame must never retry the ambiguous numeric fd at last-owner close.
+        assert calls == selected
+        os.close = original_close
+        pause = s._begin_local_pause()
+        assert not pause.drain(time.monotonic())
+        pause.resume()
+        # The retained original lease still excludes native maintenance.
+        if seam == 'registry.pending.json':
+            Admission._read_intent = original_read
+            intent.unlink()
+        try:
+            with Admission.open_existing(Path(values['root']) / 'admission').maintenance(hold.names, .05):
+                raise AssertionError('native exclusion released')
+        except AdmissionTimeout:
+            pass
+    """),
+        root=str(root),
+        seam=seam,
+        closed_first="yes" if closed_first else "no",
+        fault=fault,
+    )
+
+
+def test_candidate_observation_reserves_last_owner_before_using_pins(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    """A cache miss must retain the old native Hold throughout its pin reads."""
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    root, config, data, _ = local_scope
+    reuse_switch(True)
+    owner = storage.acquire_storage()
+    hold = storage._holds[owner._key]
+    selected, release = Event(), Event()
+    original = storage._Evidence.observe
+
+    def observe(entry, *args, **kwargs):
+        selected.set()
+        assert release.wait(5)
+        return original(entry, *args, **kwargs)
+
+    monkeypatch.setattr(storage._Evidence, "observe", observe)
+    try:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                storage._observe_candidates, root, config, data / "x.db", ()
+            )
+            try:
+                assert selected.wait(5)
+                owner.close()
+                assert not hold.stop.is_set(), "unreserved observation lost its pins"
+                assert hold.count == 1
+                assert all(chain.descriptors for chain in hold.predecessors.values())
+            finally:
+                release.set()
+            future.result(timeout=5)
+        assert hold.stop.is_set() and hold.native_context is None
+        assert hold not in storage._retiring_holds
+    finally:
+        release.set()
+        owner.close()
+
+
+def test_transaction_reuses_only_its_already_locked_file_descriptions(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    """One borrower need not reopen locks that its own native frame still holds."""
+    from collections import Counter
+
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    reuse_switch(True)
+    with storage.acquire_storage() as startup:
+        db = CharactersRAGDB(data / "lending.db", "lending-test")
+        try:
+            for _ in range(3):
+                with db.transaction() as cursor:
+                    cursor.execute("SELECT 1").fetchone()
+            hold = storage._holds[startup._key]
+            group = hold.authority._observed_groups[hold.names]
+            keys = {"registry.lock"} | {
+                hold.authority._key(name, kind)
+                for name in group
+                for kind in ("gate", "lease")
+            }
+            opened = Counter()
+            original = os.open
+
+            def counted(path, *args, **kwargs):
+                if Path(path).name in keys:
+                    opened[Path(path).name] += 1
+                return original(path, *args, **kwargs)
+
+            monkeypatch.setattr(os, "open", counted)
+            with db.transaction() as cursor:
+                assert cursor.execute("SELECT 1").fetchone()[0] == 1
+            assert opened == Counter({key: 1 for key in keys})
+        finally:
+            db.close_connection()
+
+
+@pytest.mark.parametrize("closed_first", [False, True])
+@pytest.mark.parametrize("fault", ["read", "validation", "optional"])
+def test_content_error_unknown_close_is_not_optional_ineligibility(
+    local_scope, fault, closed_first  # noqa: F811
+):
+    """Failed content validation cannot hide uncertain retirement as a miss."""
+    _temporary_close_case(local_scope, "content-file", closed_first, fault)
+
+
+def test_borrowed_nonempty_lock_bytes_still_require_current_full_read(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    lock = root / "admission" / "registry.lock"
+    lock.write_bytes(b"original")
+    reuse_switch(True)
+    target = data / "foreign.db"
+    target.write_bytes(b"foreign")
+    with storage.acquire_storage():
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        stamp = storage._content_stamp
+        original = storage._content(lock)
+        identity = original[:2]
+        before = storage._content
+        mutated = []
+
+        def content(path, parent=None, custody=None):
+            if path == lock and not mutated:
+                assert custody is not None and path in custody.borrowed
+                with lock.open("r+b") as stream:
+                    stream.write(b"modified")
+                mutated.append(True)
+            return before(path, parent, custody)
+
+        def equal_stamp(info):
+            current = stamp(info)
+            return (*original[:5], *current[5:]) if current[:2] == identity else current
+
+        monkeypatch.setattr(storage, "_content", content)
+        monkeypatch.setattr(storage, "_content_stamp", equal_stamp)
+        # A mismatch may fully rederive; it must not be a warm cache success.
+        calls = _count_derivations(monkeypatch)
+        with storage.acquire_storage(target):
+            assert target.read_bytes() == b"foreign"
+        assert mutated and calls["permission"] > 0
+
+
+def test_independent_borrow_frames_survive_another_borrowers_read_exception(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    reuse_switch(True)
+    target = data / "independent.db"
+    lock = root / "admission" / "registry.lock"
+    first_ready, release = Event(), Event()
+    observed = {}
+    with storage.acquire_storage() as owner:
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        hold = storage._holds[owner._key]
+        resources = set(hold.resources)
+        original = storage._content
+
+        def content(path, parent=None, custody=None):
+            if path == lock:
+                fd = custody.borrowed[path]
+                if not first_ready.is_set():
+                    observed["first"] = fd
+                    first_ready.set()
+                    assert release.wait(5)
+                    os.fstat(fd)
+                else:
+                    observed["second"] = fd
+                    raise OSError("second borrower read failed")
+            return original(path, parent, custody)
+
+        monkeypatch.setattr(storage, "_content", content)
+
+        def accepted():
+            with storage.acquire_storage(target):
+                target.write_bytes(b"accepted")
+
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(accepted)
+            try:
+                assert first_ready.wait(5)
+                with (
+                    pytest.raises(bootstrap.RecoveryRequired),
+                    storage.acquire_storage(target),
+                ):
+                    target.write_bytes(b"forbidden")
+                assert observed["first"] != observed["second"]
+                os.fstat(observed["first"])
+                with pytest.raises(OSError):
+                    os.fstat(observed["second"])
+            finally:
+                release.set()
+            future.result(timeout=5)
+        assert target.read_bytes() == b"accepted"
+        assert hold.error is None and hold.resources == resources
+
+
+def test_prederivation_observation_cannot_confirm_a_replacement_hold(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    _root, config, data, _ = local_scope
+    reuse_switch(True)
+    owner = storage.acquire_storage()
+    old = storage._holds[owner._key]
+    original = storage._observe_candidates
+
+    def after_last_owner(*args):
+        observed = original(*args)
+        owner.close()
+        return observed
+
+    monkeypatch.setattr(storage, "_observe_candidates", after_last_owner)
+    try:
+        with storage.acquire_storage(data / "new-generation.db") as borrower:
+            current = storage._holds[borrower._key]
+            assert current is not old
+            assert not current.evidence[str(config)].confirmed
+        assert old.native_context is None
+    finally:
+        owner.close()
+
+
+def test_lent_lock_replacement_never_authorizes_detached_description(
+    local_scope,  # noqa: F811
+    reuse_switch,
+    monkeypatch,
+):
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    reuse_switch(True)
+    target = data / "untouched.db"
+    target.write_bytes(b"foreign")
+    lock = root / "admission" / "registry.lock"
+    with storage.acquire_storage():
+        for _ in range(3):
+            with storage.acquire_storage(target):
+                pass
+        original = storage._content
+        replaced = []
+
+        def content(path, parent=None, custody=None):
+            if path == lock and not replaced:
+                assert custody is not None and path in custody.borrowed
+                lock.rename(lock.with_suffix(".detached"))
+                lock.write_bytes(b"")
+                lock.chmod(0o600)
+                replaced.append(True)
+            return original(path, parent, custody)
+
+        monkeypatch.setattr(storage, "_content", content)
+        with pytest.raises(bootstrap.RecoveryRequired), storage.acquire_storage(target):
+            target.write_bytes(b"forbidden")
+        assert replaced and target.read_bytes() == b"foreign"

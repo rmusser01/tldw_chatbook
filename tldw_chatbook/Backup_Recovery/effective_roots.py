@@ -9,13 +9,15 @@ from tldw_chatbook.Utils.platform_files import os
 from .native_files import pinned_directory
 
 
-def effective_roots(roots, entries):
+def effective_roots(roots, entries, *, custody=None):
     """Keep unproved roots strict; redundant absence grants no file authority.
 
     Both arguments come from the same declared namespace set. Serialized roots
     and historical exclusion tokens remain unchanged. Existing aliases retain
     the ordinary resolver's behavior; only genuine no-follow absence is omitted.
     """
+    files = custody if custody is not None else os
+    pin_options = {"custody": custody} if custody is not None else {}
     roots = tuple(dict.fromkeys(Path(root) for root in roots))
     entries = tuple(entries)
     result = []
@@ -38,7 +40,10 @@ def effective_roots(roots, entries):
             if parent not in root.parents or not parents:
                 continue
             try:
-                with pinned_directory(parent) as descriptor, ExitStack() as opened:
+                with (
+                    pinned_directory(parent, **pin_options) as descriptor,
+                    ExitStack() as opened,
+                ):
                     info = os.fstat(descriptor)
                     expected = {
                         "path:" + str(parent),
@@ -57,7 +62,7 @@ def effective_roots(roots, entries):
                         except FileNotFoundError:
                             # The absence comes from the original pinned root,
                             # never a new directory reached by reopening its path.
-                            with pinned_directory(parent) as verified:
+                            with pinned_directory(parent, **pin_options) as verified:
                                 final = os.fstat(verified)
                                 covered = (final.st_dev, final.st_ino) == (
                                     info.st_dev,
@@ -77,12 +82,12 @@ def effective_roots(roots, entries):
                             break
                         if not stat.S_ISDIR(current.st_mode):
                             break
-                        child = os.open(
+                        child = files.open(
                             component,
                             os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
                             dir_fd=cursor,
                         )
-                        opened.callback(os.close, child)
+                        opened.callback(files.close, child)
                         held = os.fstat(child)
                         if (
                             (held.st_dev, held.st_ino)
@@ -105,10 +110,10 @@ def effective_roots(roots, entries):
     return tuple(result)
 
 
-def check_redundant_profiles(registry, profiles):
+def check_redundant_profiles(registry, profiles, *, custody=None):
     """Prove exhaustive fixed-profile co-ownership before global alias omission."""
     roots = {Path(path) for entry in registry.values() for path in entry["roots"]}
-    omitted = roots - set(effective_roots(roots, registry.values()))
+    omitted = roots - set(effective_roots(roots, registry.values(), custody=custody))
     for name, entry in registry.items():
         absent = omitted.intersection(map(Path, entry["roots"]))
         if not absent:
@@ -120,7 +125,7 @@ def check_redundant_profiles(registry, profiles):
             entries = [registry[scope] for scope in profile["namespaces"]]
             declared = {Path(path) for value in entries for path in value["roots"]}
             if sorted(map(str, declared)) != profile["roots"] or absent.intersection(
-                effective_roots(declared, entries)
+                effective_roots(declared, entries, custody=custody)
             ):
                 raise FileNotFoundError("redundant_root_profile_required")
     return omitted

@@ -116,15 +116,17 @@ class Admission:
             return info.st_dev, info.st_ino
 
     @contextmanager
-    def _directory(self, *, predecessor=None) -> Iterator[int]:
-        directory = pinned_directory(self.control_root)
+    def _directory(self, *, predecessor=None, custody=None) -> Iterator[int]:
+        directory = pinned_directory(self.control_root, custody=custody)
         if predecessor is not None:
             try:
                 directory = nullcontext(predecessor.check())
             except OSError:
                 pass  # discard stale reuse; the full current route still checks
         with directory as fd:
-            allowed, reason = _qualified_identity("admission", native_identity(fd))
+            allowed, reason = _qualified_identity(
+                "admission", native_identity(fd, custody=custody), custody=custody
+            )
             if not allowed:
                 raise AdmissionError(reason)
             info = os.fstat(fd)
@@ -188,8 +190,9 @@ class Admission:
                 flush_directory(parent)
 
     @staticmethod
-    def _open(parent: int, name: str, flags: int) -> int:
-        fd = os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+    def _open(parent: int, name: str, flags: int, *, custody=None) -> int:
+        files = custody if custody is not None else os
+        fd = files.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         info = os.fstat(fd)
         if (
             not stat.S_ISREG(info.st_mode)
@@ -197,7 +200,7 @@ class Admission:
             or info.st_uid != os.geteuid()
             or info.st_mode & 0o077
         ):
-            os.close(fd)
+            files.close(fd)
             raise AdmissionError("control_file_unsafe")
         return fd
 
@@ -209,8 +212,15 @@ class Admission:
         mode: int,
         deadline: float | None = None,
         cancel: threading.Event | None = None,
+        *,
+        custody=None,
     ) -> Iterator[int]:
-        fd = self._open(parent, name, os.O_RDWR)
+        fd = self._open(
+            parent,
+            name,
+            os.O_RDWR,
+            **({"custody": custody} if custody is not None else {}),
+        )
         try:
             if deadline is None and cancel is None:
                 # An intentionally retained, uncancellable waiter can sleep in
@@ -226,7 +236,7 @@ class Admission:
                         time.sleep(_LOCK_POLL_INTERVAL_SECONDS)
             yield fd
         finally:
-            os.close(fd)
+            (custody if custody is not None else os).close(fd)
 
     @staticmethod
     def _check(deadline: float | None, cancel: threading.Event | None) -> None:
@@ -246,9 +256,10 @@ class Admission:
             raise ValueError("invalid_admission_timeout")
         return time.monotonic() + timeout
 
-    def _read_intent(self, parent: int) -> _WriteIntent | None:
+    def _read_intent(self, parent: int, *, custody=None) -> _WriteIntent | None:
+        options = {"custody": custody} if custody is not None else {}
         try:
-            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY)
+            fd = self._open(parent, _INTENT_NAME, os.O_RDONLY, **options)
         except FileNotFoundError:
             return None
         try:
@@ -257,9 +268,7 @@ class Admission:
                 raise ValueError("intent_too_large")
             intent = _WriteIntent.model_validate_json(raw)
             states = (
-                (intent.after,)
-                if intent.before is None
-                else (intent.before, intent.after)
+                (intent.after,) if intent.before is None else (intent.before, intent.after)
             )
             if (
                 intent.version != 1
@@ -277,12 +286,15 @@ class Admission:
         except (ValidationError, ValueError):
             raise AdmissionError("registry_publication_recovery_required") from None
         finally:
-            os.close(fd)
+            (custody if custody is not None else os).close(fd)
 
-    def _read(self, parent: int, *, previous=None, observed=None) -> _Registry:
-        if self._read_intent(parent) is not None:
+    def _read(
+        self, parent: int, *, previous=None, observed=None, custody=None
+    ) -> _Registry:
+        options = {"custody": custody} if custody is not None else {}
+        if self._read_intent(parent, **options) is not None:
             raise AdmissionError("registry_publication_recovery_required")
-        fd = self._open(parent, "registry.json", os.O_RDONLY)
+        fd = self._open(parent, "registry.json", os.O_RDONLY, **options)
         try:
             data = os.read(fd, _REGISTRY_LIMIT + 1)
             if len(data) > _REGISTRY_LIMIT:
@@ -300,7 +312,7 @@ class Admission:
         except (ValidationError, ValueError):
             raise AdmissionError("registry_invalid") from None
         finally:
-            os.close(fd)
+            (custody if custody is not None else os).close(fd)
 
     @staticmethod
     @bootstrap.advances_admission_epoch
@@ -376,7 +388,9 @@ class Admission:
     def _key(namespace: str, kind: str) -> str:
         return hashlib.sha256(namespace.encode()).hexdigest() + "." + kind
 
-    def _tokens(self, roots: tuple[Path, ...], *, predecessor=None) -> set[str]:
+    def _tokens(
+        self, roots: tuple[Path, ...], *, predecessor=None, custody=None
+    ) -> set[str]:
         if type(roots) is not tuple or not roots:
             raise ValueError("invalid_roots")
         result = set()
@@ -385,7 +399,7 @@ class Admission:
                 raise AdmissionError("absolute_root_required")
             resolved = root.resolve(strict=True)
             pin = predecessor(resolved.parent) if predecessor is not None else None
-            directory = pinned_directory(resolved.parent)
+            directory = pinned_directory(resolved.parent, custody=custody)
             if pin is not None:
                 try:
                     directory = nullcontext(pin.check())
@@ -421,6 +435,7 @@ class Admission:
         recovery_journal=None,
         *,
         predecessor=None,
+        custody=None,
     ) -> tuple[str, ...]:
         if any(n not in registry.entries for n in names):
             raise AdmissionError("namespace_unregistered")
@@ -431,23 +446,19 @@ class Admission:
             from .bootstrap import _records, effective_roots
 
             declared = {
-                Path(root)
-                for entry in registry.entries.values()
-                for root in entry.roots
+                Path(root) for entry in registry.entries.values() for root in entry.roots
             }
             entries = tuple(entry.model_dump() for entry in registry.entries.values())
-            if declared - set(effective_roots(declared, entries)):
+            if declared - set(effective_roots(declared, entries, custody=custody)):
                 from .effective_roots import check_redundant_profiles
 
                 # Only complete fixed records prove every referencing profile
                 # already owns the independent native directory namespace.
-                _, profiles = _records(self.control_root.parent)
+                _, profiles = _records(self.control_root.parent, custody=custody)
                 omitted = check_redundant_profiles(
-                    {
-                        key: entry.model_dump()
-                        for key, entry in registry.entries.items()
-                    },
+                    {key: entry.model_dump() for key, entry in registry.entries.items()},
                     profiles,
+                    custody=custody,
                 )
         tokens, missing = {}, {}
         for name, entry in registry.entries.items():
@@ -459,7 +470,9 @@ class Admission:
                 if roots or not omitted.intersection(map(Path, entry.roots)):
                     # Malformed empty declarations remain invalid. Only a proved
                     # redundant alias contributes its unchanged history alone.
-                    tokens[name].update(self._tokens(roots, predecessor=predecessor))
+                    tokens[name].update(
+                        self._tokens(roots, predecessor=predecessor, custody=custody)
+                    )
             except FileNotFoundError:
                 if recovery_journal is None:
                     raise
@@ -482,8 +495,7 @@ class Admission:
                 for name in missing[root]:
                     if (
                         root != resolved
-                        and "path:" + str(resolved)
-                        not in registry.entries[name].historical
+                        and "path:" + str(resolved) not in registry.entries[name].historical
                     ):
                         raise AdmissionError("recovery_root_alias_changed")
                     tokens[name].update(recovered)
@@ -817,18 +829,28 @@ class Admission:
         cancel=None,
         descendant=False,
         predecessor=None,
+        custody=None,
     ):
         """Fresh ordinary borrow barrier over an already retained native Hold."""
         names = self._names(namespaces)
         pin = predecessor(self.control_root) if predecessor is not None else None
-        with self._directory(predecessor=pin) as parent, ExitStack() as descriptors:
+        with (
+            self._directory(predecessor=pin, custody=custody) as parent,
+            ExitStack() as descriptors,
+        ):
             registry_fd = descriptors.enter_context(
-                self._lock(parent, "registry.lock", fcntl.LOCK_SH, cancel=cancel)
+                self._lock(
+                    parent, "registry.lock", fcntl.LOCK_SH, cancel=cancel, custody=custody
+                )
             )
             self._observe_lock(parent, "registry.lock", registry_fd)
+            if custody is not None:
+                custody.borrowed[self.control_root / "registry.lock"] = registry_fd
             observed = []
-            registry = self._read(parent, previous=previous, observed=observed)
-            group = self._groups(registry, names, predecessor=predecessor)
+            registry = self._read(
+                parent, previous=previous, observed=observed, custody=custody
+            )
+            group = self._groups(registry, names, predecessor=predecessor, custody=custody)
             if self._observed_groups.get(names) != group or any(
                 registry.entries[name].pending for name in group
             ):
@@ -836,8 +858,10 @@ class Admission:
             for name in group:
                 for kind in ("gate", "lease"):
                     key = self._key(name, kind)
-                    fd = self._open(parent, key, os.O_RDWR)
-                    descriptors.callback(os.close, fd)
+                    fd = self._open(parent, key, os.O_RDWR, custody=custody)
+                    descriptors.callback((custody if custody is not None else os).close, fd)
+                    if custody is not None:
+                        custody.borrowed[self.control_root / key] = fd
                     if kind == "gate":
                         self._observe_gate(parent, name, fd)
                         try:

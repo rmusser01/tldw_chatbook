@@ -13,6 +13,54 @@ from .native_platform import flush_directory, flush_file, rename_noreplace
 from .qualification import _qualified_identity, native_identity, qualified_for
 
 
+class _BorrowFrame:
+    """Temporary descriptors in one counted Hold; unknown closes stay sticky."""
+
+    def __init__(self):
+        self.descriptors = []
+        self.uncertain = set()
+        self.close_error = None
+        self.retired = False
+        self.borrowed = {}
+
+    def open(self, *args, **kwargs):
+        if self.close_error is not None or self.retired:
+            raise OSError("borrow_frame_unavailable")
+        fd = os.open(*args, **kwargs)
+        self.descriptors.append(fd)
+        return fd
+
+    def read_text(self, path):
+        """Keep qualification/mount-reader descriptor retirement in the frame."""
+        fd = self.open(path, os.O_RDONLY)
+        try:
+            with open(fd, closefd=False) as stream:
+                return stream.read()
+        finally:
+            self.close(fd)
+
+    def close(self, fd=None):
+        if fd is None:
+            self.borrowed.clear()
+            if self.close_error is not None:
+                raise OSError("borrow_frame_retirement_uncertain") from self.close_error
+            for current in tuple(reversed(self.descriptors)):
+                self.close(current)
+            self.retired = True
+            return
+        if fd in self.uncertain:
+            raise OSError("borrow_frame_retirement_uncertain") from self.close_error
+        if fd not in self.descriptors:
+            raise OSError("borrow_frame_descriptor_not_owned")
+        try:
+            os.close(fd)
+        except BaseException as error:
+            self.uncertain.add(fd)
+            self.close_error = error
+            raise
+        self.descriptors.remove(fd)
+
+
 class _DirectoryChain:
     """Hold-owned, link-free predecessors; every borrow checks current edges.
 
@@ -82,13 +130,14 @@ class _DirectoryChain:
 
 
 @contextmanager
-def pinned_directory(root: Path) -> Iterator[int]:
+def pinned_directory(root: Path, *, custody=None) -> Iterator[int]:
     """Pin a trusted absolute directory with no symlink components."""
     if not root.is_absolute() or ".." in root.parts:
         raise OSError("absolute_directory_required")
     if not all(hasattr(os, flag) for flag in ("O_NOFOLLOW", "O_DIRECTORY")):
         raise OSError("native_nofollow_unavailable")
-    fd = os.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    files = custody if custody is not None else os
+    fd = files.open(root.anchor, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for component in root.parts[1:]:
             info = os.fstat(fd)
@@ -96,10 +145,10 @@ def pinned_directory(root: Path) -> Iterator[int]:
                 info.st_mode & 0o022 and not info.st_mode & stat.S_ISVTX
             ):
                 raise OSError("unsafe_directory")
-            child = os.open(
+            child = files.open(
                 component, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
             )
-            os.close(fd)
+            files.close(fd)
             fd = child
         info = os.fstat(fd)
         if info.st_uid not in (0, os.geteuid()) or (
@@ -108,7 +157,7 @@ def pinned_directory(root: Path) -> Iterator[int]:
             raise OSError("unsafe_directory")
         yield fd
     finally:
-        os.close(fd)
+        files.close(fd)
 
 
 def create_private_directory(destination: Path) -> None:

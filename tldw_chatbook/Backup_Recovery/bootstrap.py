@@ -73,18 +73,23 @@ def default_bootstrap_root() -> Path:
 
 
 @contextmanager
-def pinned_directory(root: Path, *, _close: Callable[[int], None] | None = None):
+def pinned_directory(
+    root: Path, *, _close: Callable[[int], None] | None = None, custody=None
+):
+    close = custody.close if custody is not None else (_close or _native_close)
+    options = {"_open": custody.open} if custody is not None else {}
     parent, _ = _open_verified_parent(
-        root / ".bootstrap-reader", missing_leaf_allowed=True, _close=_close
+        root / ".bootstrap-reader", missing_leaf_allowed=True, _close=close, **options
     )
     try:
         yield parent
     finally:
-        (_close or _native_close)(parent)
+        close(parent)
 
 
-def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
-    fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD, custody=None) -> dict:
+    files = custody if custody is not None else os
+    fd = files.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
     try:
         info = os.fstat(fd)
         if (
@@ -119,7 +124,7 @@ def _read(parent: int, name: str, *, max_bytes: int = MAX_RECORD) -> dict:
             raise ValueError("record_version")
         return result
     finally:
-        os.close(fd)
+        files.close(fd)
 
 
 def _strings(values: object) -> bool:
@@ -211,7 +216,7 @@ def _same_activation_generation(
 
 
 def _control_records(
-    root: Path, *, activation: bool = True
+    root: Path, *, activation: bool = True, custody=None
 ) -> tuple[list[dict], list[dict], list[dict]]:
     """Read independent fixed evidence; incomplete paired writes remain fenced."""
     try:
@@ -220,7 +225,7 @@ def _control_records(
     except FileNotFoundError:
         return [], [], []
     pending, profiles, activations = [], [], []
-    with pinned_directory(root) as parent:
+    with pinned_directory(root, custody=custody) as parent:
         info = os.fstat(parent)
         if info.st_uid != os.geteuid() or info.st_mode & 0o077:
             raise ValueError("bootstrap_not_private")
@@ -244,7 +249,7 @@ def _control_records(
                     # Fixed activation-only evidence cannot authorize execution
                     # here. Its unavailability must still allow safe inspection.
                     continue
-            record = _read(parent, name)
+            record = _read(parent, name, custody=custody)
             if name.startswith("activation-update-"):
                 # This is explicit write-intent evidence, never a record to skip
                 # or repair on reads. Even a damaged intent requires recovery.
@@ -300,9 +305,9 @@ def _control_records(
     return pending, profiles, activations
 
 
-def _records(root: Path) -> tuple[list[dict], list[dict]]:
+def _records(root: Path, *, custody=None) -> tuple[list[dict], list[dict]]:
     """Read content admission, leaving activation validation to its read gate."""
-    pending, profiles, _ = _control_records(root, activation=False)
+    pending, profiles, _ = _control_records(root, activation=False, custody=custody)
     return pending, profiles
 
 
@@ -369,7 +374,10 @@ def _registry(root: Path) -> dict | None:
 
 
 def effective_roots(
-    roots: Iterable[str | Path], entries: Iterable[Mapping[str, object]]
+    roots: Iterable[str | Path],
+    entries: Iterable[Mapping[str, object]],
+    *,
+    custody=None,
 ) -> tuple[Path, ...]:
     """Defer absent-alias proof until an enrolled root is actually absent.
 
@@ -387,7 +395,7 @@ def effective_roots(
         return roots
     from .effective_roots import effective_roots as prove_absence
 
-    return prove_absence(roots, entries)
+    return prove_absence(roots, entries, custody=custody)
 
 
 def _binding(

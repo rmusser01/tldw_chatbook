@@ -53,12 +53,12 @@ class _StatFS(ctypes.Structure):
     ]
 
 
-def native_identity(fd: int) -> dict[str, str | int]:
+def native_identity(fd: int, *, custody=None) -> dict[str, str | int]:
     """Read current native identity from a pinned directory descriptor."""
     if platform.system() == "Linux":
         from .native_platform import linux_identity
 
-        return linux_identity(fd)
+        return linux_identity(fd, custody=custody)
     if platform.system() == "Windows":
         from ..Utils.windows_files import native_identity as windows_identity
 
@@ -226,10 +226,14 @@ def _platform_contract(identity: Mapping[str, str | int]) -> bool:
 
 
 def _qualified_identity(
-    operation: str, identity: dict[str, str | int]
+    operation: str, identity: dict[str, str | int], *, custody=None
 ) -> tuple[bool, str]:
     try:
-        raw = Path(__file__).with_name("native_qualification.json").read_text()
+        path = Path(__file__).with_name("native_qualification.json")
+        if custody is None:
+            raw = path.read_text()
+        else:
+            raw = custody.read_text(path)
     except OSError:
         return False, "qualification_unavailable"
     try:

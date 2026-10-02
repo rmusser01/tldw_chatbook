@@ -15,7 +15,7 @@ import threading
 import time
 from collections import OrderedDict
 from collections.abc import Iterable
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from pathlib import Path
 
 from tldw_chatbook.Utils.platform_files import os
@@ -557,6 +557,29 @@ class _Hold:
             self.error = error
             self.ready.set()
 
+    @contextmanager
+    def borrow_frame(self):
+        """Give temporary I/O custody before open, under this counted Hold."""
+        from .native_files import _BorrowFrame
+
+        frame = _BorrowFrame()
+        with _lock:
+            if not _hold_serving(self) or self.count <= 0:
+                raise bootstrap.RecoveryRequired("storage_admission_unavailable")
+            self.resources.add(frame)
+        try:
+            yield frame
+        finally:
+            try:
+                frame.close()
+            except BaseException as error:
+                with _lock:
+                    self.error = error
+                    _changed.notify_all()
+                raise
+            with _lock:
+                self.resources.remove(frame)
+
     def predecessor(self, path):
         """Get a bounded retained chain; creation and checks run outside _lock."""
         from .native_files import _DirectoryChain
@@ -879,7 +902,7 @@ def _posture(path: Path) -> tuple | None:
     )
 
 
-def _content(path: Path, parent: int | None = None) -> tuple | None:
+def _content(path: Path, parent: int | None = None, custody=None) -> tuple | None:
     """Current bounded bytes (or directory names), never metadata authority."""
     name = path if parent is None else path.name
     options = {} if parent is None else {"dir_fd": parent}
@@ -892,9 +915,15 @@ def _content(path: Path, parent: int | None = None) -> tuple | None:
         flags |= os.O_DIRECTORY
     elif not stat.S_ISREG(info.st_mode) or info.st_size > bootstrap.MAX_RECORD:
         raise OSError("evidence_content_ineligible")
-    fd = os.open(name, flags, **options)
+    files = custody if custody is not None else os
+    fd = custody.borrowed.get(path) if custody is not None else None
+    borrowed = fd is not None and _content_stamp(os.fstat(fd)) == _content_stamp(info)
+    if not borrowed:
+        fd = files.open(name, flags, **options)
     try:
         held = os.fstat(fd)
+        if borrowed:
+            os.lseek(fd, 0, os.SEEK_SET)
         if stat.S_ISDIR(held.st_mode):
             data = tuple(sorted(os.listdir(fd)))
         else:
@@ -917,7 +946,8 @@ def _content(path: Path, parent: int | None = None) -> tuple | None:
             raise OSError("evidence_content_changed")
         return (*_content_stamp(after), data)
     finally:
-        os.close(fd)
+        if not borrowed:
+            files.close(fd)
 
 
 def _content_stamp(info):
@@ -941,10 +971,11 @@ def _chain(path: Path) -> tuple[Path, ...]:
 class _Evidence:
     """Checked bytes and posture, immutable after publication on a live Hold."""
 
-    __slots__ = ("names", "posture", "content", "epoch", "confirmed", "pins")
+    __slots__ = ("names", "posture", "content", "epoch", "confirmed", "pins", "hold")
 
     def __init__(self, names, posture_paths, content_paths, hold=None):
         self.names = names
+        self.hold = hold
         self.posture = tuple((p, _posture(p)) for p in posture_paths)
         self.pins = {}
         if hold is not None:
@@ -962,7 +993,8 @@ class _Evidence:
                 if pin is None:
                     raise OSError("evidence_predecessor_ineligible")
                 self.pins[directory] = pin
-        self.content = tuple((p, _content(p)) for p in content_paths)
+        with hold.borrow_frame() if hold is not None else nullcontext(None) as frame:
+            self.content = tuple((p, _content(p, None, frame)) for p in content_paths)
         self.epoch = bootstrap._admission_epoch
         self.confirmed = False
 
@@ -978,18 +1010,24 @@ class _Evidence:
             tuple(s for _, s in self.content),
         )
 
-    def observe(self) -> tuple:
-        try:
-            parents = {}
-            for path, chain in self.pins.items():
-                chain.check()
-                parents.update(zip(_chain(path), chain.descriptors))
-        except OSError:
-            return None  # stale pins never authorize; run the complete derivation
-        return (
-            tuple(_posture(p) for p, _ in self.posture),
-            tuple(_content(p, parents.get(p.parent)) for p, _ in self.content),
+    def observe(self, custody=None) -> tuple:
+        context = (
+            self.hold.borrow_frame()
+            if custody is None and self.hold is not None
+            else nullcontext(custody)
         )
+        with context as frame:
+            try:
+                parents = {}
+                for path, chain in self.pins.items():
+                    chain.check()
+                    parents.update(zip(_chain(path), chain.descriptors))
+            except OSError:
+                return None  # stale pins never authorize; run the complete derivation
+            return (
+                tuple(_posture(p) for p, _ in self.posture),
+                tuple(_content(p, parents.get(p.parent), frame) for p, _ in self.content),
+            )
 
     def candidate(self) -> bool:
         """Cheap rejection only; success still requires locked full-byte reads."""
@@ -1161,16 +1199,20 @@ def _reuse_evidence(
         if not evidence.candidate() or any(not entry.candidate() for entry in per_path):
             token.close()
             return None
-        with hold.authority._current_hold(
-            hold.names,
-            previous=previous_registry,
-            cancel=attempt.cancel,
-            descendant=attempt.operation is not None,
-            predecessor=hold.predecessor,
-        ) as registry:
+        with (
+            hold.borrow_frame() as frame,
+            hold.authority._current_hold(
+                hold.names,
+                previous=previous_registry,
+                cancel=attempt.cancel,
+                descendant=attempt.operation is not None,
+                custody=frame,
+                predecessor=hold.predecessor,
+            ) as registry,
+        ):
             unchanged = (
-                evidence.observe() == evidence.stamps()
-                and all(entry.observe() == entry.stamps() for entry in per_path)
+                evidence.observe(frame) == evidence.stamps()
+                and all(entry.observe(frame) == entry.stamps() for entry in per_path)
                 and evidence.epoch == bootstrap._admission_epoch
             )
         if attempt.operation is not None:
@@ -1200,29 +1242,35 @@ def _reuse_evidence(
 
 
 def _observe_candidates(root, selector, path, related_paths):
-    """Before a derivation, re-observe the evidence it may confirm."""
+    """Reserve the actual generation before observing its retained pins."""
     key = (os.getpid(), str(root))
     epoch = bootstrap._admission_epoch
     with _lock:
         hold = _holds.get(key)
-        if hold is None:
-            return epoch, {}
+        if not _hold_serving(hold):
+            return epoch, None, {}
+        hold.count += 1
+        token = StorageLease(key)
         wanted = {str(selector): hold.evidence.get(str(selector))}
         for item in _selected_paths(path, related_paths):
             wanted[(str(selector), str(item))] = hold.path_evidence.get(
                 (str(selector), str(item))
             )
-    now = time.time_ns()
-    return epoch, {
-        name: (entry, entry.observe(), now)
-        for name, entry in wanted.items()
-        if entry is not None
-    }
+    try:
+        now = time.time_ns()
+        observations = {
+            name: (entry, entry.observe(), now)
+            for name, entry in wanted.items()
+            if entry is not None
+        }
+        return epoch, hold, observations
+    finally:
+        token.close()
 
 
 def _note_evidence(hold, root, selector, path, related_paths, names, roots, before):
     """Publish post-derivation stamps; confirm them if they bracket the derivation."""
-    epoch_before, observations = before
+    epoch_before, observed_hold, observations = before
     fresh = {str(selector): _selector_evidence(root, selector, names, roots, hold)}
     if names != (UNBOUND_NAMESPACE,):
         for item in _selected_paths(path, related_paths):
@@ -1253,7 +1301,10 @@ def _note_evidence(hold, root, selector, path, related_paths, names, roots, befo
             # the same inputs: observed before it, and observed again after.
             previous, observed, observed_at = observations.get(name, (None, None, 0))
             entry.confirmed = (
-                bootstrap._admission_epoch == epoch_before == entry.epoch
+                observed_hold is hold
+                and _hold_serving(hold)
+                and current is previous
+                and bootstrap._admission_epoch == epoch_before == entry.epoch
                 and previous is not None
                 and previous.names == entry.names
                 and previous.dependencies() == entry.dependencies()
@@ -1382,6 +1433,13 @@ def _acquire_storage(
     def check():
         for selected in (path, *related_paths):
             attempt.check(selected)
+        with _lock:
+            key = (os.getpid(), str(root))
+            incumbent = _holds.get(key)
+            if (incumbent is not None and incumbent.error is not None) or any(
+                retiring.key == key for retiring in _retiring_holds
+            ):
+                raise bootstrap.RecoveryRequired("storage_admission_unavailable")
 
     if attempt.operation is not None:
         for selected in (path, *related_paths):
@@ -1483,10 +1541,14 @@ def _acquire_storage(
             authority=authority,
             related_paths=related_paths,
         )
-        with hold.authority._current_hold(
-            hold.names,
-            cancel=attempt.cancel,
-            descendant=attempt.operation is not None,
+        with (
+            hold.borrow_frame() as frame,
+            hold.authority._current_hold(
+                hold.names,
+                cancel=attempt.cancel,
+                descendant=attempt.operation is not None,
+                custody=frame,
+            ),
         ):
             pass
         selection = _execution_selection_for(path)

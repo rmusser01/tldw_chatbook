@@ -49,10 +49,11 @@ def rename_noreplace(
         raise OSError(code, "native_publication_failed")
 
 
-def _linux_mount_type(fd: int) -> str:
+def _linux_mount_type(fd: int, *, custody=None) -> str:
     """Resolve the pinned mount; detached or incomplete mount records fail closed."""
+    read_text = Path.read_text if custody is None else custody.read_text
     try:
-        descriptor = Path(f"/proc/self/fdinfo/{fd}").read_text()
+        descriptor = read_text(Path(f"/proc/self/fdinfo/{fd}"))
         mount_id = next(
             line.split()[1]
             for line in descriptor.splitlines()
@@ -60,7 +61,7 @@ def _linux_mount_type(fd: int) -> str:
         )
         mount = next(
             line
-            for line in Path("/proc/self/mountinfo").read_text().splitlines()
+            for line in read_text(Path("/proc/self/mountinfo")).splitlines()
             if line.split()[0] == mount_id
         )
         return mount.split(" - ", 1)[1].split()[0]
@@ -68,7 +69,7 @@ def _linux_mount_type(fd: int) -> str:
         raise OSError("native_mount_identity_unavailable") from error
 
 
-def linux_identity(fd: int) -> dict[str, str | int]:
+def linux_identity(fd: int, *, custody=None) -> dict[str, str | int]:
     """Read filesystem type from fstatfs and flags from the pinned descriptor."""
     libc = ctypes.CDLL(None, use_errno=True)
     if not hasattr(libc, "renameat2"):
@@ -83,7 +84,7 @@ def linux_identity(fd: int) -> dict[str, str | int]:
         raise OSError(ctypes.get_errno(), "native_identity_unavailable")
     # ext2/ext3/ext4 share f_type. Bind the mount-table type to this descriptor's
     # mount ID instead of labelling every EXT superblock as ext4.
-    filesystem = _linux_mount_type(fd)
+    filesystem = _linux_mount_type(fd, custody=custody)
     expected = {"ext4": 0xEF53, "xfs": 0x58465342, "btrfs": 0x9123683E}
     if expected.get(filesystem) != data[0] & 0xFFFFFFFF:
         filesystem = "unsupported"
