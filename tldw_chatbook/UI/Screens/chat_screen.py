@@ -18738,7 +18738,12 @@ class ChatScreen(BaseAppScreen):
             controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             or controller.in_flight_run_count() > 0
             or self._console_runtime().has_custodied_turns()
-            or wake_delivering or review_pending
+            or wake_delivering
+            or review_pending
+            or any(
+                worker.group.startswith("console-run-") and not worker.is_finished
+                for worker in getattr(self, "workers", ())
+            )
         )
 
     def _start_console_transcript_sync_timer(self) -> None:

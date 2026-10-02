@@ -10119,7 +10119,13 @@ class ConsoleChatController:
         return result
 
     async def _prepare_submission_hooks(
-        self, session, configuration, origin, queue_authorization=None
+        self,
+        session,
+        configuration,
+        origin,
+        queue_authorization=None,
+        *,
+        recovery=False,
     ) -> ConsoleSubmitResult | None:
         """Reuse the owning submission's provisional hook scope and reservation."""
         session_id = session.id
@@ -10130,12 +10136,11 @@ class ConsoleChatController:
             if (
                 origin is ConsoleSubmissionOrigin.QUEUED
                 and self.prompt_queue_coordinator.reuses_claimed_slot(
-                    queue_authorization, session_id
+                    queue_authorization, session_id, recovery=recovery
                 )
             ):
-                # The queue holds this slot across terminal settlement. Its
-                # claimed next turn must reuse that reservation, not compete
-                # with itself during H4 provisional initialization.
+                # Claimed turns and authorized recovery reuse the queue's
+                # held capacity instead of competing with themselves.
                 busy = [identity for identity in busy if identity != session_id]
             if session_id in busy or len(busy) >= self.max_parallel_runs:
                 return ConsoleSubmitResult(False, False, "A run is already preparing.")

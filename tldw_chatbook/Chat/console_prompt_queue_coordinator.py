@@ -629,17 +629,27 @@ class ConsolePromptQueueCoordinator:
         )
 
     def reuses_claimed_slot(
-        self, authorization: QueueGenerationAuthorization | None, session_id: str
+        self,
+        authorization: QueueGenerationAuthorization | None,
+        session_id: str,
+        *,
+        recovery: bool = False,
     ) -> bool:
-        """Only a real current claim can reuse the queue's held capacity."""
+        """Reuse held capacity only for a current claim or explicit recovery."""
         chain = self._chains.get(session_id)
         snapshot = self.registry.snapshot(session_id)
         return bool(
             self.authorizes(authorization, session_id)
-            and authorization.entry_id is not None
             and chain.current_entry_id == authorization.entry_id
+            and (
+                (authorization.entry_id is not None and snapshot.claimed_count == 1)
+                or (
+                    recovery
+                    and authorization.entry_id is None
+                    and snapshot.claimed_count == 0
+                )
+            )
             and not chain.accepted_live_turn
-            and snapshot.claimed_count == 1
             and snapshot.reservation is PromptQueueReservation.HELD
             and self._run_status(session_id) in self._TERMINAL
             and session_id not in self._dispatch_recoveries

@@ -225,3 +225,18 @@ Reason: restore accepted authority/lifecycle admission and defer existing module
 - [ ] Implement and qualify the two existing task plans with retained RED/GREEN and focused independent immutable review.
 - [ ] Preserve incoming TASK-33662 and earlier TASK-33648 as separate limits; preserve upstream documented TASK-33621.28 Done without claiming new real-app Ctrl+Q verification.
 - [ ] Record all static/startup/artifact evidence and exact reviewed bytes; close both tasks via CLI, publish with exact observed 003a7bc lease and require fresh Qodo and all four jobs.
+
+
+### Remaining verified replay integration regressions
+
+Immutable c9a09 shares normal hook lifecycle with replay, but independent real runtime/SQLite queued Retry is RED: its entry-less recovery token rejects its own reacquired HELD reservation before initialization. Preserve every coordinator currentness, terminal, claim-count, accepted-live-turn and global-cap boundary; let only explicitly requested authorized recovery reuse its existing slot. The existing claimed-next-turn path remains the default.
+
+An actual mounted private-profile Resend probe is RED: a held initial hook admission read leaves no run status/task/custody yet, so the real timer self-stops despite the existing console-resend worker. Reuse unfinished console-run worker liveness in the common poll predicate, covering Retry/Continue as well, without another owner or fabricated run state.
+
+ADR required: no
+ADR path: backlog/decisions/098-visible-bounded-console-prompt-queue.md; backlog/decisions/163-expanded-console-hook-runtime.md; existing ADR-126/197/199 apply.
+Reason: restore accepted queue capacity and presentation lifetime contracts; task33663 criteria and plan updated before source.
+
+- [ ] Retain both real probes as durable targeted RED regressions before the narrow shared predicate fixes.
+- [ ] Qualify queued scheduled hook behavior and mounted incremental publication, neighboring authority/capacity/idle controls and immutable independent reviews.
+- [ ] Run original performance/static/artifact guards after reviewers finish; retain all non-green evidence and qualify final bytes before task closure/publication.
