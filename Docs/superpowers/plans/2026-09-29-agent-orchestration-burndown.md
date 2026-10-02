@@ -274,3 +274,16 @@ Reason: reuse existing readiness and activity refusal owners at text-generation 
 ### Final Resend/readiness source closure
 
 Independent runtime and UI reviews approve immutable2cfbb01c76ab174cb3963a75dd75a1d5e66cb88f. Final original tested/untested storage, import, UI-ready and boot-CSS selection passes5cases85.975s, with681/686imports and1033/1033UI-ready and unchanged incoming performance sources. Final94-file fatal/added-line and ten-new-file Ruff/format, worker/diagnostic/index/UI/timestamp/CSS checks pass. Task33663/64 criteria and notes close through CLI; documentation closure preserves the exact reviewed source manifest. The final review records all positive and non-green evidence, scratch fixture adaptations and separate limits. Fresh publication, Qodo/all four jobs and protected merge remain. ADR required:no new ADR; existing ADR012/033/097/098/126/163/197/199 apply.
+
+
+### Required final deferred-import upstream composition
+
+Immediately before publication, live dev advances from185c toef8fd5d38a512be299af17b1e0d5b367a352a5d6 (PR2962/e45c2132b7), supplying the same three Resend deferred imports and module-owned test mock plus a new boot-source lesson. Original003 jobs remain completed; strict up-to-date protection requires this preserving update. Source2cf and five original budget passes85.975s remain recorded qualification on185, not certification of the new base. Task33664 AC3 is reopened before composition. Existing guard subprocesses explicitly set PYTHONPATH to REPO_ROOT, so the new editable-install lesson does not invalidate those measured results.
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR199 unchanged.
+Reason: preserve incoming PR2962 implementation of the same accepted lazy-import repair; no new owner, authority, dependency, schema or ceiling.
+1. Preserve qualified2cf source and all passing/non-green evidence. Read exact incoming ef8/e45 diff, task33661 post-merge notes and testing lesson before preserving rebase.
+2. Retain incoming three deferred imports, legitimate module mock seam and complete new lesson, composing our shared hook/readiness/queue/publication repairs without broad source replacement. Compare all source bytes and exact changed methods.
+3. Qualify affected actual Resend/slow-preflight/readiness/media consumers and unchanged original budgets proportionately; obtain focused immutable review. Current budget subprocesses already force PYTHONPATH to their exact REPO_ROOT and are unchanged.
+4. Record exact source and evidence; recheck AC3 and close through CLI, then publish once observed003 lease with fresh-head Qodo/four jobs and normal protected merge.
