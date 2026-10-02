@@ -1,6 +1,7 @@
 # ADR-085: Console activity receipts and session-switcher ownership
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-23
 Related Task: [TASK-21351](../tasks/task-21351%20-%20Add-activity-views-to-CtrlK-session-switcher.md)
 Related Spec: [Console session-switcher activity views design](../../Docs/superpowers/specs/2026-08-23-console-session-switcher-activity-views-design.md)

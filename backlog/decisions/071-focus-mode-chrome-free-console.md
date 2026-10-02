@@ -1,6 +1,7 @@
 # ADR-071: Focus mode — chrome-free Console presentation
 
 Status: Proposed
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-16
 Related Task: [TASK-18812](../tasks/task-18812%20-%20Focus-mode-chrome-free-Console-presentation.md)
 Related Spec: [Focus Mode — Design](../../Docs/superpowers/specs/2026-08-16-focus-mode-design.md)

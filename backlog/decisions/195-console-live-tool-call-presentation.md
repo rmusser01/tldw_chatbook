@@ -1,6 +1,7 @@
 # ADR-195: Console live tool-call presentation
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-09-27
 Related Task: TASK-33095
 Related: ADR-078, ADR-080, ADR-029, ADR-150

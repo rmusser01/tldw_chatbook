@@ -3,10 +3,9 @@
 Every Console region restates facts that another region owns, so the active chat's title appears up to six times, provider and model three or four times, and the chrome takes half of an 80x24 screen. This ADR gives each region one job: the header shows authority, the tab strip shows identity, the Chats rail finds chats, Inspect explains what Enter sends and what the run is doing, the status strip shows this tab's state and cost, and the composer owns the run. It names one new home for every control it moves and ships in nine steps, none of which removes a control before its new home exists.
 
 Date: 2026-09-29
-Status: Proposed — all five open questions answered by the owner (2026-09-30, 2026-10-01); acceptance pending (drafted from the 2026-09-29 Console UX review)
+Status: Accepted 2026-10-01 (all five open questions answered by the owner on 2026-09-30 and 2026-10-01; drafted from the 2026-09-29 Console UX review)
 Task: [TASK-33627](../tasks/task-33627%20-%20Console-unification-give-each-screen-region-one-job-per-the-region-ownership-ADR.md)
 Evidence: [Console UX review 2026-09-29](../../qa/console-ux-review-2026-09-29/report.md), theme 8 "Regions have no single job"; ledger ids G2-36, G2-17, G2-15, G2-13, G2-14, G2-19, G2-18, G4-55, G4-36, G2-34, G2-35, G2-26, G2-28, G2-29, GAP5-08, G2-12, G2-11, G2-30, G2-41, G4-42, GAP5-22, GAP4-13, GAP4-03, GAP4-18
-Links: the Task and Evidence links resolve once PR #2926 merges. That PR adds the task file, the review report and its ledger.
 Depends on: TASK-33620 (one run truth), TASK-33622 (input ownership), TASK-33623 (action registry and glossary), TASK-33624 (attention and glyph registry), TASK-33625 (width priority, including TASK-33625.1 Stop and TASK-33625.2 Deny), TASK-33626.1 (speech-control state words and consent)
 
 Supersedes in part:
@@ -677,9 +676,9 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 - puts new code in `UI/Console_Modules/`, without raising the screen-size ratchet.
 
 0. **Accept and measure.** No visible change.
-   - The owner accepts the ADR. (All five open questions were answered on 2026-09-30 and 2026-10-01.)
+   - The owner accepted the ADR on 2026-10-01, after answering all five open questions.
    - Add the fact-placement census and never-clip sweep as report-only tests, recording today's baseline.
-   - Mark ADR-017 and ADR-083 "Superseded in part by ADR-210", and the amended ADRs "Amended by ADR-210".
+   - Done with acceptance: ADR-017 and ADR-083 carry "Superseded in part by ADR-210", and each amended ADR carries "Amended by ADR-210".
 1. **The composer owns the run control.** Needs TASK-33620, TASK-33625.1 and TASK-33626.1.
    - Add the consequence line, including `Preparing…` and `Queue full`; drop "Send disabled" and the `| $` suffix.
    - Add `■ Stop ▾` with Redirect and Stop all sub-agents.

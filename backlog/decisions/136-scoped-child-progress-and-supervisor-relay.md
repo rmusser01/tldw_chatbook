@@ -1,6 +1,7 @@
 # ADR-136: Scoped child progress and supervisor relay
 
 Status: Accepted; relay-first implementation and Console inspection reviewed and complete in the working tree
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-09-08
 Review: [Pre-implementation review, 2026-09-09](../../Docs/superpowers/reviews/2026-09-09-scoped-agent-messaging-review.md)
 Task: [TASK-32022](../tasks/task-32022%20-%20Design-scoped-bidirectional-agent-messaging.md)
