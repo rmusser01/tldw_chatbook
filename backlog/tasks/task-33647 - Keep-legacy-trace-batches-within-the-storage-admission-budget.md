@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 15:14'
-updated_date: '2026-10-02 15:26'
+updated_date: '2026-10-02 15:38'
 labels:
   - ci
   - performance
@@ -35,7 +35,7 @@ The read-only completion precheck introduced for parked trace maintenance adds a
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-CI on published 68646eeeaa failed trace maintenance at 17 admissions across eight callbacks (2.125 > ceiling 2). The real fresh file-backed regression fails before the repair at three admissions versus two. The first local whole census was red but its default child log was lost during shared pytest cleanup; a separate task-private census passes before the repair, so no deterministic whole-census red claim is made. After the repair, the cold/idle callback regression and 12 targeted maintenance cases pass in 12.08s; the unchanged full storage-unit ratchet passes in 34.33s. Keep all ceilings and measured work unchanged. Independent review, startup/schema and diagnostic checks pending.
-
 Reuse the existing core repository operation for the legacy completion probe and normalization fallback. The read-only idle transaction and immediate write rechecks stay separate; provider-active refusal occurs before admission, and run_owned_db_call and physical GC are unchanged. The real file-backed regression processes a cold legacy row, enforces a nonzero upper admission budget of two, then checks completed idle work and zero registered worker handles. Before the repair it fails at three admissions; the final predicate passes in 3.11s. The unchanged Console storage-unit guard passes in 34.33s (trace 1.875 admissions per tick; all original ceilings, phases and canaries preserved). Twelve affected maintenance cases pass in 12.08s, and eight independent refusal/rollback/read-only/parked-wake/borrowed/in-flight cleanup cases pass across 8.67s and 2.29s. Independent source review approves. Three startup/exact-schema guards pass in 22.60s, imports 679/686 and UI-ready 1032/1033. Final changed-code static checks cover 81 Python files, ten new-file Ruff/format checks pass, owned formatting and whitespace pass, and the audited diagnostic inventory remains unchanged. ADR required: no new ADR; existing backlog/decisions/126-complete-local-backup-and-recovery.md. Modified production scope, one existing test module, qualification records and testing lesson. The whole census can pass before the repair; the controlled cold-worker test is the red proof. CI failed at 17/8 on published 68646eeeaa; fresh published-head remote checks remain required. No full suite, live provider, Windows, aggregate-resource or merge result.
+
+Preserving rebase onto dev eba4305d8389a2112c99ac19fa804e9abea394ba retains the reviewed production/test bytes. Nine targeted Delete/Undo persistence/Save/native-close/cold-admission cases pass in 26.72s; unchanged storage/startup/CSS guards pass four cases in 56.00s; independent mounted Delete/Undo and accepted completion nonreplay pass two cases in 11.62s. The 81-file static scan, ten new-file Ruff/format checks, whitespace and generated bundles pass. Incoming diagnostic inventory verifies 632 owners and 15 sinks. No new ADR; existing ADR-126 and ADR-199 apply. Published 68646eeeaa has three passing CI jobs and the repaired latency failure; its Qodo summary resolves all four findings. Fresh publication and all current-head remote gates remain before merge.
 <!-- SECTION:NOTES:END -->
