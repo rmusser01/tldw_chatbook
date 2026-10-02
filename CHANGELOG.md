@@ -41,7 +41,8 @@ case-sensitivity fix from `main`.
   conversation creation, and subagent workflows.
 - Shared connection-readiness evidence across Console, Settings, and model
   selectors, with consistent verified, untested, and refused states.
-- Reduced synchronous startup, logging, configuration, and screen lifecycle work.
+- Reduced synchronous startup, logging, configuration, and screen lifecycle work,
+  including repeated data-directory and sensitive-path input discovery.
 - Continues the app-only release scope: ordinary speech recording remains
   available; experimental duplex voice stays disabled pending qualification.
 - Agent `fs_read`, `fs_write`, `fs_edit` and `fs_patch` results now end with

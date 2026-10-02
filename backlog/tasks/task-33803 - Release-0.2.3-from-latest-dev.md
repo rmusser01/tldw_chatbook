@@ -124,3 +124,16 @@ an inherited extra blank line at the task file's end. No new feature or
 changelog scope change. Bounded review found no blockers. All 75 Resend
 checks and 119 release/native-boundary/digest/UI-ready checks passed;
 the unchanged first-paint budget remains 1033/1033. Required CI is refreshed.
+
+### Fourth latest-dev refresh
+
+Preparation c29e028b387f6c66ba2d766c4a4e05f8cb478996 passed all three
+required jobs in run 37068668711 (PR/UI fast lanes and derived contracts).
+The protected merge refused because dev advanced during the final check to
+ecc0a531c855bc9e80906bff90180fd2045f7159 (#2924, PERF-07). Merged that
+data-directory and sensitive-input memoization without conflicts, preserving
+release metadata, main fixes and all release guards. Updated the changelog's
+configuration-performance summary. Existing approved ADR-126 D2 applies; no
+new architectural decision. All 22 affected memo/remote-worker checks and
+119 release/app-only/digest/first-paint checks passed; bounded integration
+review found no blockers. Required CI is refreshed again.
