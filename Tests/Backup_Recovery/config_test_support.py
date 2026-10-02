@@ -2,7 +2,12 @@
 
 import importlib.util
 import sys
+from collections.abc import MutableMapping
+from pathlib import Path
 from types import FunctionType, ModuleType
+from typing import Any
+
+import pytest
 
 _CONFIG_SOURCE_INSTALLS: list[tuple[ModuleType, ModuleType, set[str]]] = []
 
@@ -24,12 +29,29 @@ def install_config_source(monkeypatch):
     return module
 
 
-def select_config_source(monkeypatch, path, *namespaces):
+def select_config_source(
+    monkeypatch: pytest.MonkeyPatch,
+    path: str | Path | None,
+    *namespaces: MutableMapping[str, Any],
+) -> ModuleType:
     """Select one independent test source and bind only explicit consumers.
 
     Call this before patching config behavior or creating its consumers. Later
     environment changes still hit the real source-selection guard. No live
     participant registry or unrelated imported module is reset.
+
+    Args:
+        monkeypatch: Owns environment, module and explicit binding restoration.
+        path: Config file to select, or None to use the environment's default.
+        namespaces: Explicit test or adapter namespaces whose config imports
+            should bind to the fresh source.
+
+    Returns:
+        The actual config module imported under the selected profile.
+
+    Raises:
+        RecoveryRequired: If the selected profile fails config admission.
+        PrivatePathError: If the config file or parent fails private-path checks.
     """
     if path is None:
         monkeypatch.delenv("TLDW_CONFIG_PATH", raising=False)
@@ -49,7 +71,7 @@ def select_config_source(monkeypatch, path, *namespaces):
 
 
 def restore_config_source_consumers() -> None:
-    """Restore exact config imports introduced during owned test selections.
+    """Restore exact config module, function and class imports from selections.
 
     Run after fixture teardown restores monkeypatches, so explicit consumer
     undo cannot reinstall a retired source. Reverse installation order handles
@@ -62,7 +84,7 @@ def restore_config_source_consumers() -> None:
         replacements = {id(selected): (selected, previous)}
         for name, value in vars(selected).items():
             if (
-                isinstance(value, FunctionType)
+                isinstance(value, (FunctionType, type))
                 and value.__module__ == selected.__name__
                 and name in vars(previous)
             ):

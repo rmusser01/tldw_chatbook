@@ -74,3 +74,50 @@ def test_newly_imported_guarded_consumer_restores_after_source_teardown(
         retired_getter()
     for name in ("_test_data_dir_alias", "_test_config_source", "_test_unrelated"):
         delattr(consumer, name)
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("nested", [False, True])
+def test_newly_imported_consumer_still_catches_config_errors_after_teardown(
+    tmp_path, monkeypatch, nested
+):
+    """Restore real error-catching consumers with their config functions."""
+    import importlib
+    import sys
+
+    from tldw_chatbook import Chat, config
+
+    consumer_name = "tldw_chatbook.Chat.provider_readiness"
+    monkeypatch.delitem(sys.modules, consumer_name, raising=False)
+    monkeypatch.setattr(
+        Chat,
+        "provider_readiness",
+        getattr(Chat, "provider_readiness", None),
+        raising=False,
+    )
+    malformed = {"api_settings": {"moonshot": "not a table"}}
+    with pytest.MonkeyPatch.context() as selected_patch:
+        config_test_support.select_config_source(
+            selected_patch, tmp_path / "first.toml"
+        )
+        consumer = importlib.import_module(consumer_name)
+        consumer._test_error_alias = consumer.ProviderSettingsError
+        consumer._test_library_class = ValueError
+        if nested:
+            config_test_support.select_config_source(
+                selected_patch, tmp_path / "second.toml", vars(consumer)
+            )
+        before = consumer.get_provider_readiness("Moonshot", malformed, environ={})
+        assert not before.ready and before.reason == "Invalid provider settings"
+
+    config_test_support.restore_config_source_consumers()
+
+    try:
+        after = consumer.get_provider_readiness("Moonshot", malformed, environ={})
+        assert after == before
+        assert consumer.ProviderSettingsError is config.ProviderSettingsError
+        assert consumer._test_error_alias is config.ProviderSettingsError
+        assert consumer._test_library_class is ValueError
+    finally:
+        del consumer._test_error_alias
+        del consumer._test_library_class

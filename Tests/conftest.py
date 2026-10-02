@@ -290,8 +290,19 @@ if hasattr(sys.stderr, "fileno"):
 
 
 @pytest.hookimpl(hookwrapper=True, tryfirst=True)
-def pytest_runtest_teardown(item, nextitem):
-    """Finish owned config-source imports after normal fixture/resource cleanup."""
+def pytest_runtest_teardown(
+    item: pytest.Item, nextitem: pytest.Item | None
+) -> Iterator[None]:
+    """Finish config-source imports after normal fixture/resource cleanup.
+
+    Args:
+        item: Test whose owned fixtures and resources are being retired.
+        nextitem: Next test, or None at session end, for pytest's fixture teardown.
+
+    Yields:
+        Control to pytest so resource and monkeypatch teardown finishes before
+        selected-source consumer bindings are restored.
+    """
     yield
     from Tests.Backup_Recovery.config_test_support import (
         restore_config_source_consumers,

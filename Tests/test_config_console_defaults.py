@@ -552,8 +552,14 @@ def test_config_path_is_bootstrapped_before_config_import():
     assert bootstrap_config.parent.is_dir()
 
 
-def test_autouse_fixture_isolates_config_saves(isolate_test_environment):
-    isolated_config = isolate_test_environment / "config" / "config.toml"
+def test_autouse_fixture_isolates_config_saves(
+    isolate_test_environment, tmp_path, monkeypatch
+):
+    isolated_config = tmp_path / "config" / "config.toml"
+    isolated_config.parent.mkdir(mode=0o700)
+    select_config_source(monkeypatch, isolated_config, globals())
+    collection_config = Path(CONFIG_PATH_BEFORE_CONFIG_IMPORT)
+    collection_contents = collection_config.read_bytes()
     default_config = config_module.DEFAULT_CONFIG_PATH
     default_contents = default_config.read_bytes() if default_config.exists() else None
 
@@ -569,6 +575,7 @@ def test_autouse_fixture_isolates_config_saves(isolate_test_environment):
     assert (
         default_config.read_bytes() if default_config.exists() else None
     ) == default_contents
+    assert collection_config.read_bytes() == collection_contents
 
 
 def test_save_setting_redacts_sensitive_value_in_attempt_log(tmp_path, monkeypatch):
