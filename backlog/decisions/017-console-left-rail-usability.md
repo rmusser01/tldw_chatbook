@@ -1,6 +1,7 @@
 # ADR-017: Console left-rail usability redesign
 
 Status: Accepted
+Superseded in part by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-07-18
 Related Task: N/A
 Supersedes: N/A

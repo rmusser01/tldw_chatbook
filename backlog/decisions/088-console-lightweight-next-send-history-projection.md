@@ -1,6 +1,7 @@
 # ADR-088: Console lightweight next-send history projection
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-25
 Related Task: [TASK-22304](../tasks/task-22304%20-%20Show-an-estimated-next-send-price-on-the-Console-Send-button.md)
 Related Spec: [Console next-send price indicator design](../../Docs/superpowers/specs/2026-08-25-task-22304-console-next-send-price-design.md)

@@ -75,7 +75,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-079](079-console-library-conversation-authority.md) | Accepted | Separate manual search, automatic retrieval, and assistant Library tools with local per-conversation authority, fail-closed runtime composition, and minimized turn activity. |
 | [ADR-081](081-mcp-prompt-reduction-recommendations.md) | Accepted | Keep MCP prompt-reduction recommendations local-only, MCP-only, telemetry-free, and routed through the existing permission-store APIs. |
 | [ADR-082](082-console-per-chat-private-scratch-space.md) | Accepted | Give each live Console chat private temporary scratch, remove implicit cwd/config authority, preserve explicit Workspace bindings, and defer cleanup safely around late tool threads. |
-| [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
+| [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted; superseded in part by ADR-210 | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
 | [ADR-084](084-change-review-consent-and-asynchronous-finalization.md) | Accepted | Make Change Review explicit per workspace, asynchronous after Console completion, durably published, and conservatively bounded before tool dispatch. |
 | [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
 | [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
@@ -136,6 +136,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-162](162-managed-agent-plugins.md) | Accepted | Manage immutable agent-capability packages with Git marketplaces, reviewed adapters, workspace activation and authenticated lifecycle recovery. |
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
+| [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
 
 ## Historical Decision Material
 

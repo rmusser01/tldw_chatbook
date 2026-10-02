@@ -1,6 +1,7 @@
 # ADR-031: TUI Keybinding and Footer-Hint Conventions
 
 - Status: Accepted
+- Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 - Date: 2026-08-03
 - Context: UX critique of Lab/Schedules/Logs (`.impeccable/critique/2026-08-03T17-35-45Z__tldw-chatbook-ui-screens.md`, issues `output/ux-review/ux-issues-lab-schedules-logs.md`). The Schedules screen bound `ctrl+c` to "create reminder" (and taught it in first-run empty-state copy), shadowed the global `ctrl+p` command palette with a screen-level stub, and used `ctrl+s`/`ctrl+d`/`ctrl+r`, which collide with terminal flow-control (XOFF), EOF, and readline history-search reflexes. Two of five footer-advertised shortcuts were stubs that only toasted "Not yet available".
 - Decision:

@@ -1,6 +1,7 @@
 # ADR-079: Per-conversation Console Library authority and activity
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-22
 Related Task: [TASK-19900 - Make Console Library controls explicit per conversation](../tasks/task-19900%20-%20Make-Console-Library-controls-explicit-per-conversation.md)
 Amends: ADR-003's Settings ownership for future-session defaults, ADR-030's

@@ -1,6 +1,7 @@
 # ADR-095: Own Console conversation settings and explicit defaults separately
 
 Status: Accepted (amended 2026-09-26: pristine open chats converge; `max_tokens` joins the quick mask)
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-27
 Related Task: TASK-22515
 Extends: ADR-006, ADR-033, and ADR-052

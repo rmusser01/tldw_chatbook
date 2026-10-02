@@ -1,6 +1,7 @@
 # ADR-011: Chatbook Workbench UI System
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-06-29
 Related Task: [backlog/tasks/task-141 - Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md](../tasks/task-141%20-%20Implement-Chatbook-Workbench-UI-foundation-and-Console-reference.md)
 Supersedes: N/A
