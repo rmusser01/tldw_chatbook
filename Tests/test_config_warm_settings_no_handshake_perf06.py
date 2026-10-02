@@ -333,3 +333,11 @@ def test_a_config_file_the_load_created_is_served_warm_next(
         if path.is_symlink() or path.exists():
             path.unlink()
         os.replace(backup, path)
+        # The forced load above cached the defaults it created (settings and
+        # the CLI bootstrap); re-read the restored file so later tests see
+        # what is on disk (Qodo, #2903).
+        monkeypatch.undo()
+        config_module.load_settings(force_reload=True)
+    assert config_module._SETTINGS_CACHE_POSTURE == config_module._config_file_posture(path), (
+        "the cached settings do not describe the restored config file"
+    )
