@@ -133,7 +133,7 @@ Clean the `ruff-library` Ruff formatter batch at the owner boundary recorded as:
 
 **Ownership reconciliation (AC#1).** All 70 assigned paths reconcile mechanically (hash matches both the task marker and the evidence JSON), and all were reproduced: 69 exist at the base; ONE was DELETED upstream after the census pin — `tldw_chatbook/Widgets/Library/library_collections_panel.py`, removed by dev commit `5dd1077df6` ("feat(collections): retire generic containers from current surfaces"). Recorded here as the required lineage reconciliation rather than silently dropped.
 
-**Formatting (AC#2, AC#5).** 69 of 70 assigned paths formatted (the 70th is the upstream-deleted path above, which no longer exists to format). `ruff format --check` passes on every existing assigned path after formatting (rc 0). Lint: `ruff check --output-format concise` over the batch's assigned paths: 122 findings before and 122 after, per-file counts identical — the formatter introduced zero findings; the remainder are pre-existing F401-type debt outside the TASK-26000 formatter scope.
+**Formatting (AC#2, AC#5).** 67 of the 69 existing assigned paths formatted; 2 (`Tests/Library/test_library_media_trash_state.py`, `tldw_chatbook/Library/library_conversations_state.py`) were already formatter-clean at the base and were deliberately left untouched (final three-way reconciliation: 67 committed + 2 clean + 1 upstream-deleted = 70). `ruff format --check` passes on every existing assigned path after formatting (rc 0). Lint: `ruff check --output-format concise` over the batch's assigned paths: 122 findings before and 122 after, per-file counts identical — the formatter introduced zero findings; the remainder are pre-existing F401-type debt outside the TASK-26000 formatter scope.
 
 **AST equality (AC#3).** Before/after hashes equal on every existing assigned path (the deleted path has no after-state to compare).
 
@@ -145,6 +145,6 @@ Clean the `ruff-library` Ruff formatter batch at the owner boundary recorded as:
 
 **No hand-written behavior change (AC#8).** Batch-wide verification: the modified working set is exactly the assigned paths that needed formatting plus the 8 batch task files; zero unassigned paths touched. Every content diff is Ruff formatter output.
 
-**Lineage.** 1 path upstream-deleted (recorded above); the remaining 69 carried live debt and were formatted. The ownership `paths_sha256` continues to match the census record — the deletion is dev-side drift AFTER the census pin, which the rebase-reconcile AC requires recording.
+**Lineage.** 1 path upstream-deleted (recorded above); 2 already formatter-clean at the base (recorded above); the remaining 67 carried live debt and were formatted. The ownership `paths_sha256` continues to match the census record — the deletion is dev-side drift AFTER the census pin, which the rebase-reconcile AC requires recording.
 
 ADR required: no — mechanical, formatter-only cleanup executing the owner-approved TASK-26000 contract; no architecture, storage, or cross-module boundary touched.

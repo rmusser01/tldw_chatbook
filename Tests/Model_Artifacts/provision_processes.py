@@ -187,7 +187,10 @@ def provision_signal_on_phase(
     def on_progress(progress) -> None:
         if signal_phase != progress.phase:
             return
-        if signal_artifact_id is not None and progress.ref.artifact_id != signal_artifact_id:
+        if (
+            signal_artifact_id is not None
+            and progress.ref.artifact_id != signal_artifact_id
+        ):
             return
         if ready.is_set():
             return
