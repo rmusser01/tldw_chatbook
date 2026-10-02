@@ -99,9 +99,7 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
                 raise PermanentIngestError(
                     f"URL fetch failed ({status}) for {url}"
                 ) from exc
-            ctype = (
-                resp.headers.get("content-type", "").split(";")[0].strip().lower()
-            )
+            ctype = resp.headers.get("content-type", "").split(";")[0].strip().lower()
             if ctype and "html" not in ctype and "xml" not in ctype:
                 raise PermanentIngestError(
                     f"URL is not a web page (content-type {ctype!r}): {url}"

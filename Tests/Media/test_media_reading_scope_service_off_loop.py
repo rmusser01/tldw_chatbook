@@ -154,7 +154,9 @@ class _RecordingServerService:
         return None
 
 
-def _scope(*, is_memory_db: bool) -> tuple[MediaReadingScopeService, _RecordingLocalService]:
+def _scope(
+    *, is_memory_db: bool
+) -> tuple[MediaReadingScopeService, _RecordingLocalService]:
     local = _RecordingLocalService(is_memory_db=is_memory_db)
     scope = MediaReadingScopeService(local_service=local, server_service=None)
     return scope, local
@@ -262,7 +264,9 @@ LOCAL_LEAF_CASES: list[tuple[str, Any, list[str]]] = [
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("label,call,leaves", LOCAL_LEAF_CASES, ids=[c[0] for c in LOCAL_LEAF_CASES])
+@pytest.mark.parametrize(
+    "label,call,leaves", LOCAL_LEAF_CASES, ids=[c[0] for c in LOCAL_LEAF_CASES]
+)
 async def test_local_leaf_threads_off_the_calling_thread_when_file_backed(
     label, call, leaves
 ):
@@ -281,7 +285,9 @@ async def test_local_leaf_threads_off_the_calling_thread_when_file_backed(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("label,call,leaves", LOCAL_LEAF_CASES, ids=[c[0] for c in LOCAL_LEAF_CASES])
+@pytest.mark.parametrize(
+    "label,call,leaves", LOCAL_LEAF_CASES, ids=[c[0] for c in LOCAL_LEAF_CASES]
+)
 async def test_local_leaf_stays_inline_when_memory_backed(label, call, leaves):
     scope, local = _scope(is_memory_db=True)
     caller_thread = threading.get_ident()
@@ -399,8 +405,7 @@ async def test_search_media_runs_no_sqlite_on_the_event_loop(real_local_scope):
         db.get_connection().set_trace_callback(None)
 
     assert not loop_statements, (
-        "media search ran SQL on the event-loop thread: "
-        f"{loop_statements[:5]}"
+        f"media search ran SQL on the event-loop thread: {loop_statements[:5]}"
     )
     assert result["total"] == 1
     assert result["items"][0]["title"] == "Offloop Fixture"
@@ -442,9 +447,7 @@ async def test_item_click_detail_chain_runs_no_sqlite_on_the_event_loop(
         highlights = await scope.list_reading_highlights(
             mode="local", media_id=media_id
         )
-        versions = await scope.list_document_versions(
-            mode="local", media_id=media_id
-        )
+        versions = await scope.list_document_versions(mode="local", media_id=media_id)
     finally:
         db.get_connection().set_trace_callback(None)
 

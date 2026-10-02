@@ -511,9 +511,7 @@ def get_supported_extensions() -> Dict[str, List[str]]:
 # the form's size/overlap govern it. The image branch calls
 # ``process_image`` with ``chunk_options=None`` and clears its convenience
 # single chunk so exactly one layer chunks.
-_TEXT_CHUNK_TYPES = frozenset(
-    {"plaintext", "html", "document", "article", "image"}
-)
+_TEXT_CHUNK_TYPES = frozenset({"plaintext", "html", "document", "article", "image"})
 
 # Text-shaped types whose branch produces no analysis of its own. The
 # ``document`` type is excluded: ``process_document`` runs its own
@@ -629,9 +627,7 @@ def read_ingest_file_bytes(file_path: Union[str, Path]) -> bytes:
     return data
 
 
-def _decode_ingest_text(
-    raw: bytes, encoding: Optional[str]
-) -> tuple[str, list[str]]:
+def _decode_ingest_text(raw: bytes, encoding: Optional[str]) -> tuple[str, list[str]]:
     """Decode raw text-file bytes per the ingest form's Encoding selection.
 
     (task-3301) The Encoding select (auto / utf-8 / utf-16 / latin-1 /
@@ -754,9 +750,7 @@ def _chunk_text_for_ingest(
 
 
 #: Default analysis instruction when the caller supplies no custom prompt.
-_DEFAULT_ANALYSIS_PROMPT = (
-    "Please provide a comprehensive summary of this document."
-)
+_DEFAULT_ANALYSIS_PROMPT = "Please provide a comprehensive summary of this document."
 
 #: (task-3301 xhigh review round 2, F7) Sentinel distinguishing "caller never
 #: passed chunk_options" from an explicit ``None``. When task-3301 made
@@ -795,7 +789,7 @@ def _analysis_failure_reason(analysis: Any) -> Optional[str]:
     if not stripped.lower().startswith("error:"):
         return None
     first_line = stripped.splitlines()[0].strip()
-    reason = first_line[len("error:"):].strip() or first_line
+    reason = first_line[len("error:") :].strip() or first_line
     return reason[:200]
 
 
@@ -1677,8 +1671,8 @@ def parse_local_file_for_ingest(
         # (task-3301) ``process_document`` reports its internal analysis
         # under ``summary``; surface it as the payload's analysis rather
         # than dropping it on the floor.
-        if not analysis and isinstance(result.get('summary'), str):
-            analysis = result['summary']
+        if not analysis and isinstance(result.get("summary"), str):
+            analysis = result["summary"]
 
         # (task-3301 xhigh review round, F4) A processor "analysis" that is
         # an in-band error string (``analyze()`` RETURNS its failures as
@@ -1687,9 +1681,7 @@ def parse_local_file_for_ingest(
         # and the import itself stays successful.
         analysis_failed_reason = _analysis_failure_reason(analysis)
         if analysis_failed_reason:
-            warnings = list(warnings) + [
-                f"Analysis failed: {analysis_failed_reason}"
-            ]
+            warnings = list(warnings) + [f"Analysis failed: {analysis_failed_reason}"]
             analysis = ""
 
         if not perform_chunking:
@@ -1699,11 +1691,7 @@ def parse_local_file_for_ingest(
             # consistency fallback); storing it would make the OFF state
             # indistinguishable from a one-chunk ON state in the DB.
             chunks = []
-        elif (
-            file_type in _TEXT_CHUNK_TYPES
-            and not chunks
-            and content
-        ):
+        elif file_type in _TEXT_CHUNK_TYPES and not chunks and content:
             # (task-3301) Chunk ON must chunk text types too. These
             # branches produce no chunks of their own, and no deferred
             # pass exists downstream (``add_media_with_keywords`` ignores
@@ -1759,9 +1747,7 @@ def parse_local_file_for_ingest(
                 analysis_call=analysis_call,
             )
             if tail_failure:
-                logger.warning(
-                    f"Analysis failed for {file_path}: {tail_failure}"
-                )
+                logger.warning(f"Analysis failed for {file_path}: {tail_failure}")
                 warnings = list(warnings) + [f"Analysis failed: {tail_failure}"]
                 analysis_failed_reason = tail_failure
             else:
@@ -1988,9 +1974,7 @@ def _persist_chunking_template_columns(
     if auto_decision is not None:
         config["mode"] = "auto"
         config["auto_tier"] = str(auto_decision.get("tier") or "").strip()
-        config["auto_rationale"] = list(
-            auto_decision.get("rationale") or []
-        )
+        config["auto_rationale"] = list(auto_decision.get("rationale") or [])
     if template_name:
         config["template"] = template_name
     if "method" in params:
@@ -2121,6 +2105,7 @@ def persist_parsed_media(
                 if template_name:
                     chunk.setdefault("chunking_template", template_name)
                     chunk.setdefault("chunking_params", chunking_params_json)
+
         # Note: add_media_with_keywords returns tuple: (media_id, media_uuid, message)
         def _persist() -> tuple[Optional[int], Optional[str], str]:
             return media_db.add_media_with_keywords(

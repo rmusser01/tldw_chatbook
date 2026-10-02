@@ -75,9 +75,7 @@ class TestConfiguredProviderReachesBackend:
     non-default provider/model/language/device -- not the constructor's own
     platform-fallback guesses."""
 
-    def test_backend_config_reflects_transcription_section(
-        self, tmp_path, monkeypatch
-    ):
+    def test_backend_config_reflects_transcription_section(self, tmp_path, monkeypatch):
         """The backend's config mirrors a real `[transcription]` section.
 
         Pins TASK-1771 AC#1: before the accessor fix every one of these

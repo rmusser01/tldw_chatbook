@@ -66,9 +66,7 @@ async def test_x_api_key_absent_on_cross_origin_redirect_hop(
 
     def handler(request: httpx.Request) -> httpx.Response:
         host = request.url.host
-        seen_headers_by_host[host] = {
-            k.lower(): v for k, v in request.headers.items()
-        }
+        seen_headers_by_host[host] = {k.lower(): v for k, v in request.headers.items()}
         if host == "good.example":
             # The configured server "redirects" to a different, untrusted
             # host -- the exact shape a hostile or compromised endpoint (or
