@@ -1133,7 +1133,13 @@ def _scope(
         (registry[name] for name in binding["namespaces"]),
     )
     if startup_attempt is not None:
-        startup_attempt.scope_roots = roots  # stamped by _note_evidence
+        # The DECLARED roots, not the effective ones: effective_roots drops an
+        # absence-proved alias, and that proof is no stamp -- the alias can
+        # reappear (e.g. as a FIFO) without changing its parent's posture. An
+        # absent declared root makes _selector_evidence refuse to record.
+        startup_attempt.scope_roots = tuple(
+            dict.fromkeys(Path(r) for r in binding["roots"])
+        )
     for selected in (path, *related_paths):
         if selected is not None and not _contains_capture_path(
             (*roots, Path(binding["selector"])), selected

@@ -28,7 +28,12 @@ import pytest
 from Tests.Backup_Recovery.test_bootstrap import local_scope  # noqa: F401
 from tldw_chatbook.Backup_Recovery import bootstrap
 from tldw_chatbook.Backup_Recovery import storage_admission as storage
-from tldw_chatbook.Backup_Recovery.control_records import bind_profile
+from tldw_chatbook.Backup_Recovery.control_records import admission_authority, bind_profile
+
+# Evidence reuse is POSIX-only (_acquire_storage gates it on os.name != "nt"):
+# on Windows every acquisition derives, so the reuse assertions cannot hold and
+# the reuse-vs-derivation oracles compare the derivation with itself (Qodo, #2919).
+pytestmark = pytest.mark.skipif(os.name == "nt", reason="evidence reuse is POSIX-only")
 
 REPO = Path(__file__).resolve().parents[2]
 
@@ -480,6 +485,49 @@ def test_a_change_just_before_the_lease_is_counted_falls_back(
         startup.close()
 
     assert calls["scope"] >= 1, "a lease was reused over a change made before it was counted"
+
+
+def test_an_absence_proved_root_is_never_served_from_evidence(
+    tmp_path, reuse_switch, monkeypatch
+):
+    """A deleted alias under an enrolled parent is admitted by the absence proof,
+    which no stamp covers: re-creating it as a non-directory changes no parent
+    posture. Reuse must not serve such a binding (Qodo, #2919).
+
+    Args:
+        tmp_path: Holds the bootstrap root, the data directory and its alias.
+        reuse_switch: Turns evidence reuse on, then off for the derivation.
+        monkeypatch: Points the bootstrap root and config selector at tmp_path.
+    """
+    root = tmp_path / "bootstrap"
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    config = data / "config.toml"
+    config.write_text('name = "profile"\n')
+    alias = data / "history.jsonl"
+    alias.write_text("")
+    authority = admission_authority(root)
+    authority.register("parent", (data,))
+    authority.register("child", (alias,))
+    monkeypatch.setattr(bootstrap, "default_bootstrap_root", lambda: root)
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config))
+    bind_profile(root, config, ("parent", "child"), authority.control_root)
+    alias.unlink()
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(2):
+            assert _verdict(target)[0] == "allowed"
+        os.mkfifo(alias)
+        reused = _verdict(target)
+        reuse_switch(False)
+        derived = _verdict(target)
+    finally:
+        startup.close()
+
+    assert derived[0] == "refused", derived
+    assert reused == derived, f"reuse gave {reused}, derivation {derived}"
 
 
 def test_a_failed_recheck_after_counting_closes_the_reused_lease(
