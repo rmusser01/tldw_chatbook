@@ -353,8 +353,8 @@ host. H2's one-second Interrupt and three-second SessionEnd observation windows
 are separate from retained process cleanup. Revoked callbacks are suppressed;
 repeated cancellation neither releases cleanup custody nor resets deadlines, and
 no hook can veto cleanup. The schema resource is
-`tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_hook_continuation_receipts.sql`;
-its migration test is `Tests/DB/test_chachanotes_v74_hook_continuation_receipts_migration.py`.
+`tldw_chatbook/DB/migrations/chachanotes_v74_to_v75_hook_continuation_receipts.sql`;
+its migration test is `Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py`.
 
 
 ### H5 admission point across the database worker (R56)
@@ -549,3 +549,16 @@ known optional observers remain visible but unavailable. Ordinary user messages
 remain possible without expanding blocked package material. No foreign allow result
 can reach or bypass the native permission store. This documents the deliberately
 unsupported runtime subset of TASK-32687, not original-host qualification.
+
+
+### v75 receipt migration after the compaction v74 merge (2026-10-01)
+
+PR #2939's v74 failure-reason migration is retained unchanged. Hook continuation
+receipts migrate from v74 to v75, including genuine v73/v74 upgrade and atomic
+rollback/reopen evidence. Current core and combined subscriptions recovery
+catalogs are recaptured from actual constructors at v75; exact schema and version
+validation remain required. The compaction retry latch and structural no-cost
+fences run before the shared compact-once operation, which retains the same hook
+owner. Required pre-hook failures record their content-free reason with no
+summary call and do not claim a billed attempt. No consent, admission or cleanup
+policy changes. Evidence: the PR #2946 integration report.

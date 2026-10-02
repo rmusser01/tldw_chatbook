@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:25'
-updated_date: '2026-10-02 02:03'
+updated_date: '2026-10-02 02:49'
 labels:
   - plugins
   - implementation
@@ -53,4 +53,6 @@ Implemented bounded Stop scheduling through existing queue/runtime owners, atomi
 PR #2946 derived-artifact repair registers the existing continuation table in the SQL identifier allowlist and pins the actual populated conversation DELETE cascade query plan without ANALYZE. Migration/runtime ownership is unchanged; the focused repaired-runtime plus migration group passes 7 cases. Existing ADR-163 applies; exact evidence is in the integration report.
 
 PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture controls retain the collection-time private profile, real coordinator binding, full immutable snapshots plus owned turn attribution and bounded worker entry. All 203 selected Console cases pass across retained/isolated corrected runs; final teardown passes 13 cases in 431.771s with no skips, preserving exact cancellation, revocation, resource settlement and no replay under the existing best-effort observer deadline. Mounted collapse/resize and all four pending-Stop size variants pass; boot 22 passes at census 1031/1033 with unchanged limits. ADR-162/163/197 apply; no new ADR. Exact failed-run dispositions, artifacts and scope limits are in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 current-dev integration supersedes the historical v74 receipt resource above: dev 27e718f01d owns the unchanged v74 failure-reason migration; continuation receipts now migrate v74 to v75. Genuine v73/v74 upgrade, populated failure-reason preservation, receipt rollback/reopen, uncertain dispatch and cascade controls pass in the complete 25-case hook-compaction/receipt run (31.102s). Actual core and combined subscriptions recovery catalogs add exactly two receipt records, preserve all existing records and require v75; standalone subscriptions remains unchanged. The wheel contains exact v75 receipt SQL and dev v74 SQL. A covering recovery run retains one unrelated dormant-pet constructor failure reproduced on frozen dev; no guard or xfail was changed. ADR-163/052 apply; evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

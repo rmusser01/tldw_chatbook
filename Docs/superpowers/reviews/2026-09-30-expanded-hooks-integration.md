@@ -1027,3 +1027,76 @@ successfully, including both fast lanes, derived artifacts and UI latency
 neutral/skipped code reviews are not runtime/review evidence. Qodo still has
 only its original review of `17c4734241`; fresh checks and review must assess
 the newly rebased head. The platform and scope limits above remain unchanged.
+
+
+## Rebase onto dev 27e718f01d (2026-10-01)
+
+Dev advanced again with PR #2939 / TASK-33621.3 while the previous rebased head
+was conflicting. Replayed all 24 commits onto
+`27e718f01d81b7093502c0ea1d2690e07b9f6362`. Dev now owns the v74 auxiliary
+failure-reason migration. Preserve that migration unchanged and advance hook
+continuation receipts through v74 to v75, using the packaged
+`chachanotes_v74_to_v75_hook_continuation_receipts.sql` resource. Genuine v73/v74
+upgrades retain the failure-reason field, including a populated v74 failure row;
+failed receipt DDL rolls back to v74 and reopening completes v75.
+
+Compaction retains dev's retry latch, structural no-cost checks and durable
+parent-lineage fallback. Pass the existing hook owner into the compact-once
+operation after the retry fence. AST comparison preserves
+`compaction_retry_fence`, `effective_memory_identity`, `_FailedCompaction` and
+`_durable_context_snapshots` exactly; the outer `compact` method matches dev
+apart from its hook argument and forwarding. Required PreCompact refusal now
+uses the existing `_end` helper to record its fixed failure reason and
+`attempted=False`; manual and automatic refusal make no summary or main-provider
+call and commit no memory. Cancellation retains its existing propagation and
+records the fixed `cancelled` reason. No billed-retry latch, consent or resource
+owner is weakened. Existing ADR-162/163/052 apply; no new ADR is required.
+
+The existing recovery declarations must match the new actual schema. Fresh core,
+standalone subscriptions and combined subscriptions captures came from their
+real constructors, not version-label substitution or an inferred schema union.
+Core adds exactly the two receipt SQL records; standalone subscriptions is
+unchanged; combined subscriptions adds exactly those two records. No previous
+catalog record is removed. Core and combined version validation now require v75
+while subscriptions retains its own v2 stamp and exact-schema checks.
+
+New-base evidence (all runs have zero skips):
+
+- Required manual/automatic pre-hook controls first reproduce two missing
+  failure-reason failures in **2.961s** (`hooks-pr2946-v75-red.xml`). The actual
+  core constructor independently reproduces the stale v74 recovery declaration:
+  **four passed / one failed in 3.894s** (`hooks-pr2946-v75-core-red.xml`).
+- Compaction, dev retry/failure-copy/live-session neighbors, migration and full
+  affected recovery files: **497 passed / two failed in 371.375s**
+  (`hooks-pr2946-v75-integration.xml`). One new manual-refusal fixture wrongly
+  expected acceptance; corrected to assert refusal. Full hook-compaction and
+  receipt-migration files then pass **25 cases in 31.102s**
+  (`hooks-pr2946-v75-final-controls.xml`), including both real-SQLite refusal
+  paths, populated v74 preservation, rollback/reopen and uncertain-dispatch
+  receipt/cascade controls. Counts overlap.
+- The remaining failure is the existing dormant-pet constructor assertion at
+  `Widgets/AppFooterStatus.py:244`. The same AST constructor scan on an immutable
+  archive of exact dev `27e718f01d` reproduces that call site
+  (`hooks-pr2946-v75-upstream-dormant-proof.log`). It is excluded as an unrelated
+  upstream failure, not fixed, xfailed or counted as passing qualification.
+- Actual core/standalone constructor captures pass **two cases in 2.638s**;
+  actual combined constructors pass **one case in 2.267s**
+  (`hooks-pr2946-v75-capture-proof.xml`, `hooks-pr2946-v75-combined.xml`). The
+  temporary capture harness is retained as `/private/tmp/hooks-pr2946-v75-capture-source.py`
+  and was removed from the repository after recording the declarations.
+- Exact affected boot selection: **22 passed in 112.007s**, three intentional
+  headroom warnings (`hooks-pr2946-v75-boot.xml`). Census is **1,032/1,033**;
+  pre-import **557/557** and boot **680/686**. Ratchets, snapshots and workflows
+  remain unchanged.
+- Built wheel contains the exact new v75 receipt SQL bytes and dev's v74
+  failure-reason SQL (`hooks-pr2946-v75-wheel.log`). Diagnostic inventory,
+  all 117 pinned timestamp occurrences and all generated CSS reproduce without
+  tracked artifact changes (`hooks-pr2946-v75-derived.log`). All **196 branch
+  Python files** parse; seven changed Python files add no Ruff diagnostics;
+  authored/changed shared ranges are formatted and whitespace checks pass.
+
+The 499-case covering run is not a clean sweep; the corrected 25-case run and
+frozen upstream proof explain both failures explicitly. Earlier evidence and
+platform limits remain as recorded above. No full test suite was requested or
+run. The previous published `77d0766328` head received no CI run while conflicting;
+new remote checks and Qodo review must assess the newly pushed head.

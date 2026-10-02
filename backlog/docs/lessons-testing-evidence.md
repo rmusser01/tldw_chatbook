@@ -17497,3 +17497,15 @@ while the optional child marker was absent with a fixed `event_deadline` or
 and no later replay. Preserve a separate control requiring real command execution;
 when an optional observer does execute, assert its exact parent and single payload.
 Do not extend production deadlines to make mounted tests guarantee best effort.
+
+
+## Migration rebases also change exact recovery declarations
+
+**PR #2946, 2026-10-01.** Dev's compaction failure-reason migration claimed v74
+before the hook receipt branch merged. Moving receipts to v75 preserved genuine
+v73/v74 upgrades, but the actual core-constructor check still failed because its
+recovery declaration described v74 without receipts. Capture the fresh core and
+combined-store catalogs from their real constructors and update exact version
+checks together; preserve the standalone subscription variant. The repaired
+covering recovery cases and 25 hook-compaction/migration controls pass. Changing
+only the version label would still reject the actual schema during recovery.

@@ -30,6 +30,17 @@ def test_genuine_upgrade_creates_receipts(tmp_path, source_version):
             )
             .fetchone()
         )
+        if source_version == 74:
+            conversation = db.add_conversation({"title": "Before hook receipts"})
+            with db.transaction() as cursor:
+                cursor.execute(
+                    "INSERT INTO console_auxiliary_attempts "
+                    "(operation_id, conversation_id, purpose, provider, model, "
+                    "requested_output_cap, estimated_input_tokens, status, started_at, failure_reason) "
+                    "VALUES ('existing-failure', ?, 'conversation_compaction', 'openai', "
+                    "'test-model', 100, 1000, 'failed', '2026-10-01T00:00:00Z', 'invalid_summary_output')",
+                    (conversation,),
+                )
     db = CharactersRAGDB(path, client_id="upgraded")
     try:
         assert (
@@ -40,6 +51,21 @@ def test_genuine_upgrade_creates_receipts(tmp_path, source_version):
             .fetchone()
         )
         assert db._get_db_version(db.get_connection()) == 75
+        if source_version == 74:
+            assert (
+                db.get_connection()
+                .execute(
+                    "SELECT failure_reason FROM console_auxiliary_attempts WHERE operation_id='existing-failure'"
+                )
+                .fetchone()[0]
+                == "invalid_summary_output"
+            )
+        assert "failure_reason" in {
+            row[1]
+            for row in db.get_connection().execute(
+                "PRAGMA table_info(console_auxiliary_attempts)"
+            )
+        }
     finally:
         db.close()
 

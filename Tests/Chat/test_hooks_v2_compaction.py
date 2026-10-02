@@ -109,6 +109,11 @@ async def test_actual_compaction_commit_and_required_input_fence(manual, failure
         if failure == "pre":
             assert result.terminal is CompactionTerminal.FAILED
             assert gateway.calls == 0
+            assert not result.attempted
+            assert (
+                repository.finishes[-1][1]["failure_reason"]
+                == "required_pre_compact_failed"
+            )
             assert not repository.memories
             return
         assert result.terminal is CompactionTerminal.SUCCEEDED
@@ -196,17 +201,19 @@ async def test_focused_fallback_gets_its_actual_required_candidate():
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "manual,post_failure,memory_changed",
+    "manual,post_failure,memory_changed,pre_failure",
     [
-        (False, False, False),
-        (False, True, False),
-        (True, False, False),
-        (True, True, False),
-        (True, False, True),
+        (False, False, False, False),
+        (False, True, False, False),
+        (True, False, False, False),
+        (True, True, False, False),
+        (True, False, True, False),
+        (False, False, False, True),
+        (True, False, False, True),
     ],
 )
 async def test_console_compaction_real_sqlite_commit_and_provider_fence(
-    tmp_path, manual, post_failure, memory_changed
+    tmp_path, manual, post_failure, memory_changed, pre_failure
 ):
     from Tests.Chat.test_console_context_compaction import _real_selection_controller
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
@@ -290,7 +297,11 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
             id="start",
         ),
         command(
-            'print(\'{"version":2,"decision":"pass","context":[{"text":"pre only","lifetime":"turn"}]}\')',
+            (
+                "raise SystemExit(1)"
+                if pre_failure
+                else 'print(\'{"version":2,"decision":"pass","context":[{"text":"pre only","lifetime":"turn"}]}\')'
+            ),
             name="PreCompact",
             required=True,
             effects=["context"],
@@ -344,7 +355,7 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
     try:
         if manual:
             result = await controller.summarize_up_to(target.id)
-            assert result.accepted, result
+            assert result.accepted is (not pre_failure), result
             assert not payloads
         else:
             result = await controller.submit_draft("next", session_id=session.id)
@@ -352,6 +363,14 @@ async def test_console_compaction_real_sqlite_commit_and_provider_fence(
         state = repository.load_applicable_branch_memory(
             conversation_id, frozenset(row.message_id for row in snapshots)
         )
+        if pre_failure:
+            assert gateway.calls == 0
+            assert not payloads and state.memory is None
+            attempts = repository.list_auxiliary_attempts(conversation_id)
+            assert [row["failure_reason"] for row in attempts] == [
+                "required_pre_compact_failed"
+            ]
+            return
         assert state.memory is not None, (result, transactions, commit_errors)
         assert gateway.calls == 1
         assert "pre only" in str(auxiliary)

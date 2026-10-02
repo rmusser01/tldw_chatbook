@@ -2158,16 +2158,20 @@ class ConsoleCompactionService:
                         )
                     except asyncio.CancelledError:
                         self._finish(
-                            operation_id, AuxiliaryAttemptStatus.CANCELLED, started_tick
+                            operation_id,
+                            AuxiliaryAttemptStatus.CANCELLED,
+                            started_tick,
+                            failure_reason="cancelled",
                         )
                         raise
-                    except Exception:  # noqa: BLE001 -- hook boundary
-                        self._finish(
-                            operation_id, AuxiliaryAttemptStatus.FAILED, started_tick
-                        )
-                        return CompactionTransactionResult(
-                            CompactionTerminal.FAILED,
-                            reason="required_pre_compact_failed",
+                    except Exception as exc:  # noqa: BLE001 -- hook boundary
+                        return self._end(
+                            operation_id,
+                            AuxiliaryAttemptStatus.FAILED,
+                            started_tick,
+                            "required_pre_compact_failed",
+                            error_type=type(exc).__name__,
+                            attempted=False,
                         )
                 # Same executor-thread ceiling as compact()'s bound above;
                 # additionally a FOCUSED plan may spend up to 2x the bound
@@ -2532,15 +2536,20 @@ class ConsoleCompactionService:
                     )
                 except asyncio.CancelledError:
                     self._finish(
-                        operation_id, AuxiliaryAttemptStatus.CANCELLED, started_tick
+                        operation_id,
+                        AuxiliaryAttemptStatus.CANCELLED,
+                        started_tick,
+                        failure_reason="cancelled",
                     )
                     raise
-                except Exception:  # noqa: BLE001 -- hook boundary
-                    self._finish(
-                        operation_id, AuxiliaryAttemptStatus.FAILED, started_tick
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED, reason="required_pre_compact_failed"
+                except Exception as exc:  # noqa: BLE001 -- hook boundary
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "required_pre_compact_failed",
+                        error_type=type(exc).__name__,
+                        attempted=False,
                     )
             summary_engine = "local"
             try:
@@ -2861,6 +2870,7 @@ class ConsoleCompactionService:
         usage: ProviderUsage | None = None,
         terminal: CompactionTerminal = CompactionTerminal.FAILED,
         error_type: str | None = None,
+        attempted: bool = True,
     ) -> CompactionTransactionResult:
         """Finish a started attempt that did not succeed, recording why.
 
@@ -2882,7 +2892,7 @@ class ConsoleCompactionService:
                 error_type or "none",
             )
         return CompactionTransactionResult(
-            terminal, reason=reason, usage=usage, attempted=True
+            terminal, reason=reason, usage=usage, attempted=attempted
         )
 
     @staticmethod

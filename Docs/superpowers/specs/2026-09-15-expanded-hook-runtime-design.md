@@ -1212,8 +1212,8 @@ host. H2's one-second Interrupt and three-second SessionEnd observation windows
 are separate from retained process cleanup. Revoked callbacks are suppressed;
 repeated cancellation neither releases cleanup custody nor resets deadlines, and
 no hook can veto cleanup. The schema resource is
-`tldw_chatbook/DB/migrations/chachanotes_v73_to_v74_hook_continuation_receipts.sql`;
-its migration test is `Tests/DB/test_chachanotes_v74_hook_continuation_receipts_migration.py`.
+`tldw_chatbook/DB/migrations/chachanotes_v74_to_v75_hook_continuation_receipts.sql`;
+its migration test is `Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py`.
 
 
 ### H5 admission point across the database worker (R56)
