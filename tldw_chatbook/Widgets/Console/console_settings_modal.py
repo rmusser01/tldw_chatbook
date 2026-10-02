@@ -2612,7 +2612,7 @@ class ConsoleSettingsModal(
         try:
             control_id = snapshot.focus_control_id
             if control_id is None:
-                self._focus_highest_priority_connection()
+                self._focus_restored_fallback()
                 return
             if control_id == "console-settings-provider-picker":
                 try:
@@ -2642,7 +2642,7 @@ class ConsoleSettingsModal(
                         return
                 except (NoMatches, QueryError):
                     pass
-            self._focus_highest_priority_connection()
+            self._focus_restored_fallback()
         finally:
             self._suppress_focus_reveal = False
             body.scroll_to(y=snapshot.scroll_anchor, animate=False)

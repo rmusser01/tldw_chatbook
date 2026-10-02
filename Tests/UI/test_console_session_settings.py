@@ -2381,9 +2381,9 @@ async def test_suspended_focus_falls_back_to_connection_provider_when_target_hid
                 suspended_draft=snapshot,
             )
         )
-        # TASK-33006.1 (R13): an unavailable restored target falls back to
-        # where the view opens, Temperature for a ready chat.
-        await _wait_for_focused_id(app, pilot, "console-settings-temperature")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
 
 @pytest.mark.asyncio
@@ -2419,8 +2419,9 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
             "#console-settings-provider-picker-input", Input
         ).focusable
         modal._restore_suspended_scroll_and_focus(snapshot)
-        # TASK-33006.1 (R13): the view's open target, Temperature.
-        await _wait_for_focused_id(app, pilot, "console-settings-temperature")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
 
 @pytest.mark.asyncio
@@ -2431,12 +2432,7 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
 async def test_suspended_context_missing_or_transient_focus_reveals_connection_fallback(
     focus_control_id: str | None,
 ) -> None:
-    """Unavailable Context focus restores the Context view's own first control.
-
-    Rewritten on purpose by TASK-33006.1 (R13): one helper per view decides
-    where focus opens, so the view the user left stays shown instead of
-    jumping to Connection.
-    """
+    """Unavailable Context focus restores a usable visible Connection target."""
     app = ModalHarness()
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
@@ -2461,10 +2457,13 @@ async def test_suspended_context_missing_or_transient_focus_reveals_connection_f
             suspended_draft=snapshot,
         )
         await app.push_screen(modal)
-        await _wait_for_focused_id(app, pilot, "console-context-budget-mode")
+        await _wait_for_focused_id(
+            app, pilot, "console-settings-provider-picker-input"
+        )
 
-        assert modal._active_view == "context"
-        assert modal.query_one("#console-settings-context-view").display is True
+        assert modal._active_view == "model"
+        assert all(section.display for section in modal.query(".console-settings-model-view"))
+        assert modal.query_one("#console-settings-context-view").display is False
 
 
 @pytest.mark.asyncio
