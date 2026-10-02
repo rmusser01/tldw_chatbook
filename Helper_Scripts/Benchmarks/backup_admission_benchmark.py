@@ -269,11 +269,19 @@ def prepare_imports(source: Path):
 def retired_state(children):
     """Check observable native ownership after public close and startup close."""
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
+    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
 
-    storage._shutdown()
+    # App teardown and asyncio.run have already settled accepted producers.
+    # Existing owner closure is thread-qualified; foreign/unknown caches stay visible.
+    pause = storage._begin_local_pause()
+    try:
+        _retire_current_thread_caches(pause)
+        storage._shutdown()
+    finally:
+        pause.resume()
     with storage._lock:
-        outstanding = sum(
-            len(getattr(storage, name, ()))
+        outstanding = {
+            name: len(getattr(storage, name, ()))
             for name in (
                 "_holds",
                 "_retiring_holds",
@@ -282,7 +290,7 @@ def retired_state(children):
                 "_operations",
                 "_raw_operations",
             )
-        )
+        }
     live = sum(child.poll() is None for child in children)
     if live:
         # Failed runs are not qualification; own and reap the remaining effects.
@@ -290,7 +298,11 @@ def retired_state(children):
             if child.poll() is None:
                 child.kill()
             child.wait()
-    return outstanding == 0 and live == 0
+    return {
+        "retired": not any(outstanding.values()) and live == 0,
+        "outstanding_ownership": outstanding,
+        "live_children_before_reaping": live,
+    }
 
 
 def transaction(counts, iterations, seed=False):
@@ -335,6 +347,13 @@ def transaction(counts, iterations, seed=False):
     return {
         "body_median_ns": statistics.median(bodies) if bodies else 0,
         "transaction_median_ns": statistics.median(totals) if totals else 0,
+        # Conservative complete boundary: includes SQLite BEGIN/COMMIT and all
+        # guarded manager work, so a shortened admission seam cannot pass alone.
+        "transaction_boundary_median_ns": statistics.median(
+            total - body for total, body in zip(totals, bodies, strict=True)
+        )
+        if totals
+        else 0,
         "admission_median_ns": statistics.median(admissions) if admissions else 0,
         "db_path_depth": len(path.parts),
         "seed_notes": 8,
@@ -399,7 +418,7 @@ def child(source, phase, iterations):
         counts["counting"] = False
         try:
             if "tldw_chatbook.Backup_Recovery.storage_admission" in sys.modules:
-                receipt["retired"] = retired_state(children)
+                receipt.update(retired_state(children))
             else:
                 receipt["retired"] = not children
         except BaseException as error:  # noqa: BLE001 - cleanup failure is qualification failure

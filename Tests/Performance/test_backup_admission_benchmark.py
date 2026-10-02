@@ -195,3 +195,32 @@ def test_timeout_terminates_the_owned_child_group(tmp_path, monkeypatch):
     with pytest.raises(ProcessLookupError):
         os.killpg(group, signal.SIGCONT)
     assert result["exit_code"] != 0 and result["retired"] is False
+
+
+def test_cleanup_uses_existing_fenced_owner_closure_before_retirement(tmp_path):
+    module = probe()
+    selected = source(module, tmp_path / "source")
+    backup = selected / "tldw_chatbook/Backup_Recovery"
+    (backup / "storage_admission.py").write_text(
+        "import threading\n"
+        "_lock = threading.RLock()\n_live_leases = {1}\n_fenced = False\n"
+        "class Pause:\n def resume(self):\n  assert not _live_leases\n"
+        "def _begin_local_pause():\n global _fenced\n _fenced = True\n return Pause()\n"
+        "def _shutdown():\n pass\n"
+    )
+    with (backup / "participants.py").open("a") as output:
+        output.write(
+            "def _retire_current_thread_caches(pause):\n"
+            " from . import storage_admission as storage\n"
+            " assert storage._fenced\n storage._live_leases.clear()\n"
+        )
+    (selected / "tldw_chatbook/DB/ChaChaNotes_DB.py").write_text(
+        "from tldw_chatbook.Backup_Recovery import storage_admission\n"
+        "raise RuntimeError('original failure')\n"
+    )
+    manifest = json.loads((selected / module.MANIFEST).read_text())
+    manifest["content_sha256"] = module.source_digest(selected)
+    (selected / module.MANIFEST).write_text(json.dumps(manifest))
+    result = module.run_child(selected, tmp_path / "profile", "transaction", 1)
+    assert result["retired"] is True
+    assert result["error_type"] == "RuntimeError" and result["exit_code"] == 1
