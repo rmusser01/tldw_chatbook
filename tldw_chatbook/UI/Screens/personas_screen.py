@@ -898,7 +898,9 @@ async def _drain_to_thread(
                 return
             status = "running"
         try:
-            outcome = _DrainedTaskResult(completed=True, value=function(*args, **kwargs))
+            outcome = _DrainedTaskResult(
+                completed=True, value=function(*args, **kwargs)
+            )
         except asyncio.CancelledError as error:
             outcome = _DrainedTaskResult(cancellation=error)
         except BaseException as error:
@@ -1014,9 +1016,11 @@ def _persona_visual_ui_lifetime(function):
     from functools import wraps
 
     if not asyncio.iscoroutinefunction(function):
+
         @wraps(function)
         def selected(screen, *args, **kwargs):
             from ...Backup_Recovery import storage_admission as storage
+
             pending = storage._Acquisition()
             screen._persona_visual_pending += 1
             try:
@@ -1024,11 +1028,13 @@ def _persona_visual_ui_lifetime(function):
             finally:
                 screen._persona_visual_pending -= 1
                 pending.close()
+
         return selected
 
     @wraps(function)
     async def guarded(screen, *args, **kwargs):
         from ...Backup_Recovery import storage_admission as storage
+
         pending = storage._Acquisition()
         screen._persona_visual_pending += 1
         try:
@@ -1036,6 +1042,7 @@ def _persona_visual_ui_lifetime(function):
         finally:
             screen._persona_visual_pending -= 1
             pending.close()
+
     return guarded
 
 
@@ -1059,15 +1066,19 @@ def _visual_identity_ui_lifetime(function):
                 attempt.close()
 
     if not asyncio.iscoroutinefunction(function):
+
         @wraps(function)
         def selected(screen, *args, **kwargs):
             with pending(screen):
                 return function(screen, *args, **kwargs)
+
         return selected
+
     @wraps(function)
     async def guarded(screen, *args, **kwargs):
         with pending(screen):
             return await function(screen, *args, **kwargs)
+
     return guarded
 
 
@@ -2086,7 +2097,9 @@ class PersonasScreen(BaseAppScreen):
                 pass
 
     async def _apply_pending_character_conversation_link(
-        self, *, refresh_revision: bool = False,
+        self,
+        *,
+        refresh_revision: bool = False,
     ) -> CharacterConversationLinkOutcome:
         """Consume one validated deep link only after exact authority revalidation."""
 
@@ -2143,7 +2156,9 @@ class PersonasScreen(BaseAppScreen):
                         ),
                     )
                     self._pending_character_conversation_link = link
-                problem = await asyncio.to_thread(self.conversations.exact_link_problem, link)
+                problem = await asyncio.to_thread(
+                    self.conversations.exact_link_problem, link
+                )
                 if problem is not None:
                     self._show_character_link_recovery(problem)
                     return CharacterConversationLinkOutcome.REJECTED
@@ -2205,9 +2220,9 @@ class PersonasScreen(BaseAppScreen):
 
         self.conversations._requested_conversation_id = None
         try:
-            self.query_one(
-                "#personas-character-link-recovery-copy", Static
-            ).update(copy)
+            self.query_one("#personas-character-link-recovery-copy", Static).update(
+                copy
+            )
             self._show_center(_CHARACTER_DEEP_LINK_RECOVERY_ID)
             if self.size.width <= 60:
                 self._compact_active_pane = "work"
@@ -2225,7 +2240,10 @@ class PersonasScreen(BaseAppScreen):
         try:
             await self._apply_pending_character_conversation_link(refresh_revision=True)
         finally:
-            if self.is_mounted and self._pending_character_conversation_link is not None:
+            if (
+                self.is_mounted
+                and self._pending_character_conversation_link is not None
+            ):
                 event.button.disabled = False
 
     def _restore_character_return_focus(self) -> None:
@@ -7095,9 +7113,7 @@ class PersonasScreen(BaseAppScreen):
             self._focus_conversations_list(force=True)
             self._compact_active_pane = "inspector"
             self._sync_personas_rails()
-            self.set_timer(
-                0.01, lambda: self._focus_conversations_list(force=True)
-            )
+            self.set_timer(0.01, lambda: self._focus_conversations_list(force=True))
             return
         self._focus_conversations_list(force=True)
 
@@ -9116,7 +9132,8 @@ class PersonasScreen(BaseAppScreen):
             browser.set_availability("loading")
         try:
             outcome = await self._persona_visual_thread(
-                self._load_persona_visual_authoring_draft, snapshot,
+                self._load_persona_visual_authoring_draft,
+                snapshot,
                 task_name="personas-persona-visual-configure",
             )
             if outcome.error is not None:
@@ -9157,7 +9174,9 @@ class PersonasScreen(BaseAppScreen):
             or (task is not None and not task.done())
         )
 
-    def _cleanup_persona_visual_state(self, state: _PersonaVisualAuthoringState) -> bool:
+    def _cleanup_persona_visual_state(
+        self, state: _PersonaVisualAuthoringState
+    ) -> bool:
         complete = True
         if state.workspace is not None:
             if cleanup_persona_visual_authoring_workspace(state.workspace):
@@ -9207,7 +9226,8 @@ class PersonasScreen(BaseAppScreen):
         if state is None:
             return
         outcome = await self._persona_visual_thread(
-            self._cleanup_persona_visual_state, state,
+            self._cleanup_persona_visual_state,
+            state,
             task_name="personas-persona-visual-draft-cleanup",
         )
         if outcome.completed and outcome.value is True:
@@ -9225,13 +9245,19 @@ class PersonasScreen(BaseAppScreen):
         state = self._persona_visual_authoring
         if state is not None and state.dirty:
             return "needs-user-save/discard"
-        if self._persona_visual_retained_cleanup or self._persona_visual_persistence_error:
+        if (
+            self._persona_visual_retained_cleanup
+            or self._persona_visual_persistence_error
+        ):
             return "incomplete"
         from ...Backup_Recovery import persona_visual_participants as visual
+
         config = visual.sys.modules.get("tldw_chatbook.config")
         if config is None or config._CONFIG_CACHE is None:
             return "unqualified"
-        return visual.safe_point(visual.profile_paths.user_data_dir(config._CONFIG_CACHE))
+        return visual.safe_point(
+            visual.profile_paths.user_data_dir(config._CONFIG_CACHE)
+        )
 
     @_persona_visual_ui_lifetime
     async def _persona_visual_thread(self, function, /, *args, task_name, **kwargs):
@@ -9239,6 +9265,7 @@ class PersonasScreen(BaseAppScreen):
         from ...Backup_Recovery import persona_visual_participants as visual
         from ...DB.ChaChaNotes_DB import CharactersRAGDB
         from ...Persona_Visual import assets, authoring_workspace, importer, publication
+
         allowed = (
             assets.load_persona_visual_asset,
             authoring_workspace.create_persona_visual_authoring_workspace,
@@ -9266,56 +9293,105 @@ class PersonasScreen(BaseAppScreen):
             db = args[0].db
         supported = any(actual is item for item in allowed)
         concrete_db = type(db) is CharactersRAGDB
-        binding = visual.repository_source(publication.PersonaVisualRepository(db)) if concrete_db else None
+        binding = (
+            visual.repository_source(publication.PersonaVisualRepository(db))
+            if concrete_db
+            else None
+        )
         if binding is not None and not supported:
             # Preview rendering consumes already materialized raster bytes only.
             from ...Chat.console_image_view import ConsoleImageRenderCache
-            if actual is not ConsoleImageRenderCache.prepare or type(getattr(function, "__self__", None)) is not ConsoleImageRenderCache:
+
+            if (
+                actual is not ConsoleImageRenderCache.prepare
+                or type(getattr(function, "__self__", None))
+                is not ConsoleImageRenderCache
+            ):
                 raise RuntimeError("persona_visual_job_source_changed")
         captured_snapshot = visual._shape(snapshot) if snapshot is not None else None
 
         def work():
             from contextlib import ExitStack
+
             previous = getattr(db._local, "conn", None) if concrete_db else None
             result = None
             try:
-                if snapshot is not None and visual._shape(snapshot) != captured_snapshot:
+                if (
+                    snapshot is not None
+                    and visual._shape(snapshot) != captured_snapshot
+                ):
                     raise RuntimeError("persona_visual_job_source_changed")
                 with ExitStack() as sources:
-                    if actual is publication.publish_persona_visual and binding is not None and snapshot is not None:
+                    if (
+                        actual is publication.publish_persona_visual
+                        and binding is not None
+                        and snapshot is not None
+                    ):
                         from ...Backup_Recovery import chat_source_participants as chat
-                        from ...Character_Chat.local_character_persona_service import LocalCharacterPersonaService
+                        from ...Character_Chat.local_character_persona_service import (
+                            LocalCharacterPersonaService,
+                        )
+
                         actor = snapshot.local_service
                         if type(actor) is LocalCharacterPersonaService:
                             actor_binding = chat._validate(actor)
                             if actor_binding is not None:
-                                if actor.db is not db or actor_binding.config is not binding.config or actor_binding.path.parent != binding.profile:
-                                    raise RuntimeError("persona_visual_actor_source_changed")
+                                if (
+                                    actor.db is not db
+                                    or actor_binding.config is not binding.config
+                                    or actor_binding.path.parent != binding.profile
+                                ):
+                                    raise RuntimeError(
+                                        "persona_visual_actor_source_changed"
+                                    )
                                 sources.enter_context(chat.operation(actor))
                     result = function(*args, **kwargs)
                 return result
             finally:
                 if supported and concrete_db and previous is None:
                     from ...Backup_Recovery.participants import _repository_participant
+
                     try:
                         db.close_connection()
                         if getattr(db._local, "conn", None) is not None or (
-                            not db.is_memory_db and threading.current_thread() in _repository_participant(db).retiring_threads
+                            not db.is_memory_db
+                            and threading.current_thread()
+                            in _repository_participant(db).retiring_threads
                         ):
                             raise RuntimeError("persona_visual_job_native_not_retired")
                     except BaseException as error:
                         error.result = result
                         raise
+
         outcome = await _drain_to_thread(work, task_name=task_name)
-        if getattr(actual, "__name__", "").startswith("cleanup_") or actual is PersonasScreen._cleanup_persona_visual_state:
-            candidate = args[1] if actual is publication.cleanup_persona_visual_publication_candidate and len(args) > 1 else (args[0] if args else None)
-            if outcome.error is not None or not outcome.completed or outcome.value is False:
+        if (
+            getattr(actual, "__name__", "").startswith("cleanup_")
+            or actual is PersonasScreen._cleanup_persona_visual_state
+        ):
+            candidate = (
+                args[1]
+                if actual is publication.cleanup_persona_visual_publication_candidate
+                and len(args) > 1
+                else (args[0] if args else None)
+            )
+            if (
+                outcome.error is not None
+                or not outcome.completed
+                or outcome.value is False
+            ):
                 if candidate is not None:
                     self._retain_persona_visual_cleanup(candidate)
             elif candidate is not None:
-                self._persona_visual_retained_cleanup = [item for item in self._persona_visual_retained_cleanup
-                    if item is not candidate and not (actual is publication.cleanup_persona_visual_publication_candidate
-                        and getattr(item, "cleanup_candidate", None) is candidate)]
+                self._persona_visual_retained_cleanup = [
+                    item
+                    for item in self._persona_visual_retained_cleanup
+                    if item is not candidate
+                    and not (
+                        actual
+                        is publication.cleanup_persona_visual_publication_candidate
+                        and getattr(item, "cleanup_candidate", None) is candidate
+                    )
+                ]
         if outcome.error is not None:
             if getattr(outcome.error, "cleanup_candidate", None):
                 self._retain_persona_visual_cleanup(outcome.error)
@@ -9994,9 +10070,13 @@ class PersonasScreen(BaseAppScreen):
             cancellation = outcome.cancellation
             durable_result = getattr(outcome.error, "result", None)
             if isinstance(durable_result, PersonaVisualPublicationResult):
-                self._persona_visual_persistence_error = "persona_visual_native_not_retired"
+                self._persona_visual_persistence_error = (
+                    "persona_visual_native_not_retired"
+                )
                 self._retain_persona_visual_cleanup(state)
-                outcome = dataclasses.replace(outcome, completed=True, value=durable_result, error=None)
+                outcome = dataclasses.replace(
+                    outcome, completed=True, value=durable_result, error=None
+                )
             if isinstance(outcome.error, PersonaVisualPublicationError):
                 cleanup_candidate = outcome.error.cleanup_candidate
                 if cleanup_candidate is not None:
@@ -10423,7 +10503,8 @@ class PersonasScreen(BaseAppScreen):
 
     @_visual_identity_ui_lifetime
     async def _read_character_visual_identity_graph(
-        self, snapshot: _CharacterVisualIdentityLoadSnapshot,
+        self,
+        snapshot: _CharacterVisualIdentityLoadSnapshot,
     ) -> tuple[bool, dict[str, Any] | None]:
         """Read one graph with fixed-category, privacy-safe failure logging."""
 
@@ -11402,7 +11483,9 @@ class PersonasScreen(BaseAppScreen):
             )
             try:
                 ok = await self._visual_identity_thread_value(
-                    cache.prepare, cache_key, bytes(resolution.image_bytes),
+                    cache.prepare,
+                    cache_key,
+                    bytes(resolution.image_bytes),
                     task_name="personas-reaction-preview-decode",
                 )
             except Exception:
@@ -11808,6 +11891,7 @@ class PersonasScreen(BaseAppScreen):
         """Make canonical rows omitted by a user version stageable again."""
 
         from ...Backup_Recovery import visual_identity_participants as life
+
         with life.restoring_rows(candidate, assets):
             known = {str(row["expression_key"]) for row in candidate.assets}
             directions = {
@@ -12101,6 +12185,7 @@ class PersonasScreen(BaseAppScreen):
         if task is not None and not task.done():
             return "pending"
         from ...Backup_Recovery import visual_identity_participants as life
+
         db = getattr(self.app_instance, "chachanotes_db", None)
         source = life.db_source(db)
         return life.safe_point(source.profile) if source is not None else "unqualified"
@@ -12111,20 +12196,32 @@ class PersonasScreen(BaseAppScreen):
         from ...Backup_Recovery import visual_identity_participants as life
         from ...DB.ChaChaNotes_DB import CharactersRAGDB
         from ...Character_Chat import visual_identity as source_module
+
         actual = getattr(function, "__func__", function)
         repository = getattr(function, "__self__", None)
-        db = repository.db if type(repository) is VisualIdentityRepository else (args[0] if args else None)
+        db = (
+            repository.db
+            if type(repository) is VisualIdentityRepository
+            else (args[0] if args else None)
+        )
         concrete_db = type(db) is CharactersRAGDB
         source = life.db_source(db) if concrete_db else None
-        allowed = (source_module.create_visual_identity_candidate, source_module.publish_visual_identity_candidate,
-                   source_module.cleanup_visual_identity_publication_candidate, source_module.resolve_visual_identity,
-                   VisualIdentityRepository.get_active_actor_pack)
-        supported = any(actual is item for item in allowed) and life.installed_code(actual)
+        allowed = (
+            source_module.create_visual_identity_candidate,
+            source_module.publish_visual_identity_candidate,
+            source_module.cleanup_visual_identity_publication_candidate,
+            source_module.resolve_visual_identity,
+            VisualIdentityRepository.get_active_actor_pack,
+        )
+        supported = any(actual is item for item in allowed) and life.installed_code(
+            actual
+        )
         if source is not None and not supported:
             raise RuntimeError("visual_identity_job_source_changed")
         state = self._visual_identity_authoring
         snapshot = state.snapshot if state is not None else None
         snapshot_shape = life._shape(snapshot)
+
         def work():
             previous = getattr(db._local, "conn", None) if concrete_db else None
             result = None
@@ -12132,7 +12229,10 @@ class PersonasScreen(BaseAppScreen):
             try:
                 if source is not None and life.db_source(db) is not source:
                     raise RuntimeError("visual_identity_job_source_changed")
-                if snapshot is not None and (state.snapshot is not snapshot or life._shape(snapshot) != snapshot_shape):
+                if snapshot is not None and (
+                    state.snapshot is not snapshot
+                    or life._shape(snapshot) != snapshot_shape
+                ):
                     raise RuntimeError("visual_identity_job_source_changed")
                 result = function(*args, **kwargs)
                 return result
@@ -12142,26 +12242,51 @@ class PersonasScreen(BaseAppScreen):
             finally:
                 if supported and concrete_db and previous is None:
                     from ...Backup_Recovery.participants import _repository_participant
+
                     try:
                         db.close_connection()
-                        if getattr(db._local, "conn", None) is not None or (not db.is_memory_db and threading.current_thread() in _repository_participant(db).retiring_threads):
+                        if getattr(db._local, "conn", None) is not None or (
+                            not db.is_memory_db
+                            and threading.current_thread()
+                            in _repository_participant(db).retiring_threads
+                        ):
                             raise RuntimeError("visual_identity_job_native_not_retired")
                     except BaseException as error:
                         error.source_error = source_error
                         error.result = getattr(source_error, "result", result)
-                        error.cleanup_candidate_relpath = getattr(source_error, "cleanup_candidate_relpath", None)
+                        error.cleanup_candidate_relpath = getattr(
+                            source_error, "cleanup_candidate_relpath", None
+                        )
                         error._visual_identity_retirement_error = True
                         raise
+
         outcome = await _drain_to_thread(work, task_name=task_name)
-        if outcome.error is not None and (getattr(outcome.error, "cleanup_candidate_relpath", None) is not None or getattr(outcome.error, "result", None) is not None or getattr(outcome.error, "_visual_identity_retirement_error", False)):
+        if outcome.error is not None and (
+            getattr(outcome.error, "cleanup_candidate_relpath", None) is not None
+            or getattr(outcome.error, "result", None) is not None
+            or getattr(outcome.error, "_visual_identity_retirement_error", False)
+        ):
             self._visual_identity_retained_errors.append(outcome.error)
-        if actual is source_module.cleanup_visual_identity_publication_candidate and outcome.error is None and outcome.value is True and len(args) > 1:
+        if (
+            actual is source_module.cleanup_visual_identity_publication_candidate
+            and outcome.error is None
+            and outcome.value is True
+            and len(args) > 1
+        ):
             token = args[1]
-            self._visual_identity_retained_errors = [error for error in self._visual_identity_retained_errors if getattr(error, "cleanup_candidate_relpath", None) is not token]
+            self._visual_identity_retained_errors = [
+                error
+                for error in self._visual_identity_retained_errors
+                if getattr(error, "cleanup_candidate_relpath", None) is not token
+            ]
         return outcome
 
-    async def _visual_identity_thread_value(self, function, /, *args, task_name, **kwargs):
-        outcome = await self._visual_identity_thread(function, *args, task_name=task_name, **kwargs)
+    async def _visual_identity_thread_value(
+        self, function, /, *args, task_name, **kwargs
+    ):
+        outcome = await self._visual_identity_thread(
+            function, *args, task_name=task_name, **kwargs
+        )
         if outcome.cancellation is not None:
             raise outcome.cancellation
         if outcome.error is not None:
@@ -15272,7 +15397,10 @@ class PersonasScreen(BaseAppScreen):
             )
             return
         selected = str(self.state.selected_entity_id or "")
-        if self._edit_mode != "create" and selected in self._console_changed_character_ids:
+        if (
+            self._edit_mode != "create"
+            and selected in self._console_changed_character_ids
+        ):
             # Final review I1: the save path writes the editor's full field
             # set over the current version -- never do that silently.
             self._console_changed_character_ids.discard(selected)
@@ -16074,7 +16202,10 @@ class PersonasScreen(BaseAppScreen):
                         self._actor_pack_save_worker_handle,
                         self._profile_save_completion,
                     )
-                    if current_owners != prior_owners or not self.state.has_unsaved_changes:
+                    if (
+                        current_owners != prior_owners
+                        or not self.state.has_unsaved_changes
+                    ):
                         break
                 await self._await_roleplay_save_owners()
             except Exception:  # noqa: BLE001
