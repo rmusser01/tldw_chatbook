@@ -280,18 +280,24 @@ async def test_console_header_subtitle_yields_width_before_fixed_controls() -> N
                 "#console-auto-speak",
                 "#console-hands-free-label",
                 "#console-hands-free-switch",
-                "#workbench-header-status",
             )
         )
+        badge = console.query_one("#workbench-header-status", Static)
         await pilot.pause()
         wide_subtitle_width = subtitle.region.width
         wide_fixed_widths = tuple(widget.region.width for widget in fixed)
+        # TASK-33005.3 review round 1 (rewritten on purpose): the badge reads
+        # the readiness word, and below single-pane width the short status,
+        # so it is no longer one of the fixed-width controls.
+        assert _static_text(badge) == "Ready · not tested"
 
         await pilot.resize_terminal(60, 30)
         await pilot.pause(0.2)
 
         assert subtitle.region.width < wide_subtitle_width
         assert tuple(widget.region.width for widget in fixed) == wide_fixed_widths
+        assert _static_text(badge) == "Ready"
+        assert badge.region.x + badge.region.width == 60 - 1
         assert str(subtitle.styles.text_overflow) == "ellipsis"
         painted = _compositor_text(host.export_screenshot(simplify=True))
         assert "Speak replies" in painted

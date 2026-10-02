@@ -3783,13 +3783,12 @@ async def test_settings_provider_test_toast_states_success():
     # notifying (so "no toast") and opens a real socket to 127.0.0.1:11434.
     # The probe-inclusive toast is already covered by
     # test_settings_provider_test_toast_folds_in_reachable_endpoint_probe; the
-    # branch left uncovered is the plain no-probe one, which only a key-based
-    # provider reaches.
+    # branch left uncovered is the plain no-network one.
+    # TASK-33005.4 (rewritten on purpose): a key-based cloud provider no
+    # longer reaches it -- 't' checks its key by a model listing (ADR-012
+    # amendment 2026-09-26) -- so an in-process keyless provider stands in.
     app = _build_test_app()
-    app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4o"}
-    app.app_config.setdefault("api_settings", {}).setdefault("openai", {})[
-        "api_key"
-    ] = "sk-test-key-for-readiness"
+    app.app_config["chat_defaults"] = {"provider": "mlx_lm", "model": "mlx-model"}
     host = DestinationHarness(app, "settings")
 
     async with host.run_test(size=(180, 50)) as pilot:
@@ -3807,8 +3806,8 @@ async def test_settings_provider_test_toast_states_success():
         assert toasts, "provider test produced no toast"
         message, kwargs = toasts[-1]
         assert message == (
-            "Configuration check complete: OpenAI is configured; model gpt-4o. "
-            "Live generation has not been tested."
+            "Configuration check complete: MLX-LM (Apple silicon) is configured; "
+            "model mlx-model. Live generation has not been tested."
         )
         assert kwargs.get("severity") == "information"
 
@@ -4786,7 +4785,8 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(
             "check the URL; generation not tested."
         )
         assert kwargs.get("severity") == "warning"
-        assert _provider_test_rows_of(screen._provider_test_result)[0] == (
+        # [0] is the Readiness word (TASK-33005.3); the failure leads the rest.
+        assert _provider_test_rows_of(screen._provider_test_result)[1] == (
             "Endpoint",
             (
                 "http://127.0.0.1:11434 · model listing failed (connection refused) "
@@ -4892,7 +4892,9 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         # TASK-33002.2: labelled rows, each label once, no pipe dump.
         rows = _provider_test_rows_of(result)
         labels = [label for label, _text in rows]
-        assert sorted(labels) == sorted(
+        # TASK-33005.3: the Readiness word leads the five fact rows.
+        assert labels[0] == "Readiness", result
+        assert sorted(labels[1:]) == sorted(
             ("Config", "Key", "Endpoint", "Model", "Generation")
         ), result
         assert " | " not in result
@@ -4942,23 +4944,45 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_provider_test_skips_probe_for_cloud_providers(
+async def test_settings_provider_test_checks_cloud_keys_by_listing_not_endpoint_probe(
     request, monkeypatch
 ):
-    """task-191: key-based cloud providers keep the local-only Test toast."""
+    """task-191 / TASK-33005.4 (rewritten on purpose; was
+    ``test_settings_provider_test_skips_probe_for_cloud_providers``): a cloud
+    provider never gets the local endpoint probe, and since the ADR-012
+    amendment of 2026-09-26 its 't' is one authenticated model listing
+    through the discovery client -- the key check -- instead of the old
+    local-only toast."""
+    from tldw_chatbook.LLM_Provider_Catalog import (
+        openai_compatible_model_discovery as discovery_module,
+    )
+
     monkeypatch.setenv("OPENAI_API_KEY", "sk-test-not-a-real-key")
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
+    app.providers_models = {"OpenAI": ["gpt-4.1"]}
     probe_calls = []
+    listed = []
 
     async def fake_probe(base_url, **kwargs):
         probe_calls.append(base_url)
         return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
 
+    def listing(request):
+        listed.append(request.headers.get("authorization"))
+        return httpx.Response(200, json={"data": [{"id": "gpt-4.1"}]})
+
     monkeypatch.setattr(
         settings_endpoint_probe_module,
         "probe_settings_endpoint",
         fake_probe,
+    )
+    monkeypatch.setattr(
+        discovery_module,
+        "build_httpx_async_client",
+        lambda **kwargs: httpx.AsyncClient(
+            transport=httpx.MockTransport(listing), **kwargs
+        ),
     )
     host = DestinationHarness(app, "settings")
 
@@ -4969,28 +4993,34 @@ async def test_settings_provider_test_skips_probe_for_cloud_providers(
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
         screen.action_settings_test_category()
+        await screen.workers.wait_for_complete()
         await pilot.pause()
 
         assert probe_calls == []
+        assert listed == ["Bearer sk-test-not-a-real-key"]
         message, kwargs = toasts[-1]
-        assert message == (
-            "Configuration check complete: OpenAI is configured; model gpt-4.1. "
-            "Live generation has not been tested."
+        assert message.startswith("Ready · verified ")
+        assert message.endswith(
+            " — key accepted (1 model listed) · generation not tested."
         )
         assert kwargs.get("severity") == "information"
-        # TASK-33002.2 AC#5: the rows keep the local-readiness honesty.
         rows = dict(_provider_test_rows_of(screen._provider_test_result))
         assert rows["Key"] == (
-            "from env var OPENAI_API_KEY · present, not verified"
+            "from env var OPENAI_API_KEY · key accepted (1 model listed)"
         )
         assert rows["Generation"] == "not tested"
-        assert "model listing" not in screen._provider_test_result
 
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch, request):
-    """task-191: a failed readiness check keeps the failure toast, no probe."""
+async def test_settings_provider_test_lists_endpoint_before_a_model_is_chosen(
+    monkeypatch, request
+):
+    """TASK-33005.4 (AC#11; rewritten on purpose, was
+    ``test_settings_provider_test_failure_skips_endpoint_probe``): a URL-based
+    provider with no model used to skip the probe, although listing the
+    server's models is how a first run finds one. It is listed now, and the
+    result says what it found and that a model must still be chosen."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "Ollama", "model": ""}
     app.app_config["api_settings"] = {"ollama": {"api_url": "http://127.0.0.1:11434"}}
@@ -4998,7 +5028,9 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch, 
 
     async def fake_probe(base_url, **kwargs):
         probe_calls.append(base_url)
-        return SettingsEndpointProbeOutcome(reachable=True, summary="reachable")
+        return SettingsEndpointProbeOutcome(
+            state="reachable", summary="reachable", model_ids=("m-1", "m-2", "m-3")
+        )
 
     monkeypatch.setattr(
         settings_endpoint_probe_module,
@@ -5014,12 +5046,19 @@ async def test_settings_provider_test_failure_skips_endpoint_probe(monkeypatch, 
         host.notify = lambda message, **kwargs: toasts.append((message, kwargs))
 
         screen.action_settings_test_category()
+        await screen.workers.wait_for_complete()
         await pilot.pause()
 
-        assert probe_calls == []
+        assert probe_calls == ["http://127.0.0.1:11434"]
         message, kwargs = toasts[-1]
-        assert message.startswith("Configuration check blocked:")
+        assert message == (
+            "Model listing reached (3 models listed); choose a default model."
+        )
         assert kwargs.get("severity") == "warning"
+        rows = dict(_provider_test_rows_of(screen._provider_test_result))
+        assert rows["Readiness"] == "Not ready · no model"
+        assert rows["Model"] == "not set — choose a default model"
+        assert rows["Endpoint"].endswith(" · model listing reached")
 
 
 @pytest.mark.asyncio
@@ -11102,8 +11141,8 @@ async def test_settings_provider_test_blocks_unknown_provider(request):
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        label, verdict = _provider_test_rows_of(screen._provider_test_result)[0]
-        assert label == "Config"
+        label, verdict = _provider_test_rows_of(screen._provider_test_result)[1]
+        assert label == "Config"  # [0] is the Readiness word (TASK-33005.3)
         assert "is not ready: Unknown provider" in verdict
 
 
@@ -11420,7 +11459,7 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         text = _visible_text(screen)
 
         rows = _provider_test_rows_of(screen._provider_test_result)
-        assert rows[0] == ("Config", "Ollama is configured")
+        assert rows[1] == ("Config", "Ollama is configured")  # [0]: Readiness
         assert "configuration=" not in text
         assert "is ready" not in text
 
@@ -13645,9 +13684,13 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
     The status must derive from the SAME check the send path uses
     (``get_provider_readiness`` / ``resolve_provider_api_key``), not the mere
     presence of a provider/model name. A profile with a selected provider but
-    no API key must read 'Status: Not ready: Missing API key' -- an identity
+    no API key must read 'Status: Not ready · no key' -- an identity
     echo ("Status: OpenAI / gpt-4.1") implied usability while an actual send
     failed with "OpenAI API Key is required but not found."
+
+    TASK-33005 capture checkpoint (rewritten on purpose): the status now
+    speaks the one readiness vocabulary, "Not ready: Missing API key" ->
+    "Not ready · no key".
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
@@ -13663,7 +13706,7 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Not ready: Missing API key" in config_text
+        assert "; Status: Not ready · no key" in config_text
         # The provider/model identity still shows; only the honesty of the
         # trailing Status verdict changed.
         assert "OpenAI / gpt-4.1" in config_text
@@ -13674,7 +13717,8 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
 async def test_settings_overview_status_reports_ready_with_credential(
     request, monkeypatch
 ):
-    """Paired arm: a resolvable API key still reads 'Status: Ready'."""
+    """Paired arm: a resolvable API key reads 'Status: Ready · not tested'
+    (TASK-33005 capture checkpoint, rewritten on purpose from "Ready")."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -13691,7 +13735,7 @@ async def test_settings_overview_status_reports_ready_with_credential(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Ready" in config_text
+        assert config_text.endswith("; Status: Ready · not tested")
         assert "Not ready" not in config_text
 
 
@@ -13705,8 +13749,9 @@ async def test_settings_overview_status_reports_not_ready_without_model(
     A credential-only check would return Ready here while the Overview
     identity renders "not selected" and the send gateway blocks with "Select
     a model before sending." The Overview 'Status:' must agree with the send
-    path for BOTH missing-key AND missing-model, so this reports 'Not ready:
-    Select a model'.
+    path for BOTH missing-key AND missing-model, so this reports 'Not ready ·
+    no model' (TASK-33005 capture checkpoint, rewritten on purpose from "Not
+    ready: Select a model").
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
@@ -13725,11 +13770,73 @@ async def test_settings_overview_status_reports_not_ready_without_model(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Not ready: Select a model" in config_text
+        assert "; Status: Not ready · no model" in config_text
         # The identity half shows the model is unselected, matching the status.
         assert "not selected" in config_text
         # Must NOT read a bare "Ready" verdict.
         assert "; Status: Ready" not in config_text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_status_reads_a_refused_test_as_the_console_does(
+    request,
+):
+    """TASK-33005 capture checkpoint (capture 03): Overview read "Status:
+    Ready" right above "Last connection test: Readiness: Not ready · refused
+    :9199". The status line reads the shared connection evidence, in the
+    Console's words, so the two can never disagree."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+        console_send_connection,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+        shared_connection_evidence,
+    )
+
+    app = _build_test_app()
+    config = app.app_config
+    config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9199",
+        "model": "model-a",
+    }
+    host = DestinationHarness(app, "settings")
+    store = ProviderTestEvidenceStore(lambda: host)
+    store.settle(
+        store.begin(
+            console_send_connection(
+                build_target_default_console_session_settings(
+                    config, "llama_cpp", "model-a"
+                ),
+                app_config=config,
+            )
+        ),
+        ProviderProbeResult("unreachable", (), "connection_refused"),
+    )
+    console_word = readiness_words(
+        build_console_settings_readiness(
+            build_target_default_console_session_settings(
+                config, "llama_cpp", "model-a"
+            ),
+            app_config=config,
+            connection_evidence=shared_connection_evidence(lambda: host),
+        )
+    )
+    assert console_word == "Not ready · refused :9199"
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert config_text.endswith(f"; Status: {console_word}"), config_text
 
 
 @pytest.mark.asyncio

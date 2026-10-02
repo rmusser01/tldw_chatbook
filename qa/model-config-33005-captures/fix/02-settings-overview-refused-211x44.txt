@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Overview | Runtime controls stay in MCP and ACP
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Read-only here | Review readiness across Settings categories.                                                      │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Overview                                                                                                                  │  │  │ Selected category: Overview             │
+│                              │  │  │  Backup & Restore                                                                                                          │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │  │  │  Guided edits: choose Providers or      │
+│ █  > Overview (view)         │  │  │ │                                                                                                                        │ │  │  │  Console.                               │
+│      Providers & Models      │  │  │ │  Status                                                                                                                │ │  │  │  Open Theme picker                      │
+│      Web Search              │  │  │ │  Configuration: llama.cpp / model-a; Status: Not ready · refused :9199                                                 │ │  │  │ Saves apply to your local config file.  │
+│      Speech & TTS            │  │  │ │  Open Providers & Models                                                                                               │ │  │  │ Nothing is sent to a server unless you  │
+│  Interface                   │  │  │ │  Last connection test: Readiness: Not ready · refused :9199; Endpoint: http://127.0.0.1:9199 · model listing failed    │ │  │  │ run Manual sync yourself.               │
+│      Appearance              │  │  │ │  (connection refused) — start the server or check the URL                                                              │ │  │  │ Impact and boundaries                   │
+│      Theme                   │  │  │ │  Storage & privacy: Config path: config.toml — override config, writable; Privacy: local config by default;            │ │  │  │ Readiness, storage, privacy, Console    │
+│      Splash Screen           │  │  │ │  secret-looking diagnostics are redacted                                                                               │ │  │  │ behavior, diagnostics.                  │
+│      Console Behavior        │  │  │ │   Open Storage    Open Privacy & Security                                                                              │ │  │  │  Runtime owner: owning destinations     │
+│  Data & Privacy              │  │  │ │  Sync: blocked; pending outgoing: none                                                                                 │ │  │  │  Writes allowed: No                     │
+│      Storage                 │  │  │ │  Preview manual sync   Run manual sync                                                                                 │ │  │  │  Owns: global defaults                  │
+│      Workspaces              │  │  │ │ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ │  │  │  validation status                      │
+│      Tool Profiles           │  │  │ │ │  ▶ Advanced / Diagnostics                                                                                          │ │ │  │  │  recovery guidance                      │
+│      Privacy & Security      │  │  │ │ │                                                                                                                    │ │ │  │  │  Read-only: Overview summarizes status  │
+│      Network                 │  │  │ │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │  │  │  and ownership only.                    │
+│      My Profile              │  │  │ │                                                                                                                        │ │  │  │  Affected config: all Settings          │
+│  Troubleshooting             │  │  │ │ ╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │ │  │  │  categories summarized for readiness    │
+│      Diagnostics (view)      │  │  │ │ │  ▶ Where changes happen                                                                                            │ │ │  │  │  Recovery: open the specific category   │
+│      About (view)            │  │  │ │ │                                                                                                                    │ │ │  │  │  before changing values                 │
+│      Agents                  │  │  │ │ ╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │ │  │  │  Boundary: runtime MCP, ACP, and tool   │
+│  Expert                      │  │  │ │                                                                                                                        │ │  │  │  control stay in their own              │
+│      Hooks                   │  │  │ └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │  │  │  destinations                           │
+│      Internal Prompts        │  │  │                                                                                                                            │  │  │                                         │
+│      Advanced Config         │  │  │                                                                                                                            │  │  │                                         │
+│   Domain Defaults ▸ (11)     │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

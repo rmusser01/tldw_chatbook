@@ -44,6 +44,7 @@ Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
 Tests/UI/test_console_trace_call_recovery.py
 Tests/UI/test_console_trace_maintenance_status.py
+Tests/UI/test_console_turn_resend_ui.py
 Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py

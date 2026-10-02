@@ -26,6 +26,7 @@ def build_console_workbench_state(
     run_active: bool = False,
     ephemeral: bool = False,
     hook_attention: int = 0,
+    readiness_word: str = "",
 ) -> WorkbenchState:
     """Return a shared Workbench state snapshot for Console.
 
@@ -43,6 +44,8 @@ def build_console_workbench_state(
         can_send: Whether the visible composer draft can be sent.
         can_stop: Whether an active generation can be stopped.
         hook_attention: Enabled hooks or permission errors needing attention.
+        readiness_word: The active chat's spec §5 readiness word
+            (TASK-33005.3); the header badge shows it unless a run is active.
         density: Requested Workbench density, currently ``normal`` or ``compact``.
         ephemeral: Whether the active session is temporary. Retained for
             callers even though no top action reads it today: Save Chatbook
@@ -150,6 +153,9 @@ def build_console_workbench_state(
             # runs once past the blocker gate, so running takes precedence.
             status="running" if run_active else ("blocked" if blocker else "ready"),
             density=workbench_density,
+            # TASK-33005.3: the badge is the status row's readiness word, so
+            # the strip below keeps its width for the context/cost chip.
+            status_label="" if run_active else readiness_word,
         ),
         modes=modes,
         actions=actions,

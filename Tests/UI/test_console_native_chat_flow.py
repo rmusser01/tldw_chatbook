@@ -8466,7 +8466,7 @@ async def test_console_selected_message_updates_inspector_action_guidance():
         )
         assert "Selected message: Assistant message" in inspector_text
         assert (
-            "Message actions: Copy, Edit, Fork, Regenerate/Retry, Continue, More…"
+            "Message actions: Copy, Edit, Fork, Regenerate/Retry/Resend, Continue, More…"
             in inspector_text
         )
         assert (

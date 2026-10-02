@@ -100,7 +100,7 @@ async def test_modal_refreshes_expiry_and_renews_stale_snapshot_without_edits(
     async with app.run_test(size=(160, 48)) as pilot:
         await app.push_screen(modal)
         status = modal.query_one("#console-settings-readiness", Static)
-        await _wait_for_status(status, "Ready to send")
+        await _wait_for_status(status, "Ready · not tested")  # TASK-33005.3 AC#11
         await pilot.pause(0.3)
         revision = expiring_credential.cache.revision
         expiring_credential.wall = 1002
@@ -120,7 +120,7 @@ async def test_modal_refreshes_expiry_and_renews_stale_snapshot_without_edits(
             "#console-settings-configure-credential", Button
         ).display
         expiring_credential.release.set()
-        await _wait_for_status(status, "Ready to send")
+        await _wait_for_status(status, "Ready · not tested")  # TASK-33005.3 AC#11
         assert "private-token" not in str(status.renderable)
 
 
@@ -244,7 +244,7 @@ async def test_streaming_control_responds_and_readiness_refreshes_after_slow_rea
             release.set()
             # No user action after release: completion must reach the UI itself.
             async with asyncio.timeout(3):
-                while "Ready to send" not in str(status.renderable):
+                while "Ready · not tested" not in str(status.renderable):  # TASK-33005.3 AC#11
                     await asyncio.sleep(0.01)
             assert "private-token" not in str(status.renderable)
             assert len(readers) == 1

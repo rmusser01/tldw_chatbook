@@ -623,14 +623,55 @@ async def test_readiness_resolves_once_per_provider_off_the_ui_thread() -> None:
     assert all(thread != ui_thread for _p, _m, thread in recorder.readiness_calls)
 
 
-def test_readiness_words_never_claim_verified_or_reachable() -> None:
-    """AC#11: config-only readiness reads 'Ready · not tested' or 'Not ready · <reason>'."""
+def test_switcher_rows_read_the_one_readiness_vocabulary() -> None:
+    """TASK-33005.3 (rewritten on purpose from P4's
+    ``test_readiness_words_never_claim_verified_or_reachable``): rows read
+    the shared spec §5 words. Config-only readiness, or a reachable facet
+    with no observed connection, still never claims more than 'not tested';
+    an observed local listing reads 'reachable HH:MM' and a refusal names
+    the port, as every other surface does."""
+    from datetime import datetime
+
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderDraftIdentity
+
+    llama = ProviderDraftIdentity(
+        provider_key="llama_cpp",
+        connection_identity=canonical_connection_identity(
+            "llama_cpp", "http://127.0.0.1:9099"
+        ),
+        credential_source="none",
+        credential_revision=0,
+        draft_generation=0,
+    )
+    seen = datetime(2026, 10, 1, 14, 1).astimezone()
     reachable = replace(READY, endpoint="reachable")
-    assert switcher_readiness_words(reachable) == "Ready · not tested"
+    refused = ConsoleSettingsReadiness(
+        "Not ready",
+        "",
+        False,
+        operability="not_ready",
+        blocker="endpoint_unreachable",
+        recovery_action="retry_connection",
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable",
+        endpoint_category="connection_refused",
+        model="unconfirmed",
+        connection=llama,
+        observed_at=seen,
+    )
+
+    assert switcher_readiness_words(None) == "checking…"
     assert switcher_readiness_words(READY) == "Ready · not tested"
+    assert switcher_readiness_words(reachable) == "Ready · not tested"
     assert switcher_readiness_words(NO_KEY) == "Not ready · no key"
-    words = {switcher_readiness_words(r) for r in (READY, NO_KEY, reachable)}
-    assert not any("verified" in word or "reachable" in word for word in words)
+    assert switcher_readiness_words(
+        replace(reachable, connection=llama, observed_at=seen)
+    ) == ("Ready · reachable 14:01")
+    assert switcher_readiness_words(refused) == "Not ready · refused :9099"
 
 
 async def test_legacy_aliases_are_hidden_unless_current_then_labelled() -> None:

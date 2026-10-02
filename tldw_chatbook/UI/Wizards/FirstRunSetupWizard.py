@@ -3168,23 +3168,17 @@ class ProviderStep(SetupStep):
     def _provider_probe_result_from_outcome(outcome: object):
         """Convert only the exact shared Settings outcome to exact evidence."""
 
-        from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
         from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
             SettingsEndpointProbeOutcome,
+            provider_probe_result_from_settings_outcome,
         )
 
-        if type(outcome) is not SettingsEndpointProbeOutcome:
+        # The one mapping every listing probe uses (a 403 never blocks).
+        if type(outcome) is not SettingsEndpointProbeOutcome or str(
+            outcome.state
+        ) not in {"reachable", "model_listing_unavailable", "unreachable"}:
             raise ValueError("Provider probe outcome is invalid.")
-        state = str(outcome.state)
-        if state == "reachable":
-            return ProviderProbeResult("reachable", outcome.model_ids)
-        if state == "model_listing_unavailable":
-            return ProviderProbeResult(
-                "model_listing_unavailable", (), outcome.category
-            )
-        if state == "unreachable":
-            return ProviderProbeResult("unreachable", (), outcome.category)
-        raise ValueError("Provider probe outcome is invalid.")
+        return provider_probe_result_from_settings_outcome(outcome)
 
     def _render_provider_evidence(self, identity: object) -> None:
         from tldw_chatbook.Chat.provider_test_evidence import (

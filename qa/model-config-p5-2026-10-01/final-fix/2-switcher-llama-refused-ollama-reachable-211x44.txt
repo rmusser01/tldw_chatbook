@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+       •                                                                             ·                   ·                                 •                                                        *
+                                                                                                                                                      *
+                                 ·•╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────────────────────────╮                            ·     •
+                                  *│ Find type to search 29 models in 4 providers · Enter applies                                                                             │   •
+            *       *              │ RECENT · your last 50 chats                                                                                                              │
+                     ·       ·     │ ▶ model-a                      llama.cpp             ~32k  Not ready · refused :9199    ● CURRENT                                        │
+            • •                    │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │          *
+        ·             •            │   gpt-5.6-terra                OpenAI                 ~4k  Ready · not tested                                                            │*
+ *                                 │   gpt-5.6-sol                  OpenAI                 ~4k  Ready · not tested                                                            │        ·
+                                   │   gpt-5.6-luna                 OpenAI                 ~4k  Ready · not tested                                                            │ *
+    *                              │     … 11 more OpenAI models                                                                                                              │   ·           •     •
+                                   │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │                     •
+                 •                 │   gemma3:12b                   Ollama                ~32k  Ready · reachable 06:00                                                       │  •          •            *
+ ·     ·                           │   gemma3:4b                    Ollama                ~32k  Ready · reachable 06:00                                                       │
+     *                             │   gemma3:27b                   Ollama                ~32k  Ready · reachable 06:00                                                       │
+                              ·    │     … 8 more Ollama models                                                                                                               │                             *
+                                   │   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                                            │
+                                   │   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                                            │                  *
+                    ••  •          │   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                                            │
+              •                    │     … 1 more vLLM models                                                                                                                 │           · *
+                        *          │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │
+                                   │   (any model)                  llama.cpp                   Not ready · refused :9199    start it; rechecked on open                      │
+                     ·             │   (any model)                  Aphrodite Engine            Not ready · refused :2242    start it; rechecked on open                      │
+                                   │   (any model)                  TabbyAPI                    Not ready · refused :8080    start it; rechecked on open                      │                            *
+       •      ·                    │   (any model)                  Custom OpenAI-co…ble        Not ready · refused :1234    start it; rechecked on open                      │                        *
+ •                                 │   (any model)                  Custom OpenAI-co… #2        Not ready · refused :5678    start it; rechecked on open                      │                        • *     •
+                  *          •     │   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │
+        •                   •    • │   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                             ·
+    ·           ·             *    │   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │•       *
+                                   │     … 43 more providers need setup · type a name to find one                                                                             │           *               *
+                                   │ Values for model-a · llama.cpp                                                                                                           │
+                                   │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider                                 │                             *
+                                   │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │ •
+                            ·      │  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │      ·                         •
+                                   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                                  ·
+                                                                 •          ·*    *                                                                                                    *
+                                                                                                                                               ·                                      *
+   •              ·        ·                            ·                                                                              ·
+         *       *               •                    ·                        *                          *                                                                             ·
+
+  Ctrl+Shift+F focus | Enter continue setup | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

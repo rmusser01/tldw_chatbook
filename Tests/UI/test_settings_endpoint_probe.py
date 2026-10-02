@@ -12,6 +12,7 @@ import tldw_chatbook.UI.Screens.settings_endpoint_probe as settings_probe_module
 from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbeOutcome,
     probe_settings_endpoint,
+    provider_probe_result_from_settings_outcome,
 )
 from tldw_chatbook.UI.Speech.speech_settings_contracts import (
     SpeechTTSConnectionState,
@@ -736,7 +737,7 @@ async def test_console_connection_seam_reaches_real_models_endpoint() -> None:
                 endpoint,
             ),
             credential_source="none",
-            credential_revision=3,
+            credential_revision=0,  # Keyless: what every surface stamps (TASK-33005.2 review I-1).
             draft_generation=7,
         )
 
@@ -1138,3 +1139,255 @@ async def test_console_entry_probe_uses_only_selected_entry_credentials(
     assert outcome.endpoint == "reachable"
     assert outcome.model_ids == ("entry-model",)
     assert "fixture-" not in repr(outcome)
+
+
+def _discovery(status, *, kind=None, category=None, models=()):
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        DiscoveredModel,
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="OpenAI",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status=status,
+        models=tuple(
+            DiscoveredModel(
+                provider="openai",
+                provider_list_key="OpenAI",
+                model_id=model_id,
+                display_name=model_id,
+                source="runtime_discovered",
+                endpoint_fingerprint="https://api.openai.com/v1",
+                discovered_at="2026-10-01T00:00:00Z",
+            )
+            for model_id in models
+        ),
+        error=(
+            None
+            if kind is None
+            else ModelDiscoveryError(kind, "message", "hint", category=category)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "key_sent", "expected"),
+    [
+        (_discovery("success", models=("a", "b")), True, ("reachable", 2, None, True)),
+        # A listing that answered without a key proves nothing about one.
+        (_discovery("success", models=("a",)), False, ("reachable", 1, None, False)),
+        (
+            _discovery("error", kind="missing_credentials", category="unauthorized"),
+            True,
+            ("unreachable", 0, "unauthorized", False),
+        ),
+        # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403
+        # means this key may not LIST models, not that it cannot chat. It
+        # checked nothing and blocks nothing; only a 401 rejects the key.
+        (
+            _discovery("error", kind="missing_credentials", category="forbidden"),
+            True,
+            ("model_listing_unavailable", 0, "http_status", False),
+        ),
+        # Qodo #2958 finding 4: an answer with no usable model id lists
+        # nothing, so it is no key acceptance either.
+        (
+            _discovery("success", models=()),
+            True,
+            ("model_listing_unavailable", 0, None, False),
+        ),
+        # No key was sent, so a 401 rejected no key: the listing needs one.
+        (
+            _discovery("error", kind="missing_credentials", category="unauthorized"),
+            False,
+            ("model_listing_unavailable", 0, None, False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="timeout"),
+            True,
+            ("unreachable", 0, "timeout", False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="connection_refused"),
+            True,
+            ("unreachable", 0, "connection_refused", False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="connection_error"),
+            True,
+            ("unreachable", 0, "connection_error", False),
+        ),
+        # The server answered 404 (or 429, 5xx: rewritten on purpose, TASK-33005
+        # final review I-4), or answered something that is not a list: the
+        # key was not checked, and nothing blocks a send.
+        (
+            _discovery("error", kind="request_failed", category="http_status"),
+            True,
+            ("model_listing_unavailable", 0, "http_status", False),
+        ),
+        (
+            _discovery("unsupported", kind="unsupported_endpoint", category="http_status"),
+            True,
+            ("model_listing_unavailable", 0, "http_status", False),
+        ),
+        (
+            _discovery("error", kind="invalid_response"),
+            True,
+            ("model_listing_unavailable", 0, None, False),
+        ),
+    ],
+)
+def test_key_check_listing_maps_to_bounded_evidence(result, key_sent, expected):
+    """TASK-33005.4: one explicit key-check listing becomes the evidence the
+    shared owner keeps, in the probe's own facets and categories."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    probe = key_check_probe_result(result, key_sent=key_sent)
+
+    assert (
+        probe.endpoint,
+        len(probe.model_ids),
+        probe.category,
+        probe.key_accepted,
+    ) == expected
+
+
+def _cloud_key_check(category: str):
+    """What Settings 't' records for a cloud key check answered 401/403."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    return key_check_probe_result(
+        _discovery("error", kind="missing_credentials", category=category),
+        key_sent=True,
+    )
+
+
+def _local_listing_probe(category: str):
+    """What a local listing probe records for a 401/403: the transport's
+    outcome (pinned by test_probe_classifies_bounded_http_failures) through
+    the shared mapping Settings 't', Chat settings' Test connection and the
+    Switch model probe all use."""
+    return provider_probe_result_from_settings_outcome(
+        SettingsEndpointProbeOutcome(
+            state="unreachable", summary=f"unreachable: {category}", category=category
+        )
+    )
+
+
+@pytest.mark.parametrize(
+    ("provider", "table", "endpoint", "probe"),
+    [
+        ("openai", {}, "", _cloud_key_check),
+        # Qodo #2958 follow-up: the ruling holds for every listing probe.
+        (
+            "vllm",
+            {"api_url": "http://127.0.0.1:8000"},
+            "http://127.0.0.1:8000",
+            _local_listing_probe,
+        ),
+    ],
+    ids=["cloud-key-check", "local-listing"],
+)
+@pytest.mark.parametrize(
+    ("category", "word", "blocked"),
+    [
+        ("unauthorized", "Not ready · key rejected", True),
+        ("forbidden", "Ready · not tested", False),
+    ],
+    ids=["401", "403"],
+)
+def test_only_a_401_from_a_listing_probe_blocks_sending(
+    provider, table, endpoint, probe, category, word, blocked
+):
+    """Qodo #2958 finding 5 (owner ruling): a credential that may chat but
+    not list models must not read "key rejected" or block the Console; a 401
+    still does. Driven through the real mapping, shared owner, Console
+    readiness and Settings rows, which must all agree."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+        console_send_connection,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidenceStore,
+        provider_connection_evidence,
+    )
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    config = {
+        "api_settings": {provider: {**table, "api_key": "sk-test-403-0123456789"}}
+    }
+    settings = build_target_default_console_session_settings(config, provider, "m-1")
+    app = type("App", (), {})()
+    identity = console_send_connection(settings, app_config=config, environ={})
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(store.begin(identity), probe(category))
+
+    console = build_console_settings_readiness(
+        settings,
+        app_config=config,
+        environ={},
+        connection_evidence=provider_connection_evidence(app),
+    )
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            get_provider_readiness(provider, config, environ={}),
+            display_name=provider,
+            model="m-1",
+            endpoint=endpoint,
+            evidence=store.evidence_for(identity),
+        )
+    )
+
+    assert console.connection == identity  # The Console read this result.
+    assert readiness_words(console) == rows["Readiness"] == word
+    assert (console.operability != "ready_to_send") is blocked
+    assert rows["Key"].endswith("key rejected" if blocked else "present, not verified")
+    assert "verified" not in rows["Readiness"]
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        _discovery("unsupported", kind="unsupported_endpoint"),
+        _discovery("unsupported", kind="malformed_endpoint"),
+        _discovery("error", kind="missing_endpoint"),
+        _discovery("error", kind="ambiguous_provider_key"),
+        _discovery("error", kind="invalid_provider_settings"),
+    ],
+    ids=["unsupported", "malformed", "no-listing", "ambiguous", "invalid"],
+)
+def test_key_check_that_sent_nothing_records_no_evidence(result):
+    """AC#8 and the [providers] ruling: nothing was requested, so nothing was
+    learned -- never 'accepted', never a failure that blocks a send."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    assert key_check_probe_result(result, key_sent=True) is None
+
+
+def test_key_check_keeps_the_chosen_model_inside_the_evidence_bound():
+    """OpenAI lists over 100 models; evidence holds 100, so the chosen model
+    is kept first and the Model row never calls it unlisted."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    models = tuple(f"model-{index:03d}" for index in range(150))
+    probe = key_check_probe_result(
+        _discovery("success", models=models), key_sent=True, model="model-149"
+    )
+
+    assert len(probe.model_ids) == 100
+    assert probe.model_ids[0] == "model-149"
+    assert probe.key_accepted is True

@@ -103,7 +103,7 @@ call-site edit / stays, with reasons) is in the task-1 extraction report.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, TYPE_CHECKING
@@ -262,6 +262,9 @@ class ConsoleMessageController:
             Callable[[ConsoleCanvasBlockReference, str], Any] | None
         ) = None,
         prefill_canvas_repair: Callable[[str], Any] | None = None,
+        resend_refused_echo: (
+            Callable[[ConsoleChatMessage], Awaitable[str | None]] | None
+        ) = None,
     ) -> None:
         """Build the controller and bind everything its moved bodies need.
 
@@ -368,6 +371,10 @@ class ConsoleMessageController:
                 video_copy`, used by the video save action.
             regenerate_console_video_message: `ConsoleVideoController._regenerate_
                 console_video_message`, used by the video regenerate action.
+            resend_refused_echo: TASK-33661 -- re-sends a refused, never-persisted
+                echo through the screen's normal send path
+                (`_dispatch_console_draft_send`); returns refusal copy or None.
+                ``None`` leaves Resend on a refused echo refused.
         """
         self._screen = screen
         self.app_instance = app_instance
@@ -413,6 +420,7 @@ class ConsoleMessageController:
         )
         self._open_canvas_block_fn = open_canvas_block
         self._prefill_canvas_repair_fn = prefill_canvas_repair
+        self._resend_refused_echo_fn = resend_refused_echo
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         # `ChatScreen` keeps proxy properties under the original attribute
@@ -1694,7 +1702,7 @@ class ConsoleMessageController:
                 content=result.target_content or "",
             )
             return True
-        if action_id == "retry" and result.status == "completed":
+        if action_id in {"retry", "resend"} and result.status == "completed":
             controller = self._ensure_console_chat_controller()
             # Gate BEFORE spawning: an exclusive console-run worker cancels the
             # in-flight run at creation time, before the controller's own
@@ -1703,6 +1711,28 @@ class ConsoleMessageController:
             refusal = controller.send_refusal_copy(target_session_id)
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
+                return True
+            # TASK-33661 review I2: a refused echo's resend awaits the send
+            # path with no run state set yet, so a second press would pass the
+            # gate above and its exclusive worker would cancel the first
+            # mid-flight. Refuse while this session's resend worker is live.
+            if action_id == "resend" and any(
+                worker.name == "console-resend"
+                and worker.group == f"console-run-{target_session_id}"
+                and not worker.is_finished
+                for worker in self._screen.workers
+            ):
+                self.app_instance.notify(
+                    "Resend is already in progress.", severity="warning"
+                )
+                return True
+            if action_id == "resend":
+                self.run_worker(
+                    self._resend_console_turn(controller, message_id),
+                    name="console-resend",
+                    exclusive=True,
+                    group=f"console-run-{target_session_id}",
+                )
                 return True
             self.run_worker(
                 self._retry_console_message(controller, message_id),
@@ -2838,6 +2868,7 @@ class ConsoleMessageController:
             ("console-message-action-delete-cancel-", "delete-cancel"),
             ("console-message-action-delete-", "delete"),
             ("console-message-action-retry-", "retry"),
+            ("console-message-action-resend-", "resend"),
             # speak-stop MUST be checked before speak -- "speak-" is itself
             # a prefix of "speak-stop-", so the more specific entry has to
             # win the ordered startswith() scan below (else a speak-stop
@@ -2877,6 +2908,36 @@ class ConsoleMessageController:
                 severity="success",
             )
         elif result.visible_copy:
+            self.app_instance.notify(result.visible_copy, severity="warning")
+        await self._sync_native_console_chat_ui()
+
+    async def _resend_console_turn(
+        self,
+        controller: ConsoleChatController,
+        message_id: str,
+    ) -> None:
+        """Re-run a broken last turn in place (TASK-33661, ``console_turn_resend``).
+
+        A refused echo re-enters the normal send path, which starts the sync
+        timer once its turn is in custody. Starting it here first let a tick
+        stop the timer while the session still read blocked, so the resent
+        turn ran unpolled and the transcript froze (live check, 2026-10-01).
+        """
+        # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
+        from ...Chat import console_turn_resend
+
+        try:
+            refused_echo = console_turn_resend.is_refused_echo(
+                controller.store.get_message(message_id)
+            )
+        except KeyError:
+            refused_echo = False
+        if not refused_echo:
+            self._start_console_transcript_sync_timer()
+        result = await console_turn_resend.resend_turn(
+            controller, message_id, resend_echo=self._resend_refused_echo_fn
+        )
+        if result.visible_copy and not result.accepted:
             self.app_instance.notify(result.visible_copy, severity="warning")
         await self._sync_native_console_chat_ui()
 

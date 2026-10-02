@@ -258,7 +258,11 @@ def test_subscription_summary_names_the_actual_credential_source(
     assert "API key" not in presentation.primary_label
     assert "private-token" not in repr(summary)
     if state != "ready":
-        assert "Claude Code" in presentation.primary_label
+        # TASK-33005.3 (rewritten on purpose): the primary label is now the
+        # short spec §5 word ("Not ready · login expired"/"no login"), so
+        # the Claude Code remedy moved to the detail line under it.
+        assert "Claude Code" in presentation.detail
+        assert "login" in presentation.primary_label
 
 
 @pytest.mark.asyncio

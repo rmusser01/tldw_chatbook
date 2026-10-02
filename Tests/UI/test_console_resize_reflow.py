@@ -27,6 +27,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    readiness_words,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
@@ -1159,18 +1160,23 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
                 context_row="Context: 0",
                 sampling_row="T 0.7 · max_tokens 100",
                 identity_row="Identity: character",
-                readiness_label=readiness["value"].label,
+                readiness_label=readiness_words(readiness["value"]),
                 readiness=readiness["value"],
             ),
         )
         console._sync_console_settings_summary()
         rail.apply_section_open("model", True)
         rail.activate_section("model")
+        # TASK-33005.3 (rewritten on purpose): the line now always shows the
+        # readiness word, so the mutation is Ready -> blocked (and red), not
+        # hidden -> shown.
         await _wait_for_context_condition(
             pilot,
             lambda: (
                 rail._active_section_id == "model"
-                and not rail.query_one("#console-model-section-recovery").display
+                and not rail.query_one("#console-model-section-recovery").has_class(
+                    "conversation-attention-error"
+                )
                 and _context_allocation_idle(rail)
             ),
         )
@@ -1194,10 +1200,12 @@ async def test_model_summary_sync_invalidates_mounted_context_allocation(
         console._sync_console_settings_summary()
         await _wait_for_context_condition(
             pilot,
-            lambda: recovery.display and _context_allocation_idle(rail),
+            lambda: recovery.has_class("conversation-attention-error")
+            and _context_allocation_idle(rail),
         )
 
         assert recovery.display is True
+        assert recovery.content == "Not ready · check settings"
         assert model.desired_content_lines >= before_demand
         assert model.allocation == before_allocation
         assert reconcile_runs >= 1

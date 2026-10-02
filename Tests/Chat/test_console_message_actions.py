@@ -224,6 +224,74 @@ def test_failed_user_row_offers_no_retry_action():
     assert "retry" in [
         action.action_id for action in service.available_actions(failed_assistant)
     ]
+    # TASK-33661: the broken LAST user turn offers Resend instead -- still
+    # never Retry, which is the failed assistant row's own action.
+    broken_ids = [
+        action.action_id
+        for action in service.available_actions(failed_user, resend_available=True)
+    ]
+    assert "resend" in broken_ids
+    assert "retry" not in broken_ids
+
+
+def test_broken_last_user_row_swaps_regenerate_for_resend_and_drops_continue():
+    """TASK-33661: Resend takes the disabled ♻ slot on a broken last user row.
+
+    Continue is dropped there, mirroring the failed-assistant Retry swap:
+    continuing from a broken turn parented the reply under its stale failure
+    row instead of re-running the turn.
+    """
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="question", id="user-broken"
+    )
+
+    groups = ConsoleMessageActionService().action_groups(
+        message,
+        fork_eligibility=ConsoleForkEligibility(True),
+        resend_available=True,
+    )
+
+    assert tuple(action.action_id for action in groups.primary) == (
+        "copy",
+        "edit",
+        "fork",
+        "resend",
+        "more",
+    )
+    resend = next(action for action in groups.primary if action.action_id == "resend")
+    assert (resend.label, resend.enabled) == ("Resend", True)
+    assert tuple(action.action_id for action in groups.overflow) == (
+        "save-as",
+        "feedback-up",
+        "feedback-down",
+        "delete",
+        "summarize-note",
+        "save-transcript-note",
+    )
+
+
+def test_resend_is_never_offered_on_an_assistant_row():
+    service = ConsoleMessageActionService()
+    for status in ("complete", "failed", "stopped"):
+        message = ConsoleChatMessage(
+            role=ConsoleMessageRole.ASSISTANT, content="", status=status
+        )
+        ids = [
+            action.action_id
+            for action in service.available_actions(message, resend_available=True)
+        ]
+        assert "resend" not in ids, status
+
+
+def test_resend_dispatch_targets_the_user_message():
+    service = ConsoleMessageActionService()
+    message = ConsoleChatMessage(
+        role=ConsoleMessageRole.USER, content="question", id="user-broken"
+    )
+
+    result = service.dispatch("resend", message)
+
+    assert (result.status, result.target_message_id) == ("completed", "user-broken")
 
 
 def test_streaming_assistant_message_shows_completed_actions_disabled_with_reasons():
@@ -1451,6 +1519,25 @@ def test_action_row_guide_names_variant_navigation_when_present():
     guide = action_row_guide(service.available_actions(message))
 
     assert "</> Variants" in guide
+
+
+def test_action_row_guide_names_r_for_resend_and_retry_swaps():
+    """TASK-33661 AC#5: `r` runs the row's Resend or Retry, so the guide says so."""
+    service = ConsoleMessageActionService()
+    user = ConsoleChatMessage(role=ConsoleMessageRole.USER, content="question")
+    failed = ConsoleChatMessage(
+        role=ConsoleMessageRole.ASSISTANT, content="", status="failed"
+    )
+
+    user_guide = action_row_guide(
+        service.available_actions(user, resend_available=True)
+    )
+    failed_guide = action_row_guide(service.available_actions(failed))
+
+    assert "r Resend" in user_guide
+    assert "r ♻ Regenerate" not in user_guide
+    assert "---> Continue" not in user_guide
+    assert "r Retry" in failed_guide
 
 
 def test_action_row_guide_without_glyph_actions_keeps_the_key_frame():

@@ -1566,6 +1566,8 @@ def test_console_readiness_projects_exact_generation_and_credential_evidence():
         (),
         credential="present_unverified",
         generation="succeeded",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="gpt-test",
     )
 
     readiness = build_console_settings_readiness(
@@ -1627,6 +1629,8 @@ def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
         ("model",),
         generation="failed",
         generation_category="provider_error",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="model",
     )
 
     readiness = build_console_settings_readiness(
@@ -1741,6 +1745,187 @@ def test_endpoint_failure_category_selects_actionable_recovery(
     assert readiness.blocker == expected_blocker
     assert readiness.recovery_action == expected_recovery
     assert readiness.endpoint_category == category
+
+
+_LLAMA_CONFIG = {"api_settings": {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}}
+
+
+def _shared_owner_with(identity, category="connection_refused"):
+    """An app's shared evidence owner holding one settled endpoint result."""
+    from datetime import UTC, datetime
+
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderConnectionEvidence,
+    )
+
+    owner = ProviderConnectionEvidence()
+    endpoint = "reachable" if category is None else "unreachable"
+    owner.publish(
+        ProviderTestEvidence(
+            identity,
+            endpoint,
+            ("model-a",) if category is None else (),
+            category,
+            observed_at=datetime(2026, 10, 1, 14, 1, tzinfo=UTC),
+        ),
+        order=1,
+    )
+    return owner
+
+
+@pytest.mark.parametrize(
+    "session_base_url", [None, "http://127.0.0.1:9099", "http://127.0.0.1:9099/v1"]
+)
+def test_console_readiness_reads_shared_evidence_for_its_connection(session_base_url):
+    """TASK-33005.2 (AC#1): a refused test of this chat's connection, settled
+    on any surface, blocks the Console with a retry recovery."""
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    owner = _shared_owner_with(identity)
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a", base_url=session_base_url
+        ),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+        connection_evidence=owner,
+    )
+
+    assert readiness.operability == "not_ready"
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.recovery_action == "retry_connection"
+    assert readiness.endpoint_category == "connection_refused"
+    assert readiness.connection == identity
+    assert readiness.observed_at.hour == 14
+    assert readiness.detail == (
+        "llama.cpp failed its last connection test (connection refused)."
+    )
+
+
+def test_future_chat_readiness_keys_an_unconfigured_llama_on_its_default_origin():
+    """TASK-33005.2 (AC#3): a new chat's llama.cpp with nothing saved sends to
+    the default origin, the connection Chat settings tests."""
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    settings = session_settings.build_target_default_console_session_settings(
+        {"api_settings": {"llama_cpp": {}}}, "llama_cpp", "model-a"
+    )
+
+    readiness = build_console_settings_readiness(
+        settings,
+        app_config={"api_settings": {"llama_cpp": {}}},
+        environ={},
+        connection_evidence=_shared_owner_with(identity, "timeout"),
+    )
+
+    assert readiness.blocker == "endpoint_unreachable"
+    assert readiness.endpoint_category == "timeout"
+
+
+@pytest.mark.parametrize(
+    "tested",
+    [
+        {"endpoint": "http://127.0.0.1:9199"},
+        {"credential_source": "stored", "credential_revision": 7},
+    ],
+    ids=["other-endpoint", "other-credential"],
+)
+def test_other_connections_evidence_never_changes_console_readiness(tested):
+    """TASK-33005.2 (AC#4/#5): no evidence for this exact connection reads
+    Ready, not tested -- whatever another endpoint or credential reported."""
+    identity = _readiness_identity(
+        provider="llama_cpp",
+        **{"endpoint": "http://127.0.0.1:9099", **tested},
+        draft_generation=0,
+    )
+
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=_LLAMA_CONFIG,
+        environ={},
+        connection_evidence=_shared_owner_with(identity),
+    )
+
+    assert readiness.operability == "ready_to_send"
+    assert readiness.endpoint == "not_tested"
+    assert readiness.connection is None
+    assert readiness.observed_at is None
+
+
+def test_console_evidence_for_a_keyed_connection_follows_the_saved_key():
+    """TASK-33005.2 (AC#5): the key a send would use is part of the
+    connection; evidence for another key never applies."""
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        connection_credential_revision,
+    )
+
+    config = {
+        "api_settings": {
+            "vllm": {"api_url": "http://127.0.0.1:8000", "api_key": "sk-saved-vllm"}
+        }
+    }
+
+    def readiness_after(key):
+        identity = _readiness_identity(
+            provider="vllm",
+            endpoint="http://127.0.0.1:8000",
+            credential_source="stored",
+            credential_revision=connection_credential_revision(key),
+            draft_generation=0,
+        )
+        return build_console_settings_readiness(
+            ConsoleSessionSettings(provider="vllm", model="model-a"),
+            app_config=config,
+            environ={},
+            connection_evidence=_shared_owner_with(identity, "timeout"),
+        )
+
+    assert readiness_after("sk-saved-vllm").blocker == "endpoint_unreachable"
+    assert readiness_after("sk-other-key").operability == "ready_to_send"
+
+
+def test_shared_evidence_adds_no_provider_config_reads():
+    """TASK-33005.2 (AC#6, the task-24454 probe): the connection key comes
+    from values the readiness build already resolved, so a build that reads
+    shared evidence normalizes provider keys exactly as often as one that
+    does not."""
+    import sys
+
+    identity = _readiness_identity(
+        provider="llama_cpp", endpoint="http://127.0.0.1:9099", draft_generation=0
+    )
+    owner = _shared_owner_with(identity)
+
+    def config_reads(**kwargs) -> int:
+        calls = 0
+
+        def profile(frame, event, _arg):
+            nonlocal calls
+            if event == "call" and frame.f_code.co_name in {
+                "normalize_provider_config_key",
+                "load_settings",
+                "get_provider_readiness",
+            }:
+                calls += 1
+
+        sys.setprofile(profile)
+        try:
+            build_console_settings_readiness(
+                ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+                app_config=_LLAMA_CONFIG,
+                environ={},
+                **kwargs,
+            )
+        finally:
+            sys.setprofile(None)
+        return calls
+
+    baseline = config_reads()
+    assert baseline > 0
+    assert config_reads(connection_evidence=owner) == baseline
 
 
 def test_malformed_provider_configuration_precedes_endpoint_persistence():

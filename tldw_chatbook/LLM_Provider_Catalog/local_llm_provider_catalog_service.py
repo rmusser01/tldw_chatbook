@@ -274,13 +274,23 @@ class LocalLLMProviderCatalogService:
         config = self._combined_hosted_settings(
             saved_settings, staged_settings, provider_key
         )
-        if provider_key == "moonshot":
-            resolution = resolve_moonshot_request(
-                app_config=config,
-                environ=self.environ,
+        if provider_key in ("moonshot", "zai"):
+            # The gateway pins a send to the first configured endpoint alias
+            # (effective_provider_endpoint); these resolvers read only
+            # api_base_url, so pass the alias to list where a send goes.
+            try:
+                pinned = self._endpoint_from_provider_settings(
+                    self._provider_settings_for_key(config, provider_key)
+                )
+            except ProviderSettingsError:
+                pinned = None  # the resolver reports the ambiguous table
+            resolver = (
+                resolve_moonshot_request
+                if provider_key == "moonshot"
+                else resolve_zai_request
             )
-        elif provider_key == "zai":
-            resolution = resolve_zai_request(
+            resolution = resolver(
+                explicit_base_url=pinned,
                 app_config=config,
                 environ=self.environ,
             )
