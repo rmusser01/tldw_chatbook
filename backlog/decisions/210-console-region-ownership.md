@@ -3,7 +3,7 @@
 Every Console region restates facts that another region owns, so the active chat's title appears up to six times, provider and model three or four times, and the chrome takes half of an 80x24 screen. This ADR gives each region one job: the header shows authority, the tab strip shows identity, the Chats rail finds chats, Inspect explains what Enter sends and what the run is doing, the status strip shows this tab's state and cost, and the composer owns the run. It names one new home for every control it moves and ships in nine steps, none of which removes a control before its new home exists.
 
 Date: 2026-09-29
-Status: Proposed — pending owner approval (drafted from the 2026-09-29 Console UX review)
+Status: Proposed — all five open questions answered by the owner (2026-09-30, 2026-10-01); acceptance pending (drafted from the 2026-09-29 Console UX review)
 Task: [TASK-33627](../tasks/task-33627%20-%20Console-unification-give-each-screen-region-one-job-per-the-region-ownership-ADR.md)
 Evidence: [Console UX review 2026-09-29](../../qa/console-ux-review-2026-09-29/report.md), theme 8 "Regions have no single job"; ledger ids G2-36, G2-17, G2-15, G2-13, G2-14, G2-19, G2-18, G4-55, G4-36, G2-34, G2-35, G2-26, G2-28, G2-29, GAP5-08, G2-12, G2-11, G2-30, G2-41, G4-42, GAP5-22, GAP4-13, GAP4-03, GAP4-18
 Links: the Task and Evidence links resolve once PR #2926 merges. That PR adds the task file, the review report and its ledger.
@@ -17,7 +17,7 @@ Supersedes in part:
   - :10's text-only, bordered-section language and :35 remain, and now also govern Inspect's single header grammar. :12 and :36 (the shared workspace-identity helper) remain.
   - :38's `[New]` workspace test retargets to the Workspaces group header.
 - [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md):
-  - :20-27: the Sessions, Model, Agent and Details ceilings retire with their sections. Workspaces and the Default list keep 20. Characters keeps :61-66; whether the 2026-09-10 amendment's grow-to-viewport portrait survives is open question 3, because that growth causes GAP5-22.
+  - :20-27: the Sessions, Model, Agent and Details ceilings retire with their sections. Workspaces and the Default list keep 20. Characters keeps :61-66. The 2026-09-10 amendment's grow-to-viewport portrait is superseded for the Characters group: the portrait shows only while the active chat is a character chat (open question 3, resolved 2026-10-01), which closes GAP5-22.
   - :51-52: the pinned Switch/New/RAG Scope strip is replaced:
     - Switch moves to the header workspace menu, which remains the route to Default.
     - New moves to the Workspaces group header.
@@ -30,7 +30,7 @@ Supersedes in part:
 Amends:
 
 - [ADR-043](043-console-rail-compact-collapse-yields-to-explicit-toggle.md):
-  - :12 "honored at any terminal width" becomes "side by side within the rail budget, otherwise as a pane swap" (open question 4).
+  - :12 "honored at any terminal width" becomes "side by side within the rail budget, otherwise as a pane swap" (open question 4, resolved 2026-10-01: pane swap).
   - :14-19 fixed Inspector priority at 100–149 columns becomes "last opened wins" at every width.
   - The :25/:53 118–128-column auto-open band is retired.
   - The 2026-08-19 amendment's 40-column transcript floor becomes 60.
@@ -45,7 +45,7 @@ Amends:
 - [ADR-015](015-shell-destination-ia.md):
   - :30-32: Console's DestinationHeader is one row carrying workspace, authority and three actions, with no title or purpose line (a documented DESIGN.md:311 exception; see Consequences). The hidden legacy statics stay until their contract tests migrate (migration step 8).
   - :36's deferred "control bar/chips" step is this ADR.
-  - If the owner accepts the 1-row nav for every destination (open question 2), migration step 8 ships it as a shell-wide amendment to ADR-015.
+  - The owner accepted the 1-row nav for every destination (open question 2, resolved 2026-10-01), so migration step 8 ships it as a shell-wide amendment to ADR-015.
 - [ADR-071](071-focus-mode-chrome-free-console.md) :12-16 (Proposed): while focus mode hides the header, the Library chip and a pending Hooks count render in the status strip and never fold, and the active tab carries its workspace and access word.
 - [ADR-088](088-console-lightweight-next-send-history-projection.md) :20 and :36: the Next send group renders the asynchronous exact-context preview that Chat details ▸ Context already uses. It is computed off the UI thread only while Inspect is open, debounced, and never executes retrieval. The strip's `next ~$` stays on ADR-088's synchronous projection.
 - [ADR-095](095-conversation-owned-console-generation-settings.md):
@@ -66,7 +66,7 @@ Amends:
 Preserves:
 
 - [ADR-011](011-chatbook-workbench-ui-system.md):46: the palette is never a hiding place.
-- [ADR-027 (Default chats)](027-default-workspace-chats-in-chats-section.md) :26-28 and [ADR-082](082-console-per-chat-private-scratch-space.md) :21: everyday chatting uses no workspace vocabulary. Default chats stay outside the Workspaces Tree, labelled "Everyday chats" (the switcher's existing gloss), and the header names Default the same way (open question 5).
+- [ADR-027 (Default chats)](027-default-workspace-chats-in-chats-section.md) :26-28 and [ADR-082](082-console-per-chat-private-scratch-space.md) :21: everyday chatting uses no workspace vocabulary. Default chats stay outside the Workspaces Tree, labelled "Everyday chats" (the switcher's existing gloss), and the header names Default the same way, `Everyday chats ▾` (open question 5, resolved 2026-10-01).
 - [ADR-028 (workspace folders)](028-settings-workspaces-category-and-folder-roots.md) :19-20: access is set per folder, so the header reads `files: mixed` when bound folders differ.
 - [ADR-031 (keybindings)](031-tui-keybinding-and-footer-hint-conventions.md): no `ctrl+c`/`ctrl+w` bindings; footer hints stay truthful.
 - [ADR-068 (text selection)](068-console-text-selection-and-annotations.md):157-158: the header hosts only the active-playback lifecycle.
@@ -336,7 +336,7 @@ Row budget:
 
 Row budget:
 
-- compact nav 1 (open question 2) · header 1 · tabs 1 · transcript 17 · deck 1 · strip 1 · composer 1 · footer 1 = 24
+- compact nav 1 (open question 2, accepted) · header 1 · tabs 1 · transcript 17 · deck 1 · strip 1 · composer 1 · footer 1 = 24
 - Transcript: 17 rows, or 18 with nothing staged. Today it gets 12. With today's 3-row nav it would get 15 or 16.
 
 What folds at this width, by the drop orders:
@@ -484,7 +484,7 @@ Items drop whole and are never cut mid-token. Titles use one shared `truncate_ti
 |---|---|
 | Both rail minimums, a 60-column transcript and two dividers fit (30 + 34 + 60 + 2 = 126 columns) | Both requested rails render beside the transcript, at 34 / 45 by default and shrinking to 30 / 34 |
 | Only one rail fits: Chats needs 92 columns (30 + divider + 60 + the Inspect handle), Inspect 96 (34 + divider + 60 + the Chats handle) | The requested rail renders beside the transcript. If both are requested, the most recently opened wins and the other shows its handle. |
-| The requested rail does not fit beside the transcript | An explicit open becomes a **pane swap** (open question 4). The rail replaces the transcript view in the centre column, with `‹ Back to chat  Esc`. The tab strip, deck, strip, composer and footer stay. It uses the same widgets and focus model, so it is not ADR-043's rejected overlay. Alt+A and activating the Run slot close the swap first, so a pending approval card is never left behind it. |
+| The requested rail does not fit beside the transcript | An explicit open becomes a **pane swap** (open question 4, resolved: pane swap). The rail replaces the transcript view in the centre column, with `‹ Back to chat  Esc`. The tab strip, deck, strip, composer and footer stay. It uses the same widgets and focus model, so it is not ADR-043's rejected overlay. Alt+A and activating the Run slot close the swap first, so a pending approval card is never left behind it. |
 | No explicit toggle | Chats is open at ≥ 100 columns when it fits, and Inspect is closed. The 118–128 auto-open band is retired, so a rail never disappears as the terminal widens (G4-35). |
 | Every width | ±3-column hysteresis. Collapse never writes the preference. A collapsed rail always shows a handle: labelled at ≥ 100 columns, 1 column wide below that. |
 
@@ -493,7 +493,7 @@ Items drop whole and are never cut mid-token. Titles use one shared `truncate_ti
 | Rows | Rule |
 |---|---|
 | ≥ 35 | The nav keeps its 3 rows, with rules above and below the grid. |
-| < 35 (`CONSOLE_COMPACT_HEIGHT_ROWS`) | <ul><li>The nav is 1 row (open question 2).</li><li>There are no rule rows; separation is tonal.</li><li>The composer grows to 3 rows, then scrolls internally.</li><li>Tips and coachmarks appear only as toasts.</li><li>The approval card has no blank rows.</li><li>Inspect bodies are at most the viewport minus 4.</li></ul> |
+| < 35 (`CONSOLE_COMPACT_HEIGHT_ROWS`) | <ul><li>The nav is 1 row (open question 2, accepted).</li><li>There are no rule rows; separation is tonal.</li><li>The composer grows to 3 rows, then scrolls internally.</li><li>Tips and coachmarks appear only as toasts.</li><li>The approval card has no blank rows.</li><li>Inspect bodies are at most the viewport minus 4.</li></ul> |
 
 **Transcript targets** with nothing staged:
 
@@ -504,7 +504,7 @@ Items drop whole and are never cut mid-token. Titles use one shared `truncate_ti
 | 120x40 | ≥ 30 rows | 75% | — |
 | 235x52 | ≥ 42 rows | 81% | — |
 
-Each non-empty deck row costs one transcript row.
+Each non-empty deck row costs one transcript row. The owner accepted the compact nav (open question 2), so the Target column applies; "Without the compact nav" is kept only as the fallback reference.
 
 **Focus mode** (ADR-071) hides the nav and the header. While it does:
 
@@ -549,7 +549,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 | Row `💬` icon | Rail rows | Unchanged: ADR-171's menu control, showing the attention glyph or the chat's own icon (custom, or 💬) | `m` on a focused row |
 | Export .md (under Copy as ▸) | Row menu | Chat menu `Export…` | — |
 | Character groups and search | Character section | Characters group (ADR-120 bounds); search moves to `Find chats…` | Ctrl+K Character chats |
-| Character portrait | Character section | Characters group; when it shows and how tall it grows is open question 3 | — |
+| Character portrait | Character section | Characters group, shown only while the active chat is a character chat (open question 3, resolved) | — |
 | Reaction… | Character section | Next send ▸ Persona `Reaction…` | Palette (new) |
 | Open Roleplay | Character section | Characters group footer `All in Roleplay ↗` | ⌃4 |
 | Temperature, Max tokens | Model section | Next send ▸ Model | Alt+M |
@@ -615,10 +615,10 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 ## Open questions (owner decisions)
 
 1. **The stop chord — resolved 2026-09-30: Ctrl+G.** The owner chose Ctrl+G over Alt+X, which needs Option-as-Meta on macOS and otherwise types `≈`, and over Esc Esc, which collides with Esc's existing jobs. Ctrl+G is BEL (0x07), so it reaches the app in every terminal. Its only other binding is the Speech playground, on a different screen. PR #2934 (TASK-33625.1) ships it as the single constant `STOP_RUN_KEY`. Stop is also reachable by Tab then Enter from the draft, by `/stop`, and from the palette.
-2. **A 1-row nav below 35 rows for every destination.** Accepting ships migration step 8 as a shell-wide amendment to ADR-015, and the transcript targets are the "Target" column. Declining keeps the 3-row nav, the targets fall back to the "Without the compact nav" column, and step 8 does only its cleanup.
-3. **The character portrait.** Either it shows only while the active chat is a character chat, or it is always present with a fixed ceiling. ADR-083's 2026-09-10 amendment grows the portrait with the viewport at the user's request, and that growth causes GAP5-22. Either option supersedes that amendment for the Characters group; keeping the amendment leaves GAP5-22 open.
-4. **Pane swap or side by side.** Below the rail budget, this ADR swaps the rail into the centre column, so the transcript never drops below 60 columns but the two are not visible together. ADR-043 today honours an explicit toggle side by side at any width by waiving the transcript minimum. Which should win?
-5. **How the header names Default.** Proposed: `Everyday chats ▾`, which follows ADR-027's rule against workspace vocabulary and matches the switcher's gloss; at 80 columns it drops its `▾` markers (header step 7). The alternatives are keeping `Default ▾`, or omitting the workspace segment in Everyday chats and showing only `private scratch ▾`.
+2. **A 1-row nav below 35 rows for every destination — resolved 2026-10-01: accepted.** Migration step 8 ships it as a shell-wide amendment to ADR-015, and the transcript targets are the "Target" column. (Declining would have kept the 3-row nav and the "Without the compact nav" targets.)
+3. **The character portrait — resolved 2026-10-01: shown only while the active chat is a character chat.** This supersedes ADR-083's 2026-09-10 grow-with-the-viewport amendment for the Characters group, which caused GAP5-22. The rejected alternative was an always-present portrait with a fixed ceiling.
+4. **Pane swap or side by side — resolved 2026-10-01: pane swap.** Below the rail budget, an explicit rail open swaps the rail into the centre column, so the transcript never drops below 60 columns; the two are not visible together. This amends ADR-043, which honoured an explicit toggle side by side at any width by waiving the transcript minimum.
+5. **How the header names Default — resolved 2026-10-01: `Everyday chats ▾`.** It follows ADR-027's rule against workspace vocabulary and matches the switcher's gloss; at 80 columns it drops its `▾` markers (header step 7). The rejected alternatives were keeping `Default ▾`, or showing only `private scratch ▾` in Everyday chats.
 
 ## Consequences
 
@@ -644,7 +644,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
   - Alt+C opens "Chats".
   - F1 carries a one-release "What moved" section.
 - **Model settings are one step further away** when Inspect is closed: Alt+M or `Chat settings…`.
-- **Below 92 or 96 columns, a rail replaces the transcript** instead of squeezing it, so the two cannot be read side by side (open question 4).
+- **Below 92 or 96 columns, a rail replaces the transcript** instead of squeezing it, so the two cannot be read side by side (open question 4, resolved: pane swap).
 - **The header is dense at 80 columns.** File access compacts to `rw`, `ro` or `scratch`, and in Everyday chats the header drops its `▾` markers.
 - **The Console header becomes a documented exception to DESIGN.md:311,** which asks for a title, a one-line purpose, readiness, authority, a primary action, blocked recovery, `border: tall` and `padding: 1 2`. The Console header keeps authority and one recovery case (the playback lifecycle) in one unpadded row. The title is the nav item and the tab, the purpose moves to F1 and the empty state, readiness is the Run slot, the primary action is the composer's primary slot, and run recovery is the Run slot plus the turn's callout.
 - **The pinned "What happens if I send now?" card, which the review praised, becomes the pinned Next send header.**
@@ -657,7 +657,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
   - `status_chips_collapsed`
   - `TOP_ACTION_IDS`
   - `CONSOLE_TAB_REGIONS`
-- **A shell-wide compact nav** (open question 2) changes every destination below 35 rows.
+- **A shell-wide compact nav** (open question 2, accepted) changes every destination below 35 rows.
 
 ## Migration plan
 
@@ -677,7 +677,7 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
 - puts new code in `UI/Console_Modules/`, without raising the screen-size ratchet.
 
 0. **Accept and measure.** No visible change.
-   - The owner accepts and answers the open questions.
+   - The owner accepts the ADR. (All five open questions were answered on 2026-09-30 and 2026-10-01.)
    - Add the fact-placement census and never-clip sweep as report-only tests, recording today's baseline.
    - Mark ADR-017 and ADR-083 "Superseded in part by ADR-210", and the amended ADRs "Amended by ADR-210".
 1. **The composer owns the run control.** Needs TASK-33620, TASK-33625.1 and TASK-33626.1.
@@ -716,15 +716,15 @@ Twins marked (new) do not exist today and ship with the step that moves the cont
    - Rename the rail and add the single `Find chats…` field.
    - Organise it into the Workspaces, Everyday chats and Characters groups.
    - Remove Model, Agent, Details, the current-chat line, the worker alias, the workspace strip and Archive-this-chat.
-   - Add the rail footer and the portrait rule (open question 3).
+   - Add the rail footer and the portrait rule: shown only while the active chat is a character chat (open question 3).
    - Migrate `CONSOLE_RAIL_SECTION_IDS` losslessly.
 7. **Width, height and focus.** Needs TASK-33625 AC#4 and TASK-33622.
    - Add the combined rail budget with pane swap and hysteresis, and retire the auto-open band.
    - Show handles at every width.
    - Apply the height contract below 35 rows.
    - Rewrite `CONSOLE_TAB_REGIONS` as the five-region F6 ring.
-8. **Compact nav and cleanup.** The nav needs open question 2; the cleanup ships either way.
-   - Build the 1-row nav below 35 rows, if accepted.
+8. **Compact nav and cleanup.** The owner accepted the compact nav (open question 2), so this step ships both.
+   - Build the 1-row nav below 35 rows for every destination (a shell-wide amendment to ADR-015).
    - Remove the hidden `#console-title`, `#console-purpose`, `#console-status-row` and `#console-mode-bar` statics and their dead CSS.
    - Add the Console header variant and region map to DESIGN.md.
    - Make the whole fact-placement census and never-clip sweep enforcing.
