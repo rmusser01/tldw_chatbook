@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 21:38'
+updated_date: '2026-10-02 21:43'
 labels:
   - agents
   - console
@@ -26,19 +26,19 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
 ADR required: no
-ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-199 unchanged.
-Reason: defer an existing optional action module to its actual consumers without changing UI, authority or module budgets.
-1. Keep the original UI-ready RED1034/1033 and matching incoming-dev baseline as evidence; identify all three eager import owners and callers.
-2. Move the imports into message resend, refused-echo dispatch and transcript action projection. Update the existing test's mock to the owning Resend module, preserving behavior assertions.
-3. Run the unchanged original startup/storage/import/CSS guards and actual click/keyboard/duplicate-worker/custody/selected-row consumers; preserve inherited AST guard failures separately.
-4. Run focused static/artifact checks, obtain independent source and mounted review, record evidence and close through CLI.
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR199 unchanged.
+Reason: preserve incoming PR2962 implementation of the same accepted lazy-import repair; no new owner, authority, dependency, schema or ceiling.
+1. Preserve qualified2cf source and all passing/non-green evidence. Read exact incoming ef8/e45 diff, task33661 post-merge notes and testing lesson before preserving rebase.
+2. Retain incoming three deferred imports, legitimate module mock seam and complete new lesson, composing our shared hook/readiness/queue/publication repairs without broad source replacement. Compare all source bytes and exact changed methods.
+3. Qualify affected actual Resend/slow-preflight/readiness/media consumers and unchanged original budgets proportionately; obtain focused immutable review. Current budget subprocesses already force PYTHONPATH to their exact REPO_ROOT and are unchanged.
+4. Record exact source and evidence; recheck AC3 and close through CLI, then publish once observed003 lease with fresh-head Qodo/four jobs and normal protected merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
