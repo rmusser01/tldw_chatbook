@@ -592,3 +592,44 @@ pass. Receipts: /tmp/console-tool-ux-close-grouping-{before,after}.json and
 /tmp/console-tool-ux-close-grouping-final-proof.json. Latest dev advanced to
 ecc0a531c8 (PERF-07 config/path memo); qualification of that combined tree
 and fresh final-head CI/Qodo remain required before merge.
+
+
+## Final PERF-07 base qualification
+
+Code anchor `17235d9d87` on dev `ecc0a531c8` incorporates PERF-07 unchanged:
+all eight upstream files match dev and all 25 PR patches rebase unchanged.
+Of 225 preceding source pins, 222 remain byte-identical. Changed config and
+config_participants are upstream; Close tests have the qualified grouping.
+The original 230-case/native receipts retain their original identities.
+
+Fresh combined-tree checks: **65 pass**, zero failures, errors or skips:
+all seven Close children (including the nine grouped navigation/recovery
+journeys), the four-journey projection child, three compact approval cases,
+12 upstream path-memo contracts, five readiness/cache comparisons, and all
+37 cases from the exact three Perf Guard groups. Warm census remains
+1033/1033. Real counter seams, canaries, ticks, ceilings, snapshots and
+deadlines remain. Current preflight passes with census 124; zero-new Ruff
+across 34 files, edited-range format and diff checks pass. Receipts:
+/tmp/console-tool-ux-perf07-integrated-{affected,performance}.json and
+/tmp/console-tool-ux-perf07-preflight.txt.
+
+Native approval27 passes all nine real Ask-gated read/deny journeys:
+three executed reads and six denials, with 113 pins and 69 natural origins.
+Close29 passes six real approval/question/standalone-chat-create worker
+closes with sibling isolation and target fence release. It also passes
+six-kind long-title geometry at 80x24 and 80x18, including default Stay,
+action hit tests and native keyboard scrolling: 186 pins and 97 origins.
+Both apps, PTYs and sockets exit and clean up normally with code 0. Zero
+egress and the real 21 config entries/533 data-file mtimes are unchanged.
+Root independently verifies all current pins/origins and views fresh compact
+approval, chat-create Close and scrolled short-height captures. Existing
+helper bytes remain unchanged.
+
+The native Close app completed successfully before an external shell
+here-document capacity error during qualification. Its saved results were
+intact; 3.7 GiB later became available without pruning or a rerun. The separate
+environmental receipt is retained. Native AX, broader requests and forced
+races remain outside scope; naturally loaded remote-worker code is import
+evidence only. No full local suite. QA `path_memo_base_final_followup` records
+exact identity, receipts and limits. Final published-head CI/Qodo and
+protected normal merge remain required.

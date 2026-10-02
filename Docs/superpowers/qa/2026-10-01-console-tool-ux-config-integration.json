@@ -1840,5 +1840,148 @@
     "local_review": "Independent complete-body/signature/dispatch/isolation review clear; per-scenario scoped patches finish before factory drains and existing unfreeze/GC seam. No global fixture, CI setting, production or deadline change.",
     "lint_receipt": "/tmp/console-tool-ux-close-grouping-lint.json",
     "status": "Local nine-journey grouping qualified. Latest dev advanced to ecc0a531c855bc9e80906bff90180fd2045f7159 (PERF-07 config/path memo); combined-tree targeted/performance/native qualification and fresh final-head GitHub/Qodo still required."
+  },
+  "path_memo_base_final_followup": {
+    "code_anchor": "17235d9d87e51c8d982113c6cfb6f7acb5719ea7",
+    "base": "ecc0a531c855bc9e80906bff90180fd2045f7159",
+    "range_diff": "/tmp/console-tool-ux-perf07-rebase-range-diff.txt",
+    "patches_rebased_unchanged": 25,
+    "upstream_eight_files_match_dev": true,
+    "prior_source_pins": 225,
+    "prior_pins_unchanged": 222,
+    "changed_prior_pins": {
+      "tldw_chatbook/Backup_Recovery/config_participants.py": {
+        "before": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+        "after": "3f792b6b0f59217fc52ec61c45be9721ed1227471a69872cb9fef68b3dae1891"
+      },
+      "tldw_chatbook/config.py": {
+        "before": "31e92c801eebe68c35b4f1e57cf19e94d916408a729aa9dba45312c74860a583",
+        "after": "655434e1d324d6c7abc434be7ef21cba1fcd8ce7be09aa7cc304f29c8b88a21f"
+      },
+      "Tests/UI/test_console_session_tab_close.py": {
+        "before": "2bcf4d13e3526bc8fc3942efdc7d09844934da63670a2b6e44867da0f7bec716",
+        "after": "b8f13c88fc1bd8045894ec01ce21ad3c9bbc1bbe0803d286d0063f401b10775f"
+      }
+    },
+    "fresh_scoped_cases": 65,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "affected_receipt": "/tmp/console-tool-ux-perf07-integrated-affected.json",
+    "affected_groups": [
+      {
+        "nodes": [
+          "Tests/UI/test_console_session_tab_close.py"
+        ],
+        "cases": 7,
+        "duration_seconds": 170.9,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/UI/test_console_pending_interrupt_projection.py"
+        ],
+        "cases": 1,
+        "duration_seconds": 59.56,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/UI/test_console_approval_compact_layout.py"
+        ],
+        "cases": 3,
+        "duration_seconds": 54.21,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/test_user_data_dir_memo_perf07.py"
+        ],
+        "cases": 12,
+        "duration_seconds": 29.44,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/Chat/test_console_session_settings.py::test_shared_evidence_adds_no_provider_config_reads",
+          "Tests/Chat/test_console_session_settings.py::test_console_evidence_for_a_keyed_connection_follows_the_saved_key",
+          "Tests/Chat/test_console_session_settings.py::TestReadinessKeySetCaching"
+        ],
+        "cases": 5,
+        "duration_seconds": 3.76,
+        "exit_code": 0
+      }
+    ],
+    "performance_receipt": "/tmp/console-tool-ux-perf07-integrated-performance.json",
+    "performance_groups": [
+      {
+        "nodes": [
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py"
+        ],
+        "cases": 22,
+        "duration_seconds": 102.61,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "cases": 13,
+        "duration_seconds": 90.35,
+        "exit_code": 0
+      },
+      {
+        "nodes": [
+          "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets"
+        ],
+        "cases": 2,
+        "duration_seconds": 76.56,
+        "exit_code": 0
+      }
+    ],
+    "warm_module_census": "1033/1033 unchanged ceiling/snapshot",
+    "preflight": "/tmp/console-tool-ux-perf07-preflight.txt",
+    "lint": "/tmp/console-tool-ux-perf07-final-lint.json",
+    "new_ruff_diagnostics": 0,
+    "changed_python_files": 34,
+    "native_approval": {
+      "receipt": "/tmp/console-tool-ux-approval-run27-sanitized/isolation-qualified.json",
+      "journeys": 9,
+      "approved_reads": 3,
+      "denials": 6,
+      "pins": 113,
+      "natural_managed_origins": 69,
+      "identity_provenance": "Frozen HEAD/tree/base provided by parent GO; no Git commands during replay. File byte hashes are independently measured before and after.",
+      "app_pid": 43576,
+      "app_and_pty_exit": 0,
+      "socket_removed": true
+    },
+    "native_close": {
+      "receipt": "/private/tmp/console-tool-ux-close-native/run29/qualification.json",
+      "receipt_sha256": "7f3aed5d6cc3ad0bfae438af0fe1a0691d3daeaeeac522e182fdd17cf1fea1d8",
+      "real_worker_closes": 6,
+      "synthetic_geometry": "Six-kind/count long-title80x24\u219280x18; width60/defaultStay/actionhit/native scroll0\u21927/Home+Tab",
+      "pins": 186,
+      "natural_managed_origins": 97,
+      "app_pid": 53436,
+      "app_and_pty_exit": 0,
+      "socket_removed": true,
+      "external_capacity_note": "/private/tmp/console-tool-ux-close-native/run29/qualification-environment-note.json"
+    },
+    "root_viewed_captures": [
+      "/tmp/console-tool-ux-approval-run27-sanitized/80x24-inspect-True-fast-deny-pending.png",
+      "/tmp/console-tool-ux-approval-run27-sanitized/80x24-inspect-False-deny-all-decision.png",
+      "/private/tmp/console-tool-ux-close-native/run29/evidence/dark-80x24-chat_create-confirm.png",
+      "/private/tmp/console-tool-ux-close-native/run29/evidence/dark-80x18-all-consequences-long-title-scrolled.png"
+    ],
+    "real_profile": "Both native runs preserve21configentries/533datafilemtimes and zeroegress; process/socket cleanup0. Root verifies pins/origins current.",
+    "current_source_pin_count": 230,
+    "limits": "Only65freshscopedcases on newbase; preceding230case/native receipts retained at original identity. Nine regrouped scenario bodies/signatures/63asserts and fiveheavybodies unchanged. One paired grouping time95.55\u219266.86s is not a hostedCI deadline guarantee. Native covers described decisions/Close/geometry only; no AX/provider requests/widerhook/plugin/MCP handlers/Resend execution or forcedworkerDB/UI/rollbackrace claim; existingfocused regressions retain their explicit prior-base/source-equivalence limits. PERF-07 memo mutation contracts covered by12freshupstream tests; natural import of remote_worker_bundle does not mean worker execution. No fullsuite/dependency/CI cap/census relaxation. External shell temp-file capacity error happened after native completion, preserved separately; later3.7GiBavailable without pruning or rerun. Final published-head allfour CI gates/freshcleanresolvedQodo/normalmerge still required."
   }
 }

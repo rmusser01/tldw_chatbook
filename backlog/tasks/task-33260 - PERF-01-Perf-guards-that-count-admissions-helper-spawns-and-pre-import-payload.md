@@ -3,11 +3,11 @@ id: TASK-33260
 title: >-
   PERF-01: Perf guards that count admissions, helper spawns and pre-import
   payload
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 22:27'
+updated_date: '2026-10-02 22:56'
 labels:
   - performance
   - ci
@@ -99,6 +99,8 @@ Final rebase onto dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6 incorporates over
 Reopened after published45189cd3 UI Fast Lane reached97% then hit20m. No assertions failed; all Close cases had passed. Derived artifacts failed because the required UI dependency was cancelled. Continue bounded startup reduction only in selected Close fixtures; no global CI changes.
 
 Remaining UI timeout grouping locally qualified: nine unchanged scenario bodies/63 assertions execute through two ordinary private-profile wrappers,28.42+38.44=66.86s versus95.55s baseline. All five heavy bodies unchanged; scoped patches exit before per-scenario existing factory drains/unfreeze/GC. Independent review clear, zero-new Ruff34 and edited-range format pass. No production or CI/deadline changes; local single-pair saving is not a CI guarantee. Keep In Progress for dev ecc0a531c8 combined-tree qualification and fresh final-head gates.
+
+Final qualification on dev ecc0a531 at code anchor 17235d9d: all 25 patches rebase unchanged and all eight upstream files match dev. Fresh 65 scoped cases pass with zero failures/errors/skips, including all mounted Close/projection/compact-approval groups, upstream memo/readiness contracts and all three exact Perf Guard groups. Native approval27 (nine journeys) and Close29 (six real closes plus geometry) pass; independently verified source pins/origins, normal process/socket cleanup, no egress and real-profile invariance. A post-completion shell capacity error is preserved separately; space recovered without pruning or rerunning. Preflight, zero-new Ruff across 34 files, range format and independent review pass; ceilings, snapshots, counters, canaries, ticks and deadlines remain unchanged. Original receipts retain their identities and explicit limits. Existing ADR-094/097/126 apply; no new ADR. QA path_memo_base_final_followup records evidence. PR2953 still requires fresh final-head CI/Qodo and normal protected merge. No full suite.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
