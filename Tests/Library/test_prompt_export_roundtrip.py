@@ -407,13 +407,17 @@ def test_structured_export_remains_readable_to_the_prior_section_reader():
         ("recipe", json.dumps({"schema_version": 1, "messages": []})),
         (
             "recipe",
-            json.dumps(
-                {"definition_kind": "single_text_recipe", "schema_version": 2}
-            ),
+            json.dumps({"definition_kind": "single_text_recipe", "schema_version": 2}),
         ),
         ("prompt", json.dumps({"kind": "future_prompt", "schema_version": 3})),
     ],
-    ids=["malformed-json", "discriminator-mismatch", "foreign-v1", "single-text-recipe", "future-version"],
+    ids=[
+        "malformed-json",
+        "discriminator-mismatch",
+        "foreign-v1",
+        "single-text-recipe",
+        "future-version",
+    ],
 )
 def test_non_console_structure_falls_back_to_a_legacy_prompt(
     artifact_type: str, structure: str

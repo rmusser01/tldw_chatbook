@@ -134,7 +134,10 @@ class TestProbeUrl:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
+            return_value=mock_response,
+        ):
             probe = _probe_url("https://example.com/doc.pdf")
         assert probe.error is None
         assert probe.note is None
@@ -177,7 +180,9 @@ class TestProbeUrl:
         assert "unreachable" in probe.error.lower()
 
     @pytest.mark.parametrize("status", [401, 403, 405, 429, 500])
-    def test_a_status_the_probe_cannot_interpret_does_not_veto(self, status: int, probing_allowed) -> None:
+    def test_a_status_the_probe_cannot_interpret_does_not_veto(
+        self, status: int, probing_allowed
+    ) -> None:
         """The probe may report doubt; it may not refuse the source.
 
         Any HTTP status proves the host resolved and answered. Sites routinely
@@ -249,14 +254,21 @@ class TestAnalyzePath:
 
         result = analyze_path(str(tmp_path))
 
-        assert set(result.type_groups.keys()) == {"pdf", "ebook", "generic", "audio_video"}
+        assert set(result.type_groups.keys()) == {
+            "pdf",
+            "ebook",
+            "generic",
+            "audio_video",
+        }
         assert len(result.type_groups["pdf"]) == 1
         assert len(result.type_groups["ebook"]) == 1
         assert len(result.type_groups["generic"]) == 1
         assert len(result.type_groups["audio_video"]) == 1
         assert result.total_files == 4
 
-    def test_directory_collects_tooling_warnings(self, tmp_path: Path, monkeypatch) -> None:
+    def test_directory_collects_tooling_warnings(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
         (tmp_path / "a.pdf").write_bytes(b"%PDF")
 
         def fake_warnings(group: str) -> list[dict]:
@@ -270,7 +282,9 @@ class TestAnalyzePath:
         result = analyze_path(str(tmp_path))
         assert result.warnings == [{"feature": "test", "group": "pdf"}]
 
-    def test_single_unsupported_file_is_grouped_not_raised(self, tmp_path: Path) -> None:
+    def test_single_unsupported_file_is_grouped_not_raised(
+        self, tmp_path: Path
+    ) -> None:
         """An unsupported file belongs in its own group, not in an exception.
 
         ``get_type_group`` returns ``"unsupported"`` by design so the summary
@@ -336,7 +350,10 @@ class TestAnalyzePath:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
+            return_value=mock_response,
+        ):
             result = analyze_path("https://example.com/document.pdf")
 
         assert result.errors == []
@@ -360,11 +377,16 @@ class TestAnalyzePath:
         mock_response.__enter__ = MagicMock(return_value=mock_response)
         mock_response.__exit__ = MagicMock(return_value=False)
 
-        with patch("tldw_chatbook.Library.ingest_preflight._open_probe", return_value=mock_response):
+        with patch(
+            "tldw_chatbook.Library.ingest_preflight._open_probe",
+            return_value=mock_response,
+        ):
             result = analyze_path("https://example.com/lecture.mp4")
 
         assert result.errors == []
-        assert result.type_groups == {"audio_video": ["https://example.com/lecture.mp4"]}
+        assert result.type_groups == {
+            "audio_video": ["https://example.com/lecture.mp4"]
+        }
 
     def test_empty_directory(self, tmp_path: Path) -> None:
         result = analyze_path(str(tmp_path))
@@ -429,9 +451,9 @@ def test_zero_byte_files_classified_as_empty_not_importable(tmp_path):
 
     folder = analyze_path(str(tmp_path))
     assert folder.empty_files == (str(empty),)
-    assert sorted(
-        path for files in folder.type_groups.values() for path in files
-    ) == [str(real)]
+    assert sorted(path for files in folder.type_groups.values() for path in files) == [
+        str(real)
+    ]
     assert folder.total_files == 2
 
 
@@ -453,9 +475,9 @@ def test_unstatable_files_are_not_mislabeled_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(preflight_mod, "_statted_size", failing_probe)
     result = analyze_path(str(victim))
     assert result.empty_files == ()
-    assert [
-        path for files in result.type_groups.values() for path in files
-    ] == [str(victim)]
+    assert [path for files in result.type_groups.values() for path in files] == [
+        str(victim)
+    ]
 
 
 class TestUrlProbePlainLanguage:
@@ -485,54 +507,37 @@ class TestUrlProbePlainLanguage:
         import socket
 
         probe = self._probe_with(
-            URLError(
-                socket.gaierror(8, "nodename nor servname provided, or not known")
-            )
+            URLError(socket.gaierror(8, "nodename nor servname provided, or not known"))
         )
-        assert probe.error == (
-            "URL unreachable — the server name could not be found."
-        )
+        assert probe.error == ("URL unreachable — the server name could not be found.")
 
     def test_connection_refused_reads_plain(self) -> None:
         probe = self._probe_with(
             URLError(ConnectionRefusedError(61, "Connection refused"))
         )
-        assert probe.error == (
-            "URL unreachable — the connection was refused."
-        )
+        assert probe.error == ("URL unreachable — the connection was refused.")
 
     def test_timeout_inside_urlerror_reads_plain(self) -> None:
         probe = self._probe_with(URLError(TimeoutError("timed out")))
-        assert probe.error == (
-            "URL unreachable — the connection timed out."
-        )
+        assert probe.error == ("URL unreachable — the connection timed out.")
 
     def test_tls_failure_reads_plain(self) -> None:
         import ssl
 
-        probe = self._probe_with(
-            URLError(ssl.SSLError(1, "certificate verify failed"))
-        )
-        assert probe.error == (
-            "URL unreachable — the secure connection (TLS) failed."
-        )
+        probe = self._probe_with(URLError(ssl.SSLError(1, "certificate verify failed")))
+        assert probe.error == ("URL unreachable — the secure connection (TLS) failed.")
 
     def test_http_absent_status_reads_plain(self) -> None:
-        error = HTTPError(
-            "https://example.com/doc.pdf", 404, "Not Found", {}, None
-        )
+        error = HTTPError("https://example.com/doc.pdf", 404, "Not Found", {}, None)
         probe = self._probe_with(error)
         assert probe.error == (
-            "URL unreachable — the server says this page does not exist "
-            "(HTTP 404)."
+            "URL unreachable — the server says this page does not exist (HTTP 404)."
         )
         self._assert_no_repr(probe.error)
 
     def test_unmapped_url_error_never_leaks_a_repr(self) -> None:
         probe = self._probe_with(URLError(OSError(999, "weird transport")))
-        assert probe.error == (
-            "URL unreachable — the server could not be contacted."
-        )
+        assert probe.error == ("URL unreachable — the server could not be contacted.")
         self._assert_no_repr(probe.error)
 
     def test_unexpected_exception_never_leaks_a_repr(self) -> None:

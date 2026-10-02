@@ -78,9 +78,7 @@ class _ProfileRagService:
         results=None,
         vector_count: int = 12,
     ):
-        self.config = SimpleNamespace(
-            search=SimpleNamespace(default_search_mode=mode)
-        )
+        self.config = SimpleNamespace(search=SimpleNamespace(default_search_mode=mode))
         self.profile = (
             SimpleNamespace(name=profile_name) if profile_name is not None else None
         )
@@ -125,8 +123,7 @@ class _ProfileRagService:
         # rather than silently ignoring it. Reproduced for the same reason.
         if keyword_source_types is not None and search_type == "semantic":
             raise ValueError(
-                "keyword_source_types is not supported for "
-                "search_type='semantic'"
+                "keyword_source_types is not supported for search_type='semantic'"
             )
         self.calls.append(
             {
@@ -309,9 +306,7 @@ async def test_hybrid_profile_with_active_scope_runs_fused_hybrid():
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}})
 
-    result = await service.search(
-        "credential", ("media",), "rag", top_k=5, scope=scope
-    )
+    result = await service.search("credential", ("media",), "rag", top_k=5, scope=scope)
 
     assert rag.calls, "the scoped query never reached the runtime"
     assert [call["search_type"] for call in rag.calls] == ["hybrid"]
@@ -345,13 +340,9 @@ async def test_scoped_hybrid_sends_one_allowlist_entry_per_scoped_source_type():
     """
     rag = _ProfileRagService(mode="hybrid", results=[_media_result()])
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
-    scope = _scoped(
-        **{SOURCE_TYPE_MEDIA: {"media-1"}, SOURCE_TYPE_NOTE: {"note-1"}}
-    )
+    scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1"}, SOURCE_TYPE_NOTE: {"note-1"}})
 
-    await service.search(
-        "credential", ("media", "notes"), "rag", top_k=5, scope=scope
-    )
+    await service.search("credential", ("media", "notes"), "rag", top_k=5, scope=scope)
 
     assert rag.calls[0]["metadata_allowlist"] == (
         {"source_type": {SOURCE_TYPE_MEDIA}, "source_id": {"media-1"}},
@@ -420,9 +411,9 @@ async def test_scoped_prompts_only_selection_now_routes_hybrid_and_fails_closed(
     assert [call["search_type"] for call in rag.calls] == ["hybrid"]
     assert rag.calls[0]["keyword_source_types"] == {"prompt"}
     allowlist = rag.calls[0]["metadata_allowlist"]
-    assert all(
-        "prompt" not in entry.get("source_type", ()) for entry in allowlist
-    ), f"the scope named prompts, which spec D5 says it cannot: {allowlist}"
+    assert all("prompt" not in entry.get("source_type", ()) for entry in allowlist), (
+        f"the scope named prompts, which spec D5 says it cannot: {allowlist}"
+    )
 
 
 @pytest.mark.asyncio
@@ -439,9 +430,7 @@ async def test_scoped_hybrid_with_no_rows_keeps_the_scope_recovery_state():
     service = LibraryLocalRagSearchService(SimpleNamespace(_rag_service=rag))
     scope = _scoped(**{SOURCE_TYPE_MEDIA: {"media-1", "media-2"}})
 
-    result = await service.search(
-        "credential", ("media",), "rag", top_k=5, scope=scope
-    )
+    result = await service.search("credential", ("media",), "rag", top_k=5, scope=scope)
 
     assert isinstance(result, LibraryRagSearchOutcome)
     assert result.status == "empty"

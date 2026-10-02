@@ -10,9 +10,7 @@ from rich.cells import cell_len
 # pane at a time (the rail fills the width and this canvas is hidden), so
 # spatial copy was width-dependent nonsense. The copy now holds at every
 # width the layout can take.
-LIBRARY_CANVAS_LANDING_COPY = (
-    "Search everything, pick a section, or add something new."
-)
+LIBRARY_CANVAS_LANDING_COPY = "Search everything, pick a section, or add something new."
 
 LIBRARY_ROW_BROWSE_CONVERSATIONS = "browse-conversations"
 LIBRARY_ROW_BROWSE_MEDIA = "browse-media"
@@ -81,17 +79,13 @@ LIBRARY_DELETE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to delete t
 LIBRARY_DELETE_SELECTED_TOOLTIP = "Move the selected items to trash."
 
 # task-28242: the Media canvas's "Review selected" bulk action, same pair.
-LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = (
-    "Select one or more items to review them."
-)
+LIBRARY_REVIEW_SELECTED_DISABLED_TOOLTIP = "Select one or more items to review them."
 LIBRARY_REVIEW_SELECTED_TOOLTIP = "Review the selected items, one by one."
 
 # task-28007 AC#4: the Media canvas's "Analyze selected" bulk action, same
 # pair. The provider-unready reason (from ``analysis_unavailable_reason``)
 # replaces the disabled tooltip when there is nothing to dispatch to.
-LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP = (
-    "Select one or more items to analyze them."
-)
+LIBRARY_ANALYZE_SELECTED_DISABLED_TOOLTIP = "Select one or more items to analyze them."
 LIBRARY_ANALYZE_SELECTED_TOOLTIP = "Generate an analysis for the selected items."
 
 # task-32045 (critique #7 P2): Export/Review/Delete all gate on the same

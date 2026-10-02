@@ -759,9 +759,7 @@ async def test_rag_mode_diagnostics_report_uncovered_requested_source_type():
     app = SimpleNamespace(_rag_service=rag_service)
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search(
-        "cake", ("notes", "media"), "rag", top_k=5
-    )
+    result = await service.search("cake", ("notes", "media"), "rag", top_k=5)
 
     assert result["diagnostics"]["semantic_scope_coverage"] == {
         "covered": ["media"],
@@ -800,9 +798,7 @@ async def test_rag_mode_diagnostics_report_all_covered_when_every_type_present()
     app = SimpleNamespace(_rag_service=rag_service)
     service = LibraryLocalRagSearchService(app)
 
-    result = await service.search(
-        "cake", ("notes", "media"), "rag", top_k=5
-    )
+    result = await service.search("cake", ("notes", "media"), "rag", top_k=5)
 
     assert result["diagnostics"]["semantic_scope_coverage"] == {
         "covered": ["notes", "media"],
