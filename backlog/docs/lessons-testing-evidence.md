@@ -17521,3 +17521,15 @@ initial worker before injecting the discovery being tested; retain the real
 label-mount hold and exact reference/authority assertions. Do not lengthen the
 observer clock or change correct production inventory handling to hide ordering
 between two fixture producers. The worker belongs to the app, not the window.
+
+
+## Select long retention stress checks explicitly
+
+**PR #2946 / TASK-32679, 2026-10-02.** A queue-rebase check selected the entire
+round-1 recovery file and unintentionally entered its existing 1,000-turn,
+1,800-second retention test. The invocation was interrupted after 675.57s;
+170 earlier passes and two independently reproduced fixture failures survived
+in JUnit, but the stress case had no completed verdict. Inspect loops and markers
+before adding whole files to a targeted run. A quiet long-running stress body
+is not proof of a hang. Select stress separately when its retention contract
+changes, and record interrupted runs as partial evidence.

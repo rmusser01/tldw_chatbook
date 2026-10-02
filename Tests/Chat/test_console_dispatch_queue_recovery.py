@@ -32,13 +32,13 @@ from tldw_chatbook.Chat.console_prompt_queue import (
     PromptQueueEntryPhase,
     PromptQueueMode,
     PromptQueuePauseReason,
+    QueuedPrompt,
     QueueMutationStatus,
 )
 from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
     ConsolePromptQueueCoordinator,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-
 
 PROMOTION_BLOCK_COPY = "Finish or discard the pending turn before saving."
 
@@ -131,9 +131,9 @@ def _accepted_queue() -> tuple[ConsolePromptQueueRegistry, str, str, str, str]:
 
 
 def _coordinator(registry, submitted):
-    async def submit(text, *, session_id, entry_id, authorization):
+    async def submit(prompt: QueuedPrompt, *, session_id, entry_id, authorization):
         assert authorization.session_id == session_id
-        submitted.append((entry_id, text))
+        submitted.append((entry_id, prompt.text))
         coordinator.turn_accepted(
             session_id,
             origin=recovery_models.ConsoleSubmissionOrigin.QUEUED,
@@ -361,6 +361,7 @@ def test_ephemeral_recovery_is_store_owned_and_writes_no_checkpoint(
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_ephemeral_send_crosses_started_before_provider_then_settles_in_memory(
     tmp_path: Path,

@@ -1209,3 +1209,69 @@ snapshots remain unchanged. All **197 branch-changed Python files** parse;
 whitespace checks pass. Earlier static, authority, teardown and recovery evidence
 retains its exact original head/base and exclusions. The final candidate must
 pass fresh remote CI and comment checks before the authorized head-pinned merge.
+
+
+### Queue/GC and admission latest-dev closeout
+
+Live dev advanced to `ee1c1e7365c232a184e129bef1dec15afd85b24f` and then
+`113e435ab0bff12e89ae1c9f06ec154f32f776bf` during qualification. On the first
+rebase, **27 of 28 patches replay unchanged**. The one real overlap is durable
+queue settlement: retain dev's `live_chain_owns_claim` implementation and its
+exact live `current_entry_id`, which already implement the older hook patch's
+reservation handling. No second flag is added. All upstream context-review
+Resume/Retry/Discard propagation, trace-maintenance parking and GC freeze
+behavior are retained. Eight relevant upstream owner files are byte-exact;
+all newly changed runtime/controller/screen methods and the five relevant
+coordinator settlement/review methods retain their upstream ASTs. Evidence:
+`hooks-pr2946-ee1-range-diff.txt` and `hooks-pr2946-ee1-static-evidence.json`.
+The second rebase replays **all 28 patches identically**; all five admission
+implementation files are byte-identical to dev (`hooks-pr2946-113-range-diff.txt`).
+ADR required: **no**. Existing ADR-126/163/197/198/210 govern; this adds no
+storage, permission, runtime or UI contract.
+
+The first combined targeted invocation records **170 passes, two failures**, then
+is gracefully interrupted inside the existing 1,000-turn retention stress
+case after **675.57s**. This is partial evidence, not a passing aggregate or a
+stress-test verdict (`hooks-pr2946-ee1-queue-continuations.xml`). Its completed
+queue/coordinator, two mounted queue UI files, complete hook-continuation file
+and complete parked-maintenance file contribute **153 passes** (38/49/16/43/7).
+The two dispatch-recovery failures reproduce individually on the branch and on
+immutable upstream `ee1c1e` (`hooks-pr2946-ee1-recovery-isolated.xml` and
+`hooks-pr2946-ee1-upstream-recovery.xml`): the shared submit double treats the
+current `QueuedPrompt` argument as a string, and the actual ephemeral-send case
+switches away from its collection-time admitted profile. Update only that test
+helper and that case's existing `bootstrap_profile` marker. No production guard,
+assertion, timeout or workflow is weakened. The complete repaired recovery file
+passes **ten cases in 4.79s** after final import formatting
+(`hooks-pr2946-113-recovery-final-imports.xml`). The durable retry/bypass,
+single-entry reclaim and thinking-refusal controls pass **five cases in 5.92s**
+in their separate admitted-profile invocation
+(`hooks-pr2946-113-durable-reclaim.xml`). Do not reclassify the prior unrelated
+recovery/pet exclusions or the earlier frozen 1,000-turn qualification as a
+new full-suite pass.
+
+On `113e435ab0` plus the fixture repair, fresh admission-reuse oracle,
+hook-compaction and genuine v75 migration controls pass **62 cases in 30.86s**;
+one expected unbound-profile edit has no record to mutate and is skipped
+(`hooks-pr2946-113-admission-compaction.xml`). Full mounted hook review plus GC
+freeze and affected boot guards pass **32 cases in 136.40s**, without skips,
+with the same three headroom warnings (`hooks-pr2946-113-console-boot.xml`).
+UI-ready remains **1032/1033**, pre-import **557/557**, and app import **680/686**;
+no limits or snapshots change. All **eleven exact artifact checker commands**
+pass (`hooks-pr2946-113-local-artifacts.json`); diagnostic inventory is
+**631 owners / 1425 TASK-492 / 56 TASK-31551 / 7591 TASK-494 / 16 sinks** and
+all **117** timestamp occurrences remain pinned. All **197 branch Python files**
+parse and whitespace checks pass. The repaired test passes full Ruff and format;
+the queue rebase adds no Ruff diagnostics to its inherited baseline (whole-file
+legacy queue formatting still flags pre-existing ranges).
+
+Published previous head `b23edf5385` ultimately passes its hosted required
+artifact job, both fast lanes, all six native GGUF source/import jobs, native
+wheel/structural qualification and UI latency. Its former runner queue is no
+longer the blocker. The latest independently read dev remains `113e435ab0` before
+publication. Qodo's persistent report still has nine resolved findings and one
+independently disproved finding, all nine inline threads resolved; its separate
+review object remains on the original head. Fresh final-head CI and comments
+must qualify the new publication before the authorized normal head-pinned merge.
+The user approved a ten-minute current-thread heartbeat to complete those checks,
+fix actionable findings and merge after verification, then pause itself.
