@@ -99,14 +99,15 @@ APACHE_SUBTREE_LICENSE_PATHS = frozenset(
         "tldw_chatbook/tldw_api/LICENSE",
     }
 )
+# task-19565: CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH and
+# RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH were removed with their files --
+# those migrations execute embedded constants (their steps carry Python
+# recovery logic), and shipping never-opened .sql twins pinned as wheel
+# content falsely suggested they were authoritative. PERSONA_VISUAL below is
+# a runtime-read (file-backed) migration, covered by
+# RUNTIME_MIGRATION_PATHS like every other executed .sql.
 PERSONA_VISUAL_MIGRATION_PATH = (
     "tldw_chatbook/DB/migrations/chachanotes_v40_to_v41_persona_visual.sql"
-)
-CONSOLE_PROJECT_CONTEXT_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v41_to_v42_console_project_context.sql"
-)
-RESEARCH_QUICK_NOTE_PROOF_MIGRATION_PATH = (
-    "tldw_chatbook/DB/migrations/chachanotes_v42_to_v43_research_quick_note_proofs.sql"
 )
 SAMIRA_RESOURCE_ROOT = "tldw_chatbook/assets/characters/samira"
 SAMIRA_REACTION_LABELS = (

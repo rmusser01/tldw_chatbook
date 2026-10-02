@@ -180,3 +180,4 @@ Use numeric filenames:
 Do not reuse numbers.
 
 | [ADR-187](187-server-sharing-release-contracts.md) | Accepted | Consume durable clone receipts, paginated shared sources, and observed Notes link deletion versions without weakening server contracts. |
+| [ADR-208: DB migration .sql files are the executed source of truth](208-migration-sql-files-are-the-executed-source.md) | Migration .sql files execute; decorative twins deleted; packaging pins the file-backed set. |

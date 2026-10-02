@@ -39,8 +39,11 @@ Honest scope — what this sweep catches and what it cannot:
   disclosed hole is now covered elsewhere: ``test_index_census.py``
   (task-19045) pins the absolute index-name set, UNIQUE flags, and column
   tuples against a hand-maintained literal, which reds on exactly the
-  seeded-deletion shape this sweep must stay green on. Other chain-seeded
-  artifact classes still rely on consumer tests.
+  seeded-deletion shape this sweep must stay green on; for TRIGGERS and
+  COLUMNS, ``test_trigger_census.py`` (task-19565) and the
+  ``EXPECTED_TABLE_COLUMNS`` literal asserted INSIDE this sweep (also
+  task-19565) close the same hole. Other chain-seeded artifact classes
+  still rely on consumer tests.
 """
 
 from __future__ import annotations
@@ -50,6 +53,7 @@ import sqlite3
 import pytest
 
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+from Tests.ChaChaNotesDB.expected_table_columns import EXPECTED_TABLE_COLUMNS
 from Tests.ChaChaNotesDB.historical_bootstrap import (
     MINIMUM_BOOTSTRAP_VERSION,
     SCHEMA_NAME,
@@ -91,6 +95,54 @@ def _schema_objects(conn: sqlite3.Connection) -> set[tuple[str, str]]:
     return objects
 
 
+def _assert_columns_match_declared_expectation(
+    conn: sqlite3.Connection, side: str
+) -> None:
+    """Compare live table->column sets against the hand-declared literal.
+
+    task-19565: the fresh-vs-replay comparison above can never fail for a
+    defect seeded inside the chain itself (both sides run the same chain, so
+    the comparison is the identity on it). This assertion is the
+    independently-declared expectation: a column dropped from BOTH sides by
+    a bad migration, or added to both by an unintended one, fails here.
+    Applied to the fresh template AND each replayed DB, so the declared
+    shape is pinned for both construction paths.
+    """
+    live: dict[str, frozenset[str]] = {}
+    for (name,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+    ):
+        if name.endswith(("_fts_config", "_fts_data", "_fts_docsize", "_fts_idx")):
+            continue  # SQLite-managed FTS shadow internals (see literal module)
+        live[name] = frozenset(
+            column_row[1] for column_row in conn.execute(f'PRAGMA table_info("{name}")')
+        )
+    missing_tables = sorted(set(EXPECTED_TABLE_COLUMNS) - set(live))
+    assert not missing_tables, (
+        f"[{side}] tables declared in EXPECTED_TABLE_COLUMNS are missing from "
+        f"the live schema: {missing_tables}. A migration dropped them, or the "
+        f"literal in Tests/ChaChaNotesDB/expected_table_columns.py is stale."
+    )
+    unexpected_tables = sorted(set(live) - set(EXPECTED_TABLE_COLUMNS))
+    assert not unexpected_tables, (
+        f"[{side}] live tables not declared in EXPECTED_TABLE_COLUMNS: "
+        f"{unexpected_tables}. Pin them (expected_table_columns.py) in the "
+        f"same commit as the migration that adds them, or drop them."
+    )
+    divergent = [
+        f"{table}: declared-only={sorted(EXPECTED_TABLE_COLUMNS[table] - columns)} "
+        f"live-only={sorted(columns - EXPECTED_TABLE_COLUMNS[table])}"
+        for table, columns in sorted(live.items())
+        if columns != EXPECTED_TABLE_COLUMNS[table]
+    ]
+    assert not divergent, (
+        f"[{side}] live column sets diverge from the independently-declared "
+        f"EXPECTED_TABLE_COLUMNS literal (task-19565: the fresh-vs-replay "
+        f"comparison cannot see a column dropped from both sides — this "
+        f"can):\n" + "\n".join(divergent)
+    )
+
+
 @pytest.mark.parametrize(
     "stop_version",
     range(MINIMUM_BOOTSTRAP_VERSION, CharactersRAGDB._CURRENT_SCHEMA_VERSION),
@@ -124,9 +176,11 @@ def test_bootstrap_at_version_then_replay_matches_fresh_bootstrap(
         fresh_conn = sqlite3.connect(fresh_template_db)
         try:
             fresh_objects = _schema_objects(fresh_conn)
+            _assert_columns_match_declared_expectation(fresh_conn, "fresh template")
         finally:
             fresh_conn.close()
         replayed_objects = _schema_objects(migrated_conn)
+        _assert_columns_match_declared_expectation(migrated_conn, f"replay from v{stop_version}")
         assert replayed_objects == fresh_objects, (
             f"bootstrap at v{stop_version} + replay diverged from a fresh "
             f"bootstrap: missing={sorted(fresh_objects - replayed_objects)} "

@@ -935,10 +935,3 @@ def test_migration_sql_kept_tables_have_no_sync_columns_or_fts() -> None:
     assert "on delete cascade" not in briefings_body
 
 
-def test_inline_migration_sql_matches_migration_file() -> None:
-    """Guard against the runner SQL constant and the on-disk migration file
-    (kept side by side for readability -- see either's header comment)
-    drifting apart."""
-    file_sql = MIGRATION_SQL_PATH.read_text(encoding="utf-8")
-    file_ddl = file_sql[file_sql.index("CREATE TABLE") :]
-    assert CharactersRAGDB._MIGRATE_V28_TO_V29_SQL.strip() == file_ddl.strip()
