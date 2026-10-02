@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 17:12'
+updated_date: '2026-10-02 17:15'
 labels:
   - plugins
   - implementation
@@ -76,4 +76,6 @@ PR #2946 final Delete/Undo latest-dev rebase onto eba4305d83 replays all 29 patc
 PR #2946 current-dev integration onto 6958e8dfa9 replays all 31 patches identically, preserving eleven upstream owners and seven changed store/protocol/lifecycle method ASTs. Eleven first-send profile-selection failures reproduce on immutable exact dev; the existing bootstrap_profile module marker keeps real controller tests on the admitted private profile. The repaired complete file passes 29 cases without skips, retaining dedicated private-profile children and every transaction/cancellation/provider assertion. Mounted hook review, picker, keep-alive and boot controls give 42 pass plus three strict real Send-freeze xfails; W003 controls give 93 pass/two known recall xfails. All eleven artifact commands, 198 Python parses and whitespace pass; formatting is clean with no added Ruff diagnostics to the five inherited ones. Existing ADR-069/097/126/163/197/210 apply; no new ADR or production behavior. Integration remains In Progress: the independently owned review-Send repair is PR #2945, now rebased onto this dev, and normal merge waits for its integration and ordinary passing route controls, then final exact-head CI/Qodo/live-dev verification. Evidence and prior limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 
 PR #2946 integrates independently merged review-Send repair dev 30ca4552b3: 32/33 patches replay identically; only testing-lesson append context changes and both incidents remain. Eight upstream owners and ten screen/modal method ASTs are exact. All 21 formerly frozen Send cases pass as ordinary tests, mounted legacy/v2 review passes 12, canonical Settings ten and affected boot/CSS five, clearing the concrete runtime-freeze merge gate. Consent/admission/W003 passes 168 with two unchanged checker recall xfails. Twenty-eight draft fixture setup failures reproduce on immutable dev; the existing admitted-profile module marker preserves all test bodies/assertions. The complete corrected file is 27 pass/three fail; an unchanged immutable-dev run with the same marker arrangement independently reproduces those three failures, which remain explicit unsuppressed baseline exclusions. All eleven artifact commands, 199 Python parses, changed-range formatting and whitespace pass, with no added inherited lint/format diagnostics or raised budgets. Existing ADR-163/197/210 apply; no new ADR or duplicated production repair. Detailed evidence and historical limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Fresh exact-head hosted checks, Qodo and independently read current dev remain the final normal-merge gate, handled by the approved heartbeat.
+
+Final independent pre-push check caught dev advancing to 52620c3a08 (merged PR #2920 / TASK-33560). All 35 patches replay identically; both maintenance owners and eight repair owners remain byte-exact, with ten screen/modal ASTs exact. The complete native-poll and ordinary review-Send files pass 30 cases (nine maintenance, 21 formerly frozen routes), with no skips/xfails. All eleven artifact checks, 199 Python parses and whitespace pass without raised budgets. Earlier qualification and independently reproduced baseline exclusions remain explicit in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Existing ADR-126/163/197/210 apply; no new ADR or production changes. Fresh published-head CI/Qodo and independently read live dev remain required before normal merge, continued by the approved heartbeat.
 <!-- SECTION:NOTES:END -->

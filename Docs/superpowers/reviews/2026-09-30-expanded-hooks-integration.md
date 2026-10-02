@@ -1439,3 +1439,31 @@ Ruff diagnostics match immutable dev, with no addition. No budgets or snapshots
 change. Earlier semantic-inventory, pet/recovery and stress limitations remain
 recorded. Final-head hosted checks, fresh Qodo and independently read live dev
 still gate the authorized normal merge; the approved heartbeat remains active.
+
+
+### Final maintenance-probe dev 52620c3a08
+
+The independent pre-push live-ref check caught dev advancing to
+`52620c3a08bfe6057aa58b9319efb4ec34a40213` before publication. Its independently
+merged PR #2920 changes only the maintenance probe interval and its two test
+controls (TASK-33560). All **35 owned patches replay identically**, with no
+conflict (`hooks-pr2946-526-range-diff.txt`). The two maintenance files and eight
+review-Send owners remain byte-exact; the ten previously qualified screen/modal
+method ASTs remain exact (`hooks-pr2946-526-owner-evidence.json`). The complete
+native-poll and ordinary Send-review files pass **30 cases in 79.75s**, without
+skips or xfails (`hooks-pr2946-526-send-maint.xml`): nine maintenance cases and
+all 21 former freeze cases. No maintenance polling, native cancellation,
+readmission or UI authority contract is altered by this PR.
+
+All **eleven required artifact commands** reproduce on this final base
+(`hooks-pr2946-526-local-artifacts.json`), preserving the 635-owner diagnostic
+inventory. All 199 branch-changed Python files parse and whitespace passes.
+The previous section's mounted review/Settings/boot, admission and independently
+reproduced draft exclusions remain applicable: this final rebase changes only
+the two independent upstream maintenance files; all feature patches are exact.
+Existing ADR-126/163/197/210 apply; ADR required: **no**. The prior published
+`c2d41d4aa9` now passes all applicable hosted checks, including required artifacts,
+both fast lanes, six native GGUF jobs, five wheel jobs, structural qualification
+and latency. Those checks do not qualify the newly rebased head. Publication
+uses its verified explicit lease; fresh exact-head hosted checks, Qodo and an
+independently read live dev still gate the authorized normal merge.
