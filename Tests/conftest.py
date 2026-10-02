@@ -1216,6 +1216,10 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # test_hosted_chat.py above). It never re-selects a config
             # itself, so it keeps the bootstrap profile.
             "test_chunker_v2.py",
+            # TASK-19642.21.2: the golden-parity suite builds the same real
+            # Chunker per corpus×method node; identical admission signature
+            # and rationale as test_chunker_v2.py above.
+            "test_golden_parity.py",
         }
     )
     test_data_dir = (
