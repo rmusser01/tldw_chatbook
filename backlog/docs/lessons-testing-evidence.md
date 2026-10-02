@@ -17811,3 +17811,16 @@ paths, and checks old late progress plus terminal survival, new saved progress,
 and one automatic delivery per native session. Keep causal run identity separate
 from current chat-data identity, and test both identities through actual native
 authorities after Save.
+
+
+## New persistent state needs the existing repository guards
+
+**PR #2918 / TASK-33430–33432, 2026-10-01.** Targeted behavioral tests were
+green, but first PR CI found the peer runtime's exact tool inventory stale,
+two new indexes absent from the plan census and the durable progress writer
+using offset-form timestamps. The expanded derived sweep also found the Chat
+table missing from the existing SQL allowlist. The repair reused the canonical
+timestamp helper and exercised actual populated repository SQL without statistics
+before registering its plan pins. Run the existing inventory, timestamp, schema
+allowlist and query-plan guards whenever a feature adds persistent state or tools;
+behavioral coverage alone did not detect these repository contracts.

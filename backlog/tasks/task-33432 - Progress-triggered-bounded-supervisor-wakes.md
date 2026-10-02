@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-09-29 20:13'
+updated_date: '2026-10-02 00:42'
 labels:
   - agents
   - console
@@ -30,6 +30,8 @@ Let committed child progress request a supervisor turn through the existing auto
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Extend existing AgentRuns wake attempt and claim schema to identify completion and progress sources, with migration and installed recovery catalog parity. 2. Pin live-progress claim scope, shared generation budgets, duplicate protection, preacceptance rollback and restart nonreplay. 3. Add metadata-only committed enqueue intake and pending-ID revalidation to the existing scheduler, retaining its coalescing, manual priority and slots. 4. Wake with bounded report IDs and request a fresh read; keep progress claims and completion receipts distinct. 5. Run targeted ledger/scheduler/integration checks, static analysis and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: new automatic wake source sharing existing finite authority.
+
+CI addendum 2026-10-01: extend the existing real automatic-work query-plan test with populated progress claims, pin exact attempt cleanup and register its existing index; run wake/schema and rebase authority checks. ADR required: no; direct qualification of ADR-199.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -50,4 +52,6 @@ Independent review repairs preserve causal work through native Save. Progress in
 Final review qualification: 72 focused ledger/schema/progress/existing completion scheduling/recovery/real provider dispatch checks passed in 142.45s (/private/tmp/tldw-progress-review-final2-output.log and matching .log). The stronger Save/plain+agent/Canvas rerun passed 2 checks in 16.30s (/private/tmp/tldw-progress-canvas-fixed-output.log). Independent read-only review passed the 8 causal Save, Canvas, stale-completion membership, shared native slot and manual/foreign-token refusal cases in 41.94s with no remaining actionable TASK33432 findings. Ruff passes the core/new modules; changed wake/controller body ranges are formatted; added-line bridge/controller lint and git diff --check are clean. Existing unrelated shared-file formatting/lint debt was left unchanged. Status and criteria remain review-pending for root closeout.
 
 Final root disposition, September 29: independent re-review approved all remaining source intake, shared membership, native alias admission and Canvas authority repairs; eight focused cases passed in 41.94s. The final combined wake/ledger/schema/completion selection passed 72 cases in 142.45s. Changed-code static/format and whitespace checks passed. All four acceptance criteria are satisfied under ADR-199; the separate native lifecycle contention qualification belongs to TASK-33431. Targeted evidence only; no full suite or live-provider claim.
+
+October 1 CI/integration closeout: populated the existing real mixed claim-plan regression and registered idx_automatic_progress_claims_attempt. Independent rebase review reproduced upstream hook admission returning before proven-preacceptance cleanup, leaving a prepared attempt and reserved generation. The seven-line controller repair marks only an exact authorized live AGENT_WAKE token with acceptance not started; existing cleanup aborts/refunds it. The actual plain/agent gateway regression proves manual/copied-token refusal, no provider call before refusal, one retry after clearing the hook and no duplicate replay. Six authority/retry checks pass 43.72s and three existing readiness/acceptance/completion guards pass 11.51s; independent reviewer passes both new paths plus three guards and approves. Affected 145-case schema/messaging and 147-case lifecycle selections pass; overlapping selections are not summed. Final 75-file changed-code and diagnostic guards pass. Existing ADR-199 AC3 covers this repair; no new ADR. Criteria satisfied; Done. PR #2918 is rebased on dev 31d4f9b764 and awaits its published-head remote checks.
 <!-- SECTION:NOTES:END -->

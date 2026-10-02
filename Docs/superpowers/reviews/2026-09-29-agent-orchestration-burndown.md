@@ -2,8 +2,8 @@
 
 Status: all 13 tasks completed, independently reviewed and rebased; ready for PR review.
 Implementation base: dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`.
-Integration base: latest fetched dev `6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b`.
-Delivery: draft PR against dev; no merge is claimed.
+Integration base: latest fetched dev `31d4f9b76492120706ba8e3ad7d355f1aa4e0273`.
+Delivery: PR #2918 against dev; no merge is claimed.
 Branch: `codex/agent-orchestration-burndown`.
 Scope: all 13 tasks authorized by the user's request to burn down the remaining work.
 
@@ -76,3 +76,32 @@ Size-ratchet measurements are not claimed green. The initial dev baseline alread
 | `tldw_chatbook/Chat/console_chat_store.py` | 22344 | 22545 | 22771 | +226 |
 | `tldw_chatbook/Chat/console_chat_controller.py` | 29367 | 30559 | 30613 | +54 |
 | `tldw_chatbook/UI/Screens/chat_screen.py` | 25218 | 25435 | 25450 | +15 |
+
+## October 1 PR CI and latest-dev integration
+
+PR #2918's first CI run found an exact runtime inventory missing the two peer tools, two unregistered indexes and a noncanonical progress timestamp writer. Targeted RED checks reproduced those defects. The writer now reuses `utc_now_iso()` under ADR-173; the exact inventory includes both existing peer tools. Existing populated repository tests now trace the actual FIFO load and mixed completion/progress abort SQL, assert indexed search without statistics and preserve negative controls. Both indexes are registered in the census. The expanded derived sweep also found the new report table missing from Chat's SQL allowlist; the existing allowlist now covers it.
+
+The MCP renderer CI failure was an unchecked missed Run click. Upstream PR #2910 already fixes it; the rebase includes that correction. Four focused renderer cases pass in 8.52s. No production renderer change was needed.
+
+Rebased the two delivery commits onto dev `31d4f9b76492120706ba8e3ad7d355f1aa4e0273`; lesson conflicts preserve both sets of evidence. Independent review of the overlapping Console/runtime/provider/routing and frozen recovery boundaries found one additional P2: the upstream hook-admission early return bypassed proven-preacceptance cleanup, leaving an automatic wake prepared with a reserved generation. The minimal seven-line repair marks only an exact live authorized AGENT_WAKE token whose acceptance has not started. Existing cleanup aborts/refunds it. Manual and copied tokens cannot borrow that authority; uncertain or accepted attempts keep their existing fences. The real plain and agent gateway regression proves zero provider calls before refusal, no reserved generation, one retry after the hook clears and no duplicate delivery.
+
+Fresh evidence:
+
+- Exact timestamp, runtime inventory and populated claim-plan regression: **3 passed in 5.73s** (`/private/tmp/pr2918-ci-corrections-green.log`).
+- Affected messaging, peers, installer, budget and recovery/schema modules: **145 passed in 58.50s** (`/private/tmp/pr2918-ci-affected-green.log`).
+- Fallback, sampling, saved close/hydration, mounted durable progress, design tokens and guide guard: **147 passed in 271.09s** (`/private/tmp/pr2918-rebase-lifecycle-green.log`).
+- Hook repair and manual/foreign authority: **6 passed in 43.72s**; existing readiness, acceptance-write failure and completion nonreplay guards: **3 passed in 11.51s** (`/private/tmp/pr2918-hook-wake-refund-targeted-green.log`, `/private/tmp/pr2918-hook-wake-budget-guards-green.log`).
+- Independent integration review approves the hook repair and scoped overlap review: 37 boundary/recovery cases, a separate seven-case lookup/cache selection, both new real-gateway cases and three existing wake guards passed. These selections overlap and are not summed.
+- Frozen-code static scan: **75 changed Python files fatal-clean, ten new Python files full Ruff/format-clean, zero added-line/new-file findings and clean whitespace** (`/private/tmp/pr2918-final-static.log`).
+
+The diagnostic inventory was refreshed only after reviewing the three exception-type-only warnings and the controller's unchanged constant warning. No communication body, URL, path, raw exception or sink-topology change was admitted by that refresh. Derived CSS, bootstrap-profile, task IDs/readability, table allowlist, index census, workers, timestamps and UI census checks pass with Python 3.12. GitHub must rerun its checks on the published head; this record does not claim a successful remote rerun.
+
+Current size-ratchet measurements retain the pins and disclose inherited overruns:
+
+| Module | Pin | Current dev | Final code | Patch delta |
+| --- | ---: | ---: | ---: | ---: |
+| `tldw_chatbook/Chat/console_chat_store.py` | 22344 | 22534 | 22760 | +226 |
+| `tldw_chatbook/Chat/console_chat_controller.py` | 29367 | 30660 | 30721 | +61 |
+| `tldw_chatbook/UI/Screens/chat_screen.py` | 25218 | 25311 | 25326 | +15 |
+
+The earlier qualification limits remain: targeted checks only, no full suite/live provider/Windows claim, inherited whole-file static debt, stale pytest garbage-directory warnings and no broad aggregate resource sweep.
