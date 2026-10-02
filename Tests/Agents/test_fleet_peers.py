@@ -247,14 +247,18 @@ def test_peer_names_are_private_reserved_and_absent_capability_never_catalog_dis
 
 
 @private_profile_test
-def test_service_children_receive_scoped_tools_and_direct_delivery_is_private(
-    tmp_path, monkeypatch, request
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hooks", [False, True])
+async def test_service_children_receive_scoped_tools_and_direct_delivery_is_private(
+    tmp_path, monkeypatch, request, hooks
 ):
+    import asyncio
     import threading
 
     from Tests.Agents.conftest import pin_agent_settings
     from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX, FleetChat, fence
     from tldw_chatbook.Agents import agent_service, run_log
+    from tldw_chatbook.Agents.activation import worker_guard
     from tldw_chatbook.Agents.agent_service import AgentService
     from tldw_chatbook.Agents.tool_catalog import (
         BuiltinToolProvider,
@@ -323,27 +327,54 @@ def test_service_children_receive_scoped_tools_and_direct_delivery_is_private(
         fleet_coordinator=fleet,
         work_chain_id=chain,
     )
-    _, outcome = service.run_turn(
-        conversation_id="c", messages=[], config=FLEET_CFG, api_endpoint="llama_cpp"
-    )
-    assert outcome.status == "done", outcome.steps
-    for name in PEER_TOOLS:
-        assert name not in chat.parent_calls[0]["messages_payload"][0]["content"]
-        assert name in chat.child_calls["A"][0]["messages_payload"][0]["content"]
-    receipt = chat.child_calls["A"][2]["messages_payload"][-1]["content"]
-    assert '"status":"queued"' in receipt and SECRET not in receipt
-    b_payload = chat.child_calls["B"][1]["messages_payload"]
-    assert sum(SECRET in row.get("content", "") for row in b_payload) == 1
-    for handle in fleet.snapshot():
-        assert SECRET not in json.dumps(db.get_run(handle.run_id)["steps"])
-    assert not service.run_log_writer.is_active
-    assert len(callbacks) == 2
-    for list_callback, send_callback in callbacks:
-        assert list_callback({}).error == "unavailable"
-        assert (
-            send_callback({"handle_id": "unknown", "message": "late"}).error
-            == "unavailable"
+    engine = None
+    if hooks:
+        from Tests.Agents.test_hooks_v2_execution import command
+        from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+        from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+        engine = HookEngine(
+            (
+                command(
+                    'print(\'{"version":2,"decision":"pass"}\')', name="SubagentStart"
+                ),
+            ),
+            lambda *_: True,
+            HookBudgetOwner(),
         )
+        service._hooks_v2_engine = engine
+        service._hooks_v2_session_id = "session"
+        service._hooks_v2_turn_id = "turn"
+    try:
+        _, outcome = await asyncio.to_thread(
+            worker_guard(service)(service.run_turn),
+            conversation_id="c",
+            messages=[],
+            config=FLEET_CFG,
+            api_endpoint="llama_cpp",
+        )
+        assert outcome.status == "done", outcome.steps
+        for name in PEER_TOOLS:
+            assert name not in chat.parent_calls[0]["messages_payload"][0]["content"]
+            assert name in chat.child_calls["A"][0]["messages_payload"][0]["content"]
+        receipt = chat.child_calls["A"][2]["messages_payload"][-1]["content"]
+        assert '"status":"queued"' in receipt and SECRET not in receipt
+        b_payload = chat.child_calls["B"][1]["messages_payload"]
+        assert sum(SECRET in row.get("content", "") for row in b_payload) == 1
+        for handle in fleet.snapshot():
+            assert SECRET not in json.dumps(db.get_run(handle.run_id)["steps"])
+        assert not service.run_log_writer.is_active
+        assert len(callbacks) == 2
+        for list_callback, send_callback in callbacks:
+            assert list_callback({}).error == "unavailable"
+            assert (
+                send_callback({"handle_id": "unknown", "message": "late"}).error
+                == "unavailable"
+            )
+    finally:
+        if engine is not None:
+            await engine.close()
+        db.close()
 
 
 @private_profile_test
