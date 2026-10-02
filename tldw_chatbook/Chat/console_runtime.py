@@ -185,6 +185,9 @@ _VIEW_RUNTIME_FALLBACK_ATTR = "_console_runtime_fallback"
 LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS = 5.0
 LEGACY_TRACE_MAINTENANCE_RETRY_DELAY_SECONDS = 1.0
 TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS = 60.0
+#: PERF-10 (TASK-33269): how often a parked maintenance loop checks its
+#: in-memory wake conditions. Parked checks touch no database.
+LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS = 1.0
 TRACE_PHYSICAL_MAINTENANCE_RETRYABLE_REASONS = frozenset(
     {
         "provider_active",
@@ -3279,11 +3282,34 @@ class ConsoleRuntime:
                 normalizer=normalizer_factory(),
                 provider_active=provider_active,
             )
+            from tldw_chatbook.Chat.chat_persistence_service import (
+                trace_maintenance_work_generation,
+            )
+
             last_provider_activity = time.monotonic()
             last_physical_attempt = 0.0
             last_collected_epoch: int | None = None
             pending_gc_result: Any | None = None
+            # PERF-10 (TASK-33269): once a pass finds nothing to normalize and
+            # the GC interval has not elapsed, park. Parked, the loop does no
+            # database work (each run_batch was a write transaction, an
+            # admission and a helper-spawning connection, once a second
+            # forever). It wakes when an exchange row is written, and once per
+            # GC interval regardless: trace-call state, retention roots,
+            # semantic revisions and other processes advance the graph epoch
+            # without signalling, and a failed GC attempt must be retried.
+            parked = False
+            seen_work = trace_maintenance_work_generation()
             while not self._disposed:
+                if parked:
+                    await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
+                    if trace_maintenance_work_generation() != seen_work or (
+                        time.monotonic() - last_physical_attempt
+                        >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
+                    ):
+                        parked = False
+                    continue
+                seen_work = trace_maintenance_work_generation()
                 try:
                     result = await run_owned_db_call(database, maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe
@@ -3303,7 +3329,7 @@ class ConsoleRuntime:
                         now - last_physical_attempt
                         < TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):
-                        await asyncio.sleep(1.0)
+                        parked = True
                         continue
                     last_physical_attempt = now
                     try:

@@ -1,5 +1,6 @@
 import base64
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
@@ -174,6 +175,37 @@ _VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
         ("messages", "variant_of"),
     }
 )
+
+
+#: PERF-10 (TASK-33269): bumped after exchange rows are appended, so parked
+#: legacy trace maintenance wakes on new work instead of polling the database
+#: once a second. ``append_message_exchanges`` is the only exchange writer.
+#: A counter, not a cleared event: every runtime compares it with the value it
+#: last saw, so no runtime can consume another's wake.
+_TRACE_MAINTENANCE_WORK_LOCK = threading.Lock()
+_trace_maintenance_work_generation = 0
+
+
+def signal_trace_maintenance_work() -> None:
+    """Tell parked legacy trace maintenance that new exchange rows exist."""
+
+    global _trace_maintenance_work_generation
+    with _TRACE_MAINTENANCE_WORK_LOCK:
+        _trace_maintenance_work_generation += 1
+
+
+def trace_maintenance_work_generation() -> int:
+    """Return the exchange-write generation; it changes on every signal.
+
+    A maintenance loop reads it before each pass and wakes when it differs.
+    A signal raised after the read wakes the loop again; one raised before it
+    had its rows committed first, so the pass about to run reads them.
+
+    Returns:
+        The number of exchange-write signals raised in this process.
+    """
+
+    return _trace_maintenance_work_generation
 
 
 @dataclass(frozen=True, slots=True)
@@ -3173,12 +3205,13 @@ class ChatPersistenceService:
         """
         try:
             self.db.append_message_exchanges_local(message_id, rows)
-            return True
         except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
             logger.bind(message_id=message_id, error_type=type(exc).__name__).warning(
                 "exchange_append_failed"
             )
             return False
+        signal_trace_maintenance_work()
+        return True
 
     def list_full_exchange_keys_for_conversation(
         self, conversation_id: str
