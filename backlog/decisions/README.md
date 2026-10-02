@@ -122,6 +122,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 
 | [ADR-194](194-structured-note-language-and-local-editor-validation.md) | Accepted | Persist portable note language and run source-preserving structured-document checks and formatting locally, with versioned sync and normal editor undo. |
 | [ADR-197](197-console-hook-configuration-review.md) | Accepted | Review standalone user hook definitions before execution, with persistent local consent, next-Send admission, and native Console/Settings access. |
+| [ADR-211](211-console-chat-destinations-and-bounded-starts.md) | Proposed | Let Console agents create workspace or casual drafts and start background work with destination defaults, scoped approvals, shared finite budgets, and durable recovery. |
 
 ## Historical Decision Material
 

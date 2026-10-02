@@ -1,0 +1,55 @@
+---
+id: TASK-33802
+title: Design Console chat destinations and bounded agent starts
+status: In Progress
+assignee:
+  - '@codex'
+created_date: '2026-10-02 17:54'
+updated_date: '2026-10-02 18:03'
+labels:
+  - console
+  - agents
+  - design
+dependencies: []
+---
+
+## Description
+
+<!-- SECTION:DESCRIPTION:BEGIN -->
+Define how a primary Console agent creates a chat in its own workspace or casual scope, prepares a draft or starts bounded background work, and preserves destination defaults, scoped approvals, and recoverable outcomes. Record the approved behavior in a repository spec and canonical ADR before implementation planning.
+<!-- SECTION:DESCRIPTION:END -->
+
+## Acceptance Criteria
+<!-- AC:BEGIN -->
+- [x] #1 The written spec covers both destinations and both modes, destination defaults, explicit instructions overrides, and scoped session approvals.
+- [x] #2 A canonical ADR defines conversation ownership, shared automatic budgets, machine-origin start authority, persistence, and recovery boundaries.
+- [x] #3 Spec self-review confirms complete requirements, consistent lifecycle rules, valid local links, and a focused verification strategy.
+- [ ] #4 The user reviews the written spec before implementation planning begins.
+<!-- AC:END -->
+
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+ADR required: yes
+ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
+Reason: Extends the agent-facing chat-creation contract and adds shared automatic-budget lineage, durable launch authority, and chat-draft recovery semantics.
+
+1. Record the approved destination, mode, assistant, instructions, approval, and recovery behavior in Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md.
+2. Write the canonical ADR and link the existing conversation, scratch, defaults, and automatic-work decisions.
+3. Review the spec for contradictions, missing lifecycle cases, placeholders, valid links, and focused verification.
+4. Obtain written-spec review before invoking writing-plans; keep application implementation outside this design task.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Recorded the approved Console new_chat extension in Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md and proposed ADR-211 in backlog/decisions/211-console-chat-destinations-and-bounded-starts.md; added the ADR index entry.
+
+The design covers workspace/casual destinations, draft/start modes, destination defaults with explicit instructions overrides, destination-and-mode session grants, shared allowance roots with per-conversation run ownership, trusted machine-origin admission, and revision-fenced draft/restart recovery. Application implementation is pending written-spec review and subsequent planning.
+
+Self-review clarified null/direct budget-root references, machine-origin request provenance, and the two separate acceptance commits. Validation passed for 19 local links, required contract fields, placeholders, whitespace, and live worktree task/ADR identity checks. No application test run was needed for these documentation changes.
+
+Renumbering provenance: Backlog CLI assigned TASK-33167. A scan of all locally available Git refs and 107 worktrees found task IDs through 33801, so this design task moved to TASK-33802 before any inbound references were written.
+
+Acceptance criteria 1-3 are complete. Criterion 4 and task closure await the user's written-spec review.
+<!-- SECTION:NOTES:END -->
