@@ -7,7 +7,19 @@ and this project adheres to Some kind of Versioning
     
 ## [Unreleased]
 
+## [0.2.3] - 2026-10-02
+
+Includes committed development changes since 0.2.2 and retains the evaluation
+case-sensitivity fix from `main`.
+
 ### Added
+- Local workflow authoring and session runs with file inputs, prompts,
+  llama.cpp inference, editable human review, and saved Library notes.
+- Managed plugin installation, trust review, recovery, and removal, with
+  native filesystem and credential capabilities.
+- Opt-in Dreams research discovery and daily digests, disabled by default.
+- OmniVoice ONNX TTS support and setup-wizard installation and playback checks.
+- Provider presets, expanded model settings, and a component pattern library.
 - SSH remote workspace bindings (ADR-181): a named workspace can bind a folder
   on a remote host over SSH. Agent `fs_*` tools run there through a transient
   worker; nothing is installed on the host.
@@ -17,6 +29,15 @@ and this project adheres to Some kind of Versioning
   it off.
 
 ### Changed
+- Expanded local backup and recovery workflows, including native credential
+  handling and clearer restore boundaries.
+- Revised theme picker, provider settings, Library Notes, file pickers, and
+  Obsidian synchronization controls.
+- Console hook configuration and consent review, character-card tools,
+  conversation creation, and subagent workflows.
+- Reduced synchronous startup, logging, configuration, and screen lifecycle work.
+- Continues the app-only release scope: ordinary speech recording remains
+  available; experimental duplex voice stays disabled pending qualification.
 - Agent `fs_read`, `fs_write`, `fs_edit` and `fs_patch` results now end with
   `sha256:` and `size:` lines for the file content -- for local workspace
   folders too, not only SSH ones. They carry the read-before-write stamps;
@@ -24,6 +45,13 @@ and this project adheres to Some kind of Versioning
 - SSH workspaces: fast remote tool calls return a few milliseconds sooner (3–5 ms measured on a LAN host).
 
 ### Fixed
+- Console provider/model defaults, conversation forks, prompt queue state,
+  compaction, tool schemas, approvals, and stop handling.
+- Draft preservation and discard handling when quitting or closing dialogs.
+- Library imports, note backlinks, RAG recovery, and collection capture.
+- Local llama.cpp management, TTS lifecycle handling, and speech diagnostics.
+- Evaluation request fields retain case-sensitive values such as dataset paths,
+  task names, and metric identifiers.
 - `fs_list` of a workspace folder containing a symlink loop failed outright;
   the looping entry is now skipped.
 - SSH workspaces: several tool calls against a host that just went down now fail together within one connect timeout instead of one after another, and a session start never outlives the call's time budget.
