@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use subagent-driven-development or executing-plans to implement this plan task-by-task. Each task receives its own immutable review package.
 
-**Goal:** Meet TASK-33267's existing admission-performance targets without changing backup/recovery authority or freshness.
+**Goal:** Complete TASK-33560's remaining approved admission work and original performance targets without changing backup/recovery authority or freshness.
 
 **Architecture:** Retain verified predecessor chains and immutable parsed observations on existing native holds. Ordinary borrowers revalidate current paths, security posture and bytes outside the coordinator mutex; capture and recovery keep their cold paths. Use existing MCP fences and monitor ownership.
 
@@ -24,27 +24,29 @@ Reason: hold-owned evidence changes ordinary admission ownership and concurrency
 - Capture, preview, restore, publication and arbitrary materializer paths retain their fully checked paths. No execution-log or credential/backend-discovery cache.
 - Replace 10 Hz monitor scheduling with a cross-process native probe at most one second apart when its prior probe has settled, plus relevant immediate local lifecycle probes. Preserve cancellation joining and all existing child/maintenance deadlines.
 - Preserve missing/corrupt/unreadable MCP behavior, strict permission parser/generation distinctions, existing mutation fences and detached returns. Oversize input may be ineligible for caching and use its existing parse behavior; it must not acquire a new corruption/reset policy.
-- Existing <0.5 ms ChaChaNotes admission-overhead and at least 80% boot-open reduction criteria remain unchanged. Unmet goals do not justify removing checks or claiming completion.
-- Use the existing isolated worktree and associated TASK-33267 before edits. Official Backlog tools only. Normal commits/hooks, exact-head protected integration; no full suite, CI cancellation, blind retries or real-profile/credential access.
+- Existing <0.5 ms complete ChaChaNotes transaction boundary (entry and retirement, excluding the measured SQL body) and at least 80% boot-open reduction criteria remain unchanged. Unmet goals do not justify removing checks or claiming completion.
+- Use the existing isolated worktree and associated TASK-33560 before edits; preserve upstream TASK-33267 Done/part 1. Official Backlog tools only. Normal commits/hooks, exact-head protected integration; no full suite, CI cancellation, blind retries or real-profile/credential access.
 
 ### Task 1: Reconstruct and retain the paired probe (Stage 1)
 
 **Goal:** Obtain reproducible current and historical measurements before admission code changes.
-**Status:** Not Started
-**Files:** Create `Helper_Scripts/Benchmarks/backup_admission_benchmark.py`; create `Tests/Performance/test_backup_admission_benchmark.py`; update TASK-33267 through official tools.
+**Status:** Complete
+**Files:** Retain the existing `Helper_Scripts/Benchmarks/backup_admission_benchmark.py`; retain `Tests/Performance/test_backup_admission_benchmark.py`; record subsequent evidence on TASK-33560 through official tools.
 **Interfaces:** Consume `CharactersRAGDB.transaction`, `_RepositoryParticipant.operation`, `TldwCli._ui_ready`, existing `Tests.network_guard`, Null keyring and private-profile environment semantics. Produce a standalone CLI with `--source`, `--phase transaction|boot`, `--iterations` and a metadata-only JSON receipt; subsequent tasks run the identical committed probe against their immutable source snapshots.
 
-- [ ] Read the real transaction, participant and full-app startup callers before instrumentation. Use call-through timing and the existing audit-hook pattern from `test_console_keystroke_work_census.py`; never monkeypatch `os.open` or bypass admission. Include entry and retirement in ordinary admission overhead, separate DB-body time, and report native Windows handle/ACL work rather than counting it as zero.
-- [ ] Write meaningful failing tests for private environment establishment before app import, fail-closed network isolation, exact source selection, preserved errors/exit code, bounded metadata and counters including retirement. Run those tests red using the existing private runner.
-- [ ] Implement the minimum child probe using stdlib and existing helpers. Seed identical synthetic data and a disclosed fixed path depth, disable splash with existing settings, observe actual `_ui_ready` and positively close app/owners. Never export application values or raw child logs. Retain source/probe hashes, iteration counts and actual limits in private receipts.
-- [ ] Run the same probe at historical `840ed2ca58` and current `495e0abbbf3e81f5042c985d9e06e797ab77b883` from separate retained source snapshots. State that September scripts were lost; this is a reconstruction, not a reuse of missing artifacts. Preserve unsuccessful runs as unsuccessful. Do not infer a host-load cause or waive numeric targets.
-- [ ] Run targeted helper tests, scoped Bandit/lint/compile/diff; commit the probe and official Task notes normally. Obtain independent spec/quality review of probe implementation and its receipts before changing admission behavior.
+- [x] Read the real transaction, participant and full-app startup callers before instrumentation. Use call-through timing and the existing audit-hook pattern from `test_console_keystroke_work_census.py`; never monkeypatch `os.open` or bypass admission. Include entry and retirement in ordinary admission overhead, separate DB-body time, and report native Windows handle/ACL work rather than counting it as zero.
+- [x] Write meaningful failing tests for private environment establishment before app import, fail-closed network isolation, exact source selection, preserved errors/exit code, bounded metadata and counters including retirement. Run those tests red using the existing private runner.
+- [x] Implement the minimum child probe using stdlib and existing helpers. Seed identical synthetic data and a disclosed fixed path depth, disable splash with existing settings, observe actual `_ui_ready` and positively close app/owners. Never export application values or raw child logs. Retain source/probe hashes, iteration counts and actual limits in private receipts.
+- [x] Run the same probe at historical `840ed2ca58` and current `495e0abbbf3e81f5042c985d9e06e797ab77b883` from separate retained source snapshots. State that September scripts were lost; this is a reconstruction, not a reuse of missing artifacts. Preserve unsuccessful runs as unsuccessful. Do not infer a host-load cause or waive numeric targets.
+- [x] Run targeted helper tests, scoped Bandit/lint/compile/diff; commit the probe and official Task notes normally. Obtain independent spec/quality review of probe implementation and its receipts before changing admission behavior.
+
+Task1 and I1 fix reviews passed; fixed probe SHA34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428 is retained at `/private/tmp/task33267-probe-i1/retained/Helper_Scripts/Benchmarks/backup_admission_benchmark.py`. Historical495/probe identities remain historical. Fresh identical fixed-probe controls at historical840 and currentf337 are retained under `/private/tmp/task33560-paired-vtq2fabm`; command/root checks passed, independent receipt review is pending. Original <0.5ms complete boundary is still unmet; native Windows/Linux and idle outcomes remain unqualified.
 
 ### Task 2: Reuse checked hold evidence and remove warm serialization (Stage 2)
 
 **Goal:** Ordinary borrowers avoid repeated root walks and record parsing while retaining every freshness barrier.
 **Status:** Not Started
-**Files:** Modify `tldw_chatbook/Backup_Recovery/storage_admission.py`, `bootstrap.py`, `admission.py` and, only at required pinning seams, `native_files.py` / `tldw_chatbook/Utils/private_paths.py`; create `Tests/Backup_Recovery/test_admission_evidence_reuse.py`; extend existing participant/related-path/admission tests only where behavior needs coverage.
+**Files:** Modify `tldw_chatbook/Backup_Recovery/storage_admission.py`, `bootstrap.py`, `admission.py`, the actual shared validator callers in `participants.py` and, only at required pinning seams, `native_files.py` / `tldw_chatbook/Utils/private_paths.py`; extend the existing `Tests/Backup_Recovery/test_admission_evidence_reuse.py`; extend existing participant/related-path/admission tests only where behavior needs coverage.
 **Interfaces:** Preserve public `acquire_storage(path=None, *, related_paths=())`, `StorageLease.execution_context(path)`, participant operation and maintenance APIs. Use existing `_Hold` ownership and pending/live/retiring sets. Internal evidence fields must be documented in the task report for Task 3; they must not be transferable admission capabilities.
 
 - [ ] Trace every caller of changed pinning/control functions. Write red tests with real retained native holds for directory and ancestor rename/replacement, private-to-unsafe mode/ACL changes, same-inode record changes, new pending intent, registry-lock/gate replacement, related-path escape, selector/group change and fork. Assert refusal before actual dependent read/write, preserving foreign bytes.
@@ -71,15 +73,15 @@ Reason: hold-owned evidence changes ordinary admission ownership and concurrency
 
 **Goal:** Demonstrate actual numeric improvements and all preserved platform contracts, then integrate reviewed work.
 **Status:** Not Started
-**Files:** Update this plan's stage statuses, approved spec verification record if needed, official TASK-33267 evidence and only existing finite/native workflow selectors required for changed code.
+**Files:** Update this plan's stage statuses, approved spec verification record if needed, official TASK-33560 evidence and only existing finite/native workflow selectors required for changed code.
 **Interfaces:** Consume retained historical/current/probe receipts and immutable stage commits; preserve their original source identities. Consume existing macOS/Linux/Windows native runner and finite product selection, with unchanged preflight, isolation and deadlines.
 
 - [ ] Run identical retained boot/transaction probes on final source and compare to the disclosed historical reconstruction. Require <0.5 ms complete admission overhead and at least 80% fewer opens to actual `_ui_ready`; report full measurements and failures without inventing causes. Verify unrelated DB progress and include platform-native costs.
 - [ ] Run targeted security/lifetime tests and appropriate actual native macOS, Linux and Windows execution for changed routes. Audit receipts/source/installed joins independently. No blanket original matrix rerun, duplicate artifact download, incomplete qualification or full suite.
 - [ ] Run final scoped static checks and strongest available independent whole-branch review using an immutable diff; resolve verified issues with finite tests. Keep prior failed controls visible and distinct from passing current evidence.
 - [ ] Publish a separate PR against latest dev, inspect review comments and current-head required CI, assess/rebase relevant upstream changes and qualify any changed executed routes. Merge only with exact head match and protections satisfied, under the requester's existing integration authorization.
-- [ ] Finalize TASK-33267 through official tools after verified integration; preserve normal commits. Close only workstream items actually complete. Remove only this plan's disposable review workspace after final review; retain source/measurement evidence and other agents' artifacts.
+- [ ] Finalize TASK-33560 through official tools after verified integration; preserve TASK-33267 Done/part 1; preserve normal commits. Close only workstream items actually complete. Remove only this plan's disposable review workspace after final review; retain source/measurement evidence and other agents' artifacts.
 
 ## Preflight rulings
 
-PR #2955's config/test/benchmark fixes remain separate. This branch starts from its latest-dev rebase; its 707-case qualification is not relabelled as admission-performance qualification. Current dev includes PERF-06 warm config changes, so measurements must use that baseline. No assertion that historical absolute timing reproduces the lost September protocol is permitted.
+PR #2955's config/test/benchmark fixes remain separate. This branch starts from its reviewed followup176126644f/dev6958 rebase. Its earlier777 and latest affected94-case phases retain their identities and are not admission-performance qualification. Dev includes PERF-06 and PERF-08 part1; Task2 strengthens the existing Hold/Evidence and differential oracle rather than recreating them. Historical measurements cannot be relabelled, and no claim reproduces the lost September absolute timings.

@@ -261,7 +261,14 @@ implementation checks, not runtime evidence claimed by this documentation change
 
 ## Alternatives considered
 
-### 2026-10-01 ordinary admission amendment (TASK-33267)
+### 2026-10-01 ordinary admission amendment (TASK-33560 remainder)
+
+Upstream TASK-33267 is Done for the September stamp-based part1. The approved
+October design strengthens that existing implementation for the remaining
+TASK-33560 work: current full-byte comparison and retained predecessor-edge
+validation govern reuse. The September policy and original measurements below
+remain historical; they cannot lower this approved contract or qualify the new
+complete-boundary probe. Unsupported reusable chains keep the checked cold route.
 
 The requester approved the [ordinary admission design](../../Docs/superpowers/specs/2026-10-01-task33267-admission-amortization-design.md).
 The existing native hold may retain verified directory chains and immutable
@@ -288,7 +295,7 @@ reads, returning detached data and preserving each store's read-failure and
 mutation rules. Execution-log and credential/backend discovery caches are
 excluded. No dependency, platform bypass or persistent authority is added.
 
-The existing <0.5 ms ChaChaNotes admission-overhead and at least 80% boot-open
+The existing <0.5 ms complete ChaChaNotes entry/retirement boundary and at least 80% boot-open
 reduction goals remain qualification gates, not claimed results. September's
 probe scripts were lost; comparisons must disclose their reconstruction and run
 identical inputs on historical and current source. macOS, Linux and Windows
