@@ -1762,6 +1762,16 @@
       "green_receipt": "/tmp/console-tool-ux-close-safe-diagnostic-green.json",
       "payload": "Primary exception class and final raising function only; no exception content, traceback capture, locals, IDs or paths.",
       "privacy_inventory": "Reviewed controller90 to91 diagnostic records; no new sink or unrelated inventory delta. Upstream readiness inventory retained."
+    },
+    "overlapping_resend_rebase": {
+      "new_base": "ef8fd5d38a512be299af17b1e0d5b367a352a5d6",
+      "upstream_pr": 2962,
+      "rebased_code_anchor": "75872197c28e92c8a42513fe459ddf7069e8c1bf",
+      "rebased_code_tree": "e0ab0fe1456c4cf3d49eb5d6e896501c125f9038",
+      "qualified_sources_unchanged": 225,
+      "resolution": "Retain exact qualified UI/test import owners: upstream execution remains deferred; pure action projection uses resident eligibility and does not import execution. All other upstream changes retained.",
+      "range_diff": "/tmp/console-tool-ux-overlapping-resend-rebase-range-diff.txt",
+      "equivalence_limit": "Existing230-case/native/preflight qualification is on identical production/test/artifact bytes, recorded before rebase. Only upstream lesson and task metadata differ; fresh published-head CI/Qodo remain required."
     }
   }
 }

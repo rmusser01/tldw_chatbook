@@ -560,3 +560,13 @@ source/isolation/privacy review is clear. Exact receipts, byte pins and scope:
 `readiness_base_final_followup` in the combined integration JSON and
 `/tmp/console-tool-ux-readiness-integrated-final-performance.json`. Fresh published-head
 Qodo/all four GitHub gates, latest dev and verified normal merge remain pending.
+
+
+Final overlap integration: dev advanced to `ef8fd5d38a512be299af17b1e0d5b367a352a5d6`
+with PR2962's deferred Resend imports. The23-patch rebase resolves only equivalent
+import placement/monkeypatch targets, preserving the exact qualified production
+and test bytes, including the stronger execution-free broken-row projection.
+All225 qualification pins remain identical. The final tree differs from the
+preceding230-case/native/preflight candidate only in upstream lesson and task
+metadata. Original receipt identities remain unchanged; explicit rebase equivalence
+is in `overlapping_resend_rebase`. Published-head CI/Qodo remain required.

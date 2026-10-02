@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 21:42'
+updated_date: '2026-10-02 21:47'
 labels:
   - performance
   - ci
@@ -89,6 +89,8 @@ Reopened for exact final-head UI latency failure: PR run37060344703 and pure lat
 Latest-dev Resend correction: the three pure eligibility helpers now live in the already-resident message-action owner, with compatibility exports preserved; execution imports only on explicit Resend. Both new startup regressions fail before and pass after; real warm census1033/1033, unchanged limit/snapshot. All64 Resend core cases,11 actual UI/click/key/timer cases and22 boot neighbors pass. Other action logic is AST-identical to dev. Broader action-file run has120 passes/10 unchanged Canvas or legacy-label failures, exactly reproduced with the dev action owner in an otherwise combined-tree private process (not a pure full-dev checkout); initial pre-bootstrap comparison error retained. This follow-up introduces production import deferral, unlike the original test-only guard work. Artifact preflight and zero-new Ruff33 pass. Native approval25 qualifies the preceding bb865 combined candidate; newly advanced dev185c845 requires rebase/current-source verification before Done or merge.
 
 Latest readiness-base qualification (dev185c845, code anchore4577e27): all230 scoped cases pass with zero failures/errors/skips, including193 behavior/grouping/cache cases and37 exact three-group Perf Guard cases. Warm census1033/1033; both tested/untested ordinary storage variants retain real seams, canaries, ticks and ceilings. Four projection journeys and two orphan-decision kinds retain fresh apps/controllers/workers in two private children; full body AST preserved except two explicit loop-local lambda defaults. One paired timing91.55->64.84s, final bound Close rerun23.55s; unchanged180s/20m deadlines, no CI guarantee. Inherited isolated normalization counter red3669 vs9 was exactly3660 cold static support-set calls; one real no-evidence setup build preserves positive/exact comparison and measures first shared lookup; five existing related contracts pass. Native approval26(9 journeys/111pins) and Close28(6 real journeys+six-kind geometry/183pins), current loaded origins, exit0/cleanup/no-egress/real-profile invariants pass. Initial external Close path rejection retained. AX and wider native requests/races remain unqualified; earlier10 broad action failures retain explicit baseline limits. Current preflight(census124), zero-new Ruff34, edited-range format and independent review pass. Existing ADR-097/094/126 apply; no new ADR. QA readiness_base_final_followup in combined integration JSON. Final published-head CI/Qodo/normal merge remains PR2953.
+
+Final rebase onto dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6 incorporates overlapping PR2962. Resolved only equivalent Resend import/monkeypatch placement, retaining all225 exact qualified production/test/helper/artifact pins and stronger execution-free row projection. All upstream lesson/task metadata retained. The230-case/native/preflight receipts remain original; explicit source-equivalence proof and limits recorded in QA overlapping_resend_rebase. Fresh final-published-head CI/Qodo still required before normal merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
