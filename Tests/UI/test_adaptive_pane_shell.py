@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -25,6 +26,8 @@ import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testi
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Utils import adaptive_reader_state as ars
 from tldw_chatbook.Widgets import adaptive_pane_shell as shared
+from tldw_chatbook.Widgets.Library import library_adaptive_reader_shell as library_shell
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import MediaShellResized
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -286,3 +289,124 @@ def test_shared_widgets_declare_no_class_level_css() -> None:
         widget_class = getattr(shared, name)
         for attribute in ("DEFAULT_CSS", "CSS", "BUNDLED_CSS"):
             assert attribute not in vars(widget_class), (name, attribute)
+
+
+# ---------------------------------------------------------------------------
+# Library compatibility (B0): thin subclasses and same-object aliases.
+# ---------------------------------------------------------------------------
+
+
+def test_library_message_names_are_the_shared_message_objects() -> None:
+    """``@on`` matches class identity; a subclass alias would stop matching."""
+    assert library_shell.LibraryPaneVisibilityChanged is shared.PaneVisibilityChanged
+    assert library_shell.AdaptiveReaderShellResized is shared.AdaptivePaneShellResized
+    assert library_shell.PaneToggleRequested is shared.PaneToggleRequested
+    assert MediaShellResized is shared.AdaptivePaneShellResized
+
+
+def test_library_widgets_are_thin_subclasses_of_the_shared_widgets() -> None:
+    assert issubclass(library_shell.LibraryAdaptiveReaderShell, shared.AdaptivePaneShell)
+    assert issubclass(library_shell.LibraryAdaptiveReaderPaneGrip, shared.AdaptivePaneGrip)
+    assert (
+        library_shell.LibraryAdaptiveReaderShell.grip_type
+        is library_shell.LibraryAdaptiveReaderPaneGrip
+    )
+    assert library_shell.LIBRARY_ADAPTIVE_READER_GRIP_CLASS == (
+        library_shell.LIBRARY_ADAPTIVE_READER_CLASSES.grip
+    ) == "library-adaptive-reader-pane-grip"
+    # Textual dispatches these once per MRO class that defines one.
+    for handler in ("on_mount", "on_resize", "on_descendant_focus"):
+        assert handler not in vars(library_shell.LibraryAdaptiveReaderShell), handler
+
+
+async def test_library_grip_builds_its_own_destination_class_and_nav_name() -> None:
+    """A bare Library grip (the crit8 host shape) still carries its class."""
+
+    class _GripHost(App):
+        def compose(self) -> ComposeResult:
+            yield library_shell.LibraryAdaptiveReaderPaneGrip(
+                "library", open=True, pane_label="Library", width=1, id="bare-grip"
+            )
+
+    app = _GripHost()
+    async with app.run_test(size=(40, 20)) as pilot:
+        await pilot.pause()
+        grip = app.query_one("#bare-grip", library_shell.LibraryAdaptiveReaderPaneGrip)
+        assert grip.has_class("library-adaptive-reader-pane-grip")
+        assert grip.painted_names == {"Library": "Nav"}
+
+
+#: Naming-convention handler names for the aliased messages, in both
+#: directions, in Textual's public and private (``_on_``) forms.
+_ALIASED_MESSAGE_HANDLER = re.compile(
+    r"def _?on_(adaptive_reader_shell_resized|library_pane_visibility_changed"
+    r"|pane_visibility_changed|adaptive_pane_shell_resized)\b"
+)
+
+
+def test_no_naming_convention_handler_exists_for_the_aliased_messages() -> None:
+    """``@on`` matches class identity; naming-convention handlers key on ``__name__``.
+
+    After the aliasing, a handler named for a retired Library name never
+    fires, and one named for a shared name would START receiving every
+    Library post on any ancestor (App, a screen, a test host) without anyone
+    binding it. Textual's dispatcher also looks up the ``_on_`` form. Both
+    directions, both the package and the tests.
+    """
+    hits = sorted(
+        f"{path.relative_to(ROOT)}: {match.group(0)}"
+        for tree in ("tldw_chatbook", "Tests")
+        for path in (ROOT / tree).rglob("*.py")
+        for match in _ALIASED_MESSAGE_HANDLER.finditer(
+            path.read_text(encoding="utf-8", errors="ignore")
+        )
+    )
+    assert hits == []
+
+
+class _LibraryAliasHost(App):
+    """Handlers bound exactly the way ``LibraryScreen`` binds them."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.events: list[str] = []
+
+    def compose(self) -> ComposeResult:
+        yield library_shell.LibraryAdaptiveReaderShell(
+            Static("Library"),
+            Static("Items"),
+            Static("Work"),
+            _layout(),
+            id_prefix="alias",
+            library_label="Library",
+            items_label="Items",
+            id="alias-shell",
+        )
+
+    @on(library_shell.LibraryPaneVisibilityChanged)
+    def _visibility(self, event) -> None:
+        self.events.append(f"visibility:{event.pane}:{event.open}")
+
+    @on(library_shell.AdaptiveReaderShellResized)
+    def _resized_reader(self, event) -> None:
+        self.events.append("resized:reader")
+
+    @on(MediaShellResized)
+    def _resized_media(self, event) -> None:
+        self.events.append("resized:media")
+
+
+async def test_library_handlers_bound_to_aliases_still_fire_for_the_shared_shell() -> None:
+    app = _LibraryAliasHost()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        assert "visibility:library:True" in app.events
+        assert "visibility:items:True" in app.events
+        # Two handlers on one (aliased) class both run, as on LibraryScreen.
+        assert "resized:reader" in app.events and "resized:media" in app.events
+        assert len(app.query(library_shell.LibraryAdaptiveReaderPaneGrip)) == 2
+        shell = app.query_one("#alias-shell", library_shell.LibraryAdaptiveReaderShell)
+        shell.sync_layout(_layout(nav_open=False))
+        await pilot.pause()
+        assert "visibility:library:False" in app.events

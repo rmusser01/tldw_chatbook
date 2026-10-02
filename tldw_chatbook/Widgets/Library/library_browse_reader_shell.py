@@ -268,8 +268,8 @@ class LibraryBrowseReaderShell(LibraryAdaptiveReaderShell):
         """Hide the rail's legacy collapse control beside the grips.
 
         No ``super().on_mount()``: Textual's dispatcher already invokes
-        ``LibraryAdaptiveReaderShell.on_mount`` separately for this Mount
-        event (TASK-31822).
+        ``AdaptivePaneShell.on_mount`` (the shared shell the Library shell
+        subclasses) separately for this Mount event (TASK-31822).
         """
         collapse = self.query("#library-rail-collapse")
         if collapse:
