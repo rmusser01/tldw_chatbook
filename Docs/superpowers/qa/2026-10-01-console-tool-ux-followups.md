@@ -52,9 +52,10 @@ private-profile/round ownership. Native refreshed second-tab retries exposed
 scope wrapping and short-height chrome pushing Submit off-screen; existing
 scrolling/height mode fixed them. Failed receipts remain in /tmp.
 
-The CSS formatting follow-up restores unrelated rules from dev and formats
-the six compact rules normally. Only three approval rationale comments were
-shortened to pay the unchanged startup budget; their measured incidents remain.
+The CSS formatting follow-up restores unrelated multiline rules and full
+original rationale comments from dev. Consistent two-space property indentation
+in the owning stylesheet pays the unchanged startup budget; all six new compact
+rules remain readable.
 Comment/whitespace-normalized selectors and declarations match the preceding
 stylesheet exactly: /tmp/console-tool-ux-css-formatting-proof.json. Generated
 CSS was rebuilt.
@@ -85,7 +86,7 @@ Receipts: /tmp/console-tool-ux-close/qodo-{close,usage,usage-boundary,args}-gree
 /tmp/console-tool-ux-labels/qodo-focus-final.log,
 /tmp/console-tool-ux-latest-dev-tokens.txt. No full-suite sweep.
 
-## Latest-dev integration
+## Preceding healthy-run integration
 
 The clean rebase onto dev84247cb843 includes the healthy-run/provider-readiness
 fix from PR #2948. Shared pending-kind, focus and layout behavior is retained.
@@ -110,7 +111,7 @@ source hashes match the combined tree and the real profile stays unchanged.
 
 ## CI timeout and recovery follow-up
 
-UI Fast Lane job110655142114 on head70eadf9119 exceeded its unchanged
+UI Fast Lane job 110655142114 on head 70eadf9119 exceeded its unchanged
 20-minute limit at 78%, with no earlier assertion failure. Exact job logs
 are retained at /tmp/console-tool-ux-head70-ui-fast-lane.log. The fix reduces
 repeated private-child interpreter/app startup without removing scenarios,
@@ -133,11 +134,41 @@ changing the census, weakening assertions or modifying CI/timeouts.
   rules. **19 startup-budget/token checks pass**,
   /tmp/console-tool-ux-qodo-css-qualified.txt; fresh preflight passes,
   /tmp/console-tool-ux-qodo-preflight.txt. Ruff adds zero diagnostics against
-  immutable dev84247cb843 in16 modified Python files.
+  immutable dev84247cb843 in 16 modified Python files. These 19 checks cover
+  ratchet policy and tokens; the actual byte-cap check is recorded below.
 - Independent source review confirms scenario/reset preservation, safe authored
   copy, cancellation propagation and retained usage/fence semantics.
 
 The exact-head UI Fast Lane must still pass within its existing 20-minute cap.
+
+## Final combined-tree qualification
+
+Rebased cleanly onto dev27e718f01d81, including the compaction failure-copy
+and v74 lineage/recovery fix. Range-diff confirms all four patches unchanged;
+independent inspection found no upstream changes to pending, focus or Close
+ownership. **7 targeted combined checks pass**: three mounted projections,
+two compaction copy/recovery cases and two fresh/v73-upgrade schema cases.
+Nine exercised Python/test source hashes remained stable:
+/tmp/console-tool-ux-labels/combined-compaction-receipt.json.
+
+The actual CSS-byte guard first failed at 608,749 versus the unchanged 608,090
+cap after multiline restoration; shortening source comments did not help because
+the builder strips them. The final two-space property indentation preserves all
+364 ordered rules, including descendant-selector spaces, and restores the full
+original rationale. **9 actual byte-cap/token checks pass**, with five parsed
+sources totaling **607,057 bytes** (1,033 headroom):
+/tmp/console-tool-ux-dev27e-css-final-qualified.txt. The failing receipt remains
+/tmp/console-tool-ux-dev27e-css-budget-qualified.txt. Formatting passes for all
+six modified test/native helper files; Ruff introduces zero diagnostics across
+16 modified Python files against immutable dev27e718f01d81.
+
+Final preflight passes: /tmp/console-tool-ux-final-preflight.txt. Current
+native source-hash qualification is recorded below.
+The final rebase onto dev922440b93e83 adds only ADR-210 documentation.
+All five patches remain identical by range-diff, and production/native hashes
+remain valid. ADR-210 keeps the approval card as the decision surface and
+requires these TASK-33625 safety repairs before its separate region migration.
+The exact-head GitHub gates and fresh Qodo resolution remain merge prerequisites.
 
 ## Native evidence
 
@@ -156,15 +187,19 @@ Session projection is synchronized and its pending count asserted before capture
 [80×24 denial](2026-10-01-console-approval-layout/native/80x24-inspect-True-deny-all-decision.svg),
 [80×24 Inspect closed](2026-10-01-console-approval-layout/native/80x24-inspect-False-approve-once-pending.svg),
 [235×52 wide](2026-10-01-console-approval-layout/native/235x52-inspect-True-fast-deny-pending.svg).
-Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–08 remain under
-/tmp/console-tool-ux-approval-native-*; 08 requalified all nine journeys after
-the Qodo fixes and healthy-run/readiness dev84247cb843 rebase. Exported source hashes match that tree.
+Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–10 remain under
+/tmp/console-tool-ux-approval-native-*; final10 requalified all nine journeys
+after the recovery refusal, dev27e718f01d81 rebase and declaration-neutral
+CSS budget/formatting fix. All eight source hashes match the final tree; the
+real config and all 533 tracked data-file mtimes remain unchanged.
 
 [Close report](2026-10-01-console-close-followup/README.md): four real decision
 worker closes, owning task cancellation, sibling isolation and explicitly
 synthetic maximum-risk geometry. No provider/server execution is claimed
-for Close. Final run9 requalified the four real closes and all-five-kind geometry
-after the Qodo fixes and healthy-run/readiness dev84247cb843 rebase, including target fleet/wake fence release. Its
+for Close. Final run11 requalified the four real closes and all-five-kind geometry
+after the recovery refusal, dev27e718f01d81 rebase and CSS formatting/budget
+correction, including target fleet/wake fence release. Current controller,
+session and model-copy hashes match; its
 isolation receipt verifies the real profile was unchanged.
 
 ## Inherited optional-governance failures

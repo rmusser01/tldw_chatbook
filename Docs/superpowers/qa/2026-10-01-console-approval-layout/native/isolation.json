@@ -1,5 +1,6 @@
 {
   "real_config_unchanged": true,
   "real_data_mtimes_unchanged": true,
-  "tracked_real_data_files": 533
+  "tracked_real_data_files": 533,
+  "source_hashes_match_final_tree": true
 }

@@ -66,10 +66,12 @@ regressions, not by this native matrix. The extra all-kinds snapshot verifies
 geometry only.
 
 [Isolation](isolation.json) confirms that the real config hash and mtimes of
-515 files under the real default-user data directory were unchanged. Production
-source hashes were identical before and after the qualified run. Native QA
-source and evidence changes stayed in this folder and
-`/tmp/console-tool-ux-close-native`; production and test source were unchanged.
+515 files under the real default-user data directory were unchanged. The runner's
+production hashes and the additional session/controller/models hashes in that
+isolation receipt matched before and after final run11. Production, test and
+runner sources stayed unchanged during the native run. This refresh changed
+only the QA README and evidence exports; temporary profiles remain under
+`/tmp/console-tool-ux-close-native`.
 
 Earlier attempts are retained under that temporary directory: run1 reached the
 fresh-profile setup wizard before Console; run2 hit question-card duplicate IDs
@@ -81,10 +83,13 @@ the crowded long-title geometry after the copy correction. Run7 repeated those
 checks against the combined approval-card, screen and CSS changes. Run8
 reverified the reviewed Close corrections after rebasing onto dev31d4f9b764 and
 the final CSS budget paydown. It added target fence-release postconditions and
-the fifth pending kind to the crowded snapshot. Final run9 repeated the unchanged
-matrix after the healthy-run/readiness rebase onto dev84247cb843, at the
-root-provided combined head feffe122d8. The exported captures and source hashes
-are from run9; current source and runner bytes matched the recorded hashes. The qualified fixture
+the fifth pending kind to the crowded snapshot. Run9 repeated the unchanged
+matrix after the healthy-run/readiness rebase onto dev84247cb843. Run10
+repeated the matrix on the corrected close-recovery tree after rebasing onto
+dev27e718f01d and is retained before the CSS budget correction. Final
+run11 repeated the matrix after that correction on the same dev27e718f01d base.
+The exported captures and source hashes are from run11; current production,
+model-copy and runner bytes matched the recorded hashes. The qualified fixture
 creates/switches tabs before arming the viewed question, uses distinct round
 owners, and waits for notices to clear before checking paint and sending
 terminal mouse input. All started app
@@ -96,6 +101,13 @@ The review regressions also verified malformed runner commands exit 2 with
 usage and no traceback or profile writes; real pending worktree decisions return
 Allow false on Close; failed progress cleanup rolls back only its exact
 provisional fence; and a refused rollback blocks a new generation while
-surviving-child usage still folds into the retained open session. Focused
-RED/GREEN receipts are under `/tmp/console-tool-ux-close/qodo-*.log`; the
+surviving-child usage still folds into the retained open session. The scoped
+mounted retry regression verifies a named restart message, release of the close
+request and no automatic replacement confirmation. An explicit new ✕ can open
+its initial confirmation; after Confirm the same recovery refusal ends that
+request with the exact fence/generation and usage retained. Those nine mounted
+scenarios passed in three private-profile children before the final rebase,
+which changed no Close method; receipts are under
+`/tmp/console-tool-ux-close/timing-consolidation/after-green.log`. Earlier
+RED/GREEN receipts remain under `/tmp/console-tool-ux-close/qodo-*.log`; the
 independent full-finalize probe folded 165 tokens after the state correction.

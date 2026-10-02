@@ -2,5 +2,17 @@
   "real_config_unchanged": true,
   "real_data_mtimes_unchanged": true,
   "tracked_real_data_files": 515,
-  "production_sources_unchanged_during_run": true
+  "production_sources_unchanged_during_run": true,
+  "qualified_profile": "run11",
+  "root_provided_upstream": "27e718f01d81b7093502c0ea1d2690e07b9f6362",
+  "close_source_hashes_before": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+    "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007"
+  },
+  "close_source_hashes_after": {
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
+    "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007"
+  }
 }

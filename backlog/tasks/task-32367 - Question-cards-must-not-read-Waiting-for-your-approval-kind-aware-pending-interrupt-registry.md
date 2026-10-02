@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 00:52'
+updated_date: '2026-10-02 02:14'
 labels:
   - console
   - approvals
@@ -52,4 +52,6 @@ Inspector now derives pending copy and tool-approval counts from the existing se
 Qodo queued-decision finding fixed in the shared review router: scan painted cards in approval-first order independently of queued-round counts. Three mounted cases verify Alt+A, Inspector and attention-tab entry points, with approval priority retained. Independent review is clear.
 
 Final combined tree rebased onto dev31d4f9b764: 44 targeted Console/close/attribute/latency checks passed; one empty exemption set skipped as expected. Fresh derived-artifact preflight passes, with census122 and unchanged startup cap. Final native approval07 and Close08 hashes match production sources; private profiles unchanged. PR2953 retains final-head review/CI/normal-merge checkpoint.
+
+Clean latest-dev27e718f01d81 rebase preserves pending/focus behavior. All three mounted projection cases and two upstream compaction-copy plus two v74 creation/upgrade checks pass on the combined tree, with exercised Python/test hashes unchanged. Earlier130 status/composer/rail cases all have passing evidence; one inherited startup timeout passed unchanged in a fresh private profile. Final preflight and current native approval/Close receipts pass. Exact-head GitHub gates and fresh Qodo resolution remain tracked in PR2953 before normal merge.
 <!-- SECTION:NOTES:END -->

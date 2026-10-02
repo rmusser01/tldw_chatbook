@@ -1,5 +1,5 @@
 {
-  "pid": 72309,
+  "pid": 99876,
   "cells": [
     {
       "size": [
@@ -82,12 +82,12 @@
     "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py"
   },
   "source_hashes": {
-    "tldw_chatbook/UI/Console_Modules/session.py": "66c63a613f6564c311be2a2ff6a2c6074be16c072a5ae486467e90dc54c68448",
-    "tldw_chatbook/Chat/console_chat_controller.py": "f55cfe82e94c916fda3eb2fbb774bcab89fcb223e0bd3818ff3ef1f003f1a8b9",
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
     "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
     "tldw_chatbook/Widgets/confirmation_dialog.py": "b3d0f40aafb5c1baefecb98a366542eb1da91dff15716737617a3b1ac6a6cd0f",
     "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
-    "tldw_chatbook/css/tldw_cli_modular.tcss": "5eab1e94f6d7c13e84b275fe208b23fef2177105fcca131b01abb8adc096d97f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "06de3846778e2770e864f1d1b23e4394b7502997d2658a96a4e6b728d1123694",
     "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
   },
   "runner_sha256": "f68d457a823e6e81dca595d13fa1f7a1c0273597f02a60b3b6750a58ff0c88ec",
@@ -114,12 +114,12 @@
   "app_return_code": 0,
   "app_exception": null,
   "source_hashes_after": {
-    "tldw_chatbook/UI/Console_Modules/session.py": "66c63a613f6564c311be2a2ff6a2c6074be16c072a5ae486467e90dc54c68448",
-    "tldw_chatbook/Chat/console_chat_controller.py": "f55cfe82e94c916fda3eb2fbb774bcab89fcb223e0bd3818ff3ef1f003f1a8b9",
+    "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+    "tldw_chatbook/Chat/console_chat_controller.py": "ccf0db97f8f973942f78b2712decf6eac8a3ab5ffb8481dd39fc579c1cd68e2a",
     "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
     "tldw_chatbook/Widgets/confirmation_dialog.py": "b3d0f40aafb5c1baefecb98a366542eb1da91dff15716737617a3b1ac6a6cd0f",
     "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
-    "tldw_chatbook/css/tldw_cli_modular.tcss": "5eab1e94f6d7c13e84b275fe208b23fef2177105fcca131b01abb8adc096d97f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "06de3846778e2770e864f1d1b23e4394b7502997d2658a96a4e6b728d1123694",
     "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
   }
 }

@@ -1,13 +1,19 @@
 {
   "source": "tldw_chatbook/css/components/_agentic_terminal.tcss",
-  "base": "84247cb8435fcf59b6d8e2d97c6b2f0913934dd0",
+  "base": "27e718f01d81b7093502c0ea1d2690e07b9f6362",
   "selectors_and_declarations_identical": true,
-  "before_bytes": 85901,
-  "after_bytes": 83857,
-  "unrelated_formatting_restored": true,
-  "shortened_comments": [
-    "/* The Console MCP batch-approval",
-    "/* TASK-1846:",
-    "/* TASK-1846 AC#2:"
-  ]
+  "comparison": "Published PR2953 stylesheet snapshot before review",
+  "unrelated_multiline_rules_restored": true,
+  "original_rationale_comments_restored": true,
+  "property_indentation_spaces": 2,
+  "indentation_bytes_saved": 1692,
+  "after_source_bytes": 84876,
+  "budget_failure_before_indentation": {
+    "actual": 608749,
+    "cap": 608090
+  },
+  "actual_boot_parsed_css_bytes": 607057,
+  "unchanged_cap": 608090,
+  "headroom_bytes": 1033,
+  "independently_compared_ordered_rules": 364
 }
