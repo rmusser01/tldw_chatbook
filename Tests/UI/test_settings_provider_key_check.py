@@ -394,12 +394,36 @@ async def test_settings_t_sends_nothing_without_a_usable_key(
             None,
             "No non-billable key check is available for OpenAI",
         ),
+        # Fix round 2: a blank api_base_url sends to the default while the
+        # listing would follow the alias behind it; so does an alias no
+        # Settings field edits.
+        (
+            "openai",
+            {
+                "api_key": "sk-saved-test-key",
+                "api_base_url": "",
+                "base_url": "https://gateway.example.test/v1",
+            },
+            None,
+            "No non-billable key check is available for OpenAI",
+        ),
+        (
+            "openai",
+            {
+                "api_key": "sk-saved-test-key",
+                "api_endpoint": "https://gateway.example.test/v1",
+            },
+            None,
+            "No non-billable key check is available for OpenAI",
+        ),
     ],
     ids=[
         "no-supported-listing",
         "no-listing-configured",
         "send-ignores-huggingface-endpoint",
         "send-ignores-endpoint-alias",
+        "send-ignores-alias-behind-blank-api-base-url",
+        "send-ignores-api-endpoint-alias",
     ],
 )
 @private_profile_test
@@ -486,8 +510,9 @@ async def test_key_check_only_lists_where_a_send_would_go(
     ``api_base_url`` and no other spelling; Hugging Face reads neither (its
     legacy ``[API]`` table, TASK-2117). Settings refuses the key check for
     exactly the cases a send would skip. Gateway-pinned providers (Anthropic,
-    Mistral, Moonshot, Z.AI, engine presets) send to the same resolver 't'
-    lists through, so they need no row here."""
+    Mistral, engine presets) send to the same resolver 't' lists through, so
+    they need no row here; Moonshot and Z.AI list at the gateway's pinned
+    alias (fix round 2, ``test_settings_t_lists_kimi_and_zai_at_the_alias_a_send_pins``)."""
     import contextlib
 
     import requests
@@ -548,6 +573,41 @@ async def test_key_check_only_lists_where_a_send_would_go(
     assert saved.startswith("https://saved.example.test/v1") is honours, saved
     alias = send_with({"base_url": "https://alias.example.test/v1"})
     assert "alias.example.test" not in alias, alias
+    blank = send_with({"api_base_url": "", "base_url": "https://alias.example.test/v1"})
+    assert "alias.example.test" not in blank, blank
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "list_key", "model"),
+    [("moonshot", "Moonshot", "kimi-k3"), ("zai", "ZAI", "glm-5.2")],
+)
+@private_profile_test
+async def test_settings_t_lists_kimi_and_zai_at_the_alias_a_send_pins(
+    provider_name, list_key, model, request, monkeypatch
+):
+    """Fix round 2 (AC#10): the gateway pins a Kimi/Z.AI send to the first
+    configured endpoint alias, so 't' lists there and never at the
+    official host the resolver would pick from ``api_base_url`` alone."""
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    app = _cloud_app(
+        provider_name,
+        {"api_key": "sk-saved-test-key", "base_url": "https://alias.example.test/v1"},
+        model,
+    )
+    app.providers_models = {list_key: [model]}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+
+        rows = await _test_and_settle(screen, pilot)
+
+        assert [str(r.url) for r in provider.requests] == [
+            "https://alias.example.test/v1/models"
+        ], rows
+        assert rows["Readiness"].startswith("Ready · verified"), rows
 
 
 @pytest.mark.asyncio

@@ -260,8 +260,11 @@ with no non-billable listing (for example Google) says "No non-billable key
 check is available" and sends nothing, as does a provider with no model list
 in `[providers]`. The same holds when a send would not go where the listing
 would: Hugging Face (its sends still take the endpoint from the legacy `[API]`
-section) and a provider whose endpoint is saved under a key other than
-`api_base_url`. A missing, placeholder or blank key is reported as missing
+section) and, for OpenAI, Cohere, Google, Groq, OpenRouter and DeepSeek
+(their sends read only `api_base_url`), an endpoint saved under another key or
+behind a blank `api_base_url`. Moonshot (Kimi) and Z.AI sends use the first
+endpoint key that is set, and so does their listing. A missing, placeholder
+or blank key is reported as missing
 and nothing is sent. If the listing cannot run at all (for example while
 Chatbook uses a server), the result says "Key not checked" and records
 nothing. The result leads with a **Readiness** row in the same

@@ -16430,15 +16430,25 @@ class SettingsScreen(BaseAppScreen):
                 "enter one in the API key field."
             )
         provider_key = provider_config_key(provider)
+        draft_endpoint = str(
+            self._provider_current_draft_values().get("endpoint") or ""
+        ).strip()
         if provider_key == "huggingface" or (
             provider_key in _SEND_READS_ONLY_API_BASE_URL
-            and self._provider_endpoint_setting_key(provider) != "api_base_url"
+            and (
+                self._provider_endpoint_setting_key(provider) != "api_base_url"
+                # A blank draft sends to the default, while the listing
+                # would follow any saved alias (fix round 2).
+                or (
+                    not draft_endpoint
+                    and first_configured_endpoint(self._provider_config(provider))
+                )
+            )
         ):
             # ADR-012 "same destination" (AC#10): a send would not use the
             # endpoint this listing resolves -- Hugging Face sends read the
             # legacy [API] table, and these handlers no other spelling.
-            # ponytail: an `api_endpoint`-only table slips past; TASK-2117
-            # pinning api_base_url in the gateway retires this whole guard.
+            # TASK-2117 (the gateway pins api_base_url) retires this guard.
             return _NO_KEY_CHECK_COPY.format(name=name)
         return None
 
