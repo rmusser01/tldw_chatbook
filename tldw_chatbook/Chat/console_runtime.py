@@ -3689,16 +3689,19 @@ class ConsoleRuntime:
             while not self._disposed:
                 if parked:
                     await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
-                    if trace_maintenance_work_generation() != seen_work:
-                        maintenance.expect_work = True  # an exchange was written
-                        parked = False
-                    elif (
+                    if trace_maintenance_work_generation() != seen_work or (
                         time.monotonic() - last_physical_attempt
                         >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):
                         parked = False
                     continue
-                seen_work = trace_maintenance_work_generation()
+                # TASK-33801: an exchange written since the last pass -- while
+                # parked, during that pass or its cleanup -- means this pass has
+                # work, so it skips the idle check's extra admission.
+                current_work = trace_maintenance_work_generation()
+                if current_work != seen_work:
+                    maintenance.expect_work = True
+                seen_work = current_work
                 try:
                     result = await run_owned_db_call(database, maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe

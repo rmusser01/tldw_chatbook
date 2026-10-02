@@ -40,9 +40,9 @@ PERF-10 (TASK-33269, PR #2914) gave legacy trace maintenance a read-only idle ch
 <!-- SECTION:NOTES:BEGIN -->
 Per-tick instrumentation of the census (uncommitted) showed tick 0 always cost +3 with the idle check returning False, and idle ticks +2 (occasionally +1); 17 admissions over 8 ticks failed the ceiling of 2, and a run passed only when an idle tick happened to cost 1. Bisect: 0/4 failures at 92a95170a5 (before #2914), failing from ebf7dc4b06 (#2914) on.
 
-LegacyTraceMaintenance.expect_work (True at construction) makes run_batch skip the idle check once; the runtime loop sets it when the exchange-write generation differs from the value it read before its last pass. A GC-interval wake leaves it False, so an idle interval pass still uses the read-only check.
+LegacyTraceMaintenance.expect_work (True at construction) makes run_batch skip the idle check once. Before every unparked pass the runtime loop compares the exchange-write generation with the value it read before the previous pass and sets the flag if it moved -- so a write that lands while parked, during a pass, or during the physical cleanup after one is all flagged. A GC-interval wake with no write leaves it False, so an idle interval pass still uses the read-only check.
 
 Census after the fix: trace-maintenance breach 0/8 runs (dev 5/8). A separate typing-burst flake ("typing (whole burst) helper_spawns: 1 > ceiling 0") occurs with and without this change and is not addressed here.
 
-Files: tldw_chatbook/Chat/console_trace_maintenance.py, tldw_chatbook/Chat/console_runtime.py, Tests/Chat/test_console_trace_legacy_migration.py (test_a_pass_with_known_work_skips_the_idle_check), Tests/Chat/test_console_trace_maintenance_parking.py (test_a_signal_wake_tells_the_pass_it_has_work).
+Files: tldw_chatbook/Chat/console_trace_maintenance.py, tldw_chatbook/Chat/console_runtime.py, Tests/Chat/test_console_trace_legacy_migration.py (test_a_pass_with_known_work_skips_the_idle_check), Tests/Chat/test_console_trace_maintenance_parking.py (test_a_signal_wake_tells_the_pass_it_has_work, test_work_written_during_an_unparked_pass_is_flagged_for_the_next, and end to end test_a_signal_woken_real_pass_opens_only_its_write_transaction: the real worker woken by the production writer opens only its immediate transaction).
 <!-- SECTION:NOTES:END -->
