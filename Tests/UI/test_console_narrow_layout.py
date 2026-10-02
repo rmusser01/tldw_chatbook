@@ -477,8 +477,7 @@ async def test_scope_row_never_paints_a_bare_label(size):
         painted_label = label.render_line(0).text.rstrip()
 
         assert painted_label.startswith("Scope:"), (
-            f"scope label not painted; got {painted_label!r} "
-            f"(region={label.region})"
+            f"scope label not painted; got {painted_label!r} (region={label.region})"
         )
         value = painted_label[len("Scope:") :].strip()
         assert value, (
@@ -587,9 +586,7 @@ async def test_responsive_collapse_posts_notice_once_per_rail():
             for message, _ in notifications
         ), f"expected a Context collapse notice, got {notifications}"
         context_notices = [
-            (message, kw)
-            for message, kw in notifications
-            if "Context" in message
+            (message, kw) for message, kw in notifications if "Context" in message
         ]
         assert len(context_notices) == 1, "notice must fire once, not per tick"
 
@@ -599,8 +596,6 @@ async def test_responsive_collapse_posts_notice_once_per_rail():
         await pilot.resize_terminal(90, 42)
         await _wait_for_condition(pilot, lambda: left_rail.display is False)
         context_notices = [
-            (message, kw)
-            for message, kw in notifications
-            if "Context" in message
+            (message, kw) for message, kw in notifications if "Context" in message
         ]
         assert len(context_notices) == 1, "once per session per rail"
