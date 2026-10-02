@@ -511,7 +511,7 @@ fifteen characters, which is why the last two read short.
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
-| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete removes the message plus every later message under it, so it first asks on the message's own row and offers **Undo** afterwards — see [Delete a message and its follow-ups](#delete-a-message-and-its-follow-ups). | User and Assistant messages with an available overflow action |
 | Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
@@ -539,10 +539,30 @@ fifteen characters, which is why the last two read short.
 2. Click **Try** — the reply is retried in place.
 
 ### Delete a message and its follow-ups
-1. Select the message, click **More…**, then choose **Delete** — "Press Delete
-   again to remove this message."
-2. Open **More…** and choose **Delete** again. The message and everything
-   beneath it are removed.
+Delete removes the selected message **and every later message under it**,
+including later turns on other branches. It always asks first, on the message
+itself, and offers Undo afterwards.
+
+1. Select the message, click **More…**, then choose **Delete**. Nothing is
+   removed yet: the message's own action row turns into **Delete N messages**
+   and **Cancel**, and the line beneath it states the scope — for example
+   "Delete this message and 7 later messages?", with "(2 on other branches)"
+   added when some of them sit on branches you can't see. Focus moves to
+   **Cancel**. The Inspector's Selected Message section repeats the question,
+   but you never need it open.
+2. Click **Delete N messages** to confirm. **Cancel**, **Esc**, or selecting
+   another message clears the confirmation and removes nothing. If the
+   messages under it change before you confirm (a new turn arrives under it,
+   say), Delete asks again with the new count rather than removing more than
+   you saw.
+3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
+   those messages back where they were and returns the conversation to the
+   branch you were on; they stay restored after you close and reopen the
+   chat. **Done** or **Esc** keeps the delete, and from then on it can't be
+   undone in the app. If Undo can't finish (the database is busy, say), the
+   messages stay deleted and the receipt opens again so you can retry; if
+   something changed them after the delete, Undo is refused and the delete
+   stands.
 
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose

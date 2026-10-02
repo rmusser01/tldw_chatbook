@@ -14820,7 +14820,7 @@ class ChatScreen(BaseAppScreen):
             rows.append(
                 ConsoleDisplayRow(
                     "Delete confirmation",
-                    "Press Delete again to remove this message.",
+                    self._message.console_pending_delete_copy,
                     status="blocked",
                 )
             )
