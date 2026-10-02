@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 22:34'
+updated_date: '2026-10-02 23:28'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +50,17 @@ Reason: preserve landed ADR-126 D2 path memo and existing config/recovery owners
 4. Run focused real replay readiness, saved-close, wake/refund/nonreplay/config consumers; obtain independent immutable config/recovery and runtime review. Leave incoming TASK33266 status as shipped and separate open work untouched.
 5. After reviewers/runtime checks finish, run the original five budget cases unchanged, plus fatal/added-line/new-file static, CSS and affected artifact/task guards. Retain non-green evidence and original limits.
 6. Close this requalification through CLI only after evidence; documentation-only closure preserves approved bytes. Publish once with exact observed84b8 lease, then require fresh exact-head Qodo/all four CI jobs and normal protected merge.
+
+## Required release integration — October 2
+
+ADR required: no new ADR
+ADR path: backlog/decisions/032-immutable-installed-distribution-assets.md; backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/098-low-latency-speculative-duplex-voice-pipeline.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
+Reason: preserve the landed release metadata, first-paint guard and missing-field API parity without new ownership, runtime, storage, permission, packaging or performance decisions.
+1. Published e1377 has all four required CI jobs PASS, current-head Qodo clear and no actionable threads. Actual dev f3aeb32 is CONFLICTING/DIRTY after PR2961; strict protection requires a preserving update after completed checks. Reopen existing TASK33664 AC3 before implementation.
+2. Capture exact 96 reviewed Python/CSS and prior eight PERF-07 sources plus 17 incoming files. Read TASK33803/TASK33645, existing ADRs and actual overlap. Rebase preserving both complete testing-lesson tails and exact incoming version0.2.3, evaluation field, source-digest list and first-paint absence assertion. No other source repair is planned.
+3. Prove approved runtime/schema/recovery/permission/physical-custody/CSS bytes unchanged. Run only incoming evaluation schema/client and release metadata/app-only/source-digest controls; obtain a focused independent immutable source/lesson/guard review. Leave incoming tasks and separate release publication outside this PR qualification.
+4. After functional checks/reviewer settle, run the original five storage/import/UI-ready/boot-CSS cases with unchanged pins/ceilings/counts/warmup/work, now including incoming Resend absence guard. Verify fatal/added-line/new-file static, CSS and affected governance/task artifacts. Retain all non-green and earlier limits.
+5. Recheck/close existing task via CLI after evidence, record qualification in plan/review/follow-up and concise PR body; doc-only closure preserves all approved bytes. Publish once exact observed e1377 lease, then fresh exact-head Qodo/all four jobs and protected head-pinned merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
