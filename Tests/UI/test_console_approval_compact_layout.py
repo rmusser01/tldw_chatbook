@@ -103,8 +103,7 @@ async def test_every_approval_action_is_painted_and_focusable(request):
                 if host.focused in buttons:
                     _assert_painted(host, card, host.focused)
                     focused.add(host.focused.id)
-            assert deny.id in focused
-            assert "approval-deny-all" in focused
+            assert {button.id for button in buttons} <= focused
 
 
 @pytest.mark.asyncio
