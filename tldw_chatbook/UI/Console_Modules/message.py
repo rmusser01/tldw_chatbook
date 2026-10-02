@@ -133,7 +133,6 @@ from ...Chat.console_chat_store import (
     ConsoleThinkingCompatibilityError,
 )
 from ...Chat.console_chat_fork import ConsoleForkEligibility
-from ...Chat.console_message_delete import ConsoleDeleteScope
 from ...Chat.console_conversation_hydration import (
     console_messages_from_conversation_tree,
 )
@@ -164,12 +163,6 @@ from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
 from ...config import get_cli_setting
 from ...Notes.notes_scope_service import ScopeType
-from .message_delete import (
-    CONSOLE_DELETE_ACTION_IDS,
-    handle_console_delete_action,
-    pending_delete_copy,
-    pending_delete_scope,
-)
 from ...Widgets.Console import (
     ConsoleEditMessageModal,
     ConsoleEditResult,
@@ -177,13 +170,17 @@ from ...Widgets.Console import (
     ConsoleSaveAsModal,
     ConsoleThinkingEditResult,
 )
-from ...Widgets.Console.console_transcript_delete_confirmation import (
-    show_delete_confirmation,
-)
 
 if TYPE_CHECKING:
     from ..Screens.chat_screen import ChatScreen
+    from ...Chat.console_message_delete import ConsoleDeleteScope
     from ...Widgets.Console.console_transcript import ConsoleThinkingEditRequested
+
+#: Actions the message Delete flow (``message_delete``) owns end to end; the
+#: confirm/cancel pair only exists on a row whose delete is pending. The flow
+#: and its confirmation/receipt modules are imported at first use, never at
+#: boot (ADR-097: they are not first-paint dependencies).
+CONSOLE_DELETE_ACTION_IDS = frozenset({"delete", "delete-confirm", "delete-cancel"})
 
 logger = logger.bind(module="ChatScreen")
 
@@ -1476,6 +1473,8 @@ class ConsoleMessageController:
         if action_id not in CONSOLE_DELETE_ACTION_IDS:
             self._pending_console_delete_message_id = None
         else:
+            from .message_delete import handle_console_delete_action
+
             return await handle_console_delete_action(self, action_id, message_id)
 
         if action_id == "save-as":
@@ -1855,12 +1854,36 @@ class ConsoleMessageController:
         )
         if selected_id is not None:
             transcript.set_fork_eligibilities({selected_id: eligibility})
-        show_delete_confirmation(transcript, pending_delete_scope(self))
+        self._sync_delete_confirmation(transcript)
         return selected_id, eligibility
+
+    def _sync_delete_confirmation(self, transcript: Any) -> None:
+        """Show, refresh or clear the transcript's row-scoped delete confirmation.
+
+        With no delete armed here and none shown on ``transcript`` there is
+        nothing to sync -- every sync before the first Delete -- so the
+        confirmation helpers are imported only once there is.
+
+        Args:
+            transcript: The ``ConsoleTranscript`` (or a test double) to update.
+        """
+        if (
+            self._console_delete_scope is None
+            and getattr(transcript, "_delete_scope", None) is None
+        ):
+            return
+        from ...Widgets.Console.console_transcript_delete_confirmation import (
+            show_delete_confirmation,
+        )
+        from .message_delete import pending_delete_scope
+
+        show_delete_confirmation(transcript, pending_delete_scope(self))
 
     @property
     def console_pending_delete_copy(self) -> str:
         """Inspector copy for the pending, row-scoped delete confirmation."""
+        from .message_delete import pending_delete_copy
+
         return pending_delete_copy(self)
 
     def _console_message_presentation(

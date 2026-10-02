@@ -16,7 +16,9 @@ delegates its ``delete``/``delete-confirm``/``delete-cancel`` actions to:
    references, warning only if cleanup is genuinely pending.
 
 ``host`` is the ``ConsoleMessageController``; everything is reached through
-the attributes its delete branch already used, plus ``push_screen``.
+the attributes its delete branch already used, plus ``push_screen``. The
+controller routes ``message.CONSOLE_DELETE_ACTION_IDS`` here and imports this
+module at first use, so it stays off the boot path (ADR-097).
 """
 
 from __future__ import annotations
@@ -35,10 +37,6 @@ from ...Chat.console_message_delete import (
     delete_subtree_for_undo,
     restore_deleted_subtree,
 )
-
-#: Actions the delete flow owns end to end (the confirm/cancel pair only
-#: exists on a row whose delete is pending).
-CONSOLE_DELETE_ACTION_IDS = frozenset({"delete", "delete-confirm", "delete-cancel"})
 
 
 def pending_delete_scope(host: Any) -> ConsoleDeleteScope | None:

@@ -2,10 +2,12 @@
 
 The first Delete on a message turns that row's action bar into
 ``[Delete N messages] [Cancel]`` with the scoped question as its legend.
-The transcript only stores the armed scope (``_delete_scope``) and passes it
-to the action-group resolver; showing, focusing and clearing it lives here
-because ``console_transcript.py`` is held by a size ratchet
-(``Tests/Architecture/test_module_size_ratchet.py``).
+The transcript only stores the armed scope (``_delete_scope``), passes it
+to the action-group resolver and drops it when the selection moves; showing
+and focusing it lives here because ``console_transcript.py`` is held by a
+size ratchet (``Tests/Architecture/test_module_size_ratchet.py``). The
+message controller imports this module at first use -- the first armed
+delete -- so it is not a first-paint dependency (ADR-097).
 """
 
 from __future__ import annotations
@@ -20,7 +22,6 @@ if TYPE_CHECKING:  # pragma: no cover - typing only
 
 #: Frames to wait for freshly planned rows to be laid out before focusing.
 _LAYOUT_ATTEMPTS = 12
-_ACTION_BUTTON_CLASS = "console-transcript-action-button"
 
 
 def show_delete_confirmation(transcript: Any, scope: ConsoleDeleteScope | None) -> None:
@@ -36,20 +37,6 @@ def show_delete_confirmation(transcript: Any, scope: ConsoleDeleteScope | None) 
     transcript._delete_scope = scope
     if transcript.is_mounted:
         transcript.call_later(_replan_and_focus, transcript, scope)
-
-
-def drop_stale_delete_scope(transcript: Any) -> None:
-    """Moving the selection away from the armed row cancels its confirmation."""
-    scope = transcript._delete_scope
-    if scope is not None and scope.message_id != transcript.selected_message_id:
-        transcript._delete_scope = None
-
-
-def action_button_classes(action_id: str) -> str:
-    """Return the classes for one row action button (confirm reads as danger)."""
-    if action_id == "delete-confirm":
-        return f"{_ACTION_BUTTON_CLASS} console-transcript-action-danger"
-    return _ACTION_BUTTON_CLASS
 
 
 async def _replan_and_focus(transcript: Any, scope: ConsoleDeleteScope | None) -> None:

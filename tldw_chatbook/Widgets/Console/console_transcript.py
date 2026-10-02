@@ -133,10 +133,6 @@ from tldw_chatbook.Widgets.Console.console_selection_menu import (
     ConsoleSideChatRequested,
     selection_menus_on_screen,
 )
-from tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation import (
-    action_button_classes,
-    drop_stale_delete_scope,
-)
 from tldw_chatbook.Widgets.Console.console_turn_file_card import ConsoleTurnFileCard
 from tldw_chatbook.Widgets.Console.console_video_card import (
     ConsoleVideoCard,
@@ -6659,7 +6655,8 @@ class ConsoleTranscript(VerticalScroll):
 
     def _flat_transcript_rows(self) -> list[_TranscriptRow]:
         """Plan the legacy per-message rows reused by standalone and nested UI."""
-        drop_stale_delete_scope(self)  # moving the selection away cancels it
+        if self._delete_scope and self._delete_scope.message_id != self.selected_message_id:
+            self._delete_scope = None  # moving the selection away cancels it
         rows: list[_TranscriptRow] = []
         banner = self.memory_banner_presentation
         banner_anchor = None
@@ -8371,7 +8368,9 @@ class ConsoleTranscript(VerticalScroll):
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
-            classes=action_button_classes(action.action_id),
+            # A pending delete's confirm reads as danger (bundle utility class).
+            classes="console-transcript-action-button"
+            + (" ds-text-error" if action.action_id == "delete-confirm" else ""),
             disabled=not action.enabled,
         )
         if action.disabled_reason:
