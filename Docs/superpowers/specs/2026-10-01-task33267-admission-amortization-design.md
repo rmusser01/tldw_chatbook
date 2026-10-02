@@ -1,8 +1,14 @@
 # TASK-33267: amortize ordinary recovery admission
 
-Status: proposed ADR-126 amendment, awaiting owner approval. Scope is the
+Status: owner-approved on 2026-10-01. Scope is the
 existing Python backup/recovery admission path, its maintenance monitor and
 guarded MCP JSON reads. No new dependency, subsystem or authority.
+
+Current dev has merged ordinary `acquire_storage` evidence reuse under
+TASK-33267 / PR #2919. Remaining work is tracked by TASK-33560 and builds on
+that implementation where it satisfies this approved contract. Its original
+measurements retain their identities; they are not the reconstructed complete
+transaction and readiness probe used for this continuation.
 
 ## Decision
 
