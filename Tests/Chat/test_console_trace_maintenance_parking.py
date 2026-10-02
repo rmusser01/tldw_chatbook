@@ -150,9 +150,10 @@ async def test_a_signal_wake_tells_the_pass_it_has_work(
 async def test_work_written_during_an_unparked_pass_is_flagged_for_the_next(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """TASK-33801: an exchange written while a pass (or the cleanup after it)
-    runs is flagged for the next pass too, not only one that wakes a parked
-    loop (Qodo, #2959).
+    """TASK-33801: a write landing while a pass runs is flagged for the next one.
+
+    Not only a write that wakes a parked loop: one landing during a pass, or
+    the physical cleanup after it, is flagged too (Qodo, #2959).
 
     Args:
         monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
@@ -337,9 +338,11 @@ async def test_a_real_exchange_append_wakes_parked_maintenance(
 async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """TASK-33801 end to end: the real worker, woken by an exchange written
-    through the production writer, opens only its immediate write transaction
-    -- no read-only idle check first (Qodo, #2959).
+    """TASK-33801 end to end: a signal-woken real pass opens one transaction.
+
+    The real worker, woken by an exchange written through the production
+    writer, opens only its immediate write transaction -- no read-only idle
+    check first (Qodo, #2959).
 
     Args:
         monkeypatch: Records the transactions each pass opens; shortens sleeps.
@@ -385,6 +388,59 @@ async def test_a_signal_woken_real_pass_opens_only_its_write_transaction(
         await runtime.dispose()
 
     assert passes[woken_at] == [True], f"the signal-woken pass opened {passes[woken_at]}"
+
+
+@pytest.mark.asyncio
+async def test_a_real_write_landing_mid_pass_flags_the_next_real_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33801 end to end: a write landing during a real pass is flagged.
+
+    The exchange is appended through the production writer just after the
+    first real pass returns -- after the loop read the write generation,
+    before its next comparison -- so the next pass (after the physical
+    cleanup) must open only its immediate write transaction (Qodo, #2959).
+
+    Args:
+        monkeypatch: Records the transactions each pass opens; shortens sleeps.
+        tmp_path: Holds the real ChaChaNotes database.
+    """
+    db, conversation_id = _real_db(tmp_path)
+    first = _message(db, conversation_id, "answer-0")
+    second = _message(db, conversation_id, "answer-1")
+    _append_exchange(db, first, 0)
+    passes: list[list[bool]] = []
+    in_pass = threading.local()
+    real_run_batch = LegacyTraceMaintenance.run_batch
+
+    def bracketed_run_batch(self):
+        passes.append([])
+        in_pass.active = True
+        try:
+            return real_run_batch(self)
+        finally:
+            in_pass.active = False
+            if len(passes) == 1:  # lands mid-pass, as the loop sees it
+                _append_exchange(db, second, 1)
+
+    real_transaction = db.transaction
+
+    def recording_transaction(*, immediate: bool = False):
+        if getattr(in_pass, "active", False):
+            passes[-1].append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(LegacyTraceMaintenance, "run_batch", bracketed_run_batch)
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(db, lambda: LegacyTraceNormalizer(db))
+    try:
+        await _until(lambda: LegacyTraceNormalizer(db).read_calls(second))
+    finally:
+        await runtime.dispose()
+
+    assert passes[1] == [True], f"the pass after a mid-pass write opened {passes[1]}"
 
 
 @pytest.mark.asyncio
