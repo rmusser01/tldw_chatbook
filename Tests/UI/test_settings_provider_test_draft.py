@@ -906,7 +906,8 @@ def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
     )
 
     assert rows["Readiness"] == "Ready · verified 14:04"
-    assert rows["Key"] == "saved in config · accepted by the model listing"
+    # TASK-33005.4 (rewritten on purpose): the ADR-012 outcome phrase.
+    assert rows["Key"] == "saved in config · key accepted (1 model listed)"
     assert rows["Generation"] == "not tested"
 
 
@@ -1857,10 +1858,17 @@ async def test_test_provider_result_shows_draft_endpoint(request):
     that Task 2's unit tests (above) did not cover, by typing a draft endpoint
     into the real ``#settings-provider-endpoint-value`` input, firing its
     change handler (staging it dirty), then running the test via the button.
-    The model is left unset so readiness never "passes" and no async endpoint
-    probe worker starts -- keeping the assertion on the synchronously-set
-    result rows, which is where the draft tag is threaded through.
+
+    TASK-33005.4 (AC#11, rewritten on purpose): a missing model no longer
+    skips the listing, so the probe is stubbed and must receive the draft
+    endpoint; the draft tag still threads through the Endpoint row.
     """
+    probed = []
+
+    async def probe(base_url, **kwargs):
+        probed.append(base_url)
+        return await _reachable_endpoint_probe(base_url)
+
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
     app.app_config["api_settings"] = {
@@ -1878,12 +1886,19 @@ async def test_test_provider_result_shows_draft_endpoint(request):
         screen.handle_provider_endpoint_changed(Input.Changed(endpoint, endpoint.value))
         await pilot.pause()
 
-        await _click_scrolled_settings_button(screen, pilot, "#settings-test-provider")
-        await _wait_for_settings_text(screen, pilot, "choose a default model")
+        with patch(
+            "tldw_chatbook.UI.Screens.settings_endpoint_probe.probe_settings_endpoint",
+            probe,
+        ):
+            await _click_scrolled_settings_button(
+                screen, pilot, "#settings-test-provider"
+            )
+            await _wait_for_settings_text(screen, pilot, "model listing reached")
 
         detail = _provider_test_result_text(screen)
         rows = _assert_labelled_rows(detail)
-        assert rows["Endpoint"] == "http://localhost:9099 (draft)"
+        assert probed == ["http://localhost:9099"]
+        assert rows["Endpoint"] == "http://localhost:9099 (draft) · model listing reached"
         assert _result_rows(detail)[1] == ("Model", "not set — choose a default model")
 
 

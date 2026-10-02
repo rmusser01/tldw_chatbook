@@ -241,10 +241,25 @@ accepts fractional hours; **0** refreshes on every launch. Empty, negative, and
 invalid values explain how to recover without replacing the saved interval.
 Changing these controls does not record startup consent.
 
-**Test Provider** checks your current draft before saving. URL-based local
-providers also get a short endpoint or model-listing probe, sent with the
-draft's API key when it has one (a server started with a key is tested with
-it, never without). The result leads with a **Readiness** row in the same
+**Test Provider** (**t**) checks your current draft before saving, then lists
+the provider's models. Nothing is generated and nothing is saved. A URL-based
+local provider gets a short model-listing probe, sent with the draft's API key
+when it has one (a server started with a key is tested with it, never
+without), and it is listed even before you choose a model, since the list is
+how you find one. A cloud provider gets one model listing at the endpoint a
+send would use, with the key a send would use (saved, from the env var, or
+typed and not yet saved). That listing is the key check: "Ready · verified
+14:01" with "key accepted (*N* models listed) · generation not tested", or
+"Not ready · key rejected" after a 401 or 403, or its own reason for a timeout
+("timed out") or a failed connection. Only **t** sends it: opening Settings,
+typing, saving, the Console and the model switcher never contact a cloud
+provider, and the paid one-token test stays a separate, confirmed action. Two
+cases are not key checks. OpenRouter's model list is public, so it reads
+"models listed; key not checked" and stays "Ready · not tested". A provider
+with no non-billable listing (for example Google) says "No non-billable key
+check is available" and sends nothing, as does a provider with no model list
+in `[providers]`. A missing, placeholder or blank key is reported as missing
+and nothing is sent. The result leads with a **Readiness** row in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
 \<reason\>", see [Console](console.md); with no model chosen it reads "Not
@@ -259,9 +274,9 @@ profile without a workspace URL leads with the Endpoint row, and an
 unreachable server leads with, for example, "model listing failed
 (connection refused) — start the server or check the URL". The toast says the
 same in one line. While another setting blocks the provider, the Key row says
-"not checked until the provider is ready" rather than guessing. For cloud providers
-the check stays local: the Key row says the key is present but not verified,
-and Generation says not tested. With the Endpoint field empty, the Endpoint row
+"not checked until the provider is ready" rather than guessing. Until a cloud
+key is checked, the Key row says the key is present but not verified, and
+Generation says not tested. With the Endpoint field empty, the Endpoint row
 names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
@@ -1434,9 +1449,11 @@ a note on what would have to exist before Settings could own a default.
 1. **Point the app at a provider and check it works.** Open **Providers &
    Models**, pick your **Provider**, type or discover a **Model**, then fill in
    **Endpoint** for a local server or **API key** (or **Env var**) for a cloud
-   one. Press **Test Provider** *before* saving — it tests your draft. When the
-   result ends "status=ready", press **s**, then run **Test Provider** once
-   more: saving clears the previous verdict on purpose.
+   one. Press **Test Provider** *before* saving — it tests your draft. For a
+   cloud provider it checks the key with one model listing ("Ready · verified
+   *HH:MM*"); for a local server it lists its models, so you can pick one even
+   before a model is set. Then press **s**: a result for exactly the saved
+   values carries over, so the Console shows the same word.
 2. **Change what the app sounds like.** Open **Speech & TTS**, pick a
    **Default TTS Provider**, set model and voice policy (or an exact ID),
    choose **Output format** and **Speed**, then press **s** or **Save**.
@@ -1490,7 +1507,7 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 |---|---|
 | s | Save this category — only on the seven **Draft — save with s** categories |
 | r | Revert this category — same seven. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
-| t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one |
+| t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one. On Providers & Models it lists models without generating: a cloud provider's listing checks the API key, a local server's shows it answers |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |

@@ -248,6 +248,60 @@ def provider_probe_result_from_settings_outcome(
     )
 
 
+def key_check_probe_result(
+    result: object, *, key_sent: bool, model: str = ""
+) -> ProviderProbeResult | None:
+    """Project one explicit cloud key-check listing into bounded evidence.
+
+    TASK-33005.4 (ADR-012 amendment 2026-09-26): Settings 't' lists a cloud
+    provider's models with the draft key. A listing that answered accepted
+    the key it was sent; a 401/403 rejected it. A server that answered but
+    gave no usable list (404, an unreadable body) checked nothing and blocks
+    nothing.
+
+    Args:
+        result: The ``ModelDiscoveryResult`` of the listing.
+        key_sent: Whether the request carried a key.
+        model: The chosen model, kept inside the 100-id evidence bound.
+
+    Returns:
+        The evidence, or ``None`` when no request was sent (no listing
+        configured, no supported listing, or a settings problem).
+    """
+    error = getattr(result, "error", None)
+    kind = getattr(error, "kind", None)
+    category = getattr(error, "category", None)
+    if getattr(result, "status", None) == "success":
+        listed = [str(model_entry.model_id) for model_entry in result.models]
+        if model in listed:
+            listed.insert(0, model)
+        return ProviderProbeResult(
+            "reachable", model_ids_from_payload(listed) or (), key_accepted=key_sent
+        )
+    if kind == "missing_credentials":
+        if not key_sent:
+            return ProviderProbeResult("model_listing_unavailable", ())
+        return ProviderProbeResult(
+            "unreachable",
+            (),
+            "forbidden" if category == "forbidden" else "unauthorized",
+        )
+    if kind == "request_failed" and category in {
+        "timeout",
+        "connection_refused",
+        "connection_error",
+        "http_status",
+    }:
+        return ProviderProbeResult("unreachable", (), category)
+    if kind == "invalid_response" or category == "http_status":
+        return ProviderProbeResult(
+            "model_listing_unavailable",
+            (),
+            "http_status" if category == "http_status" else None,
+        )
+    return None
+
+
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:
     try:
         payload = json.loads(body)

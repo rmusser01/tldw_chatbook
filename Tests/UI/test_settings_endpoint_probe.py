@@ -1138,3 +1138,146 @@ async def test_console_entry_probe_uses_only_selected_entry_credentials(
     assert outcome.endpoint == "reachable"
     assert outcome.model_ids == ("entry-model",)
     assert "fixture-" not in repr(outcome)
+
+
+def _discovery(status, *, kind=None, category=None, models=()):
+    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
+        DiscoveredModel,
+        ModelDiscoveryError,
+        ModelDiscoveryResult,
+    )
+
+    return ModelDiscoveryResult(
+        provider="openai",
+        provider_list_key="OpenAI",
+        endpoint_fingerprint="https://api.openai.com/v1",
+        status=status,
+        models=tuple(
+            DiscoveredModel(
+                provider="openai",
+                provider_list_key="OpenAI",
+                model_id=model_id,
+                display_name=model_id,
+                source="runtime_discovered",
+                endpoint_fingerprint="https://api.openai.com/v1",
+                discovered_at="2026-10-01T00:00:00Z",
+            )
+            for model_id in models
+        ),
+        error=(
+            None
+            if kind is None
+            else ModelDiscoveryError(kind, "message", "hint", category=category)
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("result", "key_sent", "expected"),
+    [
+        (_discovery("success", models=("a", "b")), True, ("reachable", 2, None, True)),
+        # A listing that answered without a key proves nothing about one.
+        (_discovery("success", models=("a",)), False, ("reachable", 1, None, False)),
+        (
+            _discovery("error", kind="missing_credentials", category="unauthorized"),
+            True,
+            ("unreachable", 0, "unauthorized", False),
+        ),
+        (
+            _discovery("error", kind="missing_credentials", category="forbidden"),
+            True,
+            ("unreachable", 0, "forbidden", False),
+        ),
+        # No key was sent, so a 401 rejected no key: the listing needs one.
+        (
+            _discovery("error", kind="missing_credentials", category="unauthorized"),
+            False,
+            ("model_listing_unavailable", 0, None, False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="timeout"),
+            True,
+            ("unreachable", 0, "timeout", False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="connection_refused"),
+            True,
+            ("unreachable", 0, "connection_refused", False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="connection_error"),
+            True,
+            ("unreachable", 0, "connection_error", False),
+        ),
+        (
+            _discovery("error", kind="request_failed", category="http_status"),
+            True,
+            ("unreachable", 0, "http_status", False),
+        ),
+        # The server answered 404, or answered something that is not a list:
+        # the key was not checked, and nothing blocks a send.
+        (
+            _discovery("unsupported", kind="unsupported_endpoint", category="http_status"),
+            True,
+            ("model_listing_unavailable", 0, "http_status", False),
+        ),
+        (
+            _discovery("error", kind="invalid_response"),
+            True,
+            ("model_listing_unavailable", 0, None, False),
+        ),
+    ],
+)
+def test_key_check_listing_maps_to_bounded_evidence(result, key_sent, expected):
+    """TASK-33005.4: one explicit key-check listing becomes the evidence the
+    shared owner keeps, in the probe's own facets and categories."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    probe = key_check_probe_result(result, key_sent=key_sent)
+
+    assert (
+        probe.endpoint,
+        len(probe.model_ids),
+        probe.category,
+        probe.key_accepted,
+    ) == expected
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        _discovery("unsupported", kind="unsupported_endpoint"),
+        _discovery("unsupported", kind="malformed_endpoint"),
+        _discovery("error", kind="missing_endpoint"),
+        _discovery("error", kind="ambiguous_provider_key"),
+        _discovery("error", kind="invalid_provider_settings"),
+    ],
+    ids=["unsupported", "malformed", "no-listing", "ambiguous", "invalid"],
+)
+def test_key_check_that_sent_nothing_records_no_evidence(result):
+    """AC#8 and the [providers] ruling: nothing was requested, so nothing was
+    learned -- never 'accepted', never a failure that blocks a send."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    assert key_check_probe_result(result, key_sent=True) is None
+
+
+def test_key_check_keeps_the_chosen_model_inside_the_evidence_bound():
+    """OpenAI lists over 100 models; evidence holds 100, so the chosen model
+    is kept first and the Model row never calls it unlisted."""
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+
+    models = tuple(f"model-{index:03d}" for index in range(150))
+    probe = key_check_probe_result(
+        _discovery("success", models=models), key_sent=True, model="model-149"
+    )
+
+    assert len(probe.model_ids) == 100
+    assert probe.model_ids[0] == "model-149"
+    assert probe.key_accepted is True

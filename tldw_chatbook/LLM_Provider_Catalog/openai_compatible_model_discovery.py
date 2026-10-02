@@ -20,6 +20,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     MODEL_IDS_MAX_COUNT,
     MODEL_PROBE_RESPONSE_MAX_BYTES,
     UnsupportedModelResponseEncoding,
+    connect_error_is_refused,
     read_bounded_model_response,
 )
 from tldw_chatbook.LLM_Calls import recovery_review as _provider_recovery
@@ -644,13 +645,24 @@ def _discovery_error(
     kind: DiscoveryErrorKind,
     message: str,
     recovery_hint: str,
+    category: str | None = None,
 ) -> ModelDiscoveryError:
     """Build a typed safe discovery error."""
     return ModelDiscoveryError(
         kind=kind,
         message=message,
         recovery_hint=recovery_hint,
+        category=category,
     )
+
+
+def _transport_category(error: httpx.HTTPError) -> str:
+    """Name a failed request's bounded category (TASK-33005.4 AC#4)."""
+    if isinstance(error, httpx.TimeoutException):
+        return "timeout"
+    if isinstance(error, httpx.ConnectError) and connect_error_is_refused(error):
+        return "connection_refused"
+    return "connection_error"
 
 
 @_provider_recovery.discovery_call
@@ -758,6 +770,9 @@ async def discover_openai_compatible_models(
                             "missing_credentials",
                             "The models endpoint rejected the configured credentials.",
                             "Check the API key configured for this provider.",
+                            "unauthorized"
+                            if exc.response.status_code == 401
+                            else "forbidden",
                         ),
                     )
                 if exc.response.status_code == 404:
@@ -770,6 +785,7 @@ async def discover_openai_compatible_models(
                             "unsupported_endpoint",
                             "The models endpoint is unavailable.",
                             "Enter the model ID used by this endpoint.",
+                            "http_status",
                         ),
                     )
                 return None, ModelDiscoveryResult(
@@ -781,9 +797,10 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
+                        "http_status",
                     ),
                 )
-            except httpx.HTTPError:
+            except httpx.HTTPError as exc:
                 return None, ModelDiscoveryResult(
                     provider=provider,
                     provider_list_key=provider_list_key,
@@ -793,6 +810,7 @@ async def discover_openai_compatible_models(
                         "request_failed",
                         "Model discovery request failed.",
                         "Check the endpoint URL, server availability, and credentials.",
+                        _transport_category(exc),
                     ),
                 )
             if body is None:
@@ -894,7 +912,7 @@ async def discover_openai_compatible_models(
                 )
             ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)
-    except httpx.HTTPError:
+    except httpx.HTTPError as exc:
         return ModelDiscoveryResult(
             provider=provider,
             provider_list_key=provider_list_key,
@@ -904,6 +922,7 @@ async def discover_openai_compatible_models(
                 "request_failed",
                 "Model discovery request failed.",
                 "Check the endpoint URL, server availability, and credentials.",
+                _transport_category(exc),
             ),
         )
     if request_error is not None:
