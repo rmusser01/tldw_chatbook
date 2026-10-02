@@ -463,6 +463,9 @@ CONSOLE_DISPATCH_DUPLICATE_WARNING = (
     "Retry anyway may send a duplicate request because delivery status is unknown."
 )
 CONSOLE_DISPATCH_DISCARDED_COPY = "Response discarded."
+CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL = (
+    "Close cleanup needs recovery. Restart the app before closing this tab."
+)
 CONSOLE_EPHEMERAL_PROMOTION_BLOCK_COPY = (
     "Finish or discard the pending turn before saving."
 )

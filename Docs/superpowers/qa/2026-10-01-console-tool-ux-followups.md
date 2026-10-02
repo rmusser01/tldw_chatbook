@@ -13,7 +13,7 @@ optional reason input. Tall/wide layout retains its original order and
 15-row row limit. Height-only resizing preserves choice, focus and identity.
 
 Close names the tab, omits zero consequences, states pending cancellation,
-defaults to Stay, and reports/reconfirms failures. Cleanup revokes and wakes
+defaults to Stay, and reports/reconfirms recoverable failures. Cleanup revokes and wakes
 exact-session questions; hosts retain teardown. Inspector uses existing
 kind-aware copy and a locked session approval-round count including queued
 rounds. Questions and confirmations do not count as tool approvals.
@@ -52,9 +52,12 @@ private-profile/round ownership. Native refreshed second-tab retries exposed
 scope wrapping and short-height chrome pushing Submit off-screen; existing
 scrolling/height mode fixed them. Failed receipts remain in /tmp.
 
-CSS whitespace was removed only in the owning source sheet to pay for compact
-rules within the unchanged startup budget. Other visual declarations were
-retained; generated CSS was rebuilt.
+The CSS formatting follow-up restores unrelated rules from dev and formats
+the six compact rules normally. Only three approval rationale comments were
+shortened to pay the unchanged startup budget; their measured incidents remain.
+Comment/whitespace-normalized selectors and declarations match the preceding
+stylesheet exactly: /tmp/console-tool-ux-css-formatting-proof.json. Generated
+CSS was rebuilt.
 
 ## Review follow-up receipts
 
@@ -95,8 +98,46 @@ the healthy-run, held-regenerate and missing-key control. Exact-node private
 child receipts are /tmp/console-tool-ux-combined-rfotoln6/run-000..005/pytest.log;
 aggregate /tmp/console-tool-ux-labels/combined-readiness.log. Each child uses
 the designated temporary profile and disables pytest caching.
+The broader focused status/composer/rail run has passing evidence for all
+130 cases. One composer case first exhausted its inherited five-second stream
+startup wait before behavior assertions; a fresh private-profile rerun passed
+unchanged. Both receipts are retained; no timeout was widened:
+/tmp/console-tool-ux-labels/combined-readiness-receipt.json and
+/tmp/console-tool-ux-labels/combined-readiness-retry-receipt.json.
+
 Native approval run08 and Close run9 requalify the changed Console screen;
 source hashes match the combined tree and the real profile stays unchanged.
+
+## CI timeout and recovery follow-up
+
+UI Fast Lane job110655142114 on head70eadf9119 exceeded its unchanged
+20-minute limit at 78%, with no earlier assertion failure. Exact job logs
+are retained at /tmp/console-tool-ux-head70-ui-fast-lane.log. The fix reduces
+repeated private-child interpreter/app startup without removing scenarios,
+changing the census, weakening assertions or modifying CI/timeouts.
+
+- Compact geometry: all five scenarios share one real screen, with explicit
+  resize, rail preference, distinct round and focus reset. Reflow and height-only
+  cases remain separate. **3 tests pass**, 135.68s;
+  /tmp/console-tool-ux-ci-compact-reused-qualified.txt.
+- Close: five pending kinds, two title lengths and two rollback outcomes stay
+  in three isolated children, each with fresh app teardown. **All nine scenarios
+  pass**, 212.512s wall versus 341.27s for the preceding nine-child run;
+  /tmp/console-tool-ux-close/timing-consolidation/after-green.json.
+- The retained failed-provisional marker now raises one authored recovery
+  refusal. Confirmed Close reports it and ends the flow; a manual new close
+  still requires its initial consent. Exact generation/fleet fence and surviving
+  child usage6 remain unchanged. RED before the fix, then mounted GREEN:
+  /tmp/console-tool-ux-close/timing-consolidation/retry-red.log and after-green.log.
+- CSS formatting proof preserves selectors/declarations and restores unrelated
+  rules. **19 startup-budget/token checks pass**,
+  /tmp/console-tool-ux-qodo-css-qualified.txt; fresh preflight passes,
+  /tmp/console-tool-ux-qodo-preflight.txt. Ruff adds zero diagnostics against
+  immutable dev84247cb843 in16 modified Python files.
+- Independent source review confirms scenario/reset preservation, safe authored
+  copy, cancellation propagation and retained usage/fence semantics.
+
+The exact-head UI Fast Lane must still pass within its existing 20-minute cap.
 
 ## Native evidence
 

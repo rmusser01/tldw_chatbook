@@ -64,6 +64,7 @@ from tldw_chatbook.Chat.console_chat_models import (
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleControllerActivity,
@@ -14613,10 +14614,9 @@ class ConsoleChatController:
             ConsoleLifecycleRevisionChanged: The approved impact changed.
             RuntimeError: Recovery or an unreconciled close fence blocks close.
         """
-        if (
-            session_id in self._session_close_generations
-            or session_id in self._failed_session_close_generations
-        ):
+        if session_id in self._failed_session_close_generations:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        if session_id in self._session_close_generations:
             raise RuntimeError("Console session close is already fenced.")
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
@@ -14715,8 +14715,13 @@ class ConsoleChatController:
             close_progress = getattr(self._agent_bridge, "close_progress", None)
             if callable(close_progress):
                 close_progress(session_id, conversation_id=fleet_conversation_id)
-        except BaseException:
+        except BaseException as exc:
             abort_provisional_fleet_fence()
+            if (
+                isinstance(exc, Exception)
+                and session_id in self._failed_session_close_generations
+            ):
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
             raise
         self._session_close_generations[session_id] = generation
         # Admission fences are the first irreversible close action after the

@@ -65,6 +65,23 @@ Files: Chat/console_chat_controller.py count accessor; UI/Screens/chat_screen.py
 - [x] Verify lone question, question plus approval, approval precedence, queued count2, resolution, sibling session and detach/remount. Reuse actual bridge snapshots rather than synthetic activity stubs.
 - [x] Address Qodo: scan visible decision cards in approval-first order independently of queued counts. Verify Alt+A, Inspector and attention-tab routes against a real skill-confirmation owner and queued approval.
 
+## CI timing follow-up
+
+ADR required: no
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md
+Reason: Consolidate existing scenarios without weakening their assertions or private-profile boundaries; apply the existing ADR-094 Close lifetime boundary to a fail-closed recovery refusal.
+
+UI Fast Lane on head70eadf9119 exceeded its existing 20-minute limit at 78%.
+Job110655142114 reports that timeout; the repeated full-app cases consumed
+144s (compact layout), 131.6s (pending projection) and 389.7s (Close).
+
+- [x] Check the five compact geometry scenarios on one isolated real screen, resizing and replacing the pending round between cases.
+- [x] Loop the five pending-kind Close, two title and two rollback scenarios in their respective private children; preserve all assertions and fresh app teardown.
+- [x] Preserve the failed-provisional fence and usage semantics, but raise one authored recovery refusal immediately and stop UI reconfirmation; verify the mounted RED case before the fix.
+- [x] Restore unrelated CSS formatting, shorten only approval rationale comments to pay the unchanged startup budget, and prove identical selectors/declarations before rebuilding.
+- [ ] Verify consolidated tests and source/scenario preservation with independent review; refresh native production receipts after the refusal change.
+- [ ] Require the exact-head UI gate to finish within its existing budget; do not change CI settings, remove scenarios or weaken isolation.
+
 ## Integration
 
 - [x] Review component diffs against all acceptance criteria and perform independent correctness review.

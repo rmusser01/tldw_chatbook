@@ -141,6 +141,7 @@ from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
     ConsoleLifecycleRevisionChanged,
@@ -303,7 +304,10 @@ _SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
 #: generic defect type of Python, asyncio and Textual, and internal texts
 #: such as "Console session is closed." would contradict the open tab.
 _USER_ACTIONABLE_CLOSE_REFUSALS = frozenset(
-    {"Finish or discard the pending turn before closing this chat."}
+    {
+        "Finish or discard the pending turn before closing this chat.",
+        CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+    }
 )
 
 
@@ -2884,7 +2888,10 @@ class ConsoleSessionController:
                         return
                 except Exception as exc:  # noqa: BLE001 -- an explicit retry needs consent
                     await self._report_session_close_failure(session_id, title, exc)
-                    if self._session_is_gone(session_id):
+                    if self._session_is_gone(session_id) or (
+                        isinstance(exc, RuntimeError)
+                        and str(exc) == CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL
+                    ):
                         return
                     # A failed confirmed close gets another fresh dialog, even
                     # if cancellation already removed its original loss risk.

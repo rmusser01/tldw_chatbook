@@ -59,51 +59,48 @@ def _assert_painted(host, card, button):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "size,inspect_open",
-    [
-        ((80, 24), True),
-        ((90, 30), True),
-        ((100, 30), True),
-        ((80, 24), False),
-        ((235, 52), True),
-    ],
-    ids=["80-inspect", "90-inspect", "100-inspect", "80-closed", "235-inspect"],
-)
 @private_profile_test
-async def test_every_approval_action_is_painted_and_focusable(
-    size, inspect_open, request
-):
-    """Fixed-width controls must not leave clipped Deny controls in Tab order."""
+async def test_every_approval_action_is_painted_and_focusable(request):
+    """Check every geometry on the real screen without repeat app startup."""
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
-    async with host.run_test(size=size) as pilot:
+    async with host.run_test(size=(80, 24)) as pilot:
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
-        console._set_console_rail_preference(left_open=False, right_open=inspect_open)
-        _pending_card(console)
-        await pilot.pause(0.3)
-        card = console.query_one(ChatApprovalCard)
-        select = card.query_one(".approval-row-decision", Select)
-        assert card.content_region.contains_region(select.region), select.region
-        buttons = list(card.query(Button))
-        assert len(buttons) == 5
-        for button in buttons:
-            _assert_painted(host, card, button)
-        deny = card.query_one(".approval-row-fast-deny", Button)
-        approve = card.query_one(".approval-row-fast-approve", Button)
-        assert deny.region.y <= approve.region.y
-        card.focus_first_decision()
-        focused = set()
-        for _ in range(8):
-            await pilot.press("tab")
-            if host.focused in buttons:
-                _assert_painted(host, card, host.focused)
-                focused.add(host.focused.id)
-        assert deny.id in focused
-        assert "approval-deny-all" in focused
+        for size, inspect_open in (
+            ((80, 24), True),
+            ((90, 30), True),
+            ((100, 30), True),
+            ((80, 24), False),
+            ((235, 52), True),
+        ):
+            await pilot.resize_terminal(*size)
+            console._set_console_rail_preference(
+                left_open=False, right_open=inspect_open
+            )
+            _pending_card(console, f"geometry-{size[0]}-{size[1]}-{inspect_open}")
+            await pilot.pause(0.3)
+            card = console.query_one(ChatApprovalCard)
+            select = card.query_one(".approval-row-decision", Select)
+            assert card.content_region.contains_region(select.region), select.region
+            buttons = list(card.query(Button))
+            assert len(buttons) == 5
+            for button in buttons:
+                _assert_painted(host, card, button)
+            deny = card.query_one(".approval-row-fast-deny", Button)
+            approve = card.query_one(".approval-row-fast-approve", Button)
+            assert deny.region.y <= approve.region.y
+            card.focus_first_decision()
+            focused = set()
+            for _ in range(8):
+                await pilot.press("tab")
+                if host.focused in buttons:
+                    _assert_painted(host, card, host.focused)
+                    focused.add(host.focused.id)
+            assert deny.id in focused
+            assert "approval-deny-all" in focused
 
 
 @pytest.mark.asyncio

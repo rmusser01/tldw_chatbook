@@ -709,9 +709,11 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
 
 @pytest.mark.asyncio
 @private_profile_test
-@pytest.mark.parametrize(
-    ("kind", "consequence", "result"),
-    [
+async def test_background_pending_close_names_consequences_and_cancels_only_its_owner(
+    request,
+):
+    """TASK-33621.16: real background rounds, run cancellation and physical Close."""
+    for kind, consequence, result in [
         ("approval", "Tool approvals: denied; runs cancelled.", {"close-call": "deny"}),
         (
             "worktree_merge",
@@ -733,105 +735,117 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
             "Skill scripts: declined; runs cancelled.",
             {"allow": False, "remember": False},
         ),
-    ],
-)
-async def test_background_pending_close_names_consequences_and_cancels_only_its_owner(
-    request,
-    kind,
-    consequence,
-    result,
-):
-    """TASK-33621.16: real background rounds, run cancellation and physical Close."""
-    app = _ready_app()
-    host = ConsoleHarness(app)
-    async with host.run_test(size=_SIZE) as pilot:
-        console = await _mounted_console(host, pilot, "#console-native-composer")
-        controller = console._ensure_console_chat_controller()
-        app.call_from_thread = host.call_from_thread
-        store = controller.store
-        keeper = store.active_session_id
-        doomed = controller.new_session(title="Pending [notes]")
-        controller.switch_session(keeper)
-        assistant = store.append_message(
-            doomed.id, role=ConsoleMessageRole.ASSISTANT, content=""
-        )
-        cancelled = asyncio.Event()
-        controller._active_cancel_events[doomed.id] = threading.Event()
-        round_task = await _arm_pending_round(controller, kind, doomed.id)
-
-        async def waiting_run():
-            task = asyncio.current_task()
-            controller._active_stream_tasks[doomed.id] = task
-            controller._active_assistant_message_ids[doomed.id] = assistant.id
-            controller._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting"),
-                session_id=doomed.id,
+    ]:
+        app = _ready_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=_SIZE) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            controller = console._ensure_console_chat_controller()
+            app.call_from_thread = host.call_from_thread
+            store = controller.store
+            keeper = store.active_session_id
+            assert _session_ids(store) == [keeper]
+            assert not controller.pending_round_kinds(keeper)
+            assert not controller._active_stream_tasks
+            doomed = controller.new_session(title="Pending [notes]")
+            controller.switch_session(keeper)
+            assistant = store.append_message(
+                doomed.id, role=ConsoleMessageRole.ASSISTANT, content=""
             )
-            try:
-                await asyncio.shield(round_task)
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                cancelled.set()
-                raise
-            finally:
-                controller._active_stream_tasks.pop(doomed.id, None)
-                controller._active_assistant_message_ids.pop(doomed.id, None)
-                controller._active_cancel_events.pop(doomed.id, None)
+            cancelled = asyncio.Event()
+            controller._active_cancel_events[doomed.id] = threading.Event()
+            round_task = await _arm_pending_round(controller, kind, doomed.id)
 
-        run_task = asyncio.create_task(waiting_run())
-        try:
-            assert await _settle(
-                pilot,
-                lambda: (
-                    kind in controller.pending_round_kinds(doomed.id)
-                    and doomed.id in controller._active_stream_tasks
-                ),
-            ), "the actual pending round and its owning run did not arm"
-            await _show_tabs(console, pilot, {keeper, doomed.id})
-            assert (
-                controller.run_marker_for(doomed.id) is ConsoleRunMarker.NEEDS_APPROVAL
-            )
-            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
-            dialog = await _wait_for_confirmation(host)
-            assert "Pending [notes]" in dialog.title
-            assert consequence in dialog.message
-            assert "private close" not in dialog.message
-            for zero_row in (
-                "Unsent draft:",
-                "Pending attachments:",
-                "Delegated agents:",
-                "Unsent queued prompts:",
+            async def waiting_run(
+                controller=controller,
+                doomed=doomed,
+                assistant=assistant,
+                round_task=round_task,
+                cancelled=cancelled,
             ):
-                assert zero_row not in dialog.message
-            assert await _settle(
-                pilot, lambda: dialog.query_one("#cancel-button").has_focus
-            )
-            await _click(pilot, "#confirm-button")
-            assert await _settle(pilot, lambda: doomed.id not in _session_ids(store))
-            await _await_tabs(console, pilot, {keeper})
-            assert await _settle(
-                pilot, lambda: cancelled.is_set() and round_task.done()
-            )
-            assert await round_task == result
-            assert run_task.cancelled()
-            assert not controller.has_pending_approval_round(doomed.id)
-            assert (
-                controller._interrupt_host.session_round_payloads(kind, doomed.id) == []
-            )
-            assert not controller._interrupt_host.registries[kind]
-            assert store.active_session_id == keeper
-            assert not console._console_runtime().console_needs_attention
-        finally:
-            # A copy assertion can fail before Close; release the real merge
-            # worker's cancellation signal before dropping its owning task.
-            cancel_event = controller._active_cancel_events.get(doomed.id)
-            if cancel_event is not None:
-                cancel_event.set()
-            controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
-            controller._cancel_pending_decisions_for_session(doomed.id)
-            run_task.cancel()
-            await asyncio.gather(run_task, return_exceptions=True)
-            await asyncio.wait_for(asyncio.shield(round_task), 5)
+                task = asyncio.current_task()
+                controller._active_stream_tasks[doomed.id] = task
+                controller._active_assistant_message_ids[doomed.id] = assistant.id
+                controller._set_run_state(
+                    ConsoleRunState(ConsoleRunStatus.STREAMING, "Waiting"),
+                    session_id=doomed.id,
+                )
+                try:
+                    await asyncio.shield(round_task)
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    raise
+                finally:
+                    controller._active_stream_tasks.pop(doomed.id, None)
+                    controller._active_assistant_message_ids.pop(doomed.id, None)
+                    controller._active_cancel_events.pop(doomed.id, None)
+
+            run_task = asyncio.create_task(waiting_run())
+            try:
+                assert await _settle(
+                    pilot,
+                    lambda kind=kind, controller=controller, doomed=doomed: (
+                        kind in controller.pending_round_kinds(doomed.id)
+                        and doomed.id in controller._active_stream_tasks
+                    ),
+                ), "the actual pending round and its owning run did not arm"
+                await _show_tabs(console, pilot, {keeper, doomed.id})
+                assert (
+                    controller.run_marker_for(doomed.id)
+                    is ConsoleRunMarker.NEEDS_APPROVAL
+                )
+                await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                dialog = await _wait_for_confirmation(host)
+                assert "Pending [notes]" in dialog.title
+                assert consequence in dialog.message
+                assert "private close" not in dialog.message
+                for zero_row in (
+                    "Unsent draft:",
+                    "Pending attachments:",
+                    "Delegated agents:",
+                    "Unsent queued prompts:",
+                ):
+                    assert zero_row not in dialog.message
+                assert await _settle(
+                    pilot,
+                    lambda dialog=dialog: dialog.query_one("#cancel-button").has_focus,
+                )
+                await _click(pilot, "#confirm-button")
+                assert await _settle(
+                    pilot,
+                    lambda doomed=doomed, store=store: (
+                        doomed.id not in _session_ids(store)
+                    ),
+                )
+                await _await_tabs(console, pilot, {keeper})
+                assert await _settle(
+                    pilot,
+                    lambda cancelled=cancelled, round_task=round_task: (
+                        cancelled.is_set() and round_task.done()
+                    ),
+                )
+                assert await round_task == result
+                assert run_task.cancelled()
+                assert not controller.has_pending_approval_round(doomed.id)
+                assert (
+                    controller._interrupt_host.session_round_payloads(kind, doomed.id)
+                    == []
+                )
+                assert not controller._interrupt_host.registries[kind]
+                assert store.active_session_id == keeper
+                assert not console._console_runtime().console_needs_attention
+            finally:
+                # A copy assertion can fail before Close; release the real merge
+                # worker's cancellation signal before dropping its owning task.
+                cancel_event = controller._active_cancel_events.get(doomed.id)
+                if cancel_event is not None:
+                    cancel_event.set()
+                controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
+                controller._cancel_pending_decisions_for_session(doomed.id)
+                run_task.cancel()
+                await asyncio.gather(run_task, return_exceptions=True)
+                await asyncio.wait_for(asyncio.shield(round_task), 5)
 
 
 @pytest.mark.asyncio
@@ -922,197 +936,273 @@ async def test_failed_confirmed_close_reoffers_confirmation_without_retrying(req
 
 @pytest.mark.asyncio
 @private_profile_test
-@pytest.mark.parametrize("title", ["Pending [notes]", "A" * 60])
 async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80x24(
-    request, title
+    request,
 ):
     """All loss categories must fit the real dialog at the minimum terminal size."""
-    app = _ready_app()
-    host = ConsoleHarness(app)
-    async with host.run_test(size=(80, 24)) as pilot:
-        console = await _mounted_console(host, pilot, "#console-native-composer")
-        store = console._ensure_console_chat_store()
-        session = store.create_session(title=title)
-        impact = ConsoleSessionCloseImpact(
-            session_id=session.id,
-            transcript_message_count=1,
-            lifecycle=ConsoleLifecycleImpact(
-                revision=1,
-                live_run_count=1,
-                queued_session_count=1,
-                unsent_prompt_count=1,
-                delegated_child_count=1,
-            ),
-            has_draft=True,
-            pending_attachment_count=1,
-            pending_round_kinds=frozenset(
-                {
-                    "approval",
-                    "question",
-                    "skill_install",
-                    "skill_script",
-                    "worktree_merge",
-                }
-            ),
-        )
-        worker = console.run_worker(
-            console._session._confirm_session_close(impact), exit_on_error=False
-        )
-        dialog = await _wait_for_confirmation(host)
-        assert await _settle(
-            pilot, lambda: dialog.query_one("#cancel-button").has_focus
-        )
-        try:
-            container = dialog.query_one("#confirmation-dialog")
-            viewport = dialog.region
-            assert viewport.intersection(container.region) == container.region, (
-                container.region,
-                viewport,
+    for title in ("Pending [notes]", "A" * 60):
+        app = _ready_app()
+        host = ConsoleHarness(app)
+        async with host.run_test(size=(80, 24)) as pilot:
+            console = await _mounted_console(host, pilot, "#console-native-composer")
+            store = console._ensure_console_chat_store()
+            assert _session_ids(store) == [store.active_session_id]
+            session = store.create_session(title=title)
+            impact = ConsoleSessionCloseImpact(
+                session_id=session.id,
+                transcript_message_count=1,
+                lifecycle=ConsoleLifecycleImpact(
+                    revision=1,
+                    live_run_count=1,
+                    queued_session_count=1,
+                    unsent_prompt_count=1,
+                    delegated_child_count=1,
+                ),
+                has_draft=True,
+                pending_attachment_count=1,
+                pending_round_kinds=frozenset(
+                    {
+                        "approval",
+                        "question",
+                        "skill_install",
+                        "skill_script",
+                        "worktree_merge",
+                    }
+                ),
             )
-            for selector, text in (
-                (".dialog-title", "Close tab"),
-                ("#cancel-button", "Stay"),
-                ("#confirm-button", "Close"),
-            ):
-                control = dialog.query_one(selector)
-                region, clip = dialog._compositor.visible_widgets[control]
-                assert region.area and region.intersection(clip) == region
-                assert region.intersection(viewport) == region
-                painted = "\n".join(
-                    strip.crop(region.x, region.right).text
-                    for strip in dialog._compositor.render_strips()[
-                        region.y : region.bottom
-                    ]
+            worker = console.run_worker(
+                console._session._confirm_session_close(impact), exit_on_error=False
+            )
+            dialog = await _wait_for_confirmation(host)
+            assert await _settle(
+                pilot,
+                lambda dialog=dialog: dialog.query_one("#cancel-button").has_focus,
+            )
+            try:
+                container = dialog.query_one("#confirmation-dialog")
+                viewport = dialog.region
+                assert viewport.intersection(container.region) == container.region, (
+                    container.region,
+                    viewport,
                 )
-                assert text in painted, (selector, painted)
-            assert title in dialog.title
-            assert (
-                "Worktree decisions: cancelled; no merge or discard." in dialog.message
-            )
-        finally:
-            dialog.dismiss(False)
-            assert await worker.wait() is False
+                for selector, text in (
+                    (".dialog-title", "Close tab"),
+                    ("#cancel-button", "Stay"),
+                    ("#confirm-button", "Close"),
+                ):
+                    control = dialog.query_one(selector)
+                    region, clip = dialog._compositor.visible_widgets[control]
+                    assert region.area and region.intersection(clip) == region
+                    assert region.intersection(viewport) == region
+                    painted = "\n".join(
+                        strip.crop(region.x, region.right).text
+                        for strip in dialog._compositor.render_strips()[
+                            region.y : region.bottom
+                        ]
+                    )
+                    assert text in painted, (selector, painted)
+                assert title in dialog.title
+                assert (
+                    "Worktree decisions: cancelled; no merge or discard."
+                    in dialog.message
+                )
+            finally:
+                dialog.dismiss(False)
+                assert await worker.wait() is False
 
 
 @pytest.mark.asyncio
 @private_profile_test
-@pytest.mark.parametrize("rollback_refused", [False, True])
 async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
-    request, tmp_path, monkeypatch, rollback_refused
+    request,
+    tmp_path,
+    monkeypatch,
 ):
     """A failed provisional callback must not strand or replace an exact fence."""
     from Tests.Chat.test_fleet_usage_reattach import _resolution, _turn_signals
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
     from tldw_chatbook.Chat.console_agent_bridge import FleetDrained, SettledChild
 
-    app = _ready_app()
-    _attach_real_dbs(app, tmp_path)
-    notes = _record_notifications(app)
-    host = ConsoleHarness(app)
-    async with host.run_test(size=_SIZE) as pilot:
-        console = await _mounted_console(host, pilot, "#console-native-composer")
-        controller = console._ensure_console_chat_controller()
-        store = controller.store
-        keeper = store.active_session_id
-        doomed = controller.new_session(title="Progress retry")
-        assistant = store.append_message(
-            doomed.id, role=ConsoleMessageRole.ASSISTANT, content="Completed parent"
-        )
-        signals = _turn_signals(prompt=2, completion=1)
-        resolution = _resolution()
-        controller._attach_stream_usage(
-            assistant.id, signals, resolution, partial=False
-        )
-        controller._fleet_usage_reattach_sources[assistant.id] = (
-            signals,
-            resolution,
-            False,
-        )
-        signals.record_usage_payload({"prompt_tokens": 2, "completion_tokens": 1})
-        signals.close_usage_call()
-        doomed.persisted_conversation_id = "saved-progress-retry"
-        conversation_id = controller.conversation_id_for_session(doomed.id)
-        store.set_session_draft(doomed.id, "private draft")
-        controller.switch_session(keeper)
-        await _show_tabs(console, pilot, {keeper, doomed.id})
-        bridge = controller._agent_bridge
-        assert bridge is not None
-        close_progress = bridge.close_progress
-        abort_fence = bridge.abort_fleet_fence
-        calls = []
-
-        def fail_once(session_id, *, conversation_id):
-            calls.append(session_id)
-            if len(calls) == 1:
-                raise RuntimeError("progress cleanup unavailable")
-            return close_progress(session_id, conversation_id=conversation_id)
-
-        monkeypatch.setattr(bridge, "close_progress", fail_once)
-        if rollback_refused:
-            monkeypatch.setattr(
-                bridge, "abort_fleet_fence", lambda *_args, **_kwargs: False
-            )
-        try:
-            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
-            first = await _wait_for_confirmation(host)
-            await _click(pilot, "#confirm-button")
-            second = await _wait_for_confirmation(host, previous=first)
-            generation = controller._session_close_generation
-            assert calls == [doomed.id], "failure must not retry automatically"
-            assert notes[-1][1] == "error"
-            assert doomed.id in _session_ids(store)
-            assert store.session_draft(doomed.id) == "private draft"
-            assert not controller._session_close_states
-            assert doomed.id not in controller._session_close_generations
-            assert not controller._fleet_wake._conversation_fences
-            assert await _settle(
-                pilot, lambda: second.query_one("#cancel-button").has_focus
-            )
-            if rollback_refused:
-                # A provisional failure never cancelled the fleet. Its later
-                # deterministic drain must still fold usage into the open tab.
-                bridge._fleet_drain_fanout.fire(
-                    FleetDrained(
-                        conversation_id=conversation_id,
-                        children=(
-                            SettledChild(
-                                run_id="surviving-child",
-                                status="done",
-                                session_id=doomed.id,
-                                assistant_message_id=assistant.id,
-                            ),
-                        ),
-                    )
+    for rollback_refused in (False, True):
+        case_path = tmp_path / str(rollback_refused)
+        case_path.mkdir()
+        with monkeypatch.context() as patch:
+            app = _ready_app()
+            _attach_real_dbs(app, case_path)
+            notes = _record_notifications(app)
+            host = ConsoleHarness(app)
+            async with host.run_test(size=_SIZE) as pilot:
+                console = await _mounted_console(
+                    host, pilot, "#console-native-composer"
                 )
-                assert await _settle(
-                    pilot,
-                    lambda: store.get_message(assistant.id).usage.total_tokens == 6,
-                ), "provisional close failure dropped surviving-child usage"
-                assert bridge._fleet_fence_generations == {conversation_id: generation}
-                assert controller._failed_session_close_generations == {
-                    doomed.id: generation
-                }
-                await _click(pilot, "#confirm-button")
-                third = await _wait_for_confirmation(host, previous=second)
-                assert controller._session_close_generation == generation
-                assert calls == [doomed.id]
-                assert bridge._fleet_fence_generations == {conversation_id: generation}
-                third.dismiss(False)
-            else:
-                assert not bridge._fleet_fence_generations
-                assert not controller._failed_session_close_generations
-                assert doomed.id not in controller._session_close_generations
-                await _click(pilot, "#confirm-button")
-                assert await _settle(
-                    pilot, lambda: doomed.id not in _session_ids(store)
-                )
-                await _await_tabs(console, pilot, {keeper})
-                assert calls == [doomed.id, doomed.id]
-                assert not bridge._fleet_fence_generations
-                assert not controller._fleet_wake._conversation_fences
+                controller = console._ensure_console_chat_controller()
+                store = controller.store
+                keeper = store.active_session_id
+                assert _session_ids(store) == [keeper]
                 assert not controller._session_close_states
-        finally:
-            monkeypatch.setattr(bridge, "abort_fleet_fence", abort_fence)
-            generation = bridge._fleet_fence_generations.get(conversation_id)
-            if generation is not None:
-                abort_fence(conversation_id, generation=generation)
+                assert not controller._session_close_generations
+                assert not controller._failed_session_close_generations
+                doomed = controller.new_session(title="Progress retry")
+                assistant = store.append_message(
+                    doomed.id,
+                    role=ConsoleMessageRole.ASSISTANT,
+                    content="Completed parent",
+                )
+                signals = _turn_signals(prompt=2, completion=1)
+                resolution = _resolution()
+                controller._attach_stream_usage(
+                    assistant.id, signals, resolution, partial=False
+                )
+                controller._fleet_usage_reattach_sources[assistant.id] = (
+                    signals,
+                    resolution,
+                    False,
+                )
+                signals.record_usage_payload(
+                    {"prompt_tokens": 2, "completion_tokens": 1}
+                )
+                signals.close_usage_call()
+                doomed.persisted_conversation_id = "saved-progress-retry"
+                conversation_id = controller.conversation_id_for_session(doomed.id)
+                store.set_session_draft(doomed.id, "private draft")
+                controller.switch_session(keeper)
+                await _show_tabs(console, pilot, {keeper, doomed.id})
+                bridge = controller._agent_bridge
+                assert bridge is not None
+                close_progress = bridge.close_progress
+                abort_fence = bridge.abort_fleet_fence
+                calls = []
+
+                def fail_once(
+                    session_id,
+                    *,
+                    conversation_id,
+                    calls=calls,
+                    close_progress=close_progress,
+                ):
+                    calls.append(session_id)
+                    if len(calls) == 1:
+                        raise RuntimeError("progress cleanup unavailable")
+                    return close_progress(session_id, conversation_id=conversation_id)
+
+                patch.setattr(bridge, "close_progress", fail_once)
+                if rollback_refused:
+                    patch.setattr(
+                        bridge, "abort_fleet_fence", lambda *_args, **_kwargs: False
+                    )
+                try:
+                    await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                    first = await _wait_for_confirmation(host)
+                    await _click(pilot, "#confirm-button")
+                    assert await _settle(pilot, lambda notes=notes: bool(notes))
+                    generation = controller._session_close_generation
+                    assert calls == [doomed.id], "failure must not retry automatically"
+                    assert notes[-1][1] == "error"
+                    assert doomed.id in _session_ids(store)
+                    assert store.session_draft(doomed.id) == "private draft"
+                    assert not controller._session_close_states
+                    assert doomed.id not in controller._session_close_generations
+                    assert not controller._fleet_wake._conversation_fences
+                    if rollback_refused:
+                        # A provisional failure never cancelled the fleet. Its later
+                        # deterministic drain must still fold usage into the open tab.
+                        bridge._fleet_drain_fanout.fire(
+                            FleetDrained(
+                                conversation_id=conversation_id,
+                                children=(
+                                    SettledChild(
+                                        run_id="surviving-child",
+                                        status="done",
+                                        session_id=doomed.id,
+                                        assistant_message_id=assistant.id,
+                                    ),
+                                ),
+                            )
+                        )
+                        assert await _settle(
+                            pilot,
+                            lambda store=store, assistant=assistant: (
+                                store.get_message(assistant.id).usage.total_tokens == 6
+                            ),
+                        ), "provisional close failure dropped surviving-child usage"
+                        assert bridge._fleet_fence_generations == {
+                            conversation_id: generation
+                        }
+                        assert controller._failed_session_close_generations == {
+                            doomed.id: generation
+                        }
+                        assert await _settle(
+                            pilot,
+                            lambda session=console._session, doomed=doomed: (
+                                doomed.id not in session._closing_session_requests
+                            ),
+                        ), "unrecoverable close kept a replacement confirmation open"
+                        assert not isinstance(host.screen, ConfirmationDialog)
+                        assert "Progress retry" in notes[-1][0]
+                        assert "restart" in notes[-1][0].casefold()
+                        note_count = len(notes)
+                        await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+                        retry = await _wait_for_confirmation(host, previous=first)
+                        assert await _settle(
+                            pilot,
+                            lambda retry=retry: (
+                                retry.query_one("#cancel-button").has_focus
+                            ),
+                        )
+                        await _click(pilot, "#confirm-button")
+                        assert await _settle(
+                            pilot,
+                            lambda notes=notes, note_count=note_count: (
+                                len(notes) == note_count + 1
+                            ),
+                        )
+                        assert await _settle(
+                            pilot,
+                            lambda session=console._session, doomed=doomed: (
+                                doomed.id not in session._closing_session_requests
+                            ),
+                        )
+                        assert not isinstance(host.screen, ConfirmationDialog)
+                        assert "Progress retry" in notes[-1][0]
+                        assert "restart" in notes[-1][0].casefold()
+                        assert controller._session_close_generation == generation
+                        assert calls == [doomed.id]
+                        assert bridge._fleet_fence_generations == {
+                            conversation_id: generation
+                        }
+                        assert controller._failed_session_close_generations == {
+                            doomed.id: generation
+                        }
+                        assert doomed.id in _session_ids(store)
+                        assert store.session_draft(doomed.id) == "private draft"
+                        assert store.get_message(assistant.id).usage.total_tokens == 6
+                    else:
+                        second = await _wait_for_confirmation(host, previous=first)
+                        assert await _settle(
+                            pilot,
+                            lambda second=second: (
+                                second.query_one("#cancel-button").has_focus
+                            ),
+                        )
+                        assert not bridge._fleet_fence_generations
+                        assert not controller._failed_session_close_generations
+                        assert doomed.id not in controller._session_close_generations
+                        await _click(pilot, "#confirm-button")
+                        assert await _settle(
+                            pilot,
+                            lambda doomed=doomed, store=store: (
+                                doomed.id not in _session_ids(store)
+                            ),
+                        )
+                        await _await_tabs(console, pilot, {keeper})
+                        assert calls == [doomed.id, doomed.id]
+                        assert not bridge._fleet_fence_generations
+                        assert not controller._fleet_wake._conversation_fences
+                        assert not controller._session_close_states
+                finally:
+                    if isinstance(host.screen, ConfirmationDialog):
+                        host.screen.dismiss(False)
+                    patch.setattr(bridge, "abort_fleet_fence", abort_fence)
+                    generation = bridge._fleet_fence_generations.get(conversation_id)
+                    if generation is not None:
+                        abort_fence(conversation_id, generation=generation)

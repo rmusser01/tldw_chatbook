@@ -1,0 +1,13 @@
+{
+  "source": "tldw_chatbook/css/components/_agentic_terminal.tcss",
+  "base": "84247cb8435fcf59b6d8e2d97c6b2f0913934dd0",
+  "selectors_and_declarations_identical": true,
+  "before_bytes": 85901,
+  "after_bytes": 83857,
+  "unrelated_formatting_restored": true,
+  "shortened_comments": [
+    "/* The Console MCP batch-approval",
+    "/* TASK-1846:",
+    "/* TASK-1846 AC#2:"
+  ]
+}

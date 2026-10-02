@@ -492,53 +492,53 @@ LibraryFileNotesGitPanel #file-notes-git-commit-body:focus {
 #file-notes-action-status,
 #file-notes-git-status,
 #file-notes-git-push-result-reason,
-#file-notes-git-commit-check-again-reason{
-opacity:100%;
-text-opacity:100%;
-color:$ds-text-primary;
+#file-notes-git-commit-check-again-reason {
+    opacity: 100%;
+    text-opacity: 100%;
+    color: $ds-text-primary;
 }
 
-#file-notes-authority{
-width:$ds-width-full;
-height:auto;
-min-height:$ds-size-1;
-max-height:$ds-size-2;
-color:$ds-text-muted;
-text-wrap:wrap;
-overflow:hidden hidden;
+#file-notes-authority {
+    width: $ds-width-full;
+    height: auto;
+    min-height: $ds-size-1;
+    max-height: $ds-size-2;
+    color: $ds-text-muted;
+    text-wrap: wrap;
+    overflow: hidden hidden;
 }
 
-ConsoleTerminalWorkspace Button{
-width:$ds-width-full;
-min-width:$ds-size-0;
-height:$ds-size-1;
-min-height:$ds-size-1;
-max-height:$ds-size-1;
-margin:$ds-space-0;
-padding:$ds-space-0 $ds-space-1;
-border:none;
-content-align:center middle;
+ConsoleTerminalWorkspace Button {
+    width: $ds-width-full;
+    min-width: $ds-size-0;
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    max-height: $ds-size-1;
+    margin: $ds-space-0;
+    padding: $ds-space-0 $ds-space-1;
+    border: none;
+    content-align: center middle;
 }
 
-ConsoleTerminalWorkspace Button:focus{
-background:$ds-focus-bg;
-color:$ds-focus-fg;
-text-style:bold underline;
+ConsoleTerminalWorkspace Button:focus {
+    background: $ds-focus-bg;
+    color: $ds-focus-fg;
+    text-style: bold underline;
 }
 
 /* Shared direct-section body. The owner applies the measured content-row
    allocation inline; no CSS ceiling may override a smaller Context grant. */
-ConsoleBoundedSection{
-height:auto;
-min-height:$ds-size-0;
+ConsoleBoundedSection {
+    height: auto;
+    min-height: $ds-size-0;
 }
 
-ConsoleAgentHistoryModal{align:center middle;background:$background 60%;}
-#agent-history-dialog{width:$ds-percent-90;max-width:$ds-size-110;height:$ds-percent-85;border:round $primary;background:$panel;padding:$ds-space-1 $ds-space-2;}
-#agent-history-state{height:auto;color:$ds-text-muted;margin-bottom:$ds-space-1;}
-#agent-history-table{height:$ds-height-fill;min-height:$ds-size-3;}
-#agent-history-actions{height:$ds-size-3;margin-top:$ds-space-1;align-horizontal:right;}
-#agent-history-actions Button{min-width:$ds-size-12;margin-left:$ds-space-1;}
+ConsoleAgentHistoryModal { align: center middle; background: $background 60%; }
+#agent-history-dialog { width: $ds-percent-90; max-width: $ds-size-110; height: $ds-percent-85; border: round $primary; background: $panel; padding: $ds-space-1 $ds-space-2; }
+#agent-history-state { height: auto; color: $ds-text-muted; margin-bottom: $ds-space-1; }
+#agent-history-table { height: $ds-height-fill; min-height: $ds-size-3; }
+#agent-history-actions { height: $ds-size-3; margin-top: $ds-space-1; align-horizontal: right; }
+#agent-history-actions Button { min-width: $ds-size-12; margin-left: $ds-space-1; }
 
 /* task-32287 review: and so do the sibling cards that share the surface.
    With the surface `auto`, a child left on Textual's `height: 1fr` default
@@ -561,8 +561,8 @@ ConsoleAgentHistoryModal{align:center middle;background:$background 60%;}
 #chat-skill-install-card,
 #chat-skill-script-card,
 #skill-install-buttons,
-#skill-script-buttons{
-height:auto;
+#skill-script-buttons {
+    height: auto;
 }
 
 /* task-3401.10: modal full-player screen -- centered panel, frame area above
@@ -1315,7 +1315,10 @@ Button.mcp-callout {
    the rest of #mcp-detail-scroll, pushing its sibling "Copy client config"
    Button roughly 800px below the built-in enable/expose checkboxes it
    should sit directly under. QA defect 1, mcp-hub-phase2-2026-07 round. */
-#mcp-detail-builtin-toggles{height:auto;min-height:$ds-size-0;}
+#mcp-detail-builtin-toggles {
+    height: auto;
+    min-height: $ds-size-0;
+}
 
 /* task-3240 fix round 1 (Minor 2): kept in lockstep with the baseline copy
    in MCPServersMode.DEFAULT_CSS (mcp_servers_mode.py) -- same bug class
@@ -1327,9 +1330,16 @@ Button.mcp-callout {
    (Tests/UI/test_mcp_servers_mode.py) never loads this bundle, so a
    regression here would be invisible to those tests -- only a bundled-CSS
    harness or the live app would catch it. */
-#mcp-detail-tool-gates{height:auto;min-height:$ds-size-0;}
+#mcp-detail-tool-gates {
+    height: auto;
+    min-height: $ds-size-0;
+}
 
-#mcp-detail-toolbar Button{height:$ds-size-1;min-height:$ds-size-1;border:none;}
+#mcp-detail-toolbar Button {
+    height: $ds-size-1;
+    min-height: $ds-size-1;
+    border: none;
+}
 
 .mcp-compact #mcp-detail-toolbar {
     layout: grid;
@@ -1351,7 +1361,10 @@ Button.mcp-callout {
    sibling "Import N servers"/Cancel action row far below the preview list
    on a real terminal window (same bug class as #mcp-detail-builtin-toggles,
    QA defect 1, mcp-hub-phase2-2026-07 round). */
-#mcp-import-list{height:auto;min-height:$ds-size-0;}
+#mcp-import-list {
+    height: auto;
+    min-height: $ds-size-0;
+}
 
 /* T7 (P3 UX batch): quiet focus treatment for the hub's scrollable content
    panes. Both are VerticalScroll (can_focus=True by default, via
@@ -1367,7 +1380,11 @@ Button.mcp-callout {
    Textual's built-in $boost, which nothing else in this design system
    references. */
 #mcp-detail-scroll:focus,
-#mcp-adv-scroll:focus{outline:none;border:none;background:$ds-surface-panel;}
+#mcp-adv-scroll:focus {
+    outline: none;
+    border: none;
+    background: $ds-surface-panel;
+}
 
 /* task-2272 item 1 (PR-T3 Task 6): the Test Tool's typed form rendered every
    boolean field as an empty ~2-row box -- no toggle glyph, no label, state
@@ -1390,9 +1407,17 @@ Button.mcp-callout {
    idiom so OFF hides the glyph against the panel and ON shows it: with no
    On/Off word beside it here, the glyph IS the state carrier, and a boolean
    the user cannot read is a lie about what was sent to the tool. */
-MCPSchemaForm Checkbox{width:auto;height:auto;min-height:$ds-size-1;}
-MCPSchemaForm Checkbox > .toggle--button{color:$ds-surface-panel;}
-MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
+MCPSchemaForm Checkbox {
+    width: auto;
+    height: auto;
+    min-height: $ds-size-1;
+}
+MCPSchemaForm Checkbox > .toggle--button {
+    color: $ds-surface-panel;
+}
+MCPSchemaForm Checkbox.-on > .toggle--button {
+    color: $success;
+}
 
 /* --- MCP Hub Phase 5 (T9: Audit mode + Console batch approvals) ------ */
 
@@ -1400,11 +1425,17 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    (mcp_audit_mode.py) -- same fix, same rationale, as #mcp-servers-table/
    #mcp-tools-table/#mcp-perm-table above: the execution-log table hugs its
    own row count instead of ballooning to fill the canvas. */
-#mcp-audit-table{height:auto;max-height:$ds-agentic-mcp-table-cap;}
+#mcp-audit-table {
+    height: auto;
+    max-height: $ds-agentic-mcp-table-cap;
+}
 
 /* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS --
    same fix, same rationale, for the T8 Findings sub-view table. */
-#mcp-audit-findings-table{height:auto;max-height:$ds-agentic-mcp-table-cap;}
+#mcp-audit-findings-table {
+    height: auto;
+    max-height: $ds-agentic-mcp-table-cap;
+}
 
 /* Kept in lockstep with the baseline copy in MCPAuditMode.DEFAULT_CSS.
    The T8 Executions/Findings sub-view toggle strip is a Horizontal, which
@@ -1412,14 +1443,19 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    compete with the table below it for the canvas's remaining space
    instead of hugging its own two-button content, same bug class as
    #mcp-perm-preview/#mcp-detail-builtin-toggles/#mcp-import-list above. */
-#mcp-audit-subview-strip{height:auto;min-height:$ds-size-0;}
+#mcp-audit-subview-strip {
+    height: auto;
+    min-height: $ds-size-0;
+}
 
 /* Audit filters share a full-width column. Explicit app-tier widths keep
    widget-default Input/Select widths from restoring the old narrow fixed
    slots. */
 #mcp-audit-filter-text,
 #mcp-audit-filter-decision,
-#mcp-audit-filter-initiator{width:$ds-width-full;}
+#mcp-audit-filter-initiator {
+    width: $ds-width-full;
+}
 
 /* task-32287: the card's body and its action bar hug their content too.
    Both were unstyled -- `#approval-batch-body` is a Container and
@@ -1430,56 +1466,28 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    blank rows between the action bar and the bottom border the 2026-09-10
    live pass reported. */
 #approval-batch-body,
-#approval-batch-actions{height:auto;}
+#approval-batch-actions {
+    height: auto;
+}
 
-/* The Console MCP batch-approval card's per-row layout
-   (`ChatApprovalCard.set_batch()`, chat_approval_card.py -- T5 deferred
-   this CSS to T9's phase gate). This card carries no `DEFAULT_CSS` of its
-   own at all (unlike the MCP mode widgets above) -- these rules are the
-   ONLY styling `.approval-row*` has anywhere, bundle or otherwise.
-
-   `.approval-row` is a Horizontal, which defaults to `height: 1fr` --
-   live-repro'd ballooning to the full card height (and its decision
-   Select claiming the full ROW width in turn) before this fix, the same
-   fr-inside-flex bug class as the MCP lockstep rules above. `height:
-   auto` makes each row hug its own single line of content instead.
-
-   `#approval-batch-rows` (the Vertical wrapping all rows) gets the same
-   `height: auto` treatment as #mcp-perm-preview/#mcp-detail-builtin-
-   toggles/#mcp-import-list above -- without it, its own `height: 1fr`
-   default would balloon it to fill the card and push the sibling
-   Approve-all/Submit/Deny-all action bar (#approval-batch-actions) far
-   below the visible rows.
-
-   `.approval-row-header`/`.approval-row-args` (Statics, natively `width:
-   auto`) get an explicit `1fr` share each so unbounded text (a long
-   tool/server header, or an args summary up to 80 chars) can't hog the
-   row and squeeze the decision Select out of view. `.approval-row-
-   decision` (the class selector on the row's Select) gets an explicit
-   fixed width -- it was written to beat the bare `Select { width: 100%; }`
-   type selector (retired in TASK-33003.1) that made the Select claim the
-   row's FULL width, overlapping/clipping behind the header and args text
-   laid out before it; it now pins the bounded share outright. */
-#approval-batch-rows{height:auto;min-height:$ds-size-0;/* TASK-1846:bound the rows so the action bar below them is reachable at ANY row count. The card is `height:auto` inside a plain Container (`ChatTaskCards`), so before this a long batch simply grew past the viewport and took Submit/Approve-all/Deny-all with it -- measured on an 80x24 terminal, five rows already pushed Submit to y=24. Splitting arguments onto their own line costs a line per row and would have moved that cliff from five rows to four, so the cap fixes the older bug rather than inheriting it. 15 leaves room for the header, the deadline and the action bar at 24 rows;taller batches scroll. */ max-height:$ds-size-15;overflow-y:auto;}
-/* TASK-1846 AC#2: `.approval-row` is now a Vertical -- header, arguments,
-   and `.approval-row-controls` each on their own FULL width line (plus, since
-   task-32278, the reason and scope lines below).
-   Before the split all four shared one Horizontal, and the
-   controls' 27 + 14 + 14 = 55 fixed cells left the arguments 10 cells at 80
-   columns: `{"path":"~/` of `{"path":"~/notes/secrets.md"}`. Since
-   TASK-1861 the card offers one decision per TARGET, so that clipped text
-   was the decision.
-
-   Keeping the header BESIDE the controls was tried and is wrong: in the
-   Console's ~52-cell chat pane those 54 fixed cells starve the header to
-   one cell, which wraps to nine lines and pushes the arguments out of the
-   card -- caught only by looking at a real terminal.
-
-   The controls row is a Horizontal and needs the SAME `height: auto` as
-   the row itself -- a Horizontal defaults to `height: 1fr`, the
-   fr-inside-flex bug this block already documents, and left at the default
-   it balloons to the card height and takes the args line off screen. */
-.approval-row, .approval-row-controls{height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
+/* This is the approval card's only row styling (no DEFAULT_CSS).
+   Explicit auto heights prevent Textual's fr-inside-flex ballooning from
+   hiding the action bar. Full-width header/args and a bounded Select
+   prevent long tool text from clipping decisions (TASK-33003.1). */
+#approval-batch-rows {
+    height: auto;
+    min-height: $ds-size-0;
+    /* TASK-1846: five rows put Submit at y=24 on an 80x24 terminal.
+       Cap rows at 15; longer batches scroll while header, deadline and
+       actions remain reachable. */
+    max-height: $ds-size-15;
+    overflow-y: auto;
+}
+/* TASK-1846 AC#2: header, arguments and controls need separate lines.
+   The old 55-cell controls left args only 10 cells at 80 columns; putting
+   the header beside controls in a 52-cell pane wrapped it into nine lines.
+   Auto control height also prevents the fr-inside-flex ballooning above. */
+.approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
 .approval-row-header,.approval-row-args{width:$ds-width-fill;}
 .approval-row-full-command{width:$ds-width-fill;height:$ds-size-6;min-height:$ds-size-3;}
 /* task-32278: the row's reason line (why this is asking -- the visible
@@ -1506,14 +1514,33 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    already keeps these borderless/1-row tall; fixed widths keep them from
    claiming `Button`'s `width: auto` share and squeezing the row. */
 .approval-row-fast-approve,.approval-row-fast-deny{width:$ds-size-14;min-width:$ds-size-14;}
-/* TASK-33625.2: Deny stays level with approval; compact batch actions
-   share one row so changing the denial scope cannot push Submit off screen. */
-.approval-compact{padding:$ds-space-0 $ds-space-2;}
-.approval-compact #approval-batch-rows{max-height:$ds-size-8;}
-.approval-compact .approval-row-controls{layout:grid;grid-size:$ds-size-2;grid-columns:$ds-width-fill $ds-width-fill;}
-.approval-compact #approval-batch-actions{layout:grid;grid-size:$ds-size-3;grid-columns:$ds-width-fill $ds-width-fill $ds-width-fill;}
-.approval-compact .approval-row-decision{column-span:$ds-size-2;width:$ds-width-fill;}
-.approval-compact #approval-batch-actions Button{width:$ds-width-fill;min-width:$ds-size-0;padding:$ds-space-0;}
+/* TASK-33625.2: compact grids keep every decision reachable with Inspect open. */
+.approval-compact {
+    padding: $ds-space-0 $ds-space-2;
+}
+.approval-compact #approval-batch-rows {
+    max-height: $ds-size-8;
+}
+.approval-compact .approval-row-controls {
+    layout: grid;
+    grid-size: $ds-size-2;
+    grid-columns: $ds-width-fill $ds-width-fill;
+}
+.approval-compact #approval-batch-actions {
+    layout: grid;
+    grid-size: $ds-size-3;
+    grid-columns: $ds-width-fill $ds-width-fill $ds-width-fill;
+}
+.approval-compact .approval-row-decision {
+    column-span: $ds-size-2;
+    width: $ds-width-fill;
+}
+.approval-compact #approval-batch-actions Button {
+    width: $ds-width-fill;
+    min-width: $ds-size-0;
+    padding: $ds-space-0;
+}
+
 /* task-5 (Phase-5 follow-up): a bulk "Approve all"/"Deny all" press can't
    legally reach every narrowed row (`ChatApprovalCard._set_all_batch_
    decisions` -- a row whose `options` exclude every bulk candidate is left
@@ -1525,7 +1552,10 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    `$ds-status-approval-required` token rather than the generic `$ds-
    status-warning` one, since this state literally IS "still needs an
    approval decision." */
-.approval-row.needs-decision{border:solid $ds-status-approval-required;background:$ds-status-approval-required 10%;}
+.approval-row.needs-decision {
+    border: solid $ds-status-approval-required;
+    background: $ds-status-approval-required 10%;
+}
 
 /* ConsoleScopePickerModal (rag-scope-narrowing spec §4, Task 8): RAG
    retrieval scope picker -- type tabs, text+tag filters, sort select,
@@ -1533,7 +1563,9 @@ MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
    confirmation, and footer count/Save/Clear/Cancel. Mirrors
    ConsolePromptPickerModal's modal shell (round border, $ds-surface-panel,
    1 2 padding) sized wider/taller for the extra filter/list chrome. */
-ConsoleScopePickerModal{align:center middle;}
+ConsoleScopePickerModal {
+    align: center middle;
+}
 
 /* TASK-1775: one Console Prompt Workbench shell, opened only from the
    composer's existing overflow menu. It extends the Chat Context modal's
@@ -1541,81 +1573,85 @@ ConsoleScopePickerModal{align:center middle;}
    footer. Source, artifact kind, unavailable state, and recovery remain
    text labels; accent color is reserved for focus and the primary Improve
    action. */
-ConsolePromptsModal{align:center middle;}
-
-ConsolePromptDraftSaveDialog{align:center middle;}
-
-#console-prompt-draft-save-dialog{
-width:$ds-size-60;
-max-width:$ds-percent-96;
-height:auto;
-padding:$ds-space-1 $ds-space-2;
-border:round $ds-grid-line;
-background:$ds-surface-panel;
-color:$ds-text-primary;
+ConsolePromptsModal {
+    align: center middle;
 }
 
-#console-prompt-draft-save-copy{
-width:$ds-width-full;
-height:auto;
-margin-bottom:$ds-space-1;
-color:$ds-text-muted;
+ConsolePromptDraftSaveDialog {
+    align: center middle;
 }
 
-#console-prompt-draft-save-actions{
-width:$ds-width-full;
-height:auto;
-align-horizontal:right;
+#console-prompt-draft-save-dialog {
+    width: $ds-size-60;
+    max-width: $ds-percent-96;
+    height: auto;
+    padding: $ds-space-1 $ds-space-2;
+    border: round $ds-grid-line;
+    background: $ds-surface-panel;
+    color: $ds-text-primary;
 }
 
-#console-prompt-draft-editor{
-width:$ds-width-full;
-height:$ds-height-fill;
-min-height:$ds-size-12;
+#console-prompt-draft-save-copy {
+    width: $ds-width-full;
+    height: auto;
+    margin-bottom: $ds-space-1;
+    color: $ds-text-muted;
+}
+
+#console-prompt-draft-save-actions {
+    width: $ds-width-full;
+    height: auto;
+    align-horizontal: right;
+}
+
+#console-prompt-draft-editor {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-12;
 }
 
 #console-prompt-draft-editor-copy,
 #console-prompt-draft-status,
-#console-prompt-draft-promote-title{
-width:$ds-width-full;
-height:auto;
+#console-prompt-draft-promote-title {
+    width: $ds-width-full;
+    height: auto;
 }
 
 #console-prompt-draft-editor-copy,
-#console-prompt-draft-status{
-color:$ds-text-muted;
+#console-prompt-draft-status {
+    color: $ds-text-muted;
 }
 
-#console-prompt-draft-status.error{
-color:$ds-status-error-readable;
+#console-prompt-draft-status.error {
+    color: $ds-status-error-readable;
 }
 
-#console-prompt-draft-content{
-width:$ds-width-full;
-height:$ds-height-fill;
-min-height:$ds-size-6;
-margin-top:$ds-space-1;
+#console-prompt-draft-content {
+    width: $ds-width-full;
+    height: $ds-height-fill;
+    min-height: $ds-size-6;
+    margin-top: $ds-space-1;
 }
 
 #console-prompt-draft-actions,
 #console-prompt-draft-promote-fields {
-width: $ds-width-full;
-height: auto;
+    width: $ds-width-full;
+    height: auto;
 }
 
 #console-prompt-draft-promote-title {
-margin-top: $ds-space-1;
-text-style: bold;
+    margin-top: $ds-space-1;
+    text-style: bold;
 }
 
 #console-prompt-draft-library-name,
 #console-prompt-draft-library-collection {
-width: $ds-width-fill;
+    width: $ds-width-fill;
 }
 
 .console-prompts-result.highlighted {
-border-left: thick $ds-action-focus;
-background: $ds-focus-bg;
+    border-left: thick $ds-action-focus;
+    background: $ds-focus-bg;
 }
 
 ConsolePromptsModal.-narrow #console-prompt-draft-actions,
