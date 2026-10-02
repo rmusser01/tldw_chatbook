@@ -1339,13 +1339,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unavailable_focus_falls_back_to_the_view_open_target():
-    """An unavailable restored target falls back to where its view opens.
-
-    Rewritten on purpose by TASK-33006.1 (R13): the snapshot was left in the
-    Context and memory view, so the modal reopens there on Budget strategy
-    instead of jumping to the Model view's Connection pickers.
-    """
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_connection():
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1371,15 +1365,19 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_the_
         for _ in range(80):
             if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
                 focused = host.focused
-                if focused is not None and focused.id == "console-context-budget-mode":
+                if focused is not None and focused.id in {
+                    "console-settings-provider-picker-input",
+                    "model-search-picker-input",
+                }:
                     break
             await pilot.pause(0.05)
 
-        modal = host.screen_stack[-1]
-        assert isinstance(modal, ConsoleSettingsModal)
+        assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert host.focused is not None
-        assert host.focused.id == "console-context-budget-mode"
-        assert modal._active_view == "context"
+        assert host.focused.id in {
+            "console-settings-provider-picker-input",
+            "model-search-picker-input",
+        }
 
 
 @pytest.mark.asyncio

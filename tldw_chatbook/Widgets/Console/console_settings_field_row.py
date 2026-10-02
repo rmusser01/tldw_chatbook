@@ -11,7 +11,8 @@ The view opens core-first: the MODEL row, then Temperature, Max tokens,
 Streaming and the reasoning or thinking controls, then the Sampling,
 Connection, Request estimate and name disclosures. Focus opens on Temperature,
 or on the recovery action while a connection blocker stands; a restored focus
-target wins over both (``_restore_suspended_scroll_and_focus``).
+target wins over both (``_restore_suspended_scroll_and_focus``), and a missing
+or unavailable one still falls back to Connection (TASK-30012).
 
 The logic lives here, not in ``console_settings_modal.py``, because that
 module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
@@ -355,6 +356,23 @@ class ConsoleSettingsFieldRowsMixin:
                 return
         if action == "select_model":
             self._focus_model_control()
+            return
+        self._focus_connection_fallback()
+
+    def _focus_restored_fallback(self) -> None:
+        """Focus Connection when a restored focus target is missing or unavailable.
+
+        TASK-30012's fallback, kept as it was (TASK-33006.1 AC#11): the Model
+        view shows with Connection open and a live Connection control takes
+        focus, in either view. Connection's contents become focusable only
+        once its opening paints, hence the deferred focus.
+        """
+        if self._active_view != "model":
+            self._show_settings_view("model")
+        disclosure = self.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
+        if disclosure.collapsed:
+            disclosure.collapsed = False
+            self.call_after_refresh(self._focus_connection_fallback)
             return
         self._focus_connection_fallback()
 

@@ -35,6 +35,11 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 
+# Census-gated (scripts/ui_pr_gate_census.txt): Tests/UI/conftest.py imports
+# tldw_chatbook.app per test, which fails closed with
+# RecoveryRequired("raw_source_selection_changed") under the per-test sandbox.
+pytestmark = pytest.mark.bootstrap_profile
+
 FULL_SCREEN_SIZES = ((211, 44), (235, 52))
 CSS_ROOT = Path(__file__).resolve().parents[2] / "tldw_chatbook" / "css"
 
