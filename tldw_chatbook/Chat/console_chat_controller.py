@@ -19697,22 +19697,6 @@ class ConsoleChatController:
             self._head_round_payload(self._parked_question_payloads, session_id)
         )
 
-    def _revoke_question_rounds(self, run_id: str) -> list[tuple[str, str | None]]:
-        """Fail this run's question rounds closed as ``cancelled`` (PRD A10).
-
-        Registry work only, under ``_pending_question_lock``; the caller
-        (``revoke_approval_rounds_for_run``) does the badge and card work.
-
-        Args:
-            run_id: The cancelled/abandoned run.
-
-        Returns:
-            ``(request_id, session_id)`` per revoked round.
-        """
-        return self._interrupt_host.revoke_for_run(
-            run_id, {"question": _REVOCATION_STAMPS["question"]}
-        )["question"]
-
     @property
     def worktree_confirmation_enabled(self) -> bool:
         """Only the real disposable worktree surface enables new tool disclosure."""
@@ -20532,8 +20516,14 @@ class ConsoleChatController:
         )
 
     @_maintenance_boundary("turn")
-    async def continue_from_message(self, message_id: str) -> ConsoleSubmitResult:
-        """Continue from a selected message by streaming a new assistant turn."""
+    async def continue_from_message(
+        self, message_id: str, *, resend: bool = False
+    ) -> ConsoleSubmitResult:
+        """Stream a new assistant turn after a message (``resend``: TASK-33661).
+
+        ``resend`` re-runs a broken last turn, so it adds what a normal send
+        applies and Continue skips: the thinking preflight and pinned prefill.
+        """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
             return active_rejection
@@ -20565,6 +20555,11 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
         assert turn_context is not None
+        blocked = resend and self._thinking_persistence_preflight(
+            session_id=session_id, resolution=resolution
+        )
+        if blocked:
+            return blocked
 
         provider_messages = self._provider_messages_through_message(
             session_id,
@@ -20610,6 +20605,7 @@ class ConsoleChatController:
             resolution=resolution,
             provider_messages=provider_messages,
             assistant_message_id=assistant.id,
+            prefill=self._pinned_prefill_for_session(session_id) if resend else None,
             skill_bindings=skill_bindings,
             skill_bundle_block=skill_bundle_block,
             turn_context=turn_context,

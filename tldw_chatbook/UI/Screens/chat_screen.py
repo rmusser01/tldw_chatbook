@@ -14777,7 +14777,7 @@ class ChatScreen(BaseAppScreen):
             ),
             ConsoleDisplayRow(
                 "Message actions",
-                "Copy, Edit, Fork, Regenerate/Retry, Continue, More…",
+                "Copy, Edit, Fork, Regenerate/Retry/Resend, Continue, More…",
             ),
             ConsoleDisplayRow(
                 "Keyboard",

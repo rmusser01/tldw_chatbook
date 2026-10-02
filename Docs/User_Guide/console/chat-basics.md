@@ -84,7 +84,9 @@ duplicate request because the previous delivery cannot be confirmed. **Discard**
 keeps your user message and settles the interrupted response without replaying
 the request. A failed recovery leaves the available controls usable so you can
 address the reported problem and try again or discard. Once recovery settles,
-the composer clears this blocker.
+the composer clears this blocker. After **Discard**, your user message offers
+**Resend** to ask again without forking — see
+[Resend a broken turn](#resend-a-broken-turn).
 
 ### Collapsed rail labels
 
@@ -486,13 +488,14 @@ selection through the transcript. **Enter** shows the selected message's
 actions; **Tab**/**Shift+Tab** cycle through the row, **Enter** activates
 the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
-**r** Regenerate.
+**r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
+slot, that action.
 While a reply is still generating, every action is disabled with the
 tooltip "Wait for response to finish before using message actions."
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
-**Regenerate/Retry** when applicable, **Continue** when applicable, and
+**Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
 **More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
 **Delete**, and — on a finished assistant reply — the three note actions
 **Capture as note**, **Summarize up to** (here as note) and **Save
@@ -511,6 +514,7 @@ fifteen characters, which is why the last two read short.
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
+| Resend | Re-runs a broken turn in place — see [Resend a broken turn](#resend-a-broken-turn). It takes the ♻ slot, and Continue is not offered on that row. | Your last message, only when its turn is broken |
 | More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete removes the message plus every later message under it, so it first asks on the message's own row and offers **Undo** afterwards — see [Delete a message and its follow-ups](#delete-a-message-and-its-follow-ups). | User and Assistant messages with an available overflow action |
 | Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
@@ -529,6 +533,8 @@ fifteen characters, which is why the last two read short.
    composer row) or press **Ctrl+G**.
 2. The partial reply stays, tagged "[stopped]", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
+   If you stopped it before any text arrived, select your message and use
+   **Resend** to ask again.
 
 ### Copy a reply
 1. Click the reply, or move to it with j/k.
@@ -536,7 +542,39 @@ fifteen characters, which is why the last two read short.
 
 ### Retry a failed reply
 1. Select the reply tagged "[failed]".
-2. Click **Try** — the reply is retried in place.
+2. Click **Retry** or press **r** — the reply is retried in place.
+
+### Resend a broken turn
+When a send fails or gets stuck, select your own message and click
+**Resend** (or press **r**). Resend appears only on your **last** message,
+and only when its turn is broken:
+
+- the send was refused before it was accepted (for example, the provider was
+  not ready);
+- it has no reply;
+- its reply failed; or
+- its reply is empty and was stopped, discarded, or restored as
+  "Response failed." after a restart.
+
+A reply with text that you stopped is not broken — use **Continue** on it.
+Resend is not offered while a run is live in the tab (use **Stop** first)
+or while a response-recovery card is unresolved (the card's own **Retry
+anyway** / **Discard** decide that case).
+
+Resend re-runs the same turn in place. It never forks, creates a sibling, or
+copies your message: the failed or empty reply and the failure or stop rows
+after it are cleared, and the new reply appears directly under the same
+message. A failed reply is retried on the same row. A message that was
+refused before it was accepted is sent again with its own text and
+attachments as exactly one message; if your composer still holds that same
+text, it is cleared, and the shelf's "Unsent turn" copy is used up, so
+nothing is left to send twice. If your composer holds different text, Resend
+asks you to send or clear it first instead of overwriting it.
+
+Every gate a normal send applies still applies — provider readiness, the
+image (vision) check for attached images, and skill checks. A refused Resend
+shows the same message a refused send would, and the turn keeps offering
+**Resend**.
 
 ### Delete a message and its follow-ups
 Delete removes the selected message **and every later message under it**,
@@ -621,7 +659,7 @@ Transcript:
 | j / k (or down / up) | Select the next / previous message |
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
-| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message |
+| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
 | Esc | Clear the selection |
 
 ## Related settings & docs

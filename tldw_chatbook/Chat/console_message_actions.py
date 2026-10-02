@@ -317,7 +317,8 @@ class ConsoleSaveDestination:
 #: message, naming each glyph-only button in words so the meaning is on
 #: screen instead of behind a tooltip. Text-labeled buttons (Save as...,
 #: Full output, Review, Try, keep) already name themselves and are omitted.
-#: The key hints (c/e/r) mirror ConsoleTranscript.BINDINGS.
+#: The key hints (c/e/r) mirror ConsoleTranscript.BINDINGS; `r` also presses
+#: a row's Retry or Resend swap (TASK-33661), so those name their key too.
 ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("copy", "c Copy"),
     ("speak", "🔊 Speak"),
@@ -325,6 +326,8 @@ ACTION_GUIDE_SEGMENTS: tuple[tuple[str, str], ...] = (
     ("edit", "e Edit"),
     ("fork", "f Fork"),
     ("regenerate", "r ♻ Regenerate"),
+    ("retry", "r Retry"),
+    ("resend", "r Resend"),
     ("continue", "---> Continue"),
     ("feedback", "👍/👎 Rate"),
     ("delete", "🗑 Delete"),
@@ -451,6 +454,7 @@ class ConsoleMessageActionService:
             "fork",
             "regenerate",
             "retry",
+            "resend",
             "continue",
         }
     )
@@ -560,6 +564,7 @@ class ConsoleMessageActionService:
         ephemeral: bool = False,
         video_file_available: bool = False,
         fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
+        resend_available: bool = False,
     ) -> list[ConsoleMessageAction]:
         """Return canonical selected-message actions for a transcript message.
 
@@ -591,6 +596,10 @@ class ConsoleMessageActionService:
             fork_eligibility: Store-derived active-prefix durability result.
                 Message-local settled/content checks remain presentation-only;
                 this service never infers persisted lineage from message fields.
+            resend_available: Whether this user row is the broken last turn
+                that Resend may re-run (TASK-33661). The caller derives it from
+                the active path (``console_turn_resend.resend_target_id``) and
+                the live-run gate; this service never infers it from one row.
         """
         if not isinstance(fork_eligibility, ConsoleForkEligibility):
             raise TypeError("fork_eligibility must be ConsoleForkEligibility")
@@ -696,6 +705,18 @@ class ConsoleMessageActionService:
                 for action_id, label in completed_actions
                 if action_id != "edit"
             ]
+        if resend_available and message.role is ConsoleMessageRole.USER:
+            # TASK-33661: a broken last user turn swaps the disabled ♻ for
+            # Resend and drops Continue, mirroring the failed-assistant swap
+            # below: continuing from it parented the reply under the stale
+            # failure row instead of re-running the turn.
+            completed_actions = [
+                ("resend", "Resend")
+                if action_id == "regenerate"
+                else (action_id, label)
+                for action_id, label in completed_actions
+                if action_id != "continue"
+            ]
         if message.status == "failed" and self._is_assistant_message(message):
             # Retry regenerates a failed ASSISTANT response. A failed USER row —
             # e.g. the TASK-457(a) optimistic echo rejected before any provider
@@ -752,6 +773,7 @@ class ConsoleMessageActionService:
         video_file_available: bool = False,
         fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
         pending_delete: ConsoleDeleteScope | None = None,
+        resend_available: bool = False,
     ) -> ConsoleMessageActionGroups:
         """Resolve the row once, then split direct, overflow, and media actions.
 
@@ -767,6 +789,7 @@ class ConsoleMessageActionService:
             pending_delete: The armed delete scope; on its own message the
                 direct row becomes ``[Delete N messages] [Cancel]`` with the
                 scoped question as the legend (TASK-33628.2).
+            resend_available: Whether this user row is a broken last turn.
 
         Returns:
             Immutable primary, overflow, and media action tuples.
@@ -782,6 +805,7 @@ class ConsoleMessageActionService:
                 ephemeral=ephemeral,
                 video_file_available=video_file_available,
                 fork_eligibility=fork_eligibility,
+                resend_available=resend_available,
             )
         )
         if not self._is_forkable_row(message):
@@ -1113,6 +1137,13 @@ class ConsoleMessageActionService:
                 action_id=action_id,
                 status="completed",
                 visible_copy="Retrying failed response.",
+            )
+        if action_id == "resend" and message.role is ConsoleMessageRole.USER:
+            return ConsoleActionResult(
+                action_id=action_id,
+                status="completed",
+                visible_copy="Resending this turn.",
+                target_message_id=message.id,
             )
         if action_id == "edit":
             target_content = (
