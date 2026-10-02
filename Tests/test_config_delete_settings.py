@@ -8,6 +8,7 @@ import sys
 import threading
 import time
 import tomllib
+from contextlib import ExitStack
 from pathlib import Path
 
 import pytest
@@ -722,6 +723,12 @@ from pathlib import Path
 import sys
 import time
 
+from Tests import network_guard
+network_guard.install()
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+
 from tldw_chatbook import config as config_module
 
 ready_path = Path(sys.argv[1])
@@ -762,6 +769,7 @@ print(json.dumps({
     "replaced": result.file_replaced,
     "conflict": result.conflict,
     "failure_phase": result.failure_phase,
+    "network_attempts": len(network_guard.blocked_attempts()),
 }))
 """
     environment = os.environ.copy()
@@ -770,56 +778,70 @@ print(json.dumps({
     environment["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(repository_root), environment.get("PYTHONPATH", "")))
     )
-    processes = [
-        subprocess.Popen(
-            [
-                sys.executable,
-                "-c",
-                script,
-                str(ready_paths[index]),
-                str(go_path),
-                str(write_paths[index]),
-                str(write_paths[1 - index]),
-                provider_id,
-                "revisioned" if index == 0 else second_writer,
-            ],
-            cwd=repository_root,
-            env=environment,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        for index, provider_id in enumerate(("openai", "alltalk"))
+    log_paths = [
+        (tmp_path / f"writer-{index}.stdout", tmp_path / f"writer-{index}.stderr")
+        for index in range(2)
     ]
-    try:
-        deadline = time.monotonic() + 20.0
-        while not all(path.exists() for path in ready_paths):
-            exited = next(
-                (process for process in processes if process.poll() is not None),
-                None,
-            )
-            if exited is not None:
-                stdout, stderr = exited.communicate()
-                pytest.fail(
-                    "cross-process writer exited before readiness: "
-                    f"stdout={stdout!r}, stderr={stderr!r}"
+    processes = []
+    # Readiness waits cannot drain a PIPE; retain startup output in private files.
+    with ExitStack() as logs:
+        streams = [
+            tuple(logs.enter_context(path.open("w", encoding="utf-8")) for path in pair)
+            for pair in log_paths
+        ]
+        try:
+            for index, provider_id in enumerate(("openai", "alltalk")):
+                processes.append(
+                    subprocess.Popen(
+                        [
+                            sys.executable,
+                            "-c",
+                            script,
+                            str(ready_paths[index]),
+                            str(go_path),
+                            str(write_paths[index]),
+                            str(write_paths[1 - index]),
+                            provider_id,
+                            "revisioned" if index == 0 else second_writer,
+                        ],
+                        cwd=repository_root,
+                        env=environment,
+                        stdout=streams[index][0],
+                        stderr=streams[index][1],
+                        text=True,
+                    )
                 )
-            if time.monotonic() >= deadline:
-                pytest.fail("cross-process writers did not become ready")
-            time.sleep(0.01)
-        go_path.write_text("go", encoding="utf-8")
-        completed = [process.communicate(timeout=30.0) for process in processes]
-    finally:
-        for process in processes:
-            if process.poll() is None:
-                process.kill()
-                process.wait()
+            deadline = time.monotonic() + 20.0
+            while not all(path.exists() for path in ready_paths):
+                exited = next(
+                    (process for process in processes if process.poll() is not None),
+                    None,
+                )
+                if exited is not None:
+                    pytest.fail(
+                        "cross-process writer exited before readiness; "
+                        f"private output: {tmp_path}"
+                    )
+                if time.monotonic() >= deadline:
+                    pytest.fail("cross-process writers did not become ready")
+                time.sleep(0.01)
+            go_path.write_text("go", encoding="utf-8")
+            for process in processes:
+                process.communicate(timeout=30.0)
+        finally:
+            for process in processes:
+                if process.poll() is None:
+                    process.kill()
+                    process.wait()
 
     outcomes = []
-    for process, (stdout, stderr) in zip(processes, completed, strict=True):
-        assert process.returncode == 0, stderr
-        outcome = json.loads(stdout.strip().splitlines()[-1])
+    for process, (stdout_path, stderr_path) in zip(processes, log_paths, strict=True):
+        assert process.returncode == 0, f"private stderr: {stderr_path}"
+        outcome = json.loads(
+            stdout_path.read_text(encoding="utf-8").strip().splitlines()[-1]
+        )
         outcomes.append(outcome)
+    assert all(outcome["network_attempts"] == 0 for outcome in outcomes)
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     assert saved["speech_studio"]["revision"] == 1
     if second_writer == "revisioned":
