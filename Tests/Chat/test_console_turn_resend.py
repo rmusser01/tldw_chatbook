@@ -1350,3 +1350,85 @@ async def test_resend_hook_wait_retains_rows_and_retires_its_owner(
             task.cancel()
             await asyncio.gather(task, return_exceptions=True)
         await runtime.dispose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_bound_queued_retry_keeps_scheduled_hook_semantics(tmp_path, hook_file):
+    from Tests.Chat.test_console_prompt_queue_coordinator import (
+        SequencedGateway,
+        _durable_controller,
+        _queue,
+        _release_all,
+    )
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+
+    _edit(hook_file, lambda section: section.clear())
+    first = SequencedGateway(fail_call=0)
+    database, store, controller, session_id = _durable_controller(tmp_path, first)
+    initial = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    runtime = None
+    try:
+        await asyncio.wait_for(first.started[0].wait(), 5)
+        await _queue(controller, session_id, "two")
+        first.release[0].set()
+        await asyncio.wait_for(initial, 5)
+        failed = next(
+            row
+            for row in store.messages_for_session(session_id)
+            if row.role is ConsoleMessageRole.ASSISTANT and row.status == "failed"
+        )
+        marker = tmp_path / "scheduled-start"
+        input_marker = tmp_path / "manual-input"
+        handlers = [
+            {
+                "id": "start",
+                "event": "SessionStart",
+                "type": "command",
+                "required": True,
+                "effects": [],
+                "argv": child_argv(
+                    "import json,sys;from pathlib import Path;e=json.load(sys.stdin);"
+                    f"Path({str(marker)!r}).write_text(e['initiator'])"
+                ),
+            },
+            {
+                "id": "input",
+                "event": "UserPromptSubmit",
+                "type": "command",
+                "required": True,
+                "effects": [],
+                "argv": child_argv(
+                    "from pathlib import Path;"
+                    f"Path({str(input_marker)!r}).write_text('manual');raise SystemExit(1)"
+                ),
+            },
+        ]
+        _edit(hook_file, lambda section: section.update(handler=handlers))
+        runtime = ConsoleRuntime(app=None)
+        runtime.set_chat_store(store)
+        runtime.set_chat_controller(controller)
+        permissions = runtime.ensure_hook_permissions()
+        controller._hook_permissions_accessor = lambda: permissions
+        assert _approve(permissions).ready
+        gateway = SequencedGateway()
+        controller.provider_gateway = gateway
+        for event in gateway.release:
+            event.set()
+        result = await asyncio.wait_for(
+            controller.retry_failed_queue_turn(failed.id), 10
+        )
+        assert result.applied
+        assert gateway.user_turns == ["one", "two"]
+        assert marker.read_text() == "scheduled"
+        assert not input_marker.exists()
+        assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+        assert not controller._submit_tasks_snapshot()
+        assert not controller._hooks_v2_submissions
+    finally:
+        await _release_all(first, initial)
+        if runtime is not None:
+            await runtime.dispose()
+        database.close()

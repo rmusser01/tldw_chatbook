@@ -238,7 +238,7 @@ async def _replay_message(
             )
             configuration = controller.resolve_turn_configuration_snapshot(session_id)
             rejection = await controller._prepare_submission_hooks(
-                session, configuration, origin, queue_authorization
+                session, configuration, origin, queue_authorization, recovery=True
             )
             if rejection is not None:
                 return rejection
