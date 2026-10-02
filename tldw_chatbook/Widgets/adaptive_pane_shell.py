@@ -33,10 +33,10 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.content import Content
 from textual.containers import Horizontal
-from textual.events import DescendantFocus, Resize
+from textual.events import DescendantFocus, Focus, Key, MouseDown, Resize
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
@@ -802,3 +802,115 @@ class DestinationRailRowButton(Button):
         elif label.spans != painted.spans:
             self.set_reactive(Button.label, label)
             self.refresh(layout=True)
+
+
+# ---------------------------------------------------------------------------
+# Compact search input, promoted from the Library rail (B0).
+# ---------------------------------------------------------------------------
+
+
+class SelectAllOnFocusingClickInput(Input):
+    """An ``Input`` whose FIRST click (the one that also focuses it) selects
+    all text instead of just positioning the cursor there (LIB-17).
+
+    Textual's ``Input`` already defaults ``select_on_focus=True`` (its own
+    ``_on_focus`` sets ``Selection(0, len(value))``), but ``Input.
+    _on_mouse_down`` ALWAYS repositions the cursor to the click offset --
+    and ``Screen._forward_event`` calls ``set_focus()`` *synchronously*,
+    before the click is even forwarded to this widget, so ``self.has_focus``
+    already reads ``True`` by the time ``_on_mouse_down`` runs regardless of
+    whether THIS click is the one that focused the box. Checking
+    ``has_focus`` there cannot distinguish the two cases; the ``Focus``
+    event (posted by ``set_focus``) and this ``MouseDown`` (posted right
+    after, by the same click) are instead queued back-to-back on THIS
+    widget's own message pump and processed in that order, so ``_on_focus``
+    marks a one-shot "a focusing click may still be inbound" flag that
+    ``_on_mouse_down`` consumes if it is the very next thing processed --
+    the same-gesture window this whole mechanism depends on.
+
+    A second Textual quirk this override must also account for: message
+    dispatch (``MessagePump._get_dispatch_methods``) walks the class's
+    entire MRO and invokes EVERY class's own ``_on_mouse_down`` in turn
+    (most-derived first) -- calling ``super()`` is not what wires this up,
+    and NOT calling it does not skip it either. Without
+    ``event.prevent_default()`` in the select-all branch below, ``Input.
+    _on_mouse_down`` (the base class, further up the MRO) still runs
+    immediately afterward and silently overwrites the select-all with its
+    own ``Selection.cursor(click_offset)`` -- ``prevent_default()`` is the
+    documented mechanism (checked at the top of that MRO walk) that stops
+    it, the exact same seam ``_on_key`` below leans on for the "/" re-arm.
+
+    Without this fix, a plain mouse click on a not-yet-focused Input
+    silently wins the race and undoes ``select_on_focus``'s "replace me"
+    framing entirely, regardless of where in the box the click lands. For a
+    prefilled query box this means the box's stale text survives the very
+    interaction (click, then type) a user relies on to replace it:
+    live-reproduced by a click landing near the start of "quokka" and
+    typing a character, which PREPENDED instead of replacing ("Zquokka").
+
+    Scoped to the focusing click only: once the box already has focus (no
+    new ``Focus`` event, so the flag is never armed), a click positions the
+    cursor precisely as normal -- expected mid-text editing is unaffected.
+    The flag also self-clears shortly after arming (``call_after_refresh``)
+    so a LATER, unrelated click on an already-focused box (e.g. after a
+    Tab-focus with no immediately-following click) never inherits a stale
+    "select all" from an earlier, unconsumed focus event.
+
+    Promoted from the Library rail for Roleplay frame B0, together
+    with the rail search box's "/" re-arm, which is an opt-in keyword here:
+    ``swallow_slash_on_focus=True`` makes a FOCUSED box intercept "/" and
+    select all (so the next keystroke replaces a stale query) instead of
+    typing it. It defaults to ``False`` because a shared box may hold text
+    that contains "/" (Roleplay item names; the Library Notes filter's
+    folder paths). The Library rail search box keeps ``True`` through
+    ``LibraryRailSearchInput``. "/" only ever acts as a focus accelerator
+    while the box is NOT focused; the screen-level handler gates that.
+    """
+
+    def __init__(
+        self, *args: Any, swallow_slash_on_focus: bool = False, **kwargs: Any
+    ) -> None:
+        """Build the box.
+
+        Args:
+            *args: Positional arguments forwarded to ``Input.__init__``.
+            swallow_slash_on_focus: When ``True``, a focused box intercepts
+                "/" and selects all text instead of typing it.
+            **kwargs: Keyword arguments forwarded to ``Input.__init__``.
+        """
+        super().__init__(*args, **kwargs)
+        self._select_all_pending_click = False
+        self._swallow_slash_on_focus = swallow_slash_on_focus
+
+    def _on_focus(self, event: Focus) -> None:
+        self._select_all_pending_click = True
+        self.call_after_refresh(self._clear_select_all_pending_click)
+
+    def _clear_select_all_pending_click(self) -> None:
+        self._select_all_pending_click = False
+
+    async def _on_mouse_down(self, event: MouseDown) -> None:
+        if self._select_all_pending_click:
+            self._select_all_pending_click = False
+            self._pause_blink(visible=True)
+            self.select_all()
+            self._selecting = True
+            self.capture_mouse()
+            # See the class docstring: stops Textual's own MRO walk from
+            # ALSO invoking Input._on_mouse_down for this event, which
+            # would otherwise overwrite the select-all above.
+            event.prevent_default()
+            return
+        await super()._on_mouse_down(event)
+
+    async def _on_key(self, event: Key) -> None:
+        # Same slash representations the screen-level handler accepts --
+        # some platforms/layouts emit key="slash" without character="/".
+        if self._swallow_slash_on_focus and (
+            event.key in {"/", "slash"} or event.character == "/"
+        ):
+            self.select_all()
+            event.stop()
+            event.prevent_default()
+            return
+        await super()._on_key(event)

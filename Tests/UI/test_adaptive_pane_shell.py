@@ -16,17 +16,19 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 from textual import on
 from textual.app import App, ComposeResult
 from textual.containers import Vertical
 from textual.widget import Widget
-from textual.widgets import Button, Static
+from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
 from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from tldw_chatbook.Utils import adaptive_reader_state as ars
 from tldw_chatbook.Widgets import adaptive_pane_shell as shared
 from tldw_chatbook.Widgets.Library import library_adaptive_reader_shell as library_shell
+from tldw_chatbook.Widgets.Library import library_rail
 from tldw_chatbook.Widgets.Library.library_browse_reader_shell import MediaShellResized
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -280,7 +282,12 @@ def test_no_ui_ready_resident_module_imports_the_shared_shell(tmp_path: Path) ->
     assert result.stdout.strip().splitlines()[-1] == "False"
 
 
-SHARED_WIDGET_NAMES = ["AdaptivePaneShell", "AdaptivePaneGrip", "DestinationRailRowButton"]
+SHARED_WIDGET_NAMES = [
+    "AdaptivePaneShell",
+    "AdaptivePaneGrip",
+    "DestinationRailRowButton",
+    "SelectAllOnFocusingClickInput",
+]
 
 
 def test_shared_widgets_declare_no_class_level_css() -> None:
@@ -410,3 +417,63 @@ async def test_library_handlers_bound_to_aliases_still_fire_for_the_shared_shell
         shell.sync_layout(_layout(nav_open=False))
         await pilot.pause()
         assert "visibility:library:False" in app.events
+
+
+# ---------------------------------------------------------------------------
+# The promoted compact search input (B0).
+# ---------------------------------------------------------------------------
+
+
+def test_library_rail_re_exports_the_shared_search_input() -> None:
+    assert library_rail.SelectAllOnFocusingClickInput is shared.SelectAllOnFocusingClickInput
+    assert issubclass(
+        library_rail.LibraryRailSearchInput, shared.SelectAllOnFocusingClickInput
+    )
+    # The re-arm lives once, in the shared class.
+    assert "_on_key" not in vars(library_rail.LibraryRailSearchInput)
+
+
+class _InputApp(App):
+    def __init__(self, factory) -> None:
+        super().__init__()
+        self.factory = factory
+
+    def compose(self) -> ComposeResult:
+        yield self.factory()
+
+
+@pytest.mark.parametrize(
+    ("factory", "expected"),
+    [
+        (lambda: shared.SelectAllOnFocusingClickInput(value="Work", id="box"), "Work/"),
+        (
+            lambda: shared.SelectAllOnFocusingClickInput(
+                value="Work", id="box", swallow_slash_on_focus=True
+            ),
+            "Work",
+        ),
+        (lambda: library_rail.LibraryRailSearchInput(value="Work", id="box"), "Work"),
+        (
+            lambda: library_rail.LibraryRailSearchInput(
+                value="Work", id="box", swallow_slash_on_focus=False
+            ),
+            "Work/",
+        ),
+    ],
+    ids=[
+        "shared-default-types-slash",
+        "shared-opt-in-swallows",
+        "library-rail-default-swallows",
+        "library-notes-filter-types",
+    ],
+)
+async def test_slash_in_a_focused_box_follows_swallow_slash_on_focus(factory, expected) -> None:
+    app = _InputApp(factory)
+    async with app.run_test(size=(40, 5)) as pilot:
+        box = app.query_one("#box", Input)
+        box.focus()
+        await pilot.pause()
+        box.action_end()
+        await pilot.press("/")
+        await pilot.pause()
+        assert box.value == expected
