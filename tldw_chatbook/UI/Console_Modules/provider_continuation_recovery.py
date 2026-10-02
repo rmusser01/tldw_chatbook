@@ -65,8 +65,7 @@ def trace_call_recovery_state(
     return TraceCallRecoveryState(
         preparation.preparation_id,
         temporary_capture=(
-            preparation.pause_kind
-            is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
+            preparation.pause_kind is ConsolePreparationPauseKind.TEMPORARY_CAPTURE
         ),
     )
 

@@ -274,7 +274,9 @@ async def _highlight(modal: ConsoleModelPopover, pilot, query: str):
     return modal.highlighted_row()
 
 
-async def _edit_highlighted(modal: ConsoleModelPopover, pilot, temperature: str) -> None:
+async def _edit_highlighted(
+    modal: ConsoleModelPopover, pilot, temperature: str
+) -> None:
     """Editing a value edits the highlighted pair's values (TASK-33004.4)."""
     field = modal.query_one("#console-popover-temperature", Input)
     field.focus()
@@ -605,8 +607,7 @@ async def test_existing_chat_action_routes_ignore_later_new_chat_default() -> No
         )
 
         assert all(
-            result.accepted
-            for result in (retry, continued, regenerated, edited)
+            result.accepted for result in (retry, continued, regenerated, edited)
         ), [
             (result.accepted, result.visible_copy)
             for result in (retry, continued, regenerated, edited)
@@ -661,9 +662,7 @@ async def test_normal_sync_projects_delayed_first_persist_failure_for_switched_s
         assert context_row.display is False
 
         await console._session._activate_native_console_session(failed_session.id)
-        context_retry = console.query_one(
-            "#console-retry-context-settings", Button
-        )
+        context_retry = console.query_one("#console-retry-context-settings", Button)
         assert context_row.display is True
         assert context_retry.console_settings_session_id == failed_session.id
         assert context_retry.console_settings_revision == failure.revision
@@ -761,9 +760,7 @@ async def test_promotion_completion_projects_current_session_recovery_after_swit
             ConsoleSettingsComponent.CONTEXT_POLICY
         ]
         context_row = console.query_one("#console-context-recovery-row")
-        context_retry = console.query_one(
-            "#console-retry-context-settings", Button
-        )
+        context_retry = console.query_one("#console-retry-context-settings", Button)
         assert temporary.ephemeral is False
         assert promotion_failure.persisted_conversation_id != (
             clean_failure.persisted_conversation_id
@@ -825,8 +822,7 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             ConsoleSettingsComponent.CONTEXT_POLICY
         ]
         assert (
-            failure.policy_failure_label
-            is ConsoleSettingsPolicyFailureLabel.COMPACTION
+            failure.policy_failure_label is ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
         # TASK-33004.4: the quick surface no longer edits compaction, so the
         # failed quick write carries the unchanged policy (ADR-095).
@@ -850,17 +846,21 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             newer_full_policy,
         )
         assert persisted is True
-        assert await store.retry_console_settings_persistence(
-            session_id=session_id,
-            component=ConsoleSettingsComponent.CONTEXT_POLICY,
-            revision=failure.revision,
-        ) is False
+        assert (
+            await store.retry_console_settings_persistence(
+                session_id=session_id,
+                component=ConsoleSettingsComponent.CONTEXT_POLICY,
+                revision=failure.revision,
+            )
+            is False
+        )
         assert store.session_context_policy_overrides(session_id) == newer_full_policy
 
 
 @pytest.mark.asyncio
-async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults(
-) -> None:
+async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaults() -> (
+    None
+):
     """Profile/global scope drift or missing runtime publication fails here."""
 
     literal_model = "vendor/model:b"
@@ -919,7 +919,11 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         modal = await _open_provider_popover(console, harness, pilot)
         # PREVIOUS (llama.cpp) is highlighted on open; pick the current pair.
         row = await _highlight(modal, pilot, literal_model)
-        assert (row.provider, row.model, row.note) == ("vllm", literal_model, "● CURRENT")
+        assert (row.provider, row.model, row.note) == (
+            "vllm",
+            literal_model,
+            "● CURRENT",
+        )
         await _edit_highlighted(modal, pilot, "0.23")
         assert modal.query_one("#console-popover-streaming", Select).value is False
         await _choose_streaming(modal, pilot, True)
@@ -1235,9 +1239,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         console._sync_console_settings_recovery_surfaces()
         await pilot.pause()
 
-        copy = str(
-            rail.query_one("#console-default-recovery-copy", Static).renderable
-        )
+        copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
         assert copy == (
             "Not written to disk · Make default for new chats · "
             "vllm/vendor/private:model · "
@@ -1262,9 +1264,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         console._sync_console_settings_recovery_surfaces()
         await pilot.pause()
 
-        copy = str(
-            rail.query_one("#console-default-recovery-copy", Static).renderable
-        )
+        copy = str(rail.query_one("#console-default-recovery-copy", Static).renderable)
         assert copy.startswith("Saved on disk; running app refresh failed · ")
         assert refresh.display and dismiss.display
         assert not retry.display and not discard.display
@@ -1422,9 +1422,10 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         controller = console._ensure_console_chat_controller()
         controller._turn_context_provider = None
         controller.provider_gateway = _RecordingProviderGateway()
-        detached_resolution, detached_turn = (
-            await controller._capture_and_resolve_turn_execution_context(session_id)
-        )
+        (
+            detached_resolution,
+            detached_turn,
+        ) = await controller._capture_and_resolve_turn_execution_context(session_id)
         assert detached_resolution.ready is True
         assert detached_turn is not None
         assert detached_turn.provider_selection.base_url == target.api_url
@@ -1432,8 +1433,7 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert detached_turn.session_settings.base_url == target.api_url
         assert controller.provider_gateway.selections[-1].base_url == target.api_url
         assert (
-            app.app_config["api_settings"]["vllm"]["api_url"]
-            == "http://127.0.0.1:9098"
+            app.app_config["api_settings"]["vllm"]["api_url"] == "http://127.0.0.1:9098"
         )
         summary = console._build_console_settings_summary_state()
         assert summary.provider_row == "Provider: vLLM"
@@ -1581,9 +1581,7 @@ async def test_vllm_console_unsaved_session_first_persistence_excludes_endpoint(
         assert later_record is not None
         assert target.api_url not in str(later_record.get("metadata") or "")
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9111/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9111/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, conversation_id, later_record
         )
@@ -1633,9 +1631,7 @@ async def test_vllm_console_temporary_promotion_excludes_endpoint_and_reloads_de
         assert "http://127.0.0.1:9098" not in metadata
         assert "base_url" not in metadata
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9222/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9222/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, conversation_id, record
         )
@@ -1705,9 +1701,7 @@ async def test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
         assert "http://127.0.0.1:9098" not in metadata
         assert "base_url" not in metadata
 
-        app.app_config["api_settings"]["vllm"]["api_url"] = (
-            "http://127.0.0.1:9333/v1"
-        )
+        app.app_config["api_settings"]["vllm"]["api_url"] = "http://127.0.0.1:9333/v1"
         resumed_store, resumed = _restore_console_record(
             app, store, result.conversation_id, record
         )
@@ -1951,9 +1945,7 @@ async def test_vllm_console_real_metadata_conflict_blocks_detached_send(
                 detached.provider_selection.configured_endpoint_fallback_allowed
                 is False
             )
-            resolution = await gateway.resolve_for_send(
-                detached.provider_selection
-            )
+            resolution = await gateway.resolve_for_send(detached.provider_selection)
             assert resolution.ready is False
             result = await controller.submit_draft(
                 "Must never reach the configured vLLM endpoint.",
@@ -2071,11 +2063,9 @@ async def test_vllm_console_handoff_releases_stale_and_failed_claims_for_replay(
             VllmConsoleIntent.from_target(fresh_target),
         )
         original_adopt = session_store.adopt_session_ephemeral_endpoint
-        session_store.adopt_session_ephemeral_endpoint = (
-            lambda *_args, **_kwargs: (_ for _ in ()).throw(
-                RuntimeError("replace failed")
-            )
-        )
+        session_store.adopt_session_ephemeral_endpoint = lambda *_args, **_kwargs: (
+            _ for _ in ()
+        ).throw(RuntimeError("replace failed"))
         assert console.consume_pending_vllm_console_intent() is False
         assert app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         session_store.adopt_session_ephemeral_endpoint = original_adopt
@@ -2161,9 +2151,7 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
 
         assert console.consume_pending_vllm_console_intent() is False
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
-        recovery = app.pending_handoffs.release_recovery(
-            HandoffChannel.VLLM_CONSOLE
-        )
+        recovery = app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
         assert recovery is not None
         assert recovery.revision == revision
         assert recovery.last_failure == release_failure
@@ -2176,8 +2164,7 @@ async def test_vllm_console_failed_release_survives_for_later_readoption(
         monkeypatch.setattr(app.pending_handoffs, "release", real_release)
         assert console.consume_pending_vllm_console_intent() is True
         assert (
-            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE)
-            is None
+            app.pending_handoffs.release_recovery(HandoffChannel.VLLM_CONSOLE) is None
         )
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
         session_id = session_store.active_session_id
@@ -2231,10 +2218,7 @@ async def test_vllm_default_handoff_stages_settings_and_revert_is_byte_identical
         assert draft is not None
         assert draft.values["provider"] == "vllm"
         assert draft.values["model"] == "chatbook-vllm"
-        assert (
-            draft.values["endpoint"]
-            == "http://127.0.0.1:8000/v1/chat/completions"
-        )
+        assert draft.values["endpoint"] == "http://127.0.0.1:8000/v1/chat/completions"
         assert screen.query_one("#settings-model-value", Input).value == (
             "chatbook-vllm"
         )
