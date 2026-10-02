@@ -115,7 +115,13 @@ def test_builtin_is_independent_and_idempotent(environment):
 
 
 def test_installed_builtin_is_never_republished(environment, monkeypatch):
-    """TASK-33561: only a fresh profile publishes; later readiness passes are no-ops."""
+    """TASK-33561: only a fresh profile publishes; later readiness passes are no-ops.
+
+    Args:
+        environment: The Buddy library over a private profile; its first item
+            is the library.
+        monkeypatch: Replaces the publisher with one that fails the test.
+    """
     import tldw_chatbook.Persona_Buddy.library as library_module
 
     library = environment[0]

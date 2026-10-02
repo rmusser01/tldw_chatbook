@@ -991,11 +991,16 @@ def _reuse_evidence(root, selector, path, related_paths, check, execution_select
         token = StorageLease(key)
         token._execution_selection = execution_selection
     # Native filesystem observation never runs under the coordinator lock.
-    if (
-        evidence.observe() != evidence.stamps()
-        or any(entry.observe() != entry.stamps() for entry in per_path)
-        or evidence.epoch != bootstrap._admission_epoch
-    ):
+    try:
+        unchanged = (
+            evidence.observe() == evidence.stamps()
+            and all(entry.observe() == entry.stamps() for entry in per_path)
+            and evidence.epoch == bootstrap._admission_epoch
+        )
+    except BaseException:
+        token.close()  # as the derivation does: a counted lease never leaks
+        raise
+    if not unchanged:
         token.close()
         return None
     return token

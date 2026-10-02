@@ -176,7 +176,15 @@ REFUSED_BY_THE_DERIVATION = {
 
 @pytest.fixture
 def reuse_switch(monkeypatch):
-    """Toggle evidence reuse; a no-op until the reuse path exists."""
+    """Toggle evidence reuse; a no-op until the reuse path exists.
+
+    Args:
+        monkeypatch: Sets the settle margin to zero and the reuse switch.
+
+    Returns:
+        A callable taking ``enabled``; it turns evidence reuse on or off for
+        the rest of the test.
+    """
     monkeypatch.setattr(storage, "_EVIDENCE_SETTLE_NS", 0, raising=False)
 
     def switch(enabled: bool) -> None:
@@ -472,6 +480,40 @@ def test_a_change_just_before_the_lease_is_counted_falls_back(
         startup.close()
 
     assert calls["scope"] >= 1, "a lease was reused over a change made before it was counted"
+
+
+def test_a_failed_recheck_after_counting_closes_the_reused_lease(
+    local_scope, reuse_switch, monkeypatch  # noqa: F811
+):
+    """An observation that raises after reuse counted its lease closes the lease,
+    as the derivation's own failure path does, so the hold can still drain
+    (Qodo, #2919).
+
+    Args:
+        local_scope: A private storage root, config and data directory.
+        reuse_switch: Turns evidence reuse on.
+        monkeypatch: Makes the post-count observation raise.
+    """
+    root, config, data, _ = local_scope
+    bind_profile(root, config, ("profile",), root / "admission")
+    target = data / "store.db"
+    reuse_switch(True)
+    startup = storage.acquire_storage()
+    try:
+        for _ in range(2):
+            assert _verdict(target)[0] == "allowed"
+        held = sum(hold.count for hold in storage._holds.values())
+
+        def unreadable(self):
+            raise PermissionError("an admitted directory became unreadable")
+
+        monkeypatch.setattr(storage._Evidence, "observe", unreadable)
+        with pytest.raises((PermissionError, bootstrap.RecoveryRequired)):
+            with storage.acquire_storage(target):
+                pass
+        assert sum(hold.count for hold in storage._holds.values()) == held
+    finally:
+        startup.close()
 
 
 def test_evidence_stamps_and_settle_margin_in_isolation(tmp_path, monkeypatch):
