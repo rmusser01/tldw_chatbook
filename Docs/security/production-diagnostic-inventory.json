@@ -3740,6 +3740,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "1b43e780d217a7cceda5",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/Utils/ui_responsiveness.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "677d94ed6857edd40689",
       "owner": "TASK-494",
       "path": "tldw_chatbook/Video_Generation/adapters/minimax_video_adapter.py",

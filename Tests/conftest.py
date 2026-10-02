@@ -532,6 +532,11 @@ def cleanup_file_descriptors(request: pytest.FixtureRequest) -> Iterator[None]:
     """
     yield
 
+    # ADR-198: an app that reaches _ui_ready (or finishes screen pre-import)
+    # calls gc.freeze() in THIS process, moving the test's own App cycle into
+    # the permanent generation, where gc.collect() never reclaims it -- the
+    # lingering-app interference described above. Unfreezing is a list splice.
+    gc.unfreeze()
     global _gc_test_counter
     _gc_test_counter += 1
     _node_path = str(getattr(request.node, "path", "") or "")
