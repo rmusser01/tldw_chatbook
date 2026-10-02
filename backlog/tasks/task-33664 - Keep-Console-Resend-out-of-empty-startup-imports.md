@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 23:28'
+updated_date: '2026-10-02 23:47'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -74,4 +74,9 @@ Preserved incoming PR2962 implementation of the same three deferred Resend impor
 Preserving PERF-07 integration is independently approved at immutable source 13e261a2582d661d8b41fa3111937659d589241a on dev ecc0a531c855bc9e80906bff90180fd2045f7159. The rebase is clean: all 96 previously approved Python/CSS files and all eight incoming files are exact, with no direct overlap. Incoming config memo remains behind admission and re-verifies path posture; sensitive contexts resolve their memoized raw inputs afresh. Existing ADR-126 D2 applies; no new ADR, source repair, owner, permission, schema, dependency or ceiling.
 Independent config/recovery selection passes 11 cases (8.363s); independent replay passes 13 (51.881s), custody/refund/nonreplay/saved-close passes 12 (65.239s). Root incoming memo/bundle/sensitive-path/mounted consumers have 24 passes and one inherited config-retarget fixture failure (45.702s). The same raw_source_selection_changed failure reproduces on exact incoming ecc with cwd/PYTHONPATH pinned (1.511s); both non-green logs/XML are retained, with no gate/test masking. All twelve incoming memo tests pass. Final original five budgets pass 83.786s, exit 0, at 681/686 imports and 1033/1033 UI-ready with unchanged sources, workload and warnings.
 Final 93-file fatal/added-line, ten new Ruff/format, whitespace, CSS, diagnostic, worker and 4789 task guards pass. Evidence is /private/tmp/pr2918-perf07-*. All schema76/both gates/frozen AgentRuns and runtime/replay/queue/hook/refund/physical custody bytes remain exact. Incoming TASK33266 retains shipped To Do status; separate open tasks and all earlier limits remain. Fresh published-head Qodo, four CI jobs and normal protected merge remain delivery gates.
+
+Preserving release integration is independently approved at immutable source 353afb6ad48b7336945f4ca959c66c7192e25b7b on dev f3aeb32fb3d230c0774c7fc349729d9f75c96366 (PR #2961, retaining main PR #2950 evaluation parity). All four prior e1377 jobs and edited exact-head Qodo were green before the actual conflict was handled. The sole append-only testing-lesson conflict preserves the complete upstream file and complete 12,598-byte local tail. All 96 reviewed Python/CSS and eight prior PERF-07 files remain exact, as do 16 other incoming files. Across all 3,388 tracked package/native paths only upstream version 0.2.3 metadata and EvaluationSpec.case_sensitive differ. Runtime, schema 76/both gates/frozen AgentRuns, recovery, permissions, replay, hooks, refunds, physical custody and CSS remain approved. Existing ADR-032/097 boot/098 app-only/199 apply; no new ADR, owner, dependency, source repair, gate or ceiling.
+Root 46 incoming evaluation schema/client, synchronized metadata, app-only native authority, source-digest and two real mounted initial-hook polling/readiness refusal/restored Resend checks pass in 35.230s, exit 0. Independent immutable review is Ready with no actionable findings: every original API assertion survives, explicit True/False and partial omission remain covered, and removing only the incoming three-line Resend absence entry reproduces the original census bytes. Final original five budgets: 5 passes in 75.284s, exit 0, zero failures/errors/skips; app imports 681/686 and UI-ready 1033/1033. Original drift and stale pytest cleanup warnings remain, with zero UI headroom. All four actual guard sources are exact incoming f3, including the added Resend absence assertion; no pins, ceilings, counts, warmup, timeout or measured-work changes.
+Final 93 patch Python fatal/added-line, ten new full Ruff/format and whitespace checks pass; all CSS bundles reproduce. Diagnostics remain 638 owners/16 sinks (1429/56/7604 calls); workers remain 340 lookups/161 functions, 69 waits/27 roots, with no new sites. All 4,791 task IDs/paths are unique/readable. Evidence: /private/tmp/pr2918-release-*. Selections overlap and are not summed. Incoming TASK-33645 and TASK-33803 retain shipped In Progress statuses; no package/index/installed/native release is performed or certified. TASK-33266/33648/33662/33560 and all earlier positive and NON-GREEN limits remain unchanged.
+The initial ENOSPC rebase attempt left a clean plan HEAD and no rebase/index-lock state. Only 176 ignored regenerable bytecode cache directories (87,919,735 bytes) in the authorized checkout were removed; all source/evidence and other work were preserved. The same rebase completed 30 commits when disk space became available. No aggregate-resource or performance-cause qualification follows. Fresh published-head Qodo/all four jobs and protected head-pinned merge remain delivery gates; no merge is claimed.
 <!-- SECTION:NOTES:END -->
