@@ -5094,6 +5094,15 @@ def _controller_active_history_checkpoint(call_state: str):
 
 
 @pytest.mark.asyncio
+# TASK-18313: submit_draft's hook admission gate reads the saved hooks
+# config through the guarded config loader, which under the per-test
+# sandbox redirect fails closed with RecoveryRequired("raw_source_
+# selection_changed"); the gate's broad except turns that into a
+# "Hooks unavailable" refusal before any payload assertion runs. Keep
+# the collection-time profile (ADR-126 admission; per-node marker per
+# the TASK-32873 pattern) so the read succeeds and the test exercises
+# the real continuation contracts.
+@pytest.mark.bootstrap_profile
 async def test_controller_real_gateway_budgets_active_continuation_owner_atomically():
     store = ConsoleChatStore()
     session = _arm_session(store)
@@ -5258,6 +5267,11 @@ def test_controller_thinking_sidecars_exclude_opaque_application_copy() -> None:
 
 
 @pytest.mark.asyncio
+# TASK-18313: same config-admission class as the budget test above --
+# the bridge send path also crosses submit_draft's hook admission gate
+# before dispatch, so the per-test sandbox redirect would refuse the
+# send ("Hooks unavailable") before the prepared-payload assertions.
+@pytest.mark.bootstrap_profile
 async def test_controller_bridge_agent_service_bound_private_history_on_real_send(
     tmp_path, monkeypatch
 ):
