@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 import os
 import subprocess
 import sys
@@ -640,12 +641,23 @@ class FakeLoop:
     """Collects callbacks the handler defers to "the app loop"."""
 
     def __init__(self) -> None:
-        self.callbacks: list = []
+        self.callbacks: list[tuple[Callable[..., object], tuple[object, ...]]] = []
 
     def is_closed(self) -> bool:
+        """Report an open loop, so the handler defers instead of dropping.
+
+        Returns:
+            Always False.
+        """
         return False
 
-    def call_soon_threadsafe(self, callback, *args) -> None:
+    def call_soon_threadsafe(self, callback: Callable[..., object], *args: object) -> None:
+        """Queue ``callback(*args)`` for the test to run later.
+
+        Args:
+            callback: What the handler wants run on the loop.
+            *args: Its arguments.
+        """
         self.callbacks.append((callback, args))
 
 
