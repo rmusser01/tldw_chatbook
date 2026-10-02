@@ -197,7 +197,12 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
     ) -> None:
         """Render a new body-free revision while preserving entry identity."""
 
-        key = (snapshot.revision, snapshot.entries, snapshot.mode, snapshot.pause_reason)
+        key = (
+            snapshot.revision,
+            snapshot.entries,
+            snapshot.mode,
+            snapshot.pause_reason,
+        )
         if not force and key == self._render_key:
             return
         if self._render_key is not None and snapshot.revision != self._revision:
@@ -214,30 +219,26 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 "#console-prompt-queue-manager-list", VerticalScroll
             )
             pause = self.query_one("#console-prompt-queue-toggle-pause", Button)
-            resume_next = self.query_one(
-                "#console-prompt-queue-resume-next", Button
-            )
+            resume_next = self.query_one("#console-prompt-queue-resume-next", Button)
             edit_button = self.query_one("#console-prompt-queue-edit", Button)
             save_button = self.query_one("#console-prompt-queue-save", Button)
             up_button = self.query_one("#console-prompt-queue-up", Button)
             down_button = self.query_one("#console-prompt-queue-down", Button)
             remove_button = self.query_one("#console-prompt-queue-remove", Button)
             clear_button = self.query_one("#console-prompt-queue-clear", Button)
-            retry_failed = self.query_one(
-                "#console-prompt-queue-retry-failed", Button
-            )
+            retry_failed = self.query_one("#console-prompt-queue-retry-failed", Button)
             retry_stopped = self.query_one(
                 "#console-prompt-queue-retry-stopped", Button
             )
-            review = self.query_one(
-                "#console-prompt-queue-review-context", Button
-            )
-            use_current = self.query_one(
-                "#console-prompt-queue-use-context", Button
-            )
+            review = self.query_one("#console-prompt-queue-review-context", Button)
+            use_current = self.query_one("#console-prompt-queue-use-context", Button)
         except NoMatches:
             return
-        reason = snapshot.pause_reason.value.replace("_", " ") if snapshot.pause_reason else ""
+        reason = (
+            snapshot.pause_reason.value.replace("_", " ")
+            if snapshot.pause_reason
+            else ""
+        )
         state.update(
             f"Queue {snapshot.total_count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             f"{snapshot.mode.value.replace('_', ' ')}"
@@ -277,8 +278,7 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             None,
         )
         selected_waiting = bool(
-            selected is not None
-            and selected.phase is PromptQueueEntryPhase.WAITING
+            selected is not None and selected.phase is PromptQueueEntryPhase.WAITING
         )
         selected_index = self._selected_index()
         edit_button.disabled = not selected_waiting
@@ -291,8 +291,12 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         )
         remove_button.disabled = not selected_waiting
         clear_button.disabled = snapshot.waiting_count == 0
-        retry_failed.disabled = snapshot.pause_reason is not PromptQueuePauseReason.FAILED
-        retry_stopped.disabled = snapshot.pause_reason is not PromptQueuePauseReason.STOPPED
+        retry_failed.disabled = (
+            snapshot.pause_reason is not PromptQueuePauseReason.FAILED
+        )
+        retry_stopped.disabled = (
+            snapshot.pause_reason is not PromptQueuePauseReason.STOPPED
+        )
         resume_next.disabled = snapshot.pause_reason not in {
             PromptQueuePauseReason.FAILED,
             PromptQueuePauseReason.STOPPED,
@@ -363,7 +367,10 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
         feedback.set_class(warning, "-warning")
 
     def _accept_mutation(self, result: PromptQueueMutationResult) -> bool:
-        if result.status in {QueueMutationStatus.APPLIED, QueueMutationStatus.UNCHANGED}:
+        if result.status in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }:
             self._show_feedback("")
             self._apply_snapshot(result.snapshot, force=True)
             return True
@@ -372,7 +379,8 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             QueueMutationStatus.STALE_REVISION: "Queue changed. Review it and try again.",
             QueueMutationStatus.LOCKED: "Starting prompts cannot be changed.",
             QueueMutationStatus.NOT_FOUND: "That prompt is no longer queued.",
-            QueueMutationStatus.INVALID: result.detail or "That queue action is unavailable.",
+            QueueMutationStatus.INVALID: result.detail
+            or "That queue action is unavailable.",
         }.get(result.status, result.detail or "Queue action refused.")
         self._show_feedback(copy, warning=True)
         return False
@@ -476,18 +484,12 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
                 "console-prompt-queue-retry-stopped": "retry-stopped",
                 "console-prompt-queue-use-context": "use-current-context",
             }[button_id]
-            self.run_worker(
-                self._recover(action), group="console-prompt-queue-modal"
-            )
+            self.run_worker(self._recover(action), group="console-prompt-queue-modal")
         elif button_id == "console-prompt-queue-review-context":
             event.stop()
-            baseline, current = self._queue_controller.context_review(
-                self.session_id
-            )
+            baseline, current = self._queue_controller.context_review(self.session_id)
             self._reviewed_context_epoch = current
-            self.query_one(
-                "#console-prompt-queue-use-context", Button
-            ).disabled = False
+            self.query_one("#console-prompt-queue-use-context", Button).disabled = False
             self._show_feedback(
                 f"Context review: queued baseline {baseline}; current {current}. "
                 "Use current now adopts that reviewed version."
@@ -542,7 +544,9 @@ class ConsolePromptQueueModal(SafeModalDismissMixin, ModalScreen[None]):
             expected_revision=self._revision,
         )
         if result.status is not QueueMutationStatus.APPLIED or result.text is None:
-            self._apply_snapshot(self._queue_controller.snapshot(self.session_id), force=True)
+            self._apply_snapshot(
+                self._queue_controller.snapshot(self.session_id), force=True
+            )
             self._show_feedback(
                 "That prompt changed before editing. Review the queue and try again.",
                 warning=True,

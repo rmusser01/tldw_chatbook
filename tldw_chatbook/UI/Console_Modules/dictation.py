@@ -266,6 +266,7 @@ def _voice_command_chip_ack(name: str) -> str:
         return "¶"
     return name.replace("-", " ")
 
+
 def _join_segments(segments: list[str]) -> str:
     """Join transcript segments with single spaces, without padding breaks.
 
@@ -295,6 +296,7 @@ def _join_segments(segments: list[str]) -> str:
         else:
             out += segment
     return out
+
 
 class ConsoleStreamingDictationSession:
     """Drive `ConsoleVoiceInputController` through the one-shot session port.
@@ -420,7 +422,8 @@ class ConsoleStreamingDictationSession:
         """Retain installed processors even after the voice owner releases them."""
         with self._lock:
             self._maintenance_services = [
-                service for service in self._maintenance_services
+                service
+                for service in self._maintenance_services
                 if not service.maintenance_ready
             ]
             return not self._maintenance_services
@@ -876,19 +879,22 @@ class ConsoleDictationController:
         """Wait for recording/retry state and native/UI publication tails."""
         if (
             self._console_dictation_state != "idle"
-            or self._maintenance_calls or self._maintenance_native
+            or self._maintenance_calls
+            or self._maintenance_native
         ):
             return False
         session = self._console_dictation_session
         self._maintenance_sessions = {
-            candidate for candidate in self._maintenance_sessions
+            candidate
+            for candidate in self._maintenance_sessions
             if not candidate.maintenance_ready
         }
         with self._maintenance_lock:
             pending_events = bool(self._maintenance_events)
         return not (
             (session is not None and session.retry_available)
-            or pending_events or self._maintenance_sessions
+            or pending_events
+            or self._maintenance_sessions
         )
 
     async def maintenance_drain(self, deadline: float) -> bool:
@@ -1093,7 +1099,6 @@ class ConsoleDictationController:
         if composer is not None:
             composer.sync_dictation_state(state)
 
-
     def _release_buddy_listening(self) -> None:
         """Release this capture's exact voice lease, even after context changes."""
         lease, self._buddy_listening = self._buddy_listening, None
@@ -1103,7 +1108,9 @@ class ConsoleDictationController:
 
         sink, owner = lease
         sink.publish(
-            BuddyLifecycleEvent(source="voice", owner=owner, state="idle", terminal=True)
+            BuddyLifecycleEvent(
+                source="voice", owner=owner, state="idle", terminal=True
+            )
         )
 
     def _sync_console_dictation_availability(self) -> None:
@@ -1154,13 +1161,11 @@ class ConsoleDictationController:
             tooltip="" if availability.ok else availability.remedy,
         )
 
-
     def _cancel_console_dictation_timer(self) -> None:
         timer = self._console_dictation_timer
         self._console_dictation_timer = None
         if timer is not None:
             timer.stop()
-
 
     def _cancel_console_dictation_elapsed_timer(self) -> None:
         """Stop the chip's 1 s elapsed-time ticker if one is running."""
@@ -1169,13 +1174,11 @@ class ConsoleDictationController:
         if timer is not None:
             timer.stop()
 
-
     def _tick_console_dictation_elapsed(self) -> None:
         """Advance the voice chip's elapsed-time display by one second."""
         composer = self._console_composer_or_none()
         if composer is not None:
             composer.tick_voice_elapsed()
-
 
     def _notify_console_dictation_error(self, exc: Exception) -> None:
         """Return dictation to idle and show its actionable failure."""
@@ -1225,7 +1228,6 @@ class ConsoleDictationController:
         logger.warning("Console dictation failed: {}", exc)
         self.app_instance.notify(reason, severity="error")
         self._speak_status(reason)
-
 
     def _emit_console_dictation_event(self, session: Any, event: Any) -> None:
         """Hand a controller event to the UI thread. Safe from any thread.
@@ -1316,7 +1318,10 @@ class ConsoleDictationController:
             # exist at all (a resume latch armed for a blank segment would
             # otherwise never be consumed, and would incorrectly swallow the
             # NEXT real segment's `VoiceFinal`/countdown).
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
+            if (
+                self._console_dictation_state == "recording"
+                and self._console_hands_free is not None
+            ):
                 self._console_hands_free.controller.on_segment_no_final()
             return
         if isinstance(event, VoiceFinal):
@@ -1331,7 +1336,10 @@ class ConsoleDictationController:
             # final that drains after THIS capture already ended (e.g. the
             # wall-clock/buffer limit beat the recognizer to it) must not
             # arm a countdown for a turn that is no longer live.
-            if self._console_dictation_state == "recording" and self._console_hands_free is not None:
+            if (
+                self._console_dictation_state == "recording"
+                and self._console_hands_free is not None
+            ):
                 self._console_hands_free.controller.on_voice_final()
             return
         if isinstance(event, VoiceCommand):
@@ -1489,7 +1497,9 @@ class ConsoleDictationController:
             if composer is not None:
                 # The composer *holds* this, so an unrelated control-bar
                 # refresh cannot wipe it mid-download.
-                composer.set_voice_preparing_message(f"{resolve_glyph(GLYPH_VOICE_WORKING)} {event.message}")
+                composer.set_voice_preparing_message(
+                    f"{resolve_glyph(GLYPH_VOICE_WORKING)} {event.message}"
+                )
             # The chip is 42 cells and one row; the full explanation would be
             # cut mid-sentence there, taking the duration warning with it. Send
             # it somewhere with room, once.
@@ -1604,7 +1614,6 @@ class ConsoleDictationController:
                 self.app_instance.notify(VAD_UNAVAILABLE_MESSAGE, severity="warning")
             return
 
-
     def _on_console_dictation_buffer_limit(self, session: Any) -> None:
         """Marshal a recorder-thread memory-limit signal onto the UI thread.
 
@@ -1636,7 +1645,6 @@ class ConsoleDictationController:
             # signal must not stop whatever is recording now.
             return
         self._handle_console_dictation_limit()
-
 
     def _handle_console_dictation_limit(self) -> None:
         """Stop and transcribe when the wall-clock or memory bound is reached."""
@@ -1671,7 +1679,6 @@ class ConsoleDictationController:
                 sample_width=CONSOLE_DICTATION_SAMPLE_WIDTH,
             ),
         )
-
 
     async def _start_console_dictation(self) -> None:
         """Retain the admitted worker through its final UI publication."""
@@ -1787,7 +1794,6 @@ class ConsoleDictationController:
                 insertion += " "
         return insertion
 
-
     def _insert_console_dictation(
         self,
         *,
@@ -1839,7 +1845,6 @@ class ConsoleDictationController:
                 severity="warning",
             )
 
-
     async def _stop_console_dictation(self, session: Any) -> None:
         """Retain the admitted worker through its final UI publication."""
         self._maintenance_calls += 1
@@ -1873,7 +1878,9 @@ class ConsoleDictationController:
             logger.debug("Console dictation stop skipped; the capture was torn down")
             return
         try:
-            transcript = await self._maintenance_native_call(session.stop_and_transcribe)
+            transcript = await self._maintenance_native_call(
+                session.stop_and_transcribe
+            )
         except Exception as exc:
             if not session.retry_available:
                 await self._maintenance_native_call(session.discard)
@@ -2022,7 +2029,6 @@ class ConsoleDictationController:
             exit_on_error=False,
         )
 
-
     async def _discard_console_dictation_session(self, session: Any) -> None:
         """Retain the admitted worker through its final UI publication."""
         self._maintenance_calls += 1
@@ -2055,7 +2061,6 @@ class ConsoleDictationController:
         # the caller talks straight into a still-open mic. Its check is still
         # what refuses if the user has opened a NEW capture in the meantime.
         self._speak_status("Discarded.")
-
 
     def _request_console_dictation_cancel(self) -> None:
         """Abandon a capture that is `starting` or `recording`, without waiting.
@@ -2125,7 +2130,6 @@ class ConsoleDictationController:
         if session is None:
             # Nothing to release, so nothing to wait for.
             self._speak_status("Discarded.")
-
 
     def _request_console_dictation_start(self) -> None:
         if self._maintenance_paused:

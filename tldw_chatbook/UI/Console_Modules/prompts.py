@@ -642,16 +642,12 @@ class _ConsolePromptImprovementFlow:
                     or "Prompt improvement could not resolve the current provider "
                     "target. Review Console provider settings and reopen Improve."
                 ),
-                unavailable_recovery=(
-                    "draft" if projection_blocker else "provider"
-                ),
+                unavailable_recovery=("draft" if projection_blocker else "provider"),
             )
         resolved_target = (
             str(getattr(resolution, "provider", "") or ""),
             str(getattr(resolution, "model", "") or ""),
-            normalize_generic_endpoint_for_compare(
-                getattr(resolution, "base_url", "")
-            ),
+            normalize_generic_endpoint_for_compare(getattr(resolution, "base_url", "")),
         )
         if any(
             expected and expected != actual
