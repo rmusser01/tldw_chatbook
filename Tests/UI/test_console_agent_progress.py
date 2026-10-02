@@ -7,6 +7,7 @@ import pytest
 from textual.app import App
 from textual.widgets import Button, SelectionList
 
+from Tests.private_profile import private_profile_test
 from Tests.UI.consolidated_css import APP_STYLESHEETS
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
     ConsoleHarness,
@@ -382,8 +383,9 @@ async def test_console_progress_navigation_pruned_access_and_actual_paint(
 
 
 @pytest.mark.asyncio
+@private_profile_test
 async def test_real_live_report_save_preserves_open_selection_and_navigation(
-    tmp_path, monkeypatch
+    tmp_path, request, monkeypatch
 ):
     import asyncio
     import threading

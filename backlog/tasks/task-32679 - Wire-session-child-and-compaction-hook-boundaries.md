@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 18:29'
+updated_date: '2026-10-02 18:56'
 labels:
   - plugins
   - implementation
@@ -28,7 +28,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 SessionStart uses cancellable provisional admission and publishes dependent capabilities/context only after controlling requirements succeed; tab focus and package inspection emit no session events.
-- [ ] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
+- [x] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
 - [x] #3 PreCompact supplies required compactor input and PostCompact fences subsequent input after committed summaries; runtime context blocks are reassembled without duplication.
 - [x] #4 Manual-only UserPromptSubmit, idle hook-set replacement, SessionEnd, required-context failures and independent component success are covered at actual Console and agent boundaries.
 - [x] #5 Enabled standalone v2 definitions appear in Console review and canonical Settings, require exact persistent consent before execution, and changed or revoked definitions cannot bypass that consent at session admission, launch, or effect acceptance.
@@ -80,4 +80,6 @@ PR #2946 current-dev integration onto 6958e8dfa9 replays all 31 patches identica
 PR #2946 integrates independently merged review-Send repair dev 30ca4552b3: 32/33 patches replay identically; only testing-lesson append context changes and both incidents remain. Eight upstream owners and ten screen/modal method ASTs are exact. All 21 formerly frozen Send cases pass as ordinary tests, mounted legacy/v2 review passes 12, canonical Settings ten and affected boot/CSS five, clearing the concrete runtime-freeze merge gate. Consent/admission/W003 passes 168 with two unchanged checker recall xfails. Twenty-eight draft fixture setup failures reproduce on immutable dev; the existing admitted-profile module marker preserves all test bodies/assertions. The complete corrected file is 27 pass/three fail; an unchanged immutable-dev run with the same marker arrangement independently reproduces those three failures, which remain explicit unsuppressed baseline exclusions. All eleven artifact commands, 199 Python parses, changed-range formatting and whitespace pass, with no added inherited lint/format diagnostics or raised budgets. Existing ADR-163/197/210 apply; no new ADR or duplicated production repair. Detailed evidence and historical limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Fresh exact-head hosted checks, Qodo and independently read current dev remain the final normal-merge gate, handled by the approved heartbeat.
 
 Final independent pre-push check caught dev advancing to 52620c3a08 (merged PR #2920 / TASK-33560). All 35 patches replay identically; both maintenance owners and eight repair owners remain byte-exact, with ten screen/modal ASTs exact. The complete native-poll and ordinary review-Send files pass 30 cases (nine maintenance, 21 formerly frozen routes), with no skips/xfails. All eleven artifact checks, 199 Python parses and whitespace pass without raised budgets. Earlier qualification and independently reproduced baseline exclusions remain explicit in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Existing ADR-126/163/197/210 apply; no new ADR or production changes. Fresh published-head CI/Qodo and independently read live dev remain required before normal merge, continued by the approved heartbeat.
+
+October2 retained-child admission correction: a real child completed and resumed under a new parent while the original path emitted only one SubagentStart; a required deny also incorrectly admitted the resumed row/provider. Reused the existing initialization block at both spawn/resume before physical admission, with exact child endpoint, scope bodies, narrowed config/tool IDs, budget caps, existing refusal slot refund and finally scope close. Root regressions and independent immutable19-case runtime review approve3d14b4a. Real v2 session admission/cancellation and four actual automatic-wake refusal/refund/retry probes pass. Supplemental mounted test correction changes only private profile setup; runtime bytes remain approved. Existing ADR163/162/199, no new owner/contract. AC2 satisfied. Exact-session SessionEnd control succeeds; granted standalone host-disposal notification remains a separate reproduced upstream permission-lifecycle limitation and is not claimed fixed.
 <!-- SECTION:NOTES:END -->

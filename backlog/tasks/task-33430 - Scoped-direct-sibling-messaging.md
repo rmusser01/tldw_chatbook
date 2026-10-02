@@ -1,11 +1,11 @@
 ---
 id: TASK-33430
 title: Scoped direct sibling messaging
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 18:29'
+updated_date: '2026-10-02 18:56'
 labels:
   - agents
   - console
@@ -20,10 +20,10 @@ Allow live sibling agents to exchange bounded untrusted messages within their ex
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Children can discover and message only live siblings under the exact current parent, coordinator and chain; self, foreign, terminal and revoked targets refuse.
+- [x] #1 Children can discover and message only live siblings under the exact current parent, coordinator and chain; self, foreign, terminal and revoked targets refuse.
 - [x] #2 Peer delivery reuses bounded steering and shares the child reporting allowance; delivery receipts distinguish queued from consumed.
 - [x] #3 Message bodies never appear in step summaries or run logs; catalog anti-forgery, cancellation and existing budgets remain enforced.
-- [ ] #4 Targeted runtime and coordinator tests prove delivery, drain ordering, queue limits, ownership replacement and privacy.
+- [x] #4 Targeted runtime and coordinator tests prove delivery, drain ordering, queue limits, ownership replacement and privacy.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -66,4 +66,6 @@ October 1 CI/integration closeout: preserved the exact runtime inventory asserti
 October 1 Qodo review: inspect the public send contract and strict tool argument boundary, complete Google-style peer API docs and use the installed Pydantic boundary pattern without weakening exact shape, no-coercion, content-free refusal or existing allowance validation. Existing ADR-199; no new contract or dependency.
 
 October 1 Qodo follow-up complete: PeerMessenger list/send now document receipts, exact inputs and refusal conditions. The private strict Pydantic peer-argument model reuses the existing exact-type/nonblank/control/Unicode/length validator and preserves fixed error codes; exact shape and all capability/allowance custody checks remain intact. The strengthened existing invalid-argument test proves malformed payloads never reach the capability (RED: 6 failed / 2 passed, GREEN: 8 passed). The affected peer/inventory/fallback selection passes 88 cases in 49.27s. Boot imports 679/686 and UI-ready census 1031/1033 pass, proving no startup-budget increase. Independent peer privacy, actual delivery, shared final-slot allowance and lazy-import selection passes 12; final reviewer approves all reviewed changes with 22 focused checks. Final 76 changed Python/10new full-file lint+format qualification and diagnostic guard pass. Existing ADR-199; no new dependency or architecture. Done.
+
+October2 expanded-hooks integration: prospective SubagentStart runtime planning now includes eligible peer tools under the existing fleet/noninline boundary. The existing child initialization block is shared with retained resume, before row/thread/provider admission; selected hook IDs still narrow every report/read/peer tool. Real pass-only hook delivery and empty-tool retained-resume controls, exact private metadata and required refusal pass. Root8child cases are included in10repair checks17.73s; immutable independent19-case review49.50s approves3d14b4a. Existing ADR199/163; no new owner, permission, budget or dependency. All affected criteria satisfied.
 <!-- SECTION:NOTES:END -->
