@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 21:51'
+updated_date: '2026-10-02 22:23'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -39,6 +39,17 @@ Reason: preserve incoming PR2962 implementation of the same accepted lazy-import
 2. Retain incoming three deferred imports, legitimate module mock seam and complete new lesson, composing our shared hook/readiness/queue/publication repairs without broad source replacement. Compare all source bytes and exact changed methods.
 3. Qualify affected actual Resend/slow-preflight/readiness/media consumers and unchanged original budgets proportionately; obtain focused immutable review. Current budget subprocesses already force PYTHONPATH to their exact REPO_ROOT and are unchanged.
 4. Record exact source and evidence; recheck AC3 and close through CLI, then publish once observed003 lease with fresh-head Qodo/four jobs and normal protected merge.
+
+Required PERF-07 integration qualification, after all four published-head checks passed:
+ADR required: no
+ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md; backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
+Reason: preserve landed ADR-126 D2 path memo and existing config/recovery owners; no new caching, schema, permission or runtime decision.
+1. Preserve completed 84b8 CI and exact-head Qodo evidence; live strict protection requires the update to dev ecc0a531c855bc9e80906bff90180fd2045f7159 (PR2924/TASK33266).
+2. Read incoming task, D2 corollary and config/sensitive-path/bundle callers. Incoming eight files have no direct patch or reviewed-source overlap. Capture exact source manifests, then rebase while preserving both sides.
+3. Prove every reviewed Python/CSS file unchanged and incoming config/profile/sensitive-path/bundle sources byte-exact. Qualify incoming real private-profile memo invalidation/refusal, existing sensitive-path consumers and bundle fail-closed behavior.
+4. Run focused real replay readiness, saved-close, wake/refund/nonreplay/config consumers; obtain independent immutable config/recovery and runtime review. Leave incoming TASK33266 status as shipped and separate open work untouched.
+5. After reviewers/runtime checks finish, run the original five budget cases unchanged, plus fatal/added-line/new-file static, CSS and affected artifact/task guards. Retain non-green evidence and original limits.
+6. Close this requalification through CLI only after evidence; documentation-only closure preserves approved bytes. Publish once with exact observed84b8 lease, then require fresh exact-head Qodo/all four CI jobs and normal protected merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
