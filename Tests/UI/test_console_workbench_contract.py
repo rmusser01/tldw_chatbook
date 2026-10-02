@@ -41,6 +41,7 @@ from tldw_chatbook.Widgets.Console.console_workbench_state import (
     build_console_workbench_state,
 )
 
+
 class ConsoleHarness(ConsolidatedCSSApp):
     def __init__(self, app_instance):
         super().__init__()
@@ -512,8 +513,7 @@ async def test_console_approvals_chip_activation_focuses_the_decision_not_submit
 
         focused = host.focused
         assert getattr(focused, "id", None) != "approval-submit", (
-            "focus landed on the commit control: Enter would approve an "
-            "unread call"
+            "focus landed on the commit control: Enter would approve an unread call"
         )
         assert "approval-row-decision" in getattr(focused, "classes", set()), (
             f"expected the row's decision Select, got {focused!r}"
@@ -648,7 +648,9 @@ async def test_composer_menu_opens_current_draft_directly_in_recommended_review(
 
 
 @pytest.mark.asyncio
-async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable() -> None:
+async def test_direct_improve_keeps_provider_recovery_when_review_is_unavailable() -> (
+    None
+):
     """Direct entry must not strand users beside disabled model actions."""
     app = _build_test_app()
     _configure_native_ready_console(app)
@@ -1001,9 +1003,7 @@ async def test_console_composer_keeps_disabled_reason_outside_input_row():
         assert visible_draft.region.width >= 20
         assert actions.region.y == send.region.y
         assert visible_draft.region.x < actions.region.x
-        assert (
-            visible_draft.region.x + visible_draft.region.width <= reason.region.x
-        )
+        assert visible_draft.region.x + visible_draft.region.width <= reason.region.x
         assert reason.region.x + reason.region.width <= actions.region.x + 1
         assert "api key" in (send.tooltip or "").lower()
         assert "nowrap" in str(reason.styles.text_wrap)
@@ -2007,7 +2007,10 @@ async def test_console_header_carries_inline_class_and_dash_subtitle():
         await _wait_for_selector(console, pilot, "#console-workbench-header")
         header = console.query_one("#console-workbench-header")
         assert header.has_class("console-header-inline")
-        assert _widget_text(console.query_one("#workbench-header-title")).strip() == "Console"
+        assert (
+            _widget_text(console.query_one("#workbench-header-title")).strip()
+            == "Console"
+        )
         subtitle = _widget_text(console.query_one("#workbench-header-subtitle"))
         assert subtitle.lstrip().startswith("—")
         assert "source handoffs" in subtitle
@@ -2020,6 +2023,7 @@ async def test_console_header_inline_css_renders_single_row():
 
     class _HeaderApp(ConsolidatedCSSApp):
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(
@@ -2050,6 +2054,7 @@ async def test_console_header_inline_subtitle_ellipsizes_when_narrow():
 
     class _NarrowHeaderApp(ConsolidatedCSSApp):
         CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
         def compose(self) -> ComposeResult:
             yield DestinationHeader(
                 WorkbenchHeaderState(

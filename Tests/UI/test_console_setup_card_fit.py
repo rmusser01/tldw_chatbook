@@ -203,9 +203,7 @@ async def test_step_three_wraps_onto_a_second_row_on_a_narrow_terminal():
         # how much text wraps -- the second row growing in is the geometry
         # proof that overflow is now handled by wrapping, not by clipping.
         assert step3.size.height >= 2
-        rendered_rows = [
-            step3.render_line(y).text for y in range(step3.size.height)
-        ]
+        rendered_rows = [step3.render_line(y).text for y in range(step3.size.height)]
         combined = " ".join(row.strip() for row in rendered_rows if row.strip())
         for word in (
             "Send",

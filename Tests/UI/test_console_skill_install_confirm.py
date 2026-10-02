@@ -66,7 +66,9 @@ async def test_confirm_round_trip_allow():
         )
 
     task = asyncio.create_task(
-        asyncio.to_thread(controller.request_skill_install_confirm, "https://github.com/o/r")
+        asyncio.to_thread(
+            controller.request_skill_install_confirm, "https://github.com/o/r"
+        )
     )
     try:
         await resolve_soon()
@@ -175,9 +177,7 @@ def test_unrelated_session_stop_does_not_deny():
 
     threading.Thread(target=_stop_unrelated_soon).start()
     threading.Thread(target=_resolve_soon).start()
-    allowed = controller.request_skill_install_confirm(
-        "https://x/y", session_id=owning
-    )
+    allowed = controller.request_skill_install_confirm("https://x/y", session_id=owning)
 
     assert allowed is True
 
@@ -440,13 +440,18 @@ async def test_skill_install_card_allow_and_deny():
         await pilot.pause()
         assert card.display is True
         from textual.widgets import Static
+
         url_text = str(app.query_one("#skill-install-url", Static).render())
         assert "[bold]" in url_text  # not interpreted as markup
         app.query_one("#skill-install-allow", Button).press()
         await pilot.pause()
         assert app.decided == [(True, "round-1")]
         card.set_install(
-            {"url": "https://github.com/o/r", "timeout_seconds": 120.0, "request_id": "round-2"}
+            {
+                "url": "https://github.com/o/r",
+                "timeout_seconds": 120.0,
+                "request_id": "round-2",
+            }
         )
         await pilot.pause()
         app.query_one("#skill-install-deny", Button).press()
@@ -569,8 +574,7 @@ async def test_restored_pending_install_never_mounts_an_actionable_card_through_
         # An unrelated resume field from the SAME snapshot must still survive
         # the restore -- the drop is scoped to the two skill-confirm fields.
         assert (
-            console._task_resume_state.summary
-            == "Restored summary text should survive"
+            console._task_resume_state.summary == "Restored summary text should survive"
         )
         assert "Restored summary text should survive" in _visible_text(console)
 

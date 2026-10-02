@@ -37,7 +37,9 @@ from tldw_chatbook.Agents.run_context import current_run_id, use_run_id
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunMarker
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
-from tldw_chatbook.Chat.console_display_state import CONSOLE_INSPECTOR_NO_APPROVAL_REASON
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+)
 from tldw_chatbook.MCP.permission_store import EffectiveToolState
 from tldw_chatbook.UI.Screens.chat_screen import CONSOLE_WORKBENCH_SHORTCUTS, ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
@@ -1122,7 +1124,10 @@ async def test_two_option_save_row_renders_once_and_deny_only():
         select = app.query_one(".approval-row-decision", Select)
         assert [value for _label, value in select._options] == ["approve_once", "deny"]
         assert select.value == "approve_once"
-        assert str(app.query_one(".approval-row-fast-approve", Button).label) == "Approve once"
+        assert (
+            str(app.query_one(".approval-row-fast-approve", Button).label)
+            == "Approve once"
+        )
         assert str(app.query_one(".approval-row-fast-deny", Button).label) == "Deny"
 
         app.query_one("#approval-submit", Button).press()
@@ -1435,9 +1440,7 @@ class _ControllerCardsHarness(ConsolidatedCSSApp):
 async def test_descriptor_effects_reach_the_mounted_production_approval_card(tmp_path):
     """A controller-marshaled local descriptor reaches the real card unchanged."""
     app = _ControllerCardsHarness()
-    assert _BUNDLED_STYLESHEET.resolve() in {
-        path.resolve() for path in app.css_path
-    }
+    assert _BUNDLED_STYLESHEET.resolve() in {path.resolve() for path in app.css_path}
     async with app.run_test(size=(200, 40)) as pilot:
         cards = app.query_one(ChatTaskCards)
         gate = LocalToolProvider(
@@ -1620,9 +1623,7 @@ async def test_approved_definitive_tool_stays_mounted_until_real_terminal(
         assert entered.wait(2), "approved handler never started"
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
-            if _text(card.query_one("#approval-title", Static)).startswith(
-                "Finishing"
-            ):
+            if _text(card.query_one("#approval-title", Static)).startswith("Finishing"):
                 break
             await pilot.pause(0.05)
         else:
@@ -1748,9 +1749,7 @@ def test_run_terminal_sweeps_approved_undispatched_row_after_base_exception(
         service.run_turn(
             conversation_id="conversation",
             messages=[{"role": "user", "content": "go"}],
-            config=AgentConfig(
-                model="test", system_prompt="s", allowed_tools=()
-            ),
+            config=AgentConfig(model="test", system_prompt="s", allowed_tools=()),
             api_endpoint="openai",
         )
 
@@ -1814,9 +1813,7 @@ def test_local_same_name_finishing_rows_complete_by_call_id_out_of_order(tmp_pat
         str(row.get("call_id") or row["llm_name"]): "approve_once"
         for row in payload_calls
     }
-    controller.resolve_pending_approval(
-        decisions, round_id=str(payload["round_id"])
-    )
+    controller.resolve_pending_approval(decisions, round_id=str(payload["round_id"]))
     worker.join(2)
     assert not worker.is_alive()
 
@@ -2757,8 +2754,7 @@ def test_request_mcp_approvals_parks_for_a_non_active_session():
     assert _wait_until(lambda: bool(app.notifications))
 
     assert app.notifications == [
-        "A Console session needs approval to use a tool. "
-        "Return to Console to respond."
+        "A Console session needs approval to use a tool. Return to Console to respond."
     ]
     assert mounted == []  # never mounted -- the active session's card is untouched
     assert background in controller._pending_approvals
@@ -2929,9 +2925,7 @@ def test_request_mcp_approvals_other_sessions_cancel_event_does_not_deny_this_ro
         for round_id, state in controller._pending_approval_rounds.items()
         if state.get("session_id") == session_b
     )
-    controller.resolve_pending_approval(
-        {"mcp__srv__tool": "deny"}, round_id=round_id
-    )
+    controller.resolve_pending_approval({"mcp__srv__tool": "deny"}, round_id=round_id)
     worker.join(timeout=2)
 
     assert not worker.is_alive()
@@ -4852,6 +4846,8 @@ def test_a_no_app_round_does_not_record_a_user_denial_on_the_mcp_hook():
 
     assert verdicts["call-1"] == USER_DENIED_REFUSAL.format(name="mcp__srv__tool")
     assert denials == [], "a headless fail-closed deny was audited as the user's"
+
+
 @pytest.mark.asyncio
 async def test_the_approval_route_reaches_a_pending_skill_install_card():
     """Qodo #5: the ◆ marker and the Alt+A / Review-approval route cover ALL
@@ -4869,9 +4865,7 @@ async def test_the_approval_route_reaches_a_pending_skill_install_card():
     the controller's next projection tick clears the pending payload again.
     """
     app = _build_test_app()
-    with patch_app_global(
-        "get_cli_setting", side_effect=_settings_without_splash
-    ):
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=(200, 40)) as pilot:
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
@@ -4906,7 +4900,10 @@ async def test_the_approval_route_reaches_a_pending_skill_install_card():
             assert screen._console_pending_approval_count() == 0
 
             assert screen._route_console_pending_approval_focus() is True
-            assert (CONSOLE_INSPECTOR_NO_APPROVAL_REASON, "warning") not in notifications
+            assert (
+                CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
+                "warning",
+            ) not in notifications
 
 
 @pytest.mark.asyncio
@@ -4915,9 +4912,7 @@ async def test_a_route_with_nothing_pending_can_decline_to_warn():
     ordinary tab press, not warn -- so the shared route takes
     `notify_missing=False` and reports whether it focused anything."""
     app = _build_test_app()
-    with patch_app_global(
-        "get_cli_setting", side_effect=_settings_without_splash
-    ):
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=(200, 40)) as pilot:
             deadline = time.monotonic() + 10.0
             while time.monotonic() < deadline:
@@ -4933,9 +4928,10 @@ async def test_a_route_with_nothing_pending_can_decline_to_warn():
                 (str(message), kwargs.get("severity"))
             )
 
-            assert screen._route_console_pending_approval_focus(
-                notify_missing=False
-            ) is False
+            assert (
+                screen._route_console_pending_approval_focus(notify_missing=False)
+                is False
+            )
             assert notifications == []
 
             # The default still warns -- the inspector button and Alt+A rely
