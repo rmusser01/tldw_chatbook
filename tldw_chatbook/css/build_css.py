@@ -379,9 +379,10 @@ AGENTIC_SPLIT_SHEETS = {
 #: Split sheets a MODAL screen loads through its own ``CSS_PATH`` on first
 #: open (sheet -> ``(module, class)`` of that modal), as opposed to the
 #: route-loaded sheets in ``TldwCli._SCREEN_OWNED_ROUTE_CSS``. Reserved for
-#: rarely opened modals whose rules must not ride the boot parse (ADR-097:
-#: "a rarely-opened modal's large sheet does not need to ride the boot
-#: bundle"); each adds one stylesheet source, parsed only once the modal
+#: rarely opened modals whose rules must not ride the boot parse (ADR-097's
+#: "defer the cost"; Tests/Performance/test_boot_css_byte_budget.py: "a
+#: rarely-opened modal's large sheet does not need to ride the boot bundle");
+#: each adds one stylesheet source, parsed only once the modal
 #: opens, so keep this list short (the LRUCache(64) note above).
 MODAL_OWNED_SPLIT_SHEETS: dict[str, tuple[str, str]] = {
     "screen_modal_console_delete_receipt.tcss": (
