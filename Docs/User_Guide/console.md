@@ -548,7 +548,9 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key or endpoint field in
-  focus. Keys are only ever entered in Settings.
+  focus. Keys are only ever entered in Settings. A local server that refused
+  or timed out is listed first and reads "start it; rechecked on open": the
+  fix is outside the app, so **Enter** on it only repeats that hint.
 
 Each row shows the model, the provider's name, its context size (`~` marks
 an estimate), readiness and last use. Readiness comes from your
@@ -557,6 +559,14 @@ session, in the same words as the rest of the Console: "Ready · not tested",
 "Ready · reachable 14:01" once a local server's model listing answered,
 "Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
 key" (or another reason, such as "refused :9099" after a refused test).
+Opening the list also checks, in the background, each local server it lists
+that needs no key and runs on this computer or a private-network address
+(llama.cpp, Ollama, vLLM and the like): at most three at a time, each with
+the same short timeout as **Test connection**, and a result under 10 seconds
+old is reused. The list opens and takes keys at once; the words change as
+the answers come in, and a stopped server's "refused" reaches this chat's
+status too. Cloud providers, a server on a public address or host name, and
+any endpoint that would send a key are never contacted automatically.
 Typing filters every provider's saved and cached models in memory and
 highlights the best match; it never starts a model listing or a network
 call. A model id that no list has appears under **TYPED MODEL ID**

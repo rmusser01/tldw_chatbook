@@ -162,6 +162,41 @@ def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, reques
 
 
 @pytest.fixture(autouse=True)
+def _no_switcher_local_probes(monkeypatch, request, _disable_model_catalog_refresh):
+    """Keep Switch model's local-server probe off the network (TASK-33005.5).
+
+    Incident: opening Switch model (Alt+M) on a mounted Console now probes
+    each keyless local server it lists. The default test profile lists
+    llama.cpp, Ollama, vLLM, Aphrodite and the custom slots on loopback, so
+    the egress guard failed 15 Alt+M tests at teardown (``socket.connect ->
+    127.0.0.1:9099``, ``::1:11434``, ...). The probe itself is covered by
+    ``test_console_switcher_local_probe.py``, which stubs the network under
+    it; a test that needs the real seam patches ``switcher_connection_prober``
+    back in its own scope. Skipped in a private-profile parent for the same
+    reason as ``_disable_model_catalog_refresh``, and in harnesses that never
+    import the app (they override that fixture), where the import below would
+    bind config they keep unbound.
+    """
+    import sys
+
+    from Tests.private_profile import is_private_profile_child
+
+    if "tldw_chatbook.app" not in sys.modules or (
+        getattr(request.function, "_private_profile_test", False)
+        and not is_private_profile_child(request)
+    ):
+        return
+
+    async def _no_probe(_targets, _settled) -> None:
+        return None
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Console_Modules.connection_probe.switcher_connection_prober",
+        lambda _app, _app_config: _no_probe,
+    )
+
+
+@pytest.fixture(autouse=True)
 def _no_tiktoken_bpe_download(monkeypatch):
     """Keep UI token counting off tiktoken's BPE download seam (TASK-21590).
 

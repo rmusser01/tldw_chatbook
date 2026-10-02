@@ -11846,13 +11846,11 @@ class ChatScreen(BaseAppScreen):
         # revision bump, so gating on the revision alone would leave the send
         # controls stale; both signals stay in the snapshot.
         with self._console_derivation_scope():
+            # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
+            # before the build: a switcher probe settles off-thread mid-build.
+            version = getattr(shared_connection_evidence(lambda: self.app), "version", 0)
             _settings, readiness = self._active_console_settings_readiness()
-            snapshot = (
-                subscription_readiness_revision(),
-                readiness.subscription_status,
-                # TASK-33005.2: a test settled on any surface refreshes once.
-                getattr(shared_connection_evidence(lambda: self.app), "version", 0),
-            )
+            snapshot = (subscription_readiness_revision(), readiness.subscription_status, version)
             if snapshot == self._console_credential_snapshot:
                 return
             self._console_credential_snapshot = snapshot

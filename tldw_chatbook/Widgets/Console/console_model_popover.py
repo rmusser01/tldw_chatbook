@@ -126,7 +126,15 @@ _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
     "configure_endpoint": "Enter: endpoint in Settings",
     "save_endpoint": "Enter: endpoint in Settings",
+    # TASK-33005.5: a server that refused or timed out is fixed outside the
+    # app, so Enter explains in place instead of opening Settings.
+    "retry_connection": "start it; rechecked on open",
 }
+#: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
+#: row cap never hides a stopped local server behind keyless cloud rows.
+_TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
+#: A local probe can change only these rows: Ready, or a failed test.
+_PROBED_BLOCKERS = _TEST_FAILURES | {None}
 
 
 class DraftRebaser(Protocol):
@@ -170,6 +178,11 @@ RecentPairsLoader = Callable[[], Awaitable[Sequence[PairUse]]]
 PreviousPairResolver = Callable[[Sequence[PairUse]], "PairUse | None"]
 CatalogLoader = Callable[[str], Awaitable[Sequence[str]]]
 SetupOpener = Callable[[str, "str | None"], None]
+#: Probes listed providers' local servers (provider -> row model) and calls
+#: back with each provider whose shared evidence settled (TASK-33005.5).
+ConnectionProber = Callable[
+    [Mapping[str, "str | None"], Callable[[str], None]], Awaitable[None]
+]
 
 RowKind = Literal["header", "info", "pair", "setup", "more", "typed"]
 
@@ -427,6 +440,7 @@ class ConsoleModelPopover(
         setup_opener: SetupOpener | None = None,
         pick_only: bool = False,
         query: str = "",
+        connection_prober: ConnectionProber | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -457,6 +471,8 @@ class ConsoleModelPopover(
                 cannot be picked.
             query: Text Find opens with (``/model <query>``); the best match
                 is highlighted, and nothing applies until Enter.
+            connection_prober: The screen's local-server probe, run once per
+                listed provider per open; this widget calls no network.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -478,6 +494,8 @@ class ConsoleModelPopover(
         self._catalog_loader = catalog_loader
         self._setup_opener = setup_opener
         self._pick_only = pick_only
+        self._connection_prober = connection_prober
+        self._probes_offered: set[str] = set()
         settings = initial_draft.settings
         self._chat_settings = settings
         self._streaming = bool(settings.streaming)
@@ -789,12 +807,16 @@ class ConsoleModelPopover(
         models = self._models_for(key)
         return models[0] if models else None
 
-    def _request_readiness(self, providers: Sequence[str]) -> None:
-        """Resolve readiness for providers not yet asked, in one worker."""
+    def _request_readiness(
+        self, providers: Sequence[str], *, refresh: bool = False
+    ) -> None:
+        """Resolve readiness for providers not yet asked (or ``refresh``), in one worker."""
         missing = tuple(
             key
             for key in providers
-            if key and key not in self._readiness and key not in self._readiness_pending
+            if key
+            and (refresh or key not in self._readiness)
+            and key not in self._readiness_pending
         )
         if not missing:
             return
@@ -829,6 +851,29 @@ class ConsoleModelPopover(
         self._rebuild_rows()
         self._sync_find_placeholder()
         self._load_ready_catalogs(tuple(resolved))
+        self._offer_probes(resolved)
+
+    def _offer_probes(self, resolved: Mapping[str, ConsoleSettingsReadiness]) -> None:
+        """Hand rows a probe can change to the screen's probe, once per open."""
+        targets = {
+            key: self._representative_model(key)
+            for key, readiness in resolved.items()
+            if key not in self._probes_offered
+            and readiness.blocker in _PROBED_BLOCKERS
+        }
+        if self._connection_prober is None or not targets or not self.is_attached:
+            return
+        self._probes_offered.update(targets)
+        self.run_worker(
+            self._connection_prober(targets, self.refresh_readiness),
+            group="console-switcher-probes",
+            exit_on_error=False,
+        )
+
+    def refresh_readiness(self, provider: str) -> None:
+        """Re-read one provider's readiness after a probe settled; no network."""
+        if self.is_attached:  # A popped screen stays "mounted".
+            self._request_readiness((provider_key(provider),), refresh=True)
 
     def _sync_find_placeholder(self) -> None:
         for find in self.query("#console-popover-find").results(Input):
@@ -964,7 +1009,7 @@ class ConsoleModelPopover(
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 
     def _visible_providers(self) -> list[str]:
-        """Current provider first, then listing order.
+        """Current provider first, then failed tests, then listing order.
 
         Legacy aliases never get readiness unless used (``_readiness_targets``),
         so they drop out below with every other unresolved provider.
@@ -973,13 +1018,15 @@ class ConsoleModelPopover(
         order = [current] if current else []
         order += [key for key in self._provider_order if key != current]
         order += sorted(self._used_provider_keys() - set(order))
-        return [
-            key
-            for key in order
-            if key == current
-            or getattr(self._readiness.get(key), "blocker", None)
-            != "provider_unsupported"
-        ]
+        blockers = {key: getattr(self._readiness.get(key), "blocker", None) for key in order}
+        return sorted(
+            (
+                key
+                for key in order
+                if key == current or blockers[key] != "provider_unsupported"
+            ),
+            key=lambda key: key != current and blockers[key] not in _TEST_FAILURES,
+        )
 
     def _build_rows(self) -> list[SwitcherRow]:
         query = self._query.strip().casefold()
@@ -1445,6 +1492,12 @@ class ConsoleModelPopover(
             return
         if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
             key = provider_key(row.provider)
+            readiness = self._readiness.get(key)
+            if readiness is not None and readiness.recovery_action == "retry_connection":
+                self._set_error(
+                    f"{self._display(key)} did not answer: start it; rechecked on open."
+                )
+                return
             self._open_setup(key, row.model or self._representative_model(key))
             return
         if row.kind in {"pair", "typed", "setup"} and row.model:

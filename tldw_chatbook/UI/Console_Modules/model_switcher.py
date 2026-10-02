@@ -6,9 +6,10 @@ ADR-095 snapshots of the 50 most recently modified global-scope chats. An open
 chat contributes only through its live session, so a workspace chat appears
 only while it is open. PREVIOUS per chat lives in process memory.
 
-It also opens the switcher (``open_model_switcher``) and routes NEEDS SETUP
-rows to Settings (``open_provider_setup``), so ``chat_screen.py`` keeps one
-line per opener.
+It also opens the switcher (``open_model_switcher``), with its local-server
+probe (``connection_probe``, TASK-33005.5), and routes NEEDS SETUP rows to
+Settings (``open_provider_setup``), so ``chat_screen.py`` keeps one line per
+opener.
 
 ADR-097: import this module lazily from the switcher's openers only; it is not
 on the boot path.
@@ -272,6 +273,7 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     """
     from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
+    from .connection_probe import switcher_connection_prober
 
     if screen._console_setup_modal_blocking():
         return
@@ -286,6 +288,7 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     session = store.switch_session(session_id)
     before = (settings.provider, settings.model)
     providers_models = screen._providers_models()
+    app_config = screen._provider_readiness_app_config()
 
     def commit(submission):  # type: ignore[no-untyped-def]
         live_commit = screen._commit_console_settings_submission_live(submission)
@@ -296,7 +299,7 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     screen.app.push_screen(
         ConsoleModelPopover(
             origin=origin,
-            app_config=screen._provider_readiness_app_config(),
+            app_config=app_config,
             initial_draft=screen._console_settings_initial_draft(
                 settings,
                 store.session_context_policy_overrides(session_id),
@@ -329,6 +332,7 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
                 screen, provider, model
             ),
             query=query.strip(),
+            connection_prober=switcher_connection_prober(screen.app, app_config),
         ),
         callback=screen._apply_console_model_popover_result,
     )

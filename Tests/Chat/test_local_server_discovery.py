@@ -1,5 +1,7 @@
 """Pure local-server discovery tests (task-188) using httpx.MockTransport."""
 
+import errno
+
 import httpx
 import pytest
 
@@ -11,6 +13,7 @@ from tldw_chatbook.Chat.local_server_discovery import (
     DiscoveredLocalServer,
     LocalModelProbeResult,
     build_local_server_candidates,
+    connect_error_is_refused,
     discover_local_servers,
     is_localhost_url,
     model_ids_from_payload,
@@ -71,6 +74,37 @@ def test_model_ids_require_a_usable_sanitized_identifier(
 
 
 # --- candidate building -----------------------------------------------------
+
+
+def _connect_error(*causes: BaseException) -> httpx.ConnectError:
+    """httpx's chain for one connect: ConnectError <- OSError <- per-address."""
+    try:
+        try:
+            try:
+                raise ExceptionGroup("multiple connection attempts failed", list(causes))
+            except ExceptionGroup as group:
+                raise OSError("All connection attempts failed") from group
+        except OSError as os_error:
+            raise httpx.ConnectError("All connection attempts failed") from os_error
+    except httpx.ConnectError as error:
+        return error
+
+
+def test_a_host_name_refused_on_every_address_reads_as_refused() -> None:
+    """TASK-33005.5: ``localhost`` is ::1 and 127.0.0.1, so a stopped server
+    there fails as an ExceptionGroup of per-address refusals (seen live at
+    localhost:2242). It must read "refused :PORT", not "unreachable"."""
+    refused = errno.ECONNREFUSED
+
+    assert connect_error_is_refused(
+        _connect_error(
+            ConnectionRefusedError(refused, "::1"),
+            ConnectionRefusedError(refused, "127.0.0.1"),
+        )
+    )
+    assert not connect_error_is_refused(
+        _connect_error(TimeoutError("::1"), OSError(errno.EHOSTUNREACH, "v4"))
+    )
 
 
 def test_candidates_include_wellknown_defaults_first() -> None:

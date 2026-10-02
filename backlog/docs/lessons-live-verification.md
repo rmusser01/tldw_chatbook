@@ -145,6 +145,21 @@ temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
 committed, reachable source resolved those harness defects. Keep that headless
 bridge evidence separate from the full Console UI and durable persistence.
 
+## A refused `localhost` is an exception group, not one ECONNREFUSED
+
+**TASK-33005.5, 2026-10-02.** Every unit test of the "refused :PORT" word
+passed, because each faked a refusal as one `ConnectError` whose cause was
+one `OSError(ECONNREFUSED)`. In the live switcher, the shipped defaults
+(Aphrodite `localhost:2242`, the custom slots, llama.cpp's own
+`localhost:8080`) read "Not ready · unreachable" instead. `localhost` resolves
+to ::1 and 127.0.0.1, and httpx then reports `ConnectError <- OSError <-
+ExceptionGroup(two ConnectionRefusedError)`. `connect_error_is_refused`
+walked only `__cause__`/`__context__`, so it never saw the errno. A numeric
+`127.0.0.1` host gave the plain chain and read "refused" correctly, so the
+bug only showed against a host name. Build a fake failure from a real one:
+print the live exception chain once (plain httpx, no app import), then copy
+its shape into the test.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured

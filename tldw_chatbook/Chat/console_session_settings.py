@@ -2448,6 +2448,50 @@ def _console_connection_identity(
         return None
 
 
+def console_send_connection(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> ProviderDraftIdentity | None:
+    """Return the connection a send with ``settings`` uses (TASK-33005.5).
+
+    Resolved exactly as :func:`build_console_settings_readiness` resolves it
+    before its shared evidence lookup, so a result settled for this identity
+    is the one readiness reads back. Blocking: reads config and credentials.
+
+    Args:
+        settings: The chat's (or a future chat's) effective settings.
+        app_config: The live application configuration snapshot.
+        environ: Environment mapping; ``None`` reads ``os.environ``.
+
+    Returns:
+        The connection identity, or ``None`` when no endpoint resolves.
+    """
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        entry_for,
+        family_execution_key,
+    )
+
+    entry = entry_for(app_config, settings.provider)
+    provider_key = resolve_console_provider_identity(
+        _canonical_chat_provider_id(
+            family_execution_key(entry.family) if entry is not None else settings.provider
+        ),
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    ).readiness_key
+    base_url = _string_value(settings.base_url) or (entry.base_url if entry else None)
+    provider_settings, _invalid = _provider_settings_with_validity(
+        app_config, settings.provider if entry is not None else provider_key
+    )
+    readiness = get_provider_readiness(
+        provider_key, app_config, environ=environ, background_credentials=True
+    )
+    return _console_connection_identity(
+        provider_key, base_url, provider_settings, readiness, entry, environ
+    )
+
+
 def _custom_endpoint_missing_key_readiness(
     entry: "CustomEndpointEntry",
     provider_key: str,
