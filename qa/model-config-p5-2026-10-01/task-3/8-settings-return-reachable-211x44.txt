@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)               │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │ │                                                                                                                       │  │  │  │                                         │
+│  category search             │  │  │ │  Credentials                                                                                                          │  │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ │  API key source: not required for this provider                                                                       │  │  │  │ No unsaved changes                      │
+│  Core                        │  │  │ │ API key                 │ No credential required                                                                      │  │  │  │  Guided edits: change a field first.    │
+│      Overview (view)         │  │  │ │                          Clear saved key                                                                              │  │  │  │  Save (s) — no changes                  │
+│    > Providers & Models      │  │  │ │ Env var                 │ LLAMA_CPP_API_KEY                                                                           │▆ │  │  │  Revert (r) — no changes                │
+│      Web Search              │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.         │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │  Test Provider                                                                                                        │  │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Runs a local readiness check; URL-based local providers also get a short live endpoint probe.                        │  │  │  │  Focused setting: None — Tab to a       │
+│      Appearance              │  │  │ │ Readiness   Ready · reachable 21:04                                                                                   │  │  │  │  setting                                │
+│      Theme                   │  │  │ │ Config      llama.cpp is configured                                                                                   │  │  │  │  Purpose: Configure the default       ▄ │
+│      Splash Screen           │  │  │ │ Key         not required                                                                                              │  │  │  │  provider, model, endpoint, and         │
+│      Console Behavior        │  │  │ │ Endpoint    http://127.0.0.1:9199 · model listing reached                                                             │  │  │  │  credential source.                     │
+│  Data & Privacy              │  │  │ │ Model       model-a · listed by the server                                                                            │  │  │  │  Saved as: chat_defaults plus           │
+│      Storage                 │  │  │ │ Generation  not tested                                                                                                │  │  │  │  provider-specific api_settings         │
+│      Workspaces              │  │  │ │  Provider settings have not been saved this session.                                                                  │  │  │  │  Save: staged - press s to save, r to   │
+│      Tool Profiles           │  │  │ │                                                                                                                       │  │  │  │  revert                                 │
+│      Privacy & Security      │  │  │ │  Provider readiness                                                                                                   │  │  │  │  Validation: test provider readiness    │
+│      Network                 │  │  │ │  Readiness: llama.cpp / model-a                                                                                       │  │  │  │  before saving these defaults           │
+│      My Profile              │  │  │ │  Provider source: Saved chat defaults                                                                                 │  │  │  │  Runtime owner: Settings persisted      │
+│  Troubleshooting             │  │  │ │  Model source: Saved chat defaults                                                                                    │  │  │  │  defaults; Console runtime selection    │
+│      Diagnostics (view)      │  │  │ │  Endpoint: http://127.0.0.1:9199                                                                                      │  │  │  │  Writes allowed: Yes                    │
+│      About (view)            │  │  │ │ API key: not required for this provider                                                                               │  │  │  │  Owns: chat_defaults.provider         ▅ │
+│      Agents                  │  │  │ │                                                                                                                       │  │  │  │  chat_defaults.model                    │
+│  Expert                      │  │  │ │  Context capacity                                                                                                     │  │  │  │  api_settings.<provider>.               │
+│      Hooks                   │  │  │ │  Context window unknown. Enter the provider's documented token limit so Automatic conversation budgets can be         │  │  │  │    endpoint                             │
+│      Internal Prompts        │  │  │ │  verified.                                                                                                            │  │  │  │  api_settings.<provider>.               │
+│      Advanced Config         │  │  │ │ Context window          │ tokens (required when unknown)                                                              │  │  │  │    api_key                              │
+│   Domain Defaults ▸ (11)     │  │  │ │                          Reset to detected                                                                            │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │  This is the model's total token capacity, not a conversation length preference. Repairs update the existing          │  │  │  │    api_key_env_var                      │
+│                              │  │  │ │  model-capability registry used by request safety checks.                                                             │  │  │  │  api_settings.<provider>.               │
+│                              │  │  │ │                                                                                                                       │  │  │  │ ▼ more — scroll the inspector           │
+│                              │  │  │                                                                                                                            │  │  │                                         │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Open dashboard, notifications, and active work.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

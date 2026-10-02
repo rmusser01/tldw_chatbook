@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                  Speak replies   ▌   Hands-free   ▌     Ready · reachable 03:12
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂ ╭─ Switch model · now: Ollama · qwen2.5:0.5b ──────────────────────────────────────────────────────────────────────────────────────────────╮                         │
+   Terminal                        │ Find type to search 15 models in 3 providers · Enter applies                                                                             │                         │
+ ───────────────────────────────── │ RECENT · your last 50 chats                                                                                                              │                         │
+ Workspaces                    ▸   │ ▶ qwen2.5:0.5b                 Ollama                ~32k  Ready · reachable 03:12      ● CURRENT                                        │                         │
+ ───────────────────────────────── │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                         │
+ Conversations                 ▾   │   gemma3:12b                   Ollama                ~32k  Ready · reachable 03:12                                                       │                         │
+        Archive this chat          │   gemma3:4b                    Ollama                ~32k  Ready · reachable 03:12                                                       │                         │
+          Archived chats           │   gemma3:27b                   Ollama                ~32k  Ready · reachable 03:12                                                       │                         │
+        Search all chats…          │     … 8 more Ollama models                                                                                                               │                         │
+   Chat 1                          │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │                         │
+                                   │   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                                            │                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                                            │                         │
+  ▊  Filter visible     ▎          │   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                                            │                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │     … 1 more vLLM models                                                                                                                 │                         │
+                                   │ NEEDS SETUP · Enter opens the fix                                                                                                        │                         │◂ Inspect
+   New conversation                │   (any model)                  Aphrodite Engine            Not ready · refused :2242    start it; rechecked on open                      │                         │
+  Chats                        ▾   │   (any model)                  llama.cpp                   Not ready · refused :9199    start it; rechecked on open                      │                         │
+   Chat 1                     💬   │   (any model)                  TabbyAPI                    Not ready · refused :8080    start it; rechecked on open                      │                         │
+                                   │   (any model)                  Custom OpenAI-co…ble        Not ready · refused :1234    start it; rechecked on open                      │                         │
+ ───────────────────────────────── │   (any model)                  Custom OpenAI-co… #2        Not ready · refused :5678    start it; rechecked on open                      │                         │
+ Character · No chats          ▸   │   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │                         │
+ ───────────────────────────────── │   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                         │
+ Model                         ▸   │   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │                         │
+ ───────────────────────────────── │     … 44 more providers need setup · type a name to find one                                                                             │                         │
+ Agent                         ▸   │ Values for qwen2.5:0.5b · Ollama                                                                                                         │                         │
+ ───────────────────────────────── │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider                                 │                         │
+ Details                       ▸   │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                         │
+                                   │  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                         │
+                                   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                         │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Ollama     Model: qwen2.5:0.5b     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 ·
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

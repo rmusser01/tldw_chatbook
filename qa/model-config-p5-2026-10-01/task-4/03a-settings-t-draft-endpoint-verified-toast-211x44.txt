@@ -1,0 +1,44 @@
+                                                                                                                            ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs │ F4 Settings │ F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Settings | Global preferences, appearance, storage, and app behavior | Local
+ Mode: Providers & Models
+┌──────────────────────────────┐  │  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  ┌─────────────────────────────────────────┐
+│                              │  │  │                                                                                                                            │  │  │                                         │
+│  Filter categories (/)       │  │  │  State: Draft — save with s · 1 unsaved | Applies to new and unused open chats · used chats keep theirs (Console: Alt+M)   │  │  │  Scope Inspector                        │
+│  No filter | / focus         │  │  │                                                                                                                            │  │  │                                         │
+│  category search             │  │  │  Providers & Models                                                                                                        │  │  │ Selected category: Providers & Models   │
+│                              │  │  │ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │  │  │ Unsaved changes                         │
+│  Core                        │  │  │ │ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │  │  │  │  Guided edits: Save or Revert changes.  │
+│      Overview (view)         │  │  │ │ │  ▶ Prompt-cache snapshots                                                                                         │ │  │  │  │     Save (s)                            │
+│ █  > Providers & Models *    │  │  │ │ │                                                                                                                   │ │  │  │  │    Revert (r)                           │
+│      Web Search              │  │  │ │ ╰───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │  │  │  │ Local-only: saves write your config     │
+│      Speech & TTS            │  │  │ │                                                                                                                       │▂ │  │  │ file.                                   │
+│  Interface                   │  │  │ │  Connect                                                                                                              │  │  │  │  Focused setting: None — Tab to a       │
+│      Appearance              │  │  │ │ Provider                                                                                                              │  │  │  │  setting                                │
+│      Theme                   │  │  │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  │  │  │  Purpose: Configure the default       ▄ │
+│      Splash Screen           │  │  │ │ ▊  Search providers by name or ID                                                                                   ▎ │  │  │  │  provider, model, endpoint, and         │
+│      Console Behavior        │  │  │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  │  │  │  credential source.                     │
+│  Data & Privacy              │  │  │ │ Nebius Token Factory                                                                                                  │  │  │  │  Saved as: chat_defaults plus           │
+│      Storage                 │  │  │ │ Nous Research                                                                                                         │  │  │  │  provider-specific api_settings         │
+│      Workspaces              │  │  │ │ Novita AI                                                                                                             │  │  │  │  Save: staged - press s to save, r to   │
+│      Tool Profiles           │  │  │ │ NVIDIA NIM                                                                                                            │  │  │  │  revert                                 │
+│      Privacy & Security      │  │  │ │ Ollama Cloud                                                                                                          │  │  │  │  Validation: test provider readiness    │
+│      Network                 │  │  │ │ OpenAI                                                                                                                │  │  │  │  before saving these defaults           │
+│      My Profile              │  │  │ │ Choose a provider or enter a supported provider alias.                                                                │  │  │  │  Runtime owner: Settings persisted      │
+│  Troubleshooting             │  │  │ │ Model                   │ gpt-5.6-terra                                                                               │  │  │  │  defaults; Console runtime selection    │
+│      Diagnostics (view)      │  │  │ │ Endpoint                │ http://127.0.0.1:9201/v1                                                                    │  │  │  │  Writes allowed: Yes                    │
+│      About (view)            │  │  │ │                                                                                                                       │  │  │  │  Owns: chat_defaults.provider         ▅ │
+│      Agents                  │  │  │ │  Credentials                                                                                                          │  │  │  │  chat_defaults.model                    │
+│  Expert                      │  │  │ │  API key source: local config key saved                                                                               │  │  │  │  api_settings.<provider>.               │
+│      Hooks                   │  │  │ │ API key                 │ Local config key saved; paste a replacement to change it                                    │  │  │  │    endpoint                             │
+│      Internal Prompts        │  │  │ │                          Clear saved key                                                                              │  │  │  │  api_settings.<provider>.               │
+│      Advanced Config         │  │  │ │ Env var                 │ OPENAI_API_KEY                                                                    ╭──────────────────────────────────────────────────────────╮ │
+│   Domain Defaults ▸ (11)     │  │  │ │  Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret│                                                          │ │
+│                              │  │  │ │  Review restored OpenAI connection                                                                          │ Ready · verified 23:50 — key accepted (2 models listed)  │ │
+│                              │  │  │ │  Test Provider                                                                                              │ · generation not tested.                                 │ │
+│                              │  │  │ │  Checks the settings, then lists models without generating: a cloud provider's listing checks the API key, a│                                                          │ │
+│                              │  │  │                                                                                                               ╰──────────────────────────────────────────────────────────╯ │
+└──────────────────────────────┘  │  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │  └─────────────────────────────────────────┘
+ Default provider, model, context window, and readiness shared with Console.
+  s save category | r revert category | t test provider | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

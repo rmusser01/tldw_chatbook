@@ -56,6 +56,29 @@ def test_workbench_header_stays_blocked_over_running_when_not_active():
     assert blocked.header.status == "blocked"
 
 
+def test_workbench_header_reads_the_readiness_word_unless_a_run_is_active():
+    """TASK-33005.3 review round 1: the header badge is the Console status
+    row's readiness word (spec §5), not a second Ready/Blocked vocabulary;
+    a live run still reads Running (TASK-347)."""
+    for blocker, word, status in (
+        ("", "Ready · not tested", "ready"),
+        ("Provider setup needed", "Not ready · refused :9099", "blocked"),
+    ):
+        idle = build_console_workbench_state(
+            control_state=_ready_control_state(),
+            provider_blocker_copy=blocker,
+            readiness_word=word,
+        )
+        assert (idle.header.status, idle.header.status_label) == (status, word)
+
+    running = build_console_workbench_state(
+        control_state=_ready_control_state(),
+        run_active=True,
+        readiness_word="Ready · not tested",
+    )
+    assert (running.header.status, running.header.status_label) == ("running", "")
+
+
 def test_inspector_live_work_and_status_reflect_active_run():
     running = ConsoleInspectorState.from_values(
         provider_label="llama_cpp",

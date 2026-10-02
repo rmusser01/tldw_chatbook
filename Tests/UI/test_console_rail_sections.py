@@ -124,7 +124,7 @@ async def test_console_rail_summary_renders_typed_operability_and_verification_e
             str(getattr(item.renderable, "plain", item.renderable))
             for item in app.query(Static)
         )
-        assert "Not ready — endpoint unreachable" in text
+        assert "Not ready · timed out" in text  # TASK-33005.3: the spec §5 word
         assert "Endpoint · Unreachable — timed out" in text
         assert "Generation · Failed — timed out" in text
         assert "Retry connection" in str(

@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                   Speak replies   ▌   Hands-free   ▌     Ready · verified 23:50
+   New tab     Settings     ⚓     ╭─ Switch model · now: OpenAI · gpt-5.6-terra ─────────────────────────────────────────────────────────────────────────────────────────────╮
+───────────────────────────────────│ Find type to search 63 models in 11 providers · Enter applies                                                                            │────────────────────────────────────
+                                   │ RECENT · your last 50 chats                                                                                                              │                         │
+                         Context ◂ │ ▶ gpt-5.6-terra                          OpenAI                 ~4k  Ready · verified 23:50       ● CURRENT                              │                         │
+   Terminal                        │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                         │
+ ───────────────────────────────── │   gpt-5.6-sol                            OpenAI                 ~4k  Ready · verified 23:50                                              │                         │
+ Workspaces                    ▸   │   gpt-5.6-luna                           OpenAI                 ~4k  Ready · verified 23:50                                              │                         │
+ ───────────────────────────────── │   gpt-4.1-2025-04-14                     OpenAI                  1M  Ready · verified 23:50                                              │                         │
+ Conversations                 ▾   │     … 10 more OpenAI models                                                                                                              │                         │
+        Archive this chat          │   gemini-2.5-flash                       Google Gemini         ~30k  Ready · not tested                                                  │                         │
+          Archived chats           │   gemini-2.5-flash-preview-05-20         Google Gemini         ~30k  Ready · not tested                                                  │                         │
+        Search all chats…          │   gemini-2.5-pro-preview-05-06           Google Gemini         ~30k  Ready · not tested                                                  │                         │
+   Chat 1                          │     … 5 more Google Gemini models                                                                                                        │                         │
+                                   │   openai/gpt-oss-120b                    Hugging Face          ~32k  Ready · not tested                                                  │                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │   meta-llama/Meta-Llama-3.1-8B-Instruct  Hugging Face          ~32k  Ready · not tested                                                  │                         │
+  ▊  Filter visible     ▎          │   meta-llama/Meta-Llama-3.1-70B-Instruct Hugging Face          ~32k  Ready · not tested                                                  │                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │   openai/gpt-4o-mini                     OpenRouter            128k  Ready · not tested                                                  │                         │
+                                   │   anthropic/claude-3.7-sonnet            OpenRouter           ~200k  Ready · not tested                                                  │                         │◂ Inspect
+  Chats                        ▾   │   google/gemini-2.0-flash-001            OpenRouter              1M  Ready · not tested                                                  │                         │
+   Chat 1                     💬   │     … 11 more OpenRouter models                                                                                                       ▇▇ │                         │
+                                   │   aphrodite-engine                       Aphrodite Engine      ~32k  Ready · not tested                                                  │                         │
+ ───────────────────────────────── │   aphrodite-engine-2                     Aphrodite Engine      ~32k  Ready · not tested                                                  │                         │
+ Character · No chats          ▸   │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │                         │
+ ───────────────────────────────── │   gemma3:12b                             Ollama                ~32k  Ready · not tested                                                  │                         │
+ Model                         ▸   │   gemma3:4b                              Ollama                ~32k  Ready · not tested                                                  │                         │
+ ───────────────────────────────── │   gemma3:27b                             Ollama                ~32k  Ready · not tested                                                  │                         │
+ Agent                         ▸   │     … 8 more Ollama models                                                                                                               │                         │
+ ───────────────────────────────── │   tabby-model                            TabbyAPI              ~32k  Ready · not tested                                                  │                         │
+ Details                       ▸   │   tabby-model-2                          TabbyAPI              ~32k  Ready · not tested                                                  │                         │
+                                   │   tabby-model-3                          TabbyAPI              ~32k  Ready · not tested                                                  │                         │
+                                   │ Values for gpt-5.6-terra · OpenAI                                                                                                        │                         │
+                                   │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming Off   ▼  provider                                 │                         │
+                                   │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                         │
+                                   │  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                         │
+───────────────────────────────────╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context unknown · Current $
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q
