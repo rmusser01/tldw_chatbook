@@ -9740,10 +9740,10 @@ class ChatScreen(BaseAppScreen):
             model=selected_model,
             base_url=selection.base_url,
         )
+        # TASK-33620.4: NEVER `active_run` here (the settings modal alone gates
+        # on it), so consumers' `wait_for_active_run` guards are belt-and-braces.
         readiness = build_console_settings_readiness(
-            effective_settings,
-            app_config=self._provider_readiness_app_config(),
-            active_run=self._console_run_active(),
+            effective_settings, app_config=self._provider_readiness_app_config()
         )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,

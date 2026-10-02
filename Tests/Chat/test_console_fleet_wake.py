@@ -129,6 +129,25 @@ class _RecordingWakeGateway:
         #: Optional hook invoked once per stream, before yielding.
         self.on_stream: object | None = None
 
+    def cached_context_window(self, settings):
+        """The real gateway's offline metadata fallback, for mounted UI.
+
+        The screen's hot context-usage path reads it (task-33081); without it
+        every mounted wake test died with AttributeError before its assertions.
+
+        Args:
+            settings: The effective Console settings; only ``provider`` and
+                ``model`` are read.
+
+        Returns:
+            The ``ContextWindowResolution`` that ``resolve_context_window``
+            reports for that provider/model pair (the double skips the real
+            gateway's provider-identity mapping).
+        """
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         return provider_resolution(ready=self.ready)
 

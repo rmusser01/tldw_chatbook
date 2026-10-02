@@ -11805,6 +11805,9 @@ async def test_console_settings_modal_cancel_keeps_original_summary() -> None:
         assert store.session_settings(session.id).provider == "llama_cpp"
 
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_console_settings_modal_save_disabled_during_active_run() -> None:
     app = _build_test_app()
@@ -11841,6 +11844,10 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         )
         assert "Not ready — current run is active" in readiness_copy
         assert "Ready to send" not in readiness_copy
+        # TASK-33620.4: the modal's mutation gate is a run-state fact, not a
+        # provider problem -- it must never render "Provider setup needed".
+        assert "Provider setup needed" not in readiness_copy
+        assert "Settings changes wait for the current run to finish." in readiness_copy
 
         controller._set_run_state(ConsoleRunState(ConsoleRunStatus.IDLE, "Ready."))
         await pilot.pause()

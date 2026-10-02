@@ -245,6 +245,16 @@ SEND_LABEL_PREPARING = "Preparing..."
 SEND_LABEL_QUEUE_FULL = "Queue full"
 SEND_LABEL_QUEUE = "Queue"
 
+#: The reason strip's queue copy. TASK-33620.4: the prompt-queue
+#: presentation's refusing tooltips are these same strings, so the strip and
+#: the Send tooltip agree. Only a prompt-chain turn is ever queue-accepted: a
+#: regenerate / continue / agent wake holds the slot (Send still reads
+#: "Preparing...") with no chain, so that hold names the run it waits on
+#: rather than promising a queue that never opens.
+QUEUE_REASON_PREPARING = "Queue opens once this turn is accepted"
+QUEUE_REASON_FULL = "Queue full — manage it to make room"
+QUEUE_REASON_RUN_HOLD = "Wait for the current run to finish"
+
 
 def build_console_disabled_reason(
     *,
@@ -272,14 +282,19 @@ def build_console_disabled_reason(
         queue_blocked_reason: The prompt queue's own disabled tooltip, when
             the queue (not setup) blocks Send. A real ``setup_blocked_reason``
             outranks it: a "Preparing..." label must not mask a setup or
-            attachment blocker (TASK-33625.1 review).
+            attachment blocker (TASK-33625.1 review). TASK-33620.4: it used
+            to ride ``setup_blocked_reason`` and fall through to "finish
+            provider setup" -- mid-run, as a link to the first-run wizard --
+            so a queue refusal outside the labelled states is shown
+            verbatim, never as setup or run copy. Under ``Preparing...`` a
+            chainless hold's ``QUEUE_REASON_RUN_HOLD`` keeps its own copy.
         wake_turn_active: Whether the active session is busy with a
             machine-injected auto-wake turn (task-15862 AC#3). Checked
             before the queue and setup copy: a chainless wake is never
-            queue-accepted, so the queue's "wait to be accepted" state
-            would name the wrong blocker (before TASK-33625.1 that copy
-            rode ``setup_blocked_reason`` and blamed provider setup -- the
-            observed live lie).
+            queue-accepted, so the queue's "Preparing" state is present for
+            its whole duration and would name the wrong blocker (before
+            TASK-33625.1 that copy rode ``setup_blocked_reason`` and blamed
+            provider setup -- the observed live lie).
 
     Returns:
         A user-facing disabled reason, or an empty string when no conservative
@@ -294,11 +309,16 @@ def build_console_disabled_reason(
         return "Send blocked — delivering a sub-agent result"
 
     setup_reason = _clean(setup_blocked_reason, "")
-    queue_blocked = send_blocked and bool(queue_blocked_reason) and not setup_reason
+    queue_reason = _clean(queue_blocked_reason, "")
+    queue_blocked = send_blocked and bool(queue_reason) and not setup_reason
     if queue_blocked and send_label == SEND_LABEL_PREPARING:
-        return "Queue opens once this turn is accepted"
+        # TASK-33620.4: a chainless hold (regenerate / continue / wake) is
+        # labelled Preparing too, but no queue ever opens behind it.
+        if queue_reason == QUEUE_REASON_RUN_HOLD:
+            return QUEUE_REASON_RUN_HOLD
+        return QUEUE_REASON_PREPARING
     if queue_blocked and send_label == SEND_LABEL_QUEUE_FULL:
-        return "Queue full — manage it to make room"
+        return QUEUE_REASON_FULL
     setup_reason_lower = setup_reason.lower()
     if send_blocked and setup_reason:
         if setup_reason == "Checking Claude subscription credential.":
@@ -323,6 +343,10 @@ def build_console_disabled_reason(
         ):
             return "Send blocked — choose a provider to continue"
         return "Send blocked — finish provider setup to continue"
+    if queue_blocked:
+        # TASK-33620.4: any other queue refusal names itself -- it never
+        # falls through to provider-setup or active-run copy.
+        return queue_reason
     if send_blocked:
         # No setup copy means an active run is the blocker (the setup gate
         # always supplies its own reason).

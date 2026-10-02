@@ -2341,9 +2341,8 @@ class ConsoleComposerBar(Horizontal):
                 workbench's Save Chatbook action already gates).
             wake_turn_active: Whether the active session is busy with a
                 machine-injected auto-wake turn (task-15862 AC#3) -- the
-                blocked copy then names the wake, and whatever queue/setup
-                copy rode ``setup_blocked_reason`` never paints as a
-                provider-setup problem.
+                blocked copy then names the wake, not the queue's wait (a
+                chainless wake is never queue-accepted) or provider setup.
         """
         has_draft = bool(has_draft)
         run_active = bool(run_active)
@@ -2352,7 +2351,10 @@ class ConsoleComposerBar(Horizontal):
         setup_blocked_reason = setup_blocked_reason.strip()
         queue_blocked_reason = queue_blocked_reason.strip()
         ephemeral = bool(ephemeral)
-        setup_reason_changed = self._setup_blocked_reason != setup_blocked_reason
+        setup_reason_changed = (
+            self._setup_blocked_reason != setup_blocked_reason
+            or self._queue_blocked_reason != queue_blocked_reason
+        )
         self._run_active = run_active
         self._send_blocked = send_blocked
         self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)

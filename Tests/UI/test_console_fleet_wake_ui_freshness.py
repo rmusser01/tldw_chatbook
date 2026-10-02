@@ -58,6 +58,10 @@ from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleComposerBa
 from tldw_chatbook.Widgets.Console.console_transcript import ConsoleTranscript
 from tldw_chatbook.config import load_settings, save_setting_to_cli_config
 
+# The real ChatScreen/store goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired); keep the collection-time profile.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 async def _settle(pilot, predicate, seconds: float = 8.0) -> bool:
     """Run the app loop until ``predicate()`` is true (or time out)."""
@@ -318,6 +322,15 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
         assert "sub-agent" in tooltip.lower(), (
             "the send button's hover copy must name the wake too, not the "
             f"queue's not-yet-accepted line: {tooltip!r}"
+        )
+        # TASK-33620.4 review: a keystroke re-syncs the composer from its OWN
+        # cache (`_sync_current_action_state`, no screen pass in between,
+        # asserted before the loop can tick). That cache dropped the wake
+        # flag, so the strip fell through to the queue's wait copy.
+        composer.insert_text("x")
+        resynced = str(composer._send_disabled_reason or "")
+        assert "sub-agent" in resynced.lower(), (
+            f"a keystroke mid-wake re-named the wait: {resynced!r}"
         )
 
         gate.set()

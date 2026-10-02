@@ -647,6 +647,67 @@ def test_agent_wake_acceptance_does_not_require_a_prompt_queue_chain():
     assert controller.prompt_queue_registry.snapshot(session_id).entries == ()
 
 
+class HoldValidationGateway(SequencedGateway):
+    """Holds ``resolve_for_send`` (the run's VALIDATING window) on demand."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.hold = False
+        self.validation_started = asyncio.Event()
+        self.validation_release = asyncio.Event()
+
+    async def resolve_for_send(self, selection):
+        if self.hold:
+            self.validation_started.set()
+            await self.validation_release.wait()
+        return await super().resolve_for_send(selection)
+
+
+@pytest.mark.asyncio
+async def test_only_a_prompt_chain_turn_is_preparing_before_acceptance():
+    """TASK-33620.4 review: ``preparing_before_acceptance`` means "a queue will
+    open once this turn is accepted". A manual prompt-chain turn in validation
+    is exactly that; a chainless regenerate in the SAME status is never
+    queue-accepted, so it occupies the slot without promising a queue."""
+    gateway = HoldValidationGateway()
+    controller, store, session_id = _arm_controller(gateway)
+    coordinator = controller.prompt_queue_coordinator
+
+    # Positive control: a manual prompt-chain turn held in validation.
+    gateway.hold = True
+    chain = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    await asyncio.wait_for(gateway.validation_started.wait(), timeout=5)
+    assert controller.run_state_for(session_id).status is ConsoleRunStatus.VALIDATING
+    activity = coordinator.activity(session_id)
+    assert activity.occupies_slot and not activity.accepted_live_turn
+    assert activity.preparing_before_acceptance
+    gateway.hold = False
+    gateway.validation_release.set()
+    gateway.release[0].set()
+    await asyncio.wait_for(chain, timeout=5)
+    assistant_id = store.active_leaf(session_id)
+    assert assistant_id is not None
+
+    # The chainless regenerate, held in the same VALIDATING window.
+    gateway.validation_started = asyncio.Event()
+    gateway.validation_release = asyncio.Event()
+    gateway.hold = True
+    regenerate = asyncio.create_task(controller.regenerate_message(assistant_id))
+    await asyncio.wait_for(gateway.validation_started.wait(), timeout=5)
+    assert controller.run_state_for(session_id).status is ConsoleRunStatus.VALIDATING
+    activity = coordinator.activity(session_id)
+    assert activity.occupies_slot and not activity.accepted_live_turn
+    assert not activity.preparing_before_acceptance
+    gateway.hold = False
+    gateway.validation_release.set()
+    gateway.release[1].set()
+    result = await asyncio.wait_for(regenerate, timeout=5)
+    assert result.accepted
+    assert gateway.user_turns == ["one", "one"]
+
+
 @pytest.mark.asyncio
 async def test_stop_pauses_immediately_and_resume_next_dispatches_once():
     gateway = SequencedGateway()
