@@ -132,3 +132,14 @@ All four jobs pass on published `e8474ca134ab73d66ab36d168bf0a11a78367c6b`; its 
 ADR required: no new ADR. ADR path: backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md. Reason: preserving integration of an accepted upstream repair without a new persistence, authority, lifecycle or orchestration decision. Existing ADR-126 worker/storage and schema/recovery constraints remain intact; no full sweep is authorized.
 
 Qualification complete on `51b46e279578c9220c1d1f34711815dab271ebfa`: ten targeted consumers, four unchanged storage/startup/CSS guards, four independent persistence/Inspector cases and six independent lifecycle cases pass. Both source reviews approve. Final 81-file/new-file static, worker-contract and diagnostic guards pass; all CSS and all preceding patch Python bytes except the upstream store remain unchanged. Import/UI counts are 680/686 and 1033/1033 without pin changes. Publish once; fresh-head gates and protected merge remain.
+
+
+## Required hook-review conflict integration
+
+Published `64d77044761dbfd4993cdad7fcd12cc987c14cc9` passes all four jobs and exact-head Qodo resolves all four findings with no open threads. Dev `30ca4552b3b881bee6c077db08c44233e5e97e6a` ships PR #2945 / TASK-33621.28, and GitHub reports CONFLICTING / DIRTY.
+
+1. Rebase onto that observed dev head and preserve both sides of any actual conflict, including testing lessons, the worker-owned human hook-review continuation and our exact wake refund/nonreplay gates.
+2. Compare the 81-file source manifest; qualify the new accepted-status/modal/cancellation boundaries and existing hook-refund/Save/close consumers with targeted checks and independent review. Preserve schema, recovery catalogs, physical worker custody and all ratchets.
+3. Record evidence and publish once with the exact `64d77044761dbfd4993cdad7fcd12cc987c14cc9` lease, then require fresh-head Qodo and all four jobs before normal protected merge. No full suite or preemptive rebase while CI runs.
+
+ADR required: no new ADR. ADR path: backlog/decisions/148-console-run-hooks.md and backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md. Reason: preserve accepted upstream human review behavior and existing orchestration authority; no new schema, permission or lifecycle contract is planned. Existing ADR-126 worker/storage boundaries remain.
