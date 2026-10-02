@@ -613,3 +613,87 @@ def test_subtree_delete_seeds_stay_in_the_conversation_and_on_live_rows():
     assert sorted(row["message_id"] for row in rows) == ["f1", "f2"]
     assert _deleted(db, ["f0", "f1", "f2", "f3", "elsewhere"]) == [0, 1, 1, 1, 0]
     assert db.get_message_tombstones(["f3"])[0]["version"] == f3_tombstone_version
+
+
+#: A flat conversation whose first reply was regenerated after branching
+#: shipped: ``r1`` hangs under ``f0`` by a real parent link and is the active
+#: leaf, so the chained ``f1 -> f2 -> f3`` spine sits OFF the active path.
+_FLAT_REGENERATED = [*_FLAT, ("r1", "assistant", "f0")]
+
+
+@pytest.mark.parametrize(
+    ("target", "removed"),
+    [
+        pytest.param("f0", ["f0", "f1", "f2", "f3", "r1"], id="spans-both-paths"),
+        pytest.param("f1", ["f1", "f2", "f3"], id="off-path-chained-root"),
+    ],
+)
+def test_flat_delete_reaches_chained_roots_off_the_active_path(target, removed):
+    """The DB delete takes the whole in-memory subtree, not just what is shown.
+
+    The prompt counts off-path rows too (``console_delete_scope`` reports
+    them as off-branch), so the durable delete must tombstone them as well.
+    """
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    ids = [message_id for message_id, _role, _parent in _FLAT_REGENERATED]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT_REGENERATED)
+    store, session_id, native = _open_store(db, conversation_id)
+    # Precondition: the chained spine is loaded but off the active path.
+    assert [m for m, _role in _visible(store, session_id)] == ["f0", "r1"]
+    assert _tree_ids(store, session_id) == set(ids)
+
+    scope = console_delete_scope(store, native[target])
+    deleted, _held = delete_subtree_for_undo(store, native[target])
+
+    assert scope.removed_count == deleted.count == len(removed)
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+    restore_deleted_subtree(store, deleted)
+    assert _deleted(db, ids) == [0] * len(ids)
+
+
+def test_subtree_delete_descends_by_parent_link_without_statistics():
+    """Each recursive step finds children by parent id, not by conversation.
+
+    No ChaChaNotes database runs ``ANALYZE``, so the planner has no
+    ``sqlite_stat1``. With ``child.conversation_id = ?`` indexable it chose
+    the ``(conversation_id, id)`` index and scanned the whole conversation
+    once per subtree row: 1.8 s to delete from a 3,000-message conversation,
+    on the event loop. Both the SELECT and the UPDATE must search a
+    ``parent_message_id`` index for the child rows.
+    """
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    _seed(db, _FLAT)
+    conn = db.get_connection()
+    assert (
+        conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sqlite_stat1'"
+        ).fetchone()
+        is None
+    )
+    statements: list[str] = []
+    conn.set_trace_callback(statements.append)
+    try:
+        ChatPersistenceService(db).delete_message_subtree(
+            message_id="f1", subtree_message_ids=("f1", "f2", "f3")
+        )
+    finally:
+        conn.set_trace_callback(None)
+
+    # Trigger sub-programs re-report their outer statement; dedupe them.
+    recursive = {
+        s for s in statements if s.lstrip().startswith("WITH RECURSIVE subtree")
+    }
+    assert len(recursive) == 2  # the SELECT that reads versions, and the UPDATE
+    for statement in recursive:
+        plan = [str(row[3]) for row in conn.execute("EXPLAIN QUERY PLAN " + statement)]
+        child_steps = [detail for detail in plan if detail.split()[1:2] == ["child"]]
+        assert child_steps, plan
+        for detail in child_steps:
+            assert detail.startswith("SEARCH child USING INDEX"), plan
+            assert detail.endswith("(parent_message_id=?)"), plan

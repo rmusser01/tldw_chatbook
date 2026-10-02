@@ -3295,16 +3295,16 @@ class ChatPersistenceService:
         )
 
     def delete_message_subtree(
-        self, *, message_id: str, subtree_message_ids: Sequence[str] = ()
+        self, *, message_id: str, subtree_message_ids: Sequence[str | None] = ()
     ) -> list[dict[str, Any]]:
         """Atomically tombstone one persisted branch and return its versions.
 
         Args:
             message_id: Persisted id of the branch's root message.
-            subtree_message_ids: Persisted ids the caller shows beneath it,
-                including those with no ``parent_message_id`` link (a legacy
-                flat conversation the Console chains in memory,
-                TASK-33628.6); see
+            subtree_message_ids: Persisted ids the caller shows in the
+                branch (``None`` for unsaved nodes is ignored), including those
+                with no ``parent_message_id`` link (a legacy flat conversation
+                the Console chains in memory, TASK-33628.6); see
                 :meth:`CharactersRAGDB.soft_delete_message_subtree`.
 
         Returns:

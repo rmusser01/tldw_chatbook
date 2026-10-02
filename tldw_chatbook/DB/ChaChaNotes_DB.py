@@ -16032,7 +16032,7 @@ UPDATE db_schema_version
         message_id: str,
         expected_version: int,
         *,
-        subtree_message_ids: Sequence[str] = (),
+        subtree_message_ids: Sequence[str | None] = (),
     ) -> List[Dict[str, Any]]:
         """Atomically soft-delete an active message and all active descendants.
 
@@ -16044,12 +16044,15 @@ UPDATE db_schema_version
         Args:
             message_id: The selected message; its version is the fence.
             expected_version: The version the caller expects it to hold.
-            subtree_message_ids: Further ids the caller shows beneath the
-                selected message without a ``parent_message_id`` link -- a
-                legacy flat conversation (every parent NULL) that the Console
-                chains in memory (TASK-33628.6). They seed the same descent as
-                the selected message; ids outside its conversation, or already
-                deleted, are never touched.
+            subtree_message_ids: The ids the caller shows in the selected
+                message's subtree. The Console sends its whole in-memory
+                subtree: the selected id, parent-linked rows, and ``None`` for
+                unsaved nodes (ignored). It matters for rows WITHOUT a
+                ``parent_message_id`` link -- a legacy flat conversation
+                (every parent NULL) that the Console chains in memory
+                (TASK-33628.6). Each id seeds the same descent as the selected
+                message; ids outside its conversation, or already deleted, are
+                never touched.
 
         Returns:
             One ``message_id``/``conversation_id``/``version`` mapping per
@@ -16086,6 +16089,9 @@ UPDATE db_schema_version
                     entity="messages",
                     entity_id=message_id,
                 )
+            # Unary ``+`` keeps the recursive step off the (conversation_id, id)
+            # index: with no sqlite_stat1 the planner otherwise scans the whole
+            # conversation once per subtree row instead of searching by parent.
             scope = (seeds, current["conversation_id"], current["conversation_id"])
             rows = conn.execute(
                 """
@@ -16098,7 +16104,7 @@ UPDATE db_schema_version
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 SELECT id, conversation_id, version
                   FROM messages
@@ -16120,7 +16126,7 @@ UPDATE db_schema_version
                       FROM messages AS child
                       JOIN subtree AS parent ON child.parent_message_id = parent.id
                      WHERE child.deleted = 0
-                       AND child.conversation_id = ?
+                       AND +child.conversation_id = ?
                 )
                 UPDATE messages
                    SET deleted = 1,

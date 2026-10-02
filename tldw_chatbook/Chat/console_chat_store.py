@@ -13825,9 +13825,9 @@ class ConsoleChatStore:
                 raise RuntimeError("Message deletion could not be persisted.")
             with self._dispatch_branch_mutation(session_id):
                 # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
+                saved = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
                 tombstones = deleter(
-                    message_id=message.persisted_message_id,
-                    subtree_message_ids=[nodes[n].persisted_message_id for n in subtree_ids],
+                    message_id=message.persisted_message_id, subtree_message_ids=saved
                 )
                 if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
                     raise ValueError("Resolve pending dispatch before deleting this message.")
