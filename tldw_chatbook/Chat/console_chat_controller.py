@@ -7222,9 +7222,9 @@ class ConsoleChatController:
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
             kind: Which interrupt kind is waiting -- a
-                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
-                (``approval``, ``question``, ``skill_install``,
-                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                registered interrupt key (``approval``, ``question``,
+                ``skill_install``, ``skill_script``, ``worktree_merge``, or
+                the standalone ``chat_create`` confirmation). Qodo #4: the badge and
                 lifecycle do not care, but the run chip and activity line do
                 -- they used to translate this registry's generic "something
                 is pending" into "Waiting for your approval" even for a
@@ -7337,9 +7337,8 @@ class ConsoleChatController:
             session_id: The session to read.
 
         Returns:
-            Every distinct kind currently outstanding for ``session_id``
-            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
-            when nothing is.
+            Every distinct registered kind outstanding for ``session_id``,
+            including standalone chat creation, empty when nothing is.
         """
         with self._approval_state_lock:
             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
@@ -16251,6 +16250,18 @@ class ConsoleChatController:
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)
+        with self._pending_chat_create_lock:
+            for state in self._pending_chat_create_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
         for event in events:
             event.set()
 
@@ -18988,13 +18999,16 @@ class ConsoleChatController:
         # SUB-AGENT requester never rides one -- children share the session
         # with the primary, so the user's session grant must not silently
         # auto-allow child-run chat creation; every child call confirms.
-        if (
-            requesting_kind == AGENT_KIND_PRIMARY
-            and tool in self._chat_create_session_grants.get(
-                owning_session_id, set()
-            )
-        ):
-            return {"allow": True, "remember": True}
+        with self._pending_chat_create_lock:
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
+            if (
+                requesting_kind == AGENT_KIND_PRIMARY
+                and tool in self._chat_create_session_grants.get(
+                    owning_session_id, set()
+                )
+            ):
+                return {"allow": True, "remember": True}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
         # round is armed -- fork_source_title/fork_message_count (the card's
@@ -19023,6 +19037,9 @@ class ConsoleChatController:
             "revoked": False,
         }
         with self._pending_chat_create_lock:
+            # Enrichment can finish after Close has swept the standalone rounds.
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
             self._pending_chat_create_rounds[request_id] = chat_create_round_state
 
         timeout_seconds = (
@@ -19049,7 +19066,7 @@ class ConsoleChatController:
         # they keep the unconditional mount below.
         is_head = True
         if session_id is not None:
-            self.add_pending_round(session_id, request_id)
+            self.add_pending_round(session_id, request_id, kind="chat_create")
             # Keyed by ROUND; the return says whether THIS round is its
             # session's FIFO head. A non-head round must not mount: an
             # older sibling is still holding the card.

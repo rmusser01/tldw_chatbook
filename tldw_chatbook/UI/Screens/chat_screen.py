@@ -1380,6 +1380,7 @@ CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
     "#chat-question-card",
     "#chat-skill-install-card",
     "#chat-skill-script-card",
+    "#chat-create-card",
 )
 
 
@@ -20806,8 +20807,8 @@ class ChatScreen(BaseAppScreen):
         ``handle_console_inspector_review_approval`` verbatim so a third
         (or fourth) caller cannot drift from it.
 
-        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
-        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        Qodo #5: that ``◆`` marker is worn for every interrupt-round kind,
+        including standalone chat creation, but this
         knew only approvals and questions -- a pending skill-install or
         skill-script confirm reached the "no approval" warning instead of
         its own mounted card. The scan now walks every decision card in the
@@ -20850,7 +20851,7 @@ class ChatScreen(BaseAppScreen):
         `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
         card's sole production entry point, is the only body it ever
         renders, so a displayed card's action is always its "Submit"
-        button). The other four kinds have no such method, so their first
+        button). The other cards have no such method, so their first
         interactive control is focused directly -- Buttons included, which
         is what a confirm card's Approve/Deny pair is made of.
         """

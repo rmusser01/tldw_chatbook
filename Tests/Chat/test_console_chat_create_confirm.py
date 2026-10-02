@@ -374,7 +374,14 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
     assert payload_seen["agent_task"].startswith("do the thing")
 
 
-def test_primary_requester_still_rides_session_grant(make_controller):
+@pytest.mark.parametrize("closing", [False, True], ids=["open-session", "committed-close"])
+def test_primary_requester_still_rides_session_grant(make_controller, closing):
+    """A remembered grant survives only while its source session is live.
+
+    Args:
+        make_controller: Existing standalone confirmation controller fixture.
+        closing: Commit the real Close ticket before consulting the grant.
+    """
     controller = make_controller()
     real = controller.store.create_session(title="S")
     sid = real.id
@@ -383,6 +390,13 @@ def test_primary_requester_still_rides_session_grant(make_controller):
 
     from tldw_chatbook.Agents.run_context import use_run_id
 
+    if closing:
+        controller.begin_session_close(
+            sid, expected_revision=controller.lifecycle_impact(session_id=sid).revision
+        )
+        assert sid in controller._chat_create_session_grants
+        assert any(session.id == sid for session in controller.store.sessions())
     with use_run_id("run-9"):
         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
-    assert decision == {"allow": True, "remember": True}
+    assert decision == {"allow": not closing, "remember": not closing}
+    assert not controller.pending_chat_create_ids()

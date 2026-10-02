@@ -615,5 +615,6 @@ The dialog keeps both actions visible when the terminal is short. Press Shift+Ta
 from **Stay** to focus the scrollable consequences, then use arrows, Home or End
 to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
 Closing denies pending tool approvals, cancels unanswered questions and declines
-skill and worktree-merge confirmations, cancelling the owning work without
-affecting other tabs. Declining a merge or discard confirmation performs neither action.
+skill, chat-creation and worktree-merge confirmations, cancelling the owning work
+without affecting other tabs. Declining chat creation creates no chat. Declining
+a merge or discard confirmation performs neither action.

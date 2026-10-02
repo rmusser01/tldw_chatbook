@@ -388,3 +388,84 @@ async def test_review_routes_reach_visible_skill_confirm_before_queued_approval(
             assert controller.pending_round_count(session_id) == 1
         finally:
             await _stop_workers(controller, workers, pilot)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_chat_create_confirmation_has_its_own_kind_and_review_route(
+    request, tmp_path
+):
+    """Keep real chat creation separate from tool approvals and reviewable.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the navigation app fixture.
+    """
+    app = _build_app(tmp_path)
+    workers = []
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        console, controller, store, session_id = await _seed_console(app, pilot)
+        assistant_id = _start_live_turn(console, controller, store, session_id)
+        result = {}
+        worker = threading.Thread(
+            target=lambda: result.update(
+                controller.request_chat_create_confirm(
+                    {"tool": "new_chat", "title": "Proposed chat"},
+                    session_id=session_id,
+                )
+            ),
+            daemon=True,
+        )
+        workers.append(worker)
+        worker.start()
+        try:
+            await _wait(
+                pilot,
+                lambda: (
+                    bool(list(console.query("#chat-create-card")))
+                    and console.query_one("#chat-create-card").display
+                    and bool(console.query_one("#chat-create-card")._request_id)
+                ),
+            )
+            assert controller.pending_round_kinds(session_id) == {"chat_create"}
+            await _assert_projection(
+                console, pilot, assistant_id, "Waiting for your confirmation", 0
+            )
+            card = console.query_one("#chat-create-card")
+            allow = card.query_one("#chat-create-allow", Button)
+            for entry_point in ("shortcut", "session_tab"):
+                console.query_one("#console-native-composer").focus()
+                if entry_point == "shortcut":
+                    await pilot.press("alt+a")
+                else:
+                    console.query_one(
+                        f"#console-session-tab-{session_id}", Button
+                    ).press()
+                await pilot.pause()
+                assert app.focused is allow, (entry_point, _toast_text(app))
+                assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON not in _toast_text(app)
+
+            approval_worker, _ = _arm(controller, session_id, call=_risk_row())
+            workers.append(approval_worker)
+            assert await _wait_for_round(controller, session_id)
+            await _wait(pilot, lambda: console.query_one("#chat-approval-card").display)
+            await _assert_projection(
+                console, pilot, assistant_id, "Waiting for your approval", 1
+            )
+            console.query_one("#console-native-composer").focus()
+            await pilot.press("alt+a")
+            assert app.focused in tuple(
+                console.query_one("#chat-approval-card").walk_children()
+            )
+            sibling = controller.new_session(title="Unrelated session")
+            await pilot.pause()
+            assert console._console_pending_approval_count() == 0
+            assert not controller.pending_round_kinds(sibling.id)
+            controller.switch_session(session_id)
+            await _wait(pilot, lambda: console.query_one("#chat-create-card").display)
+            controller.resolve_pending_chat_create(False, False, request_id=card._request_id)
+            await _finish_worker(pilot, worker)
+            assert result == {"allow": False, "remember": False}
+            assert controller.pending_round_kinds(session_id) == {"approval"}
+        finally:
+            await _stop_workers(controller, workers, pilot)

@@ -160,7 +160,9 @@ its rows and actions is unchanged.
 tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts outstanding tool-approval rounds in the viewed
-conversation; a round may contain several calls. The Approvals chip is
+conversation; a round may contain several calls. Chat-creation confirmations
+use "Waiting for your confirmation" and do not count as tool approvals.
+The Approvals chip is
 clickable: it jumps to the visible decision card, preferring an approval when
 one is displayed. If approvals are queued behind a skill confirmation, review
 reaches that confirmation first. With no decision visible it says
@@ -422,7 +424,7 @@ approval"; the inspector's **Review approval** button is the same route. A
 session tab wearing the **◆** marker (the status legend reads "● running · ◆
 needs approval · ✓ finished · ✗ failed") routes straight to whichever
 decision card is actually pending — approval, question, skill-install, or
-skill-script confirm, checked in that precedence (a worktree-merge confirm
+skill-script or chat-creation confirm, checked in that precedence (a worktree-merge confirm
 has no card wired on this screen) — when you press it: the session is
 activated first — a parked round only mounts its card once its session is
 the one you are viewing — and the usual "press the active tab to rename it"

@@ -706,6 +706,11 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
                 ],
                 session_id=session_id,
             )
+        if kind == "chat_create":
+            return controller.request_chat_create_confirm(
+                {"tool": "new_chat", "title": "private close chat"},
+                session_id=session_id,
+            )
         if kind == "worktree_merge":
             return controller.request_worktree_merge_confirm(
                 {"run_id": "private-child", "action": "merge"}, session_id=session_id
@@ -740,6 +745,11 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
     """
     for kind, consequence, result in [
         ("approval", "Tool approvals: denied; runs cancelled.", {"close-call": "deny"}),
+        (
+            "chat_create",
+            "Chat creation: declined; no chat created.",
+            {"allow": False, "remember": False},
+        ),
         (
             "worktree_merge",
             "Worktree decisions: cancelled; no merge or discard.",
@@ -853,11 +863,17 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
                 assert await round_task == result
                 assert run_task.cancelled()
                 assert not controller.has_pending_approval_round(doomed.id)
-                assert (
-                    controller._interrupt_host.session_round_payloads(kind, doomed.id)
-                    == []
-                )
-                assert not controller._interrupt_host.registries[kind]
+                if kind == "chat_create":
+                    assert not controller.pending_chat_create_ids()
+                    assert not controller._parked_chat_create_payloads
+                else:
+                    assert (
+                        controller._interrupt_host.session_round_payloads(
+                            kind, doomed.id
+                        )
+                        == []
+                    )
+                    assert not controller._interrupt_host.registries[kind]
                 assert store.active_session_id == keeper
                 assert not console._console_runtime().console_needs_attention
             finally:
@@ -875,11 +891,26 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_background_question_close_releases_round_without_an_active_turn(request):
-    """A closed session's question must not survive when no turn cancel signal exists.
+@pytest.mark.parametrize(
+    ("kind", "expected"),
+    [
+        pytest.param(
+            "question", {"answered": False, "reason": "cancelled"}, id="question"
+        ),
+        pytest.param(
+            "chat_create", {"allow": False, "remember": False}, id="chat-create"
+        ),
+    ],
+)
+async def test_background_pending_close_releases_round_without_an_active_turn(
+    request, kind, expected
+):
+    """Release a closed session's real decision without a turn cancel signal.
 
     Args:
         request: Pytest request selecting the isolated private-profile child.
+        kind: Existing question or standalone chat-creation confirmation.
+        expected: Fail-closed result returned to the owning worker.
     """
     app = _ready_app()
     host = ConsoleHarness(app)
@@ -889,14 +920,19 @@ async def test_background_question_close_releases_round_without_an_active_turn(r
         app.call_from_thread = host.call_from_thread
         store = controller.store
         keeper = store.active_session_id
-        doomed = controller.new_session(title="Question")
+        doomed = controller.new_session(title="Pending decision")
         controller.switch_session(keeper)
         sibling = await _arm_pending_round(controller, "question", keeper)
-        pending = await _arm_pending_round(controller, "question", doomed.id)
+        pending = await _arm_pending_round(controller, kind, doomed.id)
         try:
+            read_ids = (
+                controller.pending_question_ids
+                if kind == "question"
+                else controller.pending_chat_create_ids
+            )
             assert await _settle(
-                pilot, lambda: len(controller.pending_question_ids()) == 2
-            ), "both real question rounds must be armed before closing"
+                pilot, lambda: len(read_ids()) == (2 if kind == "question" else 1)
+            ), "both real decision rounds must be armed before closing"
             await _show_tabs(console, pilot, {keeper, doomed.id})
             await _click(pilot, f"#console-close-session-tab-{doomed.id}")
             await _wait_for_confirmation(host)
@@ -904,9 +940,9 @@ async def test_background_question_close_releases_round_without_an_active_turn(r
             assert await _settle(pilot, lambda: doomed.id not in _session_ids(store))
             await _await_tabs(console, pilot, {keeper})
             assert await _settle(pilot, pending.done, timeout=2), (
-                "closed session left its question armed without an owning turn"
+                "closed session left its decision armed without an owning turn"
             )
-            assert await pending == {"answered": False, "reason": "cancelled"}
+            assert await pending == expected
             assert not sibling.done(), (
                 "closing the background tab answered the viewed tab"
             )
@@ -914,11 +950,68 @@ async def test_background_question_close_releases_round_without_an_active_turn(r
             assert controller.pending_round_kinds(keeper) == {"question"}
             assert not controller.has_pending_approval_round(doomed.id)
         finally:
-            for session_id in (keeper, doomed.id):
-                controller.revoke_approval_rounds_for_run(
-                    f"close-question-{session_id}"
-                )
+            controller.revoke_approval_rounds_for_run(f"close-question-{keeper}")
+            controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
             await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_chat_create_enrichment_cannot_arm_after_its_session_closes(
+    request, monkeypatch
+):
+    """A worker returning from fork enrichment must observe the committed Close.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        monkeypatch: Pause the real bridge at its payload-enrichment boundary.
+    """
+    app = _ready_app()
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        app.call_from_thread = host.call_from_thread
+        keeper = controller.store.active_session_id
+        doomed = controller.new_session(title="Closing before confirmation")
+        controller.switch_session(keeper)
+        entered = threading.Event()
+        release = threading.Event()
+        enrich = controller._enrich_chat_create_confirm_payload
+
+        def paused_enrichment(payload):
+            entered.set()
+            assert release.wait(10), "Close never released the enrichment boundary"
+            return enrich(payload)
+
+        monkeypatch.setattr(
+            controller, "_enrich_chat_create_confirm_payload", paused_enrichment
+        )
+        pending = await _arm_pending_round(controller, "chat_create", doomed.id)
+        try:
+            assert await _settle(pilot, entered.is_set)
+            assert not controller.pending_round_kinds(doomed.id)
+            assert doomed.id not in controller._active_cancel_events
+            await _show_tabs(console, pilot, {keeper, doomed.id})
+            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+            assert await _settle(
+                pilot, lambda: doomed.id not in _session_ids(controller.store)
+            )
+            assert doomed.id in controller._session_close_generations
+            release.set()
+            assert await _settle(pilot, pending.done, timeout=2), (
+                "chat-create confirmation armed after the committed Close sweep"
+            )
+            assert await pending == {"allow": False, "remember": False}
+            assert not controller.pending_chat_create_ids()
+            assert not controller._parked_chat_create_payloads
+            assert not controller.pending_round_kinds(doomed.id)
+            assert doomed.id not in controller._chat_create_session_grants
+            assert controller.store.active_session_id == keeper
+        finally:
+            release.set()
+            controller.revoke_approval_rounds_for_run(f"close-chat_create-{doomed.id}")
+            await asyncio.wait_for(pending, 5)
 
 
 @pytest.mark.asyncio
@@ -1004,6 +1097,7 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                         "skill_install",
                         "skill_script",
                         "worktree_merge",
+                        "chat_create",
                     }
                 ),
             )
@@ -1048,6 +1142,7 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                     "Worktree decisions: cancelled; no merge or discard."
                     in dialog.message
                 )
+                assert "Chat creation: declined; no chat created." in dialog.message
                 await pilot.resize_terminal(80, 18)
                 await pilot.pause()
                 assert dialog.region.intersection(container.region) == container.region

@@ -3097,6 +3097,7 @@ class ConsoleSessionController:
                 ("question", "Questions: cancelled without an answer."),
                 ("skill_install", "Skill installs: declined; runs cancelled."),
                 ("skill_script", "Skill scripts: declined; runs cancelled."),
+                ("chat_create", "Chat creation: declined; no chat created."),
                 (
                     "worktree_merge",
                     "Worktree decisions: cancelled; no merge or discard.",

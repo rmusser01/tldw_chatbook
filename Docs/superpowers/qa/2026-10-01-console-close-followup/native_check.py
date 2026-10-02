@@ -99,9 +99,11 @@ def main() -> None:
         },
         "runner_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "fixture_scope": (
-            "Actual TldwCli and LinuxDriver. Real request_user_questions and "
-            "request_mcp_approvals worker rounds; deterministic registered owning "
-            "asyncio task, no provider, tool dispatch or external server. Actual "
+            "Actual TldwCli and LinuxDriver. Real request_user_questions, "
+            "request_mcp_approvals and request_chat_create_confirm worker rounds. "
+            "Approvals/questions use deterministic registered owning asyncio "
+            "tasks; chat creation has no owning turn. No provider, tool dispatch "
+            "or external server. Actual "
             "ConsoleRuntime closes the requested background session. Terminal "
             "SGR mouse input presses both tab close and confirmation buttons."
         ),
@@ -197,6 +199,11 @@ def main() -> None:
                         ],
                         session_id=session_id,
                     )
+                if kind == "chat_create":
+                    return controller.request_chat_create_confirm(
+                        {"tool": "new_chat", "title": "private close chat"},
+                        session_id=session_id,
+                    )
                 return controller.request_user_questions(
                     [
                         {
@@ -271,7 +278,7 @@ def main() -> None:
                     lambda width=width, height=height: app.size == (width, height),
                     "resize",
                 )
-                for kind in ("approval", "question"):
+                for kind in ("approval", "question", "chat_create"):
                     chat = controller.new_session(
                         title="Pending [notes]", ephemeral=True
                     )
@@ -285,14 +292,17 @@ def main() -> None:
                         "viewed question",
                     )
                     worker = arm(kind, chat.id)
-                    owner = own_run(chat.id, worker)
+                    # A standalone decision must close without a turn's cancel signal.
+                    owner = None if kind == "chat_create" else own_run(chat.id, worker)
                     conversation_id = controller.conversation_id_for_session(chat.id)
                     await wait_for(
-                        lambda kind=kind, sid=chat.id: (
+                        lambda kind=kind, sid=chat.id, owner=owner: (
                             kind in controller.pending_round_kinds(sid)
-                            and sid in controller._active_stream_tasks
+                            and (
+                                owner is None or sid in controller._active_stream_tasks
+                            )
                         ),
-                        "background round and owning task",
+                        "background round and optional owning task",
                     )
                     await console._sync_native_console_chat_ui()
                     await click(f"#console-close-session-tab-{chat.id}")
@@ -308,13 +318,19 @@ def main() -> None:
                         "default Stay focus",
                     )
                     assert 'Close tab "Pending [notes]"?' == dialog.title
-                    category = (
-                        "Tool approvals: denied"
-                        if kind == "approval"
-                        else "Questions: cancelled"
-                    )
+                    category = {
+                        "approval": "Tool approvals: denied",
+                        "question": "Questions: cancelled",
+                        "chat_create": "Chat creation: declined; no chat created.",
+                    }[kind]
                     assert category in dialog.message
                     assert "private close payload" not in dialog.message
+                    assert "private close chat" not in dialog.message
+                    if owner is None:
+                        assert chat.id not in controller._active_stream_tasks
+                        assert chat.id not in controller._active_cancel_events
+                        assert "Live agent turns:" not in dialog.message
+                        assert "Temporary or unsaved messages:" not in dialog.message
                     for absent in (
                         "Unsent draft:",
                         "Pending attachments:",
@@ -336,18 +352,19 @@ def main() -> None:
                     )
                     await wait_for(
                         lambda worker=worker, owner=owner: (
-                            worker.done() and owner.done()
+                            worker.done() and (owner is None or owner.done())
                         ),
                         "owned work terminated",
                     )
-                    expected = (
-                        {"close-call": "deny"}
-                        if kind == "approval"
-                        else {"answered": False, "reason": "cancelled"}
-                    )
+                    expected = {
+                        "approval": {"close-call": "deny"},
+                        "question": {"answered": False, "reason": "cancelled"},
+                        "chat_create": {"allow": False, "remember": False},
+                    }[kind]
                     actual = await worker
                     assert actual == expected, actual
-                    assert owner.cancelled()
+                    if owner is not None:
+                        assert owner.cancelled()
                     assert controller._agent_bridge is not None
                     assert (
                         conversation_id
@@ -358,9 +375,14 @@ def main() -> None:
                         not in controller._fleet_wake._conversation_fences
                     )
                     assert not controller.pending_round_kinds(chat.id)
-                    assert not controller._interrupt_host.session_round_payloads(
-                        kind, chat.id
-                    )
+                    if kind == "chat_create":
+                        assert not controller.pending_chat_create_ids()
+                        assert not controller._parked_chat_create_payloads
+                        assert chat.id not in controller._chat_create_session_grants
+                    else:
+                        assert not controller._interrupt_host.session_round_payloads(
+                            kind, chat.id
+                        )
                     assert (
                         controller.store.active_session_id == keeper
                         and not sibling.done()
@@ -376,7 +398,10 @@ def main() -> None:
                             "zero_consequences_absent": True,
                             "terminal_mouse_close": True,
                             "worker_result": actual,
-                            "owning_task_cancelled": True,
+                            "owning_task_cancelled": owner.cancelled()
+                            if owner is not None
+                            else None,
+                            "standalone_decision_waiter": owner is None,
                             "target_fleet_and_wake_fences_released": True,
                             "target_rounds_removed": True,
                             "viewed_sibling_question_pending": True,
@@ -409,6 +434,7 @@ def main() -> None:
                         "question",
                         "skill_install",
                         "skill_script",
+                        "chat_create",
                         "worktree_merge",
                     }
                 ),
@@ -425,6 +451,7 @@ def main() -> None:
                     lambda: dialog.query_one("#cancel-button").has_focus,
                     "max-risk Stay focus",
                 )
+                assert "Chat creation: declined; no chat created." in dialog.message
                 assert (
                     "Worktree decisions: cancelled; no merge or discard."
                     in dialog.message
@@ -440,7 +467,7 @@ def main() -> None:
                     "size": [80, 24],
                     "title_characters": 60,
                     "all_six_nonzero_counts": True,
-                    "all_five_pending_kinds": True,
+                    "all_six_pending_kinds": True,
                     "title_and_actions_fully_painted": True,
                     "default_stay": True,
                     "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",
@@ -495,7 +522,7 @@ def main() -> None:
                     "size": [80, 18],
                     "title_characters": 60,
                     "all_six_nonzero_counts": True,
-                    "all_five_pending_kinds": True,
+                    "all_six_pending_kinds": True,
                     "original_dialog_width": container.region.width,
                     "title_fully_painted_at_top": True,
                     "actions_fully_painted_and_hit_testable_before_and_after_scroll": True,

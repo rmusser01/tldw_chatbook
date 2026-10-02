@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 05:29'
+updated_date: '2026-10-02 18:21'
 labels:
   - console
   - approvals
@@ -29,6 +29,7 @@ Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/super
 - [x] #2 The pending-interrupt registry exposes the interrupt kind to the activity classifier and the inspector count agrees with it
 - [x] #3 A test pins one question card + one approval card → the line names the approval, and a lone question card → the question copy
 - [x] #4 Keyboard review focuses the visible pending decision card when a tool approval is queued behind another confirmation, while retaining visible approval priority.
+- [ ] #5 A pending agent chat-creation confirmation is classified as a confirmation, contributes zero tool-approval rounds, and stays reachable through keyboard Review and its attention tab; Close declines it without creating a chat.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -42,6 +43,14 @@ Reason: Complete the existing kind-aware pending-decision projection into Inspec
 3. Cover lone question, question plus approval, two queued approvals, resolution, sibling session and detach/remount with production-shaped round ownership and visible cards.
 4. Run targeted Inspector/activity/pending-lifetime tests and native Console journey; update user guide and QA.
 5. Self-review integrated changes, resolve PR feedback and require final-head checks before normal merge.
+
+Qodo chat-create projection follow-up (PR2953):
+ADR required: no
+ADR path: backlog/decisions/150-agent-chat-fork-and-spawn.md; existing ADR-067/094/195 above.
+Reason: Classify an existing standalone confirmation through the existing registry and focus/Close seams without changing its owner, permission or grant policy.
+6. Reproduce the real mounted chat-create round incorrectly counting as a tool approval; cover confirmation copy, keyboard/attention-tab focus, visible tool-approval priority and sibling isolation.
+7. Extend the existing real background Close matrix and crowded confirmation geometry for chat-create; use the existing confirmation copy and registry, add only its kind, card selector and truthful Close consequence.
+8. Run targeted projection/Close and chat-create consent/revocation neighbors, token/artifact/lint guards, and native approval/Close replay; require fresh final-head Qodo and all four GitHub gates before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +67,6 @@ Clean latest-dev27e718f01d81 rebase preserves pending/focus behavior. All three 
 Clean rebase onto devab4df9995954 (PR2903 warm-config settings/snapshot paths) preserves all six patches. Combined verification: 16 passed with zero skips (three mounted pending projections and thirteen config warm-read safety cases). Fresh native approval11 passes nine Ask-gated fs_read journeys; Close12 passes four real worker closes and five-kind maximum-risk geometry. Current UI/config hashes, app/process exit0, no network and unchanged real profiles verified. Sanitized receipt: Docs/superpowers/qa/2026-10-01-console-tool-ux-config-integration.json. Final published-head GitHub gates and Qodo resolution remain required for normal merge in PR2953.
 
 Fresh Qodo fixture-documentation finding corrected for all three new pending-projection tests with summary/Args; executable AST unchanged and Ruff/format pass. The previously qualified combined warm-config/projection behavior is unchanged. PR2953 fresh final-head gates/review remain required.
+
+PR2953 final-head Qodo finding bbb8ec52-4caf-42d4-987b-565ebe92410f exposed the standalone chat-create bridge using the generic approval kind. Reopened for this existing pending-kind projection gap; new AC records the confirmation/count/focus/Close outcomes before implementation.
 <!-- SECTION:NOTES:END -->
