@@ -280,7 +280,7 @@ def test_no_ui_ready_resident_module_imports_the_shared_shell(tmp_path: Path) ->
     assert result.stdout.strip().splitlines()[-1] == "False"
 
 
-SHARED_WIDGET_NAMES = ["AdaptivePaneShell", "AdaptivePaneGrip"]
+SHARED_WIDGET_NAMES = ["AdaptivePaneShell", "AdaptivePaneGrip", "DestinationRailRowButton"]
 
 
 def test_shared_widgets_declare_no_class_level_css() -> None:

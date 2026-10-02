@@ -27,12 +27,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, ClassVar, Mapping
 
+from rich.cells import cell_len
 from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.content import Content
 from textual.containers import Horizontal
-from textual.events import DescendantFocus
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button
@@ -42,6 +43,7 @@ from tldw_chatbook.Utils.adaptive_reader_state import (
     AdaptivePaneLayout,
     PaneName,
 )
+from tldw_chatbook.Widgets.glyph_fallback import resolve_glyph
 
 #: Where the navigation pane's upper arrow sits, as a fraction of the grip's
 #: height; the lower arrow mirrors it (task-32355). The items grip paints one
@@ -544,3 +546,259 @@ class AdaptivePaneShell(Horizontal):
             # Keep focus recovery synchronous so it cannot overwrite a newer
             # explicit focus change queued before the next refresh.
             self.screen.set_focus(automatic_reopen_target, scroll_visible=False)
+
+
+# ---------------------------------------------------------------------------
+# Rail rows (spec section 1.4.3). Modelled on the Library rail's own row
+# label builder, but deliberately neither shared with it nor golden-tested
+# against it: the fit steps differ by design.
+# ---------------------------------------------------------------------------
+
+#: The current-row marker (spec section 1.4.3), resolved through the glyph map
+#: so ASCII mode paints ``>``. Two cells with its trailing space -- the same as
+#: a non-current row's two-space prefix -- so rows never shift when the current
+#: row moves.
+RAIL_ROW_CURRENT_MARKER = "▸"
+
+#: The ellipsis a squeezed title ends with (step 6), measured in cells. It goes
+#: through ``resolve_glyph``, but the glyph map has no ASCII substitute for it,
+#: so ASCII mode paints it unchanged.
+RAIL_ROW_ELLIPSIS = "…"
+
+#: Gap between the count and the key hint (the spec's examples print two cells).
+_RAIL_ROW_KEY_GAP = "  "
+
+
+@dataclass(frozen=True)
+class DestinationRailRow:
+    """One row of a destination's navigation rail.
+
+    A sibling of the Library's own row record, not a subclass of it: Roleplay
+    never imports ``Widgets/Library/``. Counts arrive pre-formatted because
+    their states (loading, known, ``3 of 28``, ``100+``, failed) belong to the
+    destination (spec section 1.4.2); this record only says how to shorten
+    them.
+
+    Attributes:
+        row_id: Stable id; callers build the button's DOM id from it.
+        title: The canonical noun, for example ``"Lore books"``.
+        short_title: The fallback noun (``"Lore"``); ``""`` means ``title``.
+        count: The count text including its parentheses (``"(3 · 2 on)"``),
+            or ``""`` for a row with no count.
+        short_count: The shorter count (``"(3)"``); ``""`` means ``count``.
+        key: The kind key hint (``"l"``), or ``""``.
+        count_loading: ``True`` while the count is in flight. The key hint is
+            never painted then (RC-11): it would vanish when the count lands.
+        disabled: Whether the row's button is disabled.
+    """
+
+    row_id: str
+    title: str
+    short_title: str = ""
+    count: str = ""
+    short_count: str = ""
+    key: str = ""
+    count_loading: bool = False
+    disabled: bool = False
+
+
+@dataclass(frozen=True)
+class FittedRailRowLabel:
+    """A rail row label after fitting, kept in parts so a button can style them.
+
+    Attributes:
+        prefix: ``"▸ "`` (resolved) on the current row, ``"  "`` otherwise.
+        title: The title as painted -- full, short or ellipsized; ``""`` only
+            when not even one character fits beside the count.
+        count: The count as painted (full or short). Never truncated.
+        key: The key hint, or ``""`` once it has been dropped.
+    """
+
+    prefix: str
+    title: str
+    count: str
+    key: str
+
+    @property
+    def plain(self) -> str:
+        """The label as one string, exactly as it paints."""
+        body = " ".join(part for part in (self.title, self.count) if part)
+        tail = f"{_RAIL_ROW_KEY_GAP}{self.key}" if self.key else ""
+        return f"{self.prefix}{body}{tail}"
+
+
+def _ellipsize(text: str, budget: int) -> str:
+    """Cut ``text`` to ``budget`` terminal cells, ending in the ellipsis.
+
+    Measures cells, not characters, so wide (CJK, emoji) and zero-width
+    characters fit by what they paint.
+
+    Args:
+        text: The title to shorten.
+        budget: Cells available for the title.
+
+    Returns:
+        ``text`` when it already fits; ``""`` when not even one character
+        fits before the ellipsis; otherwise the longest fitting head plus the
+        ellipsis.
+    """
+    if cell_len(text) <= budget:
+        return text
+    ellipsis = resolve_glyph(RAIL_ROW_ELLIPSIS)
+    room = budget - cell_len(ellipsis)
+    head = ""
+    for character in text:
+        if cell_len(head + character) > room:
+            break
+        head += character
+    head = head.rstrip()
+    return f"{head}{ellipsis}" if head else ""
+
+
+def fit_rail_row_label(
+    row: DestinationRailRow, width: int, *, current: bool = False
+) -> FittedRailRowLabel:
+    """Fit one rail row's label into ``width`` terminal cells (spec section 1.4.3).
+
+    Tries, in order, and returns the first that fits:
+
+    1. title + count + key hint (the key is skipped while the count loads);
+    2. title + count -- the key drops first: keys are always in the footer
+       and F1;
+    3. title + short count;
+    4. short title + count;
+    5. short title + short count;
+    6. the short title ellipsized, with the short count whole.
+
+    The canonical noun outlives the key hint and the count is never clipped:
+    when even step 6 cannot fit, the title shrinks to nothing and the label
+    may exceed ``width`` by the count alone.
+
+    Args:
+        row: The row to fit.
+        width: Available text cells. ``0`` or less (compose time, before
+            layout) returns the full label.
+        current: Whether the row is the destination's current kind.
+
+    Returns:
+        The fitted label, in parts.
+    """
+    prefix = f"{resolve_glyph(RAIL_ROW_CURRENT_MARKER)} " if current else "  "
+    short_title = row.short_title or row.title
+    short_count = row.short_count or row.count
+    key = "" if row.count_loading else row.key
+    candidates = (
+        FittedRailRowLabel(prefix, row.title, row.count, key),
+        FittedRailRowLabel(prefix, row.title, row.count, ""),
+        FittedRailRowLabel(prefix, row.title, short_count, ""),
+        FittedRailRowLabel(prefix, short_title, row.count, ""),
+        FittedRailRowLabel(prefix, short_title, short_count, ""),
+    )
+    if width <= 0:
+        return candidates[0]
+    for candidate in candidates:
+        if cell_len(candidate.plain) <= width:
+            return candidate
+    count_cells = cell_len(f" {short_count}") if short_count else 0
+    title = _ellipsize(short_title, width - cell_len(prefix) - count_cells)
+    return FittedRailRowLabel(prefix, title, short_count, "")
+
+
+def rail_row_content(
+    row: DestinationRailRow, width: int, *, current: bool = False
+) -> Content:
+    """The fitted label as literal ``Content``.
+
+    The key hint and a loading count are dim and the current row is bold.
+    Built from ``Content`` parts and never parsed as markup, so a title such
+    as ``"[/]"`` paints as typed (spec R33).
+
+    Args:
+        row: The row to render.
+        width: Available text cells (see ``fit_rail_row_label``).
+        current: Whether the row is the destination's current kind.
+
+    Returns:
+        Content whose ``plain`` equals ``fit_rail_row_label(...).plain``.
+    """
+    label = fit_rail_row_label(row, width, current=current)
+    parts: list[str | tuple[str, str]] = [label.prefix, label.title]
+    if label.count:
+        if label.title:
+            parts.append(" ")
+        parts.append((label.count, "dim") if row.count_loading else label.count)
+    if label.key:
+        parts.append((f"{_RAIL_ROW_KEY_GAP}{label.key}", "dim"))
+    content = Content.assemble(*parts)
+    return content.stylize("bold") if current else content
+
+
+class DestinationRailRowButton(Button):
+    """A rail row button that refits its own label whenever its width changes.
+
+    Per-button ``on_resize``, not one rail-level pass, so the fit also follows
+    a vertical scrollbar's gutter: the rail's own size does not change when
+    its scrollbar appears, but each row's content width does. Rows are
+    patched through ``sync_row``, never recomposed. Width and height come from
+    the canonical ``w-full`` and ``h-1`` utilities; every other row rule
+    belongs to the destination's lazy sheet.
+    """
+
+    def __init__(
+        self, row: DestinationRailRow, *, current: bool = False, **kwargs: Any
+    ) -> None:
+        """Build a row button.
+
+        Args:
+            row: The row this button renders.
+            current: Whether the row is the destination's current kind.
+            **kwargs: Forwarded to ``Button`` (``id``, ``classes``, ...).
+        """
+        self.rail_row = row
+        self.is_current = current
+        super().__init__(
+            rail_row_content(row, 0, current=current),
+            compact=True,
+            disabled=row.disabled,
+            **kwargs,
+        )
+        self.add_class("w-full")
+        self.add_class("h-1")
+        self.styles.line_pad = 0
+
+    def sync_row(self, row: DestinationRailRow, *, current: bool) -> None:
+        """Patch the row in place; does nothing when nothing changed.
+
+        Args:
+            row: The row's new state.
+            current: Whether the row is now the destination's current kind.
+        """
+        if row == self.rail_row and current == self.is_current:
+            return
+        self.rail_row = row
+        self.is_current = current
+        if self.disabled != row.disabled:
+            self.disabled = row.disabled
+        self._refit()
+
+    def on_resize(self, event: Resize) -> None:
+        """Refit the label to the new content width."""
+        self._refit()
+
+    def _refit(self) -> None:
+        """Assign a refitted label only when it differs from the current one.
+
+        ``Content.__eq__`` compares plain text only, and so does the ``label``
+        reactive, so a style-only change (a count that starts or stops
+        loading with unchanged text) is set past that equality check and
+        repainted explicitly.
+        """
+        label = rail_row_content(
+            self.rail_row, self.content_region.width, current=self.is_current
+        )
+        painted = self.label
+        if label.plain != painted.plain:
+            self.label = label
+        elif label.spans != painted.spans:
+            self.set_reactive(Button.label, label)
+            self.refresh(layout=True)
