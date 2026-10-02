@@ -301,3 +301,35 @@ def test_a_replaced_config_file_is_not_served_warm(
         if path.is_symlink() or path.exists():
             path.unlink()
         os.replace(backup, path)
+
+
+def test_a_config_file_the_load_created_is_served_warm_next(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A fresh profile's first load creates the config file; the next read is warm.
+
+    The identity is stamped before reading, when the file did not exist yet;
+    re-stamping what the bootstrap created avoids a second rebuild on every
+    fresh profile (Qodo, #2903).
+
+    Args:
+        monkeypatch: Replaces the guarded rebuild with a marker after the load.
+        tmp_path: pytest fixture; holds the original config file.
+    """
+    _warm_settings()
+    path = config_module._get_effective_config_path()
+    if not path.exists():
+        pytest.skip("no config file in this environment")
+    backup = tmp_path / "original.toml"
+    os.replace(path, backup)
+    try:
+        config_module.load_settings(force_reload=True)
+        if not path.exists():
+            pytest.skip("the bootstrap does not create the config file here")
+        marker: dict = {"guarded": True}
+        monkeypatch.setattr(config_module, "_load_settings_guarded", lambda **kwargs: marker)
+        assert config_module.load_settings() is not marker
+    finally:
+        if path.is_symlink() or path.exists():
+            path.unlink()
+        os.replace(backup, path)

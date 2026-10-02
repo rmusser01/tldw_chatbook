@@ -3699,6 +3699,12 @@ def _load_settings_uncached(
         )
 
     if bootstrap.succeeded:
+        if posture and posture[-1] is None:
+            # The file was missing when stamped and this load's bootstrap
+            # created it: stamp what now exists, or every fresh profile pays a
+            # second rebuild. A file that existed keeps its pre-read stamp, so
+            # a mid-read swap still misses (Qodo, #2903).
+            posture = _config_file_posture(active_config_path)
         with _SETTINGS_CACHE_LOCK:
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
