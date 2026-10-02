@@ -1209,6 +1209,13 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-19642.21.1: the ported v2-chunker suite constructs the real
+            # engine Chunker, whose ChunkerConfig reads chatbook's [Chunking]
+            # TOML through the _shims/config.py guarded config loader under
+            # the per-test redirect (same admission signature as
+            # test_hosted_chat.py above). It never re-selects a config
+            # itself, so it keeps the bootstrap profile.
+            "test_chunker_v2.py",
         }
     )
     test_data_dir = (
