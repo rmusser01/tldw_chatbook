@@ -23,7 +23,12 @@ this scans, statically:
 * every method of ``app_lifecycle.py`` whose name mentions ``quit``, with the
   same ``self.`` closure;
 * every module-level function of ``confirmation_dialog.py`` whose name
-  mentions ``quit`` except ``await_quit_prompt`` itself.
+  mentions ``quit`` except ``await_quit_prompt`` itself;
+* every module-level function of ``Persona_Modules/roleplay_draft_guard.py``
+  (TASK-33622.14). ``PersonasScreen.confirm_quit`` delegates there, so the
+  scan cannot follow it through ``self.``; the module's flow is shared with
+  app navigation and is handed its ``ask``, so no function in it may wait on
+  a pushed screen at all.
 
 and fails if any of them waits on a pushed screen other than through the
 choke point. Calls into other classes are not followed; the rule is pinned
@@ -39,6 +44,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 APP_LIFECYCLE = PACKAGE / "app_lifecycle.py"
 CONFIRMATION_DIALOG = PACKAGE / "Widgets" / "confirmation_dialog.py"
+#: Roleplay's quit hook delegates here; every function in it is scanned.
+ROLEPLAY_DRAFT_GUARD = PACKAGE / "UI" / "Persona_Modules" / "roleplay_draft_guard.py"
 
 #: Hooks the quit walk (and the workflow authoring owner) call with no args.
 WALK_HOOKS = frozenset({"confirm_quit", "prepare_for_quit", "prepare_quit"})
@@ -137,15 +144,29 @@ def scan_source(
     return roots_seen, offences
 
 
-def scan_module_functions(source: str, label: str) -> tuple[list[str], list[str]]:
-    """Scan the module-level quit functions of the choke point's own module."""
+def scan_module_functions(
+    source: str, label: str, *, quit_named_only: bool = True
+) -> tuple[list[str], list[str]]:
+    """Scan a module's module-level functions.
+
+    Args:
+        source: The module's source text.
+        label: How offences name the module.
+        quit_named_only: Scan only functions whose name mentions ``quit``
+            (the choke point's own module); False scans every function.
+
+    Returns:
+        ``(roots, offences)`` as ``scan_source`` returns them.
+    """
     tree = ast.parse(source)
     roots: list[str] = []
     offences: list[str] = []
     for node in tree.body:
         if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             continue
-        if "quit" not in node.name or node.name == CHOKE_POINT:
+        if node.name == CHOKE_POINT:
+            continue
+        if quit_named_only and "quit" not in node.name:
             continue
         roots.append(f"{label}:{node.name}")
         offences.extend(
@@ -171,7 +192,18 @@ def _scan_tree() -> tuple[list[str], list[str]]:
         CONFIRMATION_DIALOG.read_text(encoding="utf-8"),
         str(CONFIRMATION_DIALOG.relative_to(REPO_ROOT)),
     )
-    return roots + found_roots, offences + found_offences
+    roots.extend(found_roots)
+    offences.extend(found_offences)
+    # Missing on a tree without TASK-33622.14: the reach test then names it.
+    if ROLEPLAY_DRAFT_GUARD.exists():
+        found_roots, found_offences = scan_module_functions(
+            ROLEPLAY_DRAFT_GUARD.read_text(encoding="utf-8"),
+            str(ROLEPLAY_DRAFT_GUARD.relative_to(REPO_ROOT)),
+            quit_named_only=False,
+        )
+        roots.extend(found_roots)
+        offences.extend(found_offences)
+    return roots, offences
 
 
 def test_quit_flow_prompts_are_awaited_only_through_the_choke_point() -> None:
@@ -198,6 +230,12 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         "tldw_chatbook/app_lifecycle.py:LifecycleMixin._confirm_and_quit",
         "tldw_chatbook/app_lifecycle.py:LifecycleMixin._await_quit_prompt",
         "tldw_chatbook/Widgets/confirmation_dialog.py:confirm_quit_discarding_edits",
+        # TASK-33622.14: Roleplay's hook, and the shared flow it delegates to.
+        "tldw_chatbook/UI/Screens/personas_screen.py:PersonasScreen.confirm_quit",
+        "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
+        "confirm_roleplay_quit",
+        "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
+        "confirm_roleplay_drafts",
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"
@@ -253,3 +291,17 @@ async def confirm_quit_with_a_bare_wait(app, prompt):
     roots, offences = scan_module_functions(source, "fixture")
     assert roots == ["fixture:confirm_quit_with_a_bare_wait"]
     assert offences == ["fixture:confirm_quit_with_a_bare_wait:6"]
+
+
+def test_negative_control_every_function_of_a_delegate_module() -> None:
+    """The Roleplay flow's shared helper is scanned whatever its name."""
+    source = """
+async def confirm_drafts(screen, ask):
+    return await ask(Prompt())
+
+async def _save_then_ask(screen):
+    return await screen.app.push_screen_wait(Prompt())
+"""
+    roots, offences = scan_module_functions(source, "fixture", quit_named_only=False)
+    assert roots == ["fixture:confirm_drafts", "fixture:_save_then_ask"]
+    assert offences == ["fixture:_save_then_ask:6"]
