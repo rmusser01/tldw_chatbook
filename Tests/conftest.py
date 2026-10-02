@@ -1195,6 +1195,17 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-22302: the real-stack citation persistence suite drives the
+            # real Console controller submit path, whose hook-consent admission
+            # (`_hook_admission_reason` -> `read_hooks_config_snapshot`) reads
+            # the guarded config loader. Under the per-test redirect that read
+            # fails closed with RecoveryRequired("raw_source_selection_changed")
+            # and the gate's broad except turns it into a send refusal
+            # ("Hooks unavailable"), so the durable turn never starts and the
+            # six-table assertions never run -- the same admission signature as
+            # the two console continuation suites above, red since the
+            # hook-consent gate landed (aed1b13501).
+            "test_console_terminal_citation_persistence.py",
         }
     )
     test_data_dir = (
