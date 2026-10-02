@@ -12,7 +12,7 @@ from Tests.private_profile import private_profile_test
 
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
-from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
 from Tests.UI.test_console_dictation import _mounted_console, _ready_host
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
 from tldw_chatbook.Chat.console_chat_models import ConsoleControllerActivity
@@ -20,14 +20,19 @@ from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
     ConsolePromptQueueRegistry,
+    PromptQueueMode,
     PromptQueuePauseReason,
+    PromptQueueReservation,
+    PromptQueueSnapshot,
     QueueMutationStatus,
+    make_prompt_preview,
 )
 from tldw_chatbook.Chat.console_runtime import (
     ConsoleRuntime,
     ConsoleTurnRecoveryEntry,
 )
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+    RECOVERY_TURN_PREVIEW_CELLS,
     ConsolePromptDispatchStatus,
     ConsolePromptQueueRegion,
     ConsolePromptQueueUIController,
@@ -286,8 +291,153 @@ async def test_recovery_shelf_buttons_pin_the_displayed_turn_id() -> None:
     ]
 
 
+class _PaintedRegionApp(ConsolidatedCSSApp):
+    """The shelf under every app-tier sheet production loads.
+
+    The app bundle's ``Button { border: none }`` is what lets a one-row
+    Button paint its label at all; without it the harness measures nothing.
+    """
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        yield ConsolePromptQueueRegion(id="queue")
+
+
+def _shelf_snapshot(
+    mode: PromptQueueMode,
+    reason: PromptQueuePauseReason | None = None,
+    *,
+    count: int = 1,
+) -> PromptQueueSnapshot:
+    return PromptQueueSnapshot(
+        session_id="session-a",
+        revision=1,
+        entries=(),
+        waiting_count=count,
+        claimed_count=0,
+        total_count=count,
+        mode=mode,
+        pause_reason=reason,
+        reservation=PromptQueueReservation.HELD,
+        expected_context_epoch=1,
+        closing=False,
+    )
+
+
+def _every_shelf_presentation():
+    """Every shelf state ``presentation_for`` can project, longest copy first.
+
+    Built through the production projection with the arguments
+    ``ConsolePromptQueueUIController.presentation_for`` passes, so a new
+    pause label or primary action lands here without a hand-kept list. The
+    failed turn's name uses the production preview budget at its full width:
+    that summary is the shelf's longest, and the one most likely to push a
+    button off the row.
+    """
+
+    derive = derive_prompt_queue_presentation
+    paused = PromptQueueMode.PAUSED
+    failed_name = make_prompt_preview(
+        "Summarise the attached quarterly report in five bullets, then rank "
+        "each risk by impact",
+        cell_budget=RECOVERY_TURN_PREVIEW_CELLS,
+    )
+    yield (
+        "draining",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING), _activity(accepted=True, count=1)
+        ),
+    )
+    yield (
+        "pause-after-turn",
+        derive(
+            _shelf_snapshot(PromptQueueMode.PAUSE_AFTER_TURN),
+            _activity(accepted=True, count=1),
+        ),
+    )
+    for reason in PromptQueuePauseReason:
+        yield (
+            f"paused-{reason.value}",
+            derive(
+                _shelf_snapshot(paused, reason),
+                _activity(count=1, paused=True),
+                failed_turn_preview=(
+                    failed_name if reason is PromptQueuePauseReason.FAILED else None
+                ),
+            ),
+        )
+    yield (
+        "response-recovery-blocked",
+        derive(
+            _shelf_snapshot(paused, PromptQueuePauseReason.MANUAL),
+            _activity(count=1, paused=True),
+            dispatch_recovery_blocked=True,
+        ),
+    )
+    yield (
+        "unsent-turn-recovery",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING, count=0),
+            _activity(),
+            turn_recovery_id="turn-a",
+        ),
+    )
+
+
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 40)])
+@pytest.mark.parametrize(
+    "shelf_width",
+    # Both sides of the shelf's own 92-cell narrow threshold, then the
+    # widths the mounted Console gives the shelf at 80/100/120/160/235
+    # terminal columns (rails closed, so the shelf spans the terminal).
+    [60, 80, 91, 92, 100, 120, 160, 235],
+)
+async def test_every_shelf_button_paints_its_whole_label(shelf_width) -> None:
+    """TASK-33625.4: the controls on the queue shelf never clip their label.
+
+    The Manage slot was a fixed 8 cells; padding 0 1 plus Button's own
+    line-pad 1 left 4 cells, so it painted 'Mana' and 'Rest'. The Pause slot's
+    fixed 15 left 11, so 'Keep draining' wrapped and painted only 'Keep'.
+    The oracle is the painted strip, not the label value or the widget width:
+    each label must be in the button's own rendered line AND in the screen's
+    composited row inside the button's columns, which also catches a button
+    pushed past the shelf's right edge.
+    """
+
+    app = _PaintedRegionApp()
+    async with app.run_test(size=(shelf_width, 10)) as pilot:
+        region = app.query_one("#queue", ConsolePromptQueueRegion)
+        manage = region.query_one("#console-prompt-queue-manage", Button)
+        pause = region.query_one("#console-prompt-queue-pause", Button)
+        for name, presentation in _every_shelf_presentation():
+            assert region.sync_presentation("session-a", presentation)
+            await pilot.pause()
+            assert region.display and region.region.height == 1, name
+            row = app.screen._compositor.render_strips()[region.region.y].text
+            for button in (manage, pause):
+                label = button.label.plain
+                assert label, name
+                own_line = button.render_line(0).text
+                assert own_line.strip() == label, (
+                    f"{name} at {shelf_width}: {button.id} painted "
+                    f"{own_line!r} for label {label!r} in "
+                    f"{button.region.width} cells"
+                )
+                assert button.region.right <= region.region.right, (
+                    f"{name} at {shelf_width}: {button.id} ends at "
+                    f"{button.region.right}, past the shelf's "
+                    f"{region.region.right}; row {row!r}"
+                )
+                assert label in row[button.region.x : button.region.right], (
+                    f"{name} at {shelf_width}: {label!r} is not painted in "
+                    f"{button.id}'s columns; row {row!r}"
+                )
+            assert manage.region.right <= pause.region.x, name
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("size", [(80, 24), (100, 30), (120, 40), (160, 40), (235, 52)])
 @private_profile_test
 async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
     request, size
@@ -336,6 +486,15 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
         assert manage.region.right <= pause.region.x
         assert send.label.plain == "Queue"
         assert send.region.right <= composer.region.right
+        # TASK-33625.4: the painted label, not the widget's width. A fixed
+        # 8-cell Manage painted 'Mana' on the real Console at every width.
+        row = console._compositor.render_strips()[region.region.y].text
+        for button, label in ((manage, "Manage"), (pause, "Pause")):
+            assert button.render_line(0).text.strip() == label, (
+                f"{size}: shelf {region.region.width} cells, {button.id} "
+                f"painted {button.render_line(0).text!r}"
+            )
+            assert label in row[button.region.x : button.region.right], row
 
 
 @pytest.mark.asyncio

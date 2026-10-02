@@ -317,7 +317,10 @@ class ConsolePromptQueueRegion(Widget):
     # #console-prompt-queue-row Horizontal has no rule: its own defaults
     # (1fr x 1fr, horizontal layout) fill this region, which max-height
     # clamps to one row. No min-height sits beside a fixed `height: 1`:
-    # it could never take effect.
+    # it could never take effect. The two Buttons keep Button's own
+    # `width: auto` (label + line-pad): fixed widths clipped 'Manage' to
+    # 'Mana' and 'Keep draining' to 'Keep' (TASK-33625.4). min-width 8
+    # undoes Button's 16; Pause's 15 keeps its short labels one size.
     BUNDLED_CSS = """
     ConsolePromptQueueRegion {
         display: none;
@@ -347,14 +350,12 @@ class ConsolePromptQueueRegion(Widget):
     }
 
     #console-prompt-queue-manage {
-        width: 8;
         min-width: 8;
         height: 1;
         padding: 0 1;
     }
 
     #console-prompt-queue-pause {
-        width: 15;
         min-width: 15;
         height: 1;
         padding: 0 1;
@@ -482,6 +483,11 @@ class ConsolePromptQueueRegion(Widget):
                 f"{presentation.pause_label} this session's prompt queue."
             )
         self.refresh(layout=True)
+        # A Button caches its box model per its OWN layout count, so a new
+        # label keeps the old width unless the Button itself is re-laid
+        # out: 'Pause' -> 'Keep draining' painted 'Keep' (TASK-33625.4).
+        manage.refresh(layout=True)
+        pause.refresh(layout=True)
         return True
 
     def on_resize(self) -> None:
