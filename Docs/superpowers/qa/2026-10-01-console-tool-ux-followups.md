@@ -570,3 +570,25 @@ All225 qualification pins remain identical. The final tree differs from the
 preceding230-case/native/preflight candidate only in upstream lesson and task
 metadata. Original receipt identities remain unchanged; explicit rebase equivalence
 is in `overlapping_resend_rebase`. Published-head CI/Qodo remain required.
+
+
+## Remaining UI Fast Lane startup cost
+
+Published45189cd3 reached97% without an assertion failure, then its unchanged
+20-minute UI job expired; all14 Close nodes had passed in273.95s. The derived
+check fails explicitly on that cancelled required dependency, while its
+artifact steps pass. Exact logs are retained in /tmp.
+
+Nine lightweight Close navigation/recovery bodies now run in two bounded
+private children instead of nine. Every original body/signature and all63
+assertions remain identical; the five heavier cases stay separate. Fresh
+apps/controllers/stores/workers, distinct real database paths, per-scenario
+patch contexts, original cleanup and factory drains/unfreeze/GC remain.
+Ordinary private wrappers pass all nine journeys: one paired macOS sample
+95.55s ->28.42+38.44=66.86s. This is not a hosted CI completion guarantee.
+All180s child/20m job deadlines, gates and census floor124 are unchanged.
+Independent isolation review clear; edited-range format and zero-new Ruff34
+pass. Receipts: /tmp/console-tool-ux-close-grouping-{before,after}.json and
+/tmp/console-tool-ux-close-grouping-final-proof.json. Latest dev advanced to
+ecc0a531c8 (PERF-07 config/path memo); qualification of that combined tree
+and fresh final-head CI/Qodo remain required before merge.

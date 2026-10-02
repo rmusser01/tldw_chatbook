@@ -9,8 +9,9 @@ the right outcome but call ``Button.press()`` directly, so every case here
 goes through a real Pilot mouse click on a mounted ``ChatScreen`` and lets
 the real close worker run against the real chat store and ``ConsoleRuntime``.
 
-Each case runs under ``@private_profile_test``: ``_build_test_app`` reloads
-config, which the per-test config sandbox refuses locally with
+Each public group runs under ``@private_profile_test``; navigation and
+recovery scenarios retain fresh apps and cleanup within their group.
+``_build_test_app`` reloads config, which the per-test config sandbox refuses locally with
 ``RecoveryRequired: raw_source_selection_changed`` (see the Tests/UI
 ``RecoveryRequired`` lesson in ``backlog/docs/lessons-testing-evidence.md``).
 """
@@ -18,8 +19,11 @@ config, which the per-test config sandbox refuses locally with
 from __future__ import annotations
 
 import asyncio
+import gc
 import threading
 import time
+import warnings
+from pathlib import Path
 
 import pytest
 from loguru import logger
@@ -28,7 +32,11 @@ from textual.css.query import NoMatches
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app
+from Tests.UI.app_factory import (
+    _build_test_app,
+    drain_active_service_patches,
+    drain_created_dirs,
+)
 from Tests.UI.test_console_button_routing import (
     _mounted_console,
     _wait_for_confirmation,
@@ -214,9 +222,7 @@ def _failure_toasts(notes: list[tuple[str, str]]) -> list[tuple[str, str]]:
     return [note for note in notes if note[1] in {"error", "warning"}]
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_path):
+async def _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_path):
     """AC #1 / #5: the real ✕ click runs the close worker and the tab goes."""
 
     app = _ready_app()
@@ -254,9 +260,7 @@ async def test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab(request, tmp_
         db.close_connection()
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
+async def _verify_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
     """AC #2: Stay keeps the tab and its draft; Close really closes it."""
 
     app = _ready_app()
@@ -293,9 +297,7 @@ async def test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it(request):
         assert _failure_toasts(notes) == []
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_middle_click_closes_a_tab_without_switching_to_it(request):
+async def _verify_middle_click_closes_a_tab_without_switching_to_it(request):
     """AC #3: a middle-click closes the tab; it never activates it first.
 
     Closing the ACTIVE tab activates its right-hand neighbour, so a
@@ -330,9 +332,7 @@ async def test_middle_click_closes_a_tab_without_switching_to_it(request):
         assert set(_session_ids(store)) == {keeper, other.id}
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_internal_close_error_names_the_tab_but_never_the_error_text(
+async def _verify_internal_close_error_names_the_tab_but_never_the_error_text(
     request, tmp_path, monkeypatch
 ):
     """AC #4: a close that fails inside the runtime is shown and logged.
@@ -420,9 +420,7 @@ class _UndrainedVoiceOwner:
         self.aborted += 1
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_close_that_does_not_finish_is_reported_and_keeps_tab_state(
+async def _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state(
     request, tmp_path
 ):
     """AC #4: a runtime close that returns without closing is not success.
@@ -467,9 +465,7 @@ async def test_close_that_does_not_finish_is_reported_and_keeps_tab_state(
         db.close_connection()
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_close_flow_that_cannot_start_tells_the_user(request, monkeypatch):
+async def _verify_close_flow_that_cannot_start_tells_the_user(request, monkeypatch):
     """AC #4: even a close worker that cannot be scheduled is not silent."""
 
     app = _ready_app()
@@ -565,9 +561,7 @@ def _pending_temporary_turn(store) -> str:
     return session.id
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
+async def _verify_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
     """An actionable pending-turn refusal leaves the tab accessible.
 
     Args:
@@ -605,9 +599,7 @@ async def test_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
         await _await_tabs(console, pilot, {keeper, pending})
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
+async def _verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab(
     request,
 ):
     """AC #4: a failure after the store closed the session is not a failed close.
@@ -1013,9 +1005,7 @@ async def test_chat_create_enrichment_cannot_arm_after_its_session_closes(
             await asyncio.wait_for(pending, 5)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_failed_confirmed_close_reoffers_confirmation_without_retrying(request):
+async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(request):
     """A refused at-risk close keeps work and offers a fresh, explicit retry.
 
     Args:
@@ -1470,3 +1460,84 @@ async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
                     generation = bridge._fleet_fence_generations.get(conversation_id)
                     if generation is not None:
                         abort_fence(conversation_id, generation=generation)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_close_navigation_journeys(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """Run three real tab-strip journeys with independent app lifetimes.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Parent directory for the saved-history scenario's database.
+    """
+    saved_dir = tmp_path / "saved-history"
+    saved_dir.mkdir()
+    for verify, kwargs in (
+        (
+            _verify_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab,
+            {"tmp_path": saved_dir},
+        ),
+        (_verify_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it, {}),
+        (_verify_middle_click_closes_a_tab_without_switching_to_it, {}),
+    ):
+        try:
+            await verify(request, **kwargs)
+        finally:
+            drain_active_service_patches()
+            drain_created_dirs()
+            gc.unfreeze()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_close_failure_and_retry_journeys(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run six Close recovery journeys with fresh apps and scoped patches.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Parent directory for distinct saved-history databases.
+        monkeypatch: Fixture providing a separate patch context per journey.
+    """
+    error_dir = tmp_path / "internal-error"
+    error_dir.mkdir()
+    unfinished_dir = tmp_path / "unfinished-close"
+    unfinished_dir.mkdir()
+    for verify, kwargs in (
+        (
+            _verify_internal_close_error_names_the_tab_but_never_the_error_text,
+            {"tmp_path": error_dir, "monkeypatch": monkeypatch},
+        ),
+        (
+            _verify_close_that_does_not_finish_is_reported_and_keeps_tab_state,
+            {"tmp_path": unfinished_dir},
+        ),
+        (
+            _verify_close_flow_that_cannot_start_tells_the_user,
+            {"monkeypatch": monkeypatch},
+        ),
+        (_verify_a_refusal_the_user_can_act_on_shows_its_own_reason, {}),
+        (_verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab, {}),
+        (_verify_failed_confirmed_close_reoffers_confirmation_without_retrying, {}),
+    ):
+        try:
+            with monkeypatch.context() as patch:
+                if "monkeypatch" in kwargs:
+                    kwargs["monkeypatch"] = patch
+                await verify(request, **kwargs)
+        finally:
+            drain_active_service_patches()
+            drain_created_dirs()
+            gc.unfreeze()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()

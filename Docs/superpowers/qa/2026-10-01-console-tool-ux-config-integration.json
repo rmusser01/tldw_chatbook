@@ -1773,5 +1773,72 @@
       "range_diff": "/tmp/console-tool-ux-overlapping-resend-rebase-range-diff.txt",
       "equivalence_limit": "Existing230-case/native/preflight qualification is on identical production/test/artifact bytes, recorded before rebase. Only upstream lesson and task metadata differ; fresh published-head CI/Qodo remain required."
     }
+  },
+  "remaining_ui_timeout_followup": {
+    "anchor_head": "45189cd3fd0c86498b1cd3334651cf8913849a2d",
+    "base": "ef8fd5d38a512be299af17b1e0d5b367a352a5d6",
+    "failure": {
+      "job": 111043714432,
+      "progress_percent": 97,
+      "assertion_failures_before_timeout": 0,
+      "job_cap_minutes": 20,
+      "log": "/tmp/console-tool-ux-head45189-ui-cancelled.log",
+      "derived_job": 111051036281,
+      "derived_cause": "Required UI Fast Lane cancelled; artifact reproduction steps themselves succeed.",
+      "derived_log": "/tmp/console-tool-ux-head45189-derived-failed.log"
+    },
+    "grouping": {
+      "scenario_body_ast_identical": {
+        "test_clicking_x_closes_an_idle_saved_tab_and_a_blank_tab": true,
+        "test_at_risk_tab_dialog_stay_keeps_it_and_close_closes_it": true,
+        "test_middle_click_closes_a_tab_without_switching_to_it": true,
+        "test_internal_close_error_names_the_tab_but_never_the_error_text": true,
+        "test_close_that_does_not_finish_is_reported_and_keeps_tab_state": true,
+        "test_close_flow_that_cannot_start_tells_the_user": true,
+        "test_a_refusal_the_user_can_act_on_shows_its_own_reason": true,
+        "test_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab": true,
+        "test_failed_confirmed_close_reoffers_confirmation_without_retrying": true
+      },
+      "unmodified_other_functions": {
+        "_await_tabs": true,
+        "_show_tabs": true,
+        "_click": true,
+        "_settle": true,
+        "_arm_pending_round": true,
+        "test_background_pending_close_names_consequences_and_cancels_only_its_owner": true,
+        "test_background_pending_close_releases_round_without_an_active_turn": true,
+        "test_chat_create_enrichment_cannot_arm_after_its_session_closes": true,
+        "test_all_close_consequences_keep_named_title_and_actions_painted_at_80x24": true,
+        "test_progress_close_failure_reconciles_fleet_before_confirmed_retry": true
+      },
+      "original_assert_nodes": 63,
+      "private_child_nodes_before": 14,
+      "private_child_nodes_after": 7,
+      "formatted_executable_ast_identical_to_measured": true,
+      "module_docstring_only_change": "Clarifies private child vs individual fresh scenario ownership; excluded from executable AST comparison.",
+      "formatted_sha256": "b8f13c88fc1bd8045894ec01ce21ad3c9bbc1bbe0803d286d0063f401b10775f",
+      "per_scenario_factory_cleanup": true,
+      "per_scenario_gc_unfreeze_and_collection": true,
+      "patch_context_exits_before_cleanup": true,
+      "independent_database_directories": [
+        "saved-history",
+        "internal-error",
+        "unfinished-close"
+      ],
+      "before": 95.55,
+      "after": [
+        28.42,
+        38.44
+      ],
+      "single_pair_saved_seconds": 28.69,
+      "limits": "One macOS pair; not a hosted CI completion guarantee. All9 scenario bodies/63 assertions retained and5 heavy tests unchanged."
+    },
+    "ordinary_wrapper_receipts": [
+      "/tmp/console-tool-ux-close-grouping-before.json",
+      "/tmp/console-tool-ux-close-grouping-after.json"
+    ],
+    "local_review": "Independent complete-body/signature/dispatch/isolation review clear; per-scenario scoped patches finish before factory drains and existing unfreeze/GC seam. No global fixture, CI setting, production or deadline change.",
+    "lint_receipt": "/tmp/console-tool-ux-close-grouping-lint.json",
+    "status": "Local nine-journey grouping qualified. Latest dev advanced to ecc0a531c855bc9e80906bff90180fd2045f7159 (PERF-07 config/path memo); combined-tree targeted/performance/native qualification and fresh final-head GitHub/Qodo still required."
   }
 }
