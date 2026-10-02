@@ -180,6 +180,7 @@ def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, reques
         # break if the config module is rebound here -- measured, 1 failure.
         "test_research_mode_strip.py",
         "test_first_run_wizard_cancel_route.py",
+        "test_chat_screen_worker_groups.py",
     }:
         # These source-bound consumers must follow this test's newly selected
         # real config, before the fixture lazily imports the application.
