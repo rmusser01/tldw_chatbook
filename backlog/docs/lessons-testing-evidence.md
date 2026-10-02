@@ -17619,3 +17619,12 @@ in JUnit, but the stress case had no completed verdict. Inspect loops and marker
 before adding whole files to a targeted run. A quiet long-running stress body
 is not proof of a hang. Select stress separately when its retention contract
 changes, and record interrupted runs as partial evidence.
+
+### 2026-10-02 release 0.2.3: source lists must follow CSS moves
+
+The targeted release checks failed three voice-source digest tests because
+ADR-161's CSS split deleted `screen_agentic_console.tcss` while the qualification
+input list still named it. Updating that list to `features/_console.tcss` and
+`features/_console_panels.tcss` restored all 268 targeted checks without changing
+qualification claims. File moves must update explicit digest inputs as well as
+build inputs; the existing presence check caught this drift before publication.

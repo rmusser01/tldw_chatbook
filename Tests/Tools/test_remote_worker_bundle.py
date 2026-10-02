@@ -446,6 +446,10 @@ _STUB_RAISE_ALLOWED = frozenset(
         "_sensitive_skill_trust_dir",
         "_direct_child_rule_container_dirs",
         "resolve_sensitive_context",
+        # PERF-07: the memo key of resolve_sensitive_context's raw inputs
+        # holds its stubbed config import; reached only through it, so it
+        # raises (fails closed) exactly where that function did.
+        "_raw_inputs_key",
     }
 )
 

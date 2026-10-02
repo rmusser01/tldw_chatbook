@@ -28,6 +28,7 @@ class EvaluationMetadata(BaseModel):
 
 
 class EvaluationSpec(BaseModel):
+    case_sensitive: bool = False
     sub_type: Optional[str] = None
     metrics: Optional[list[str]] = None
     threshold: Optional[float] = None
