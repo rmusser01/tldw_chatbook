@@ -102,3 +102,10 @@ The subsequent dev 922440b93e changes only canonical ADRs, including ADR-210's a
 ## Requested merge
 
 Rebase onto dev `ab4df99959`, qualify the incoming warm-config behavior with targeted checks and independent review, publish the exact reviewed head, wait for Qodo and fresh required CI, address any new finding and merge under normal branch protection. ADR required: no; integration of the accepted PERF-06 behavior without changes to orchestration contracts. Existing qualification limits remain. The fresh 19-case integration, three startup/CSS guards and five independent consumer/fallback cases pass; all preceding patch Python bytes remain unchanged.
+
+
+## October 2 final merge base
+
+Latest qualified dev: `113e435ab0bff12e89ae1c9f06ec154f32f776bf`, following queue/logging/maintenance/freeze base `ee1c1e7365`. ADR required: no new ADR; integrate the accepted ADR-126 admission-evidence amendment while preserving ADR-199/200 and all existing authority, migration and recovery boundaries.
+
+Rebase, inspect overlapping runtime paths, verify source-byte preservation, run targeted consumer and independent checks, record failed setup/optional-dependency qualification limits, publish with the exact remote lease, then require fresh Qodo and all four CI jobs before head-pinned normal merge. The approved five-minute heartbeat stops after verified merge. All 13 implementation tasks remain Done; no full sweep is authorized.
