@@ -86,6 +86,7 @@ from tldw_chatbook.Chat.console_turn_grouping import (
     ordered_assistant_activities,
     project_thinking_activities,
 )
+from tldw_chatbook.Chat.console_turn_resend import resend_target_id
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
@@ -413,6 +414,7 @@ _ACTION_TOOLTIPS = {
     "tool-output": "Show or hide this tool call's full result (o).",
     "review-changes": "Open the Change Review screen for this turn (v).",
     "retry": "Retry the failed response.",
+    "resend": "Re-run this turn in place: clear the broken reply, send again (r).",
     "regenerate": "Generate another assistant variant for this turn.",
     "continue": "Continue and extend the selected message.",
     "feedback-up": "Mark this response as helpful.",
@@ -504,11 +506,6 @@ def get_console_transcript_window_lines(
         DEFAULT_SCROLLBACK_CHUNK_LINES,
     )
     return initial_lines, max(1, chunk_lines)
-
-
-def _message_role_label(message: ConsoleChatMessage) -> str:
-    role = message.role.value if hasattr(message.role, "value") else str(message.role)
-    return role.title()
 
 
 #: Statuses an assistant row holds while its turn is still in flight. The
@@ -2998,7 +2995,7 @@ class ConsoleTranscript(VerticalScroll):
         ("c", "invoke_selected_action('copy')", "Copy"),
         ("e", "invoke_selected_action('edit')", "Edit"),
         ("f", "invoke_selected_action('fork')", "Fork"),
-        ("r", "invoke_selected_action('regenerate')", "Regenerate"),
+        ("r", "invoke_selected_action('regenerate')", "Regenerate/Retry/Resend"),
         ("o", "invoke_selected_action('tool-output')", "Full output"),
         ("v", "invoke_selected_action('review-changes')", "Review changes"),
         ("n", "open_review_notes", "Notes"),
@@ -5372,19 +5369,6 @@ class ConsoleTranscript(VerticalScroll):
         if self.is_mounted:
             self.call_later(self.refresh_messages)
 
-    def select_previous_variant(self, message_id: str) -> None:
-        """Select the previous rendered variant for a message when available."""
-        message = self._message_by_id(message_id)
-        if (
-            message is None
-            or message.variants is None
-            or not message.variants.can_go_previous
-        ):
-            return
-        message.variants.selected_index -= 1
-        if self.is_mounted:
-            self.call_later(self.refresh_messages)
-
     def to_plain_text(self, width: int = 80) -> str:
         """Return an answer-oriented transcript without model thinking."""
         rule = "─" * max(1, width)
@@ -5758,6 +5742,11 @@ class ConsoleTranscript(VerticalScroll):
         try:
             button = self.query_one(selector, Button)
         except NoMatches:
+            if action_id == "regenerate":  # `r` also presses a Retry/Resend swap.
+                return any(
+                    self._press_selected_action_button(message_id, swap)
+                    for swap in ("retry", "resend")
+                )
             if action_id not in {"speak", "speak-stop"}:
                 return False
             try:
@@ -8284,6 +8273,8 @@ class ConsoleTranscript(VerticalScroll):
                 message.id, ConsoleForkEligibility(True)
             ),
             pending_delete=self._delete_scope,
+            resend_available=resend_target_id(self._messages) == message.id
+            and not self._selection_run_active(),
             **self._generation_action_kwargs(message),
         )
 

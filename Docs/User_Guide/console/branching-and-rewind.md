@@ -30,7 +30,10 @@ Branching lives in two places on the Console screen:
 
 - **The action row** under a selected message — its stable direct order is
   Copy, Speak/Stop when available, Edit, text-response **< / >** when present,
-  **Fork**, ♻ Regenerate/Retry when present, Continue, and **More…**. When
+  **Fork**, ♻ Regenerate/Retry when present (Resend on your last message
+  when its turn is broken — it re-runs that turn in place and never forks;
+  see [chat basics](chat-basics.md#resend-a-broken-turn)), Continue, and
+  **More…**. When
   variants exist, the message's role label above it carries the
   "(2/2)"-style counter.
 - **The "Rewind" menu** (captured above) — opened by typing `/rewind`. Your

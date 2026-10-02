@@ -14777,7 +14777,7 @@ class ChatScreen(BaseAppScreen):
             ),
             ConsoleDisplayRow(
                 "Message actions",
-                "Copy, Edit, Fork, Regenerate/Retry, Continue, More…",
+                "Copy, Edit, Fork, Regenerate/Retry/Resend, Continue, More…",
             ),
             ConsoleDisplayRow(
                 "Keyboard",
@@ -18757,8 +18757,8 @@ class ChatScreen(BaseAppScreen):
         return (
             controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             or controller.in_flight_run_count() > 0
-            or wake_delivering
-            or review_pending
+            or self._console_runtime().has_custodied_turns()
+            or wake_delivering or review_pending
         )
 
     def _start_console_transcript_sync_timer(self) -> None:

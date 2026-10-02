@@ -96,6 +96,27 @@ expiry can happen inside the cache TTL without a new completion revision.
 Coverage: `Tests/UI/test_personas_subscription_readiness.py` and
 `Tests/UI/test_settings_subscription_readiness.py`.
 
+## Start the transcript sync timer only after an active run status is set
+
+**TASK-33661, 2026-10-01.** Resend on a refused echo ran in a `console-run-*`
+worker that, like Retry, called `_start_console_transcript_sync_timer()` first and
+then sent the echo through `_dispatch_console_draft_send`. In two live runs the
+app log showed the resent turn completing while the transcript stayed on
+"Generating…" and Send still read Queue. The poll stops itself when the viewed
+session is not active. The session still read blocked from the refusal while the
+send path awaited hook admission, so the poll could stop before the turn ran.
+The start that the send path makes at custody returns early while a timer object
+exists. The control (the shelf's Restore, then Enter) never froze, because that
+path starts nothing before custody. Leaving the timer to the send path fixed both
+live runs. The mounted pilot tests passed before the fix: they poll
+`_visible_text` themselves, so a stopped timer is invisible to them.
+
+**What to do:** start the sync timer only in code that sets an active run status
+before its first await, such as Retry, Continue or a controller re-run. When
+routing through the normal send path, let that path start the timer. To check a
+poll timer, read a live capture after the log reports the turn complete; a pilot
+test cannot catch a stopped timer.
+
 ## A lock that looks redundant may be the barrier something else promises on
 
 **TASK-32801.4, 2026-09-18.** The core review found `_capture_quiescence_lock`
