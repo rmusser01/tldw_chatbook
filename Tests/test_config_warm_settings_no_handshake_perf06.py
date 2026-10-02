@@ -341,3 +341,26 @@ def test_a_config_file_the_load_created_is_served_warm_next(
     assert config_module._SETTINGS_CACHE_POSTURE == config_module._config_file_posture(path), (
         "the cached settings do not describe the restored config file"
     )
+
+
+def test_only_a_plain_owned_file_may_replace_a_missing_stamp(tmp_path: Path) -> None:
+    """A load may re-stamp only what the guarded checks would accept (Qodo, #2903).
+
+    Args:
+        tmp_path: pytest fixture; holds the probed paths.
+    """
+    plain = tmp_path / "config.toml"
+    plain.write_text("x")
+    assert config_module._is_plain_owned_file(config_module._config_file_posture(plain))
+
+    link = tmp_path / "link.toml"
+    link.symlink_to(plain)
+    assert not config_module._is_plain_owned_file(config_module._config_file_posture(link))
+
+    second = tmp_path / "second-name.toml"
+    os.link(plain, second)  # now linked twice
+    assert not config_module._is_plain_owned_file(config_module._config_file_posture(plain))
+
+    assert not config_module._is_plain_owned_file(
+        config_module._config_file_posture(tmp_path / "absent.toml")
+    )

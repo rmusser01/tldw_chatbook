@@ -1931,6 +1931,32 @@ def _config_file_posture(config_path: Path) -> tuple:
     return tuple(posture)
 
 
+def _is_plain_owned_file(posture: tuple) -> bool:
+    """Whether a posture's last entry is a regular file this user owns, linked once.
+
+    Only that may stand in for the config file a load just created: the
+    guarded member checks reject anything else, so a symlink or other object
+    swapped in before the re-stamp keeps the stale stamp and the next read
+    meets those checks (Qodo, #2903).
+
+    Args:
+        posture: A :func:`_config_file_posture` result.
+
+    Returns:
+        True for a plain, owned, singly linked file.
+    """
+    import stat as _stat
+
+    leaf = posture[-1] if posture else None
+    return (
+        leaf is not None
+        and len(leaf) == 6
+        and leaf[2] == _stat.S_IFREG
+        and leaf[4] == os.geteuid()
+        and leaf[5] == 1
+    )
+
+
 def _settings_cache_hit(active_config_path: Path) -> dict | None:
     """Return the installed settings for ``active_config_path``, or None.
 
@@ -3704,7 +3730,9 @@ def _load_settings_uncached(
             # created it: stamp what now exists, or every fresh profile pays a
             # second rebuild. A file that existed keeps its pre-read stamp, so
             # a mid-read swap still misses (Qodo, #2903).
-            posture = _config_file_posture(active_config_path)
+            created = _config_file_posture(active_config_path)
+            if _is_plain_owned_file(created):
+                posture = created
         with _SETTINGS_CACHE_LOCK:
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
