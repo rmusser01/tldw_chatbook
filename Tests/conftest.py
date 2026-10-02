@@ -1209,6 +1209,14 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-19642.19.2: the reranker system-prompt contract suite
+            # constructs a real PointwiseReranker, whose __init__ resolves
+            # the registry default through get_internal_prompt ->
+            # get_cli_setting on the guarded config loader (same admission
+            # signature as test_hosted_chat.py above). The file's fixture
+            # fakes load_settings, not the config getters, so it keeps the
+            # bootstrap profile.
+            "test_reranker_system_prompt.py",
         }
     )
     test_data_dir = (
