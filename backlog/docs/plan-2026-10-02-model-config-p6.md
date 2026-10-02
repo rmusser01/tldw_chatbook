@@ -74,6 +74,7 @@ Constraints:
 - Owner rulings in force: only a 401 reads "key rejected" and blocks; a 403 from any model listing is "model listing unavailable" (non-blocking, never verified); "verified" applies only to the model actually tested; untouched shipped local defaults that refuse sit quietly under NOT RUNNING.
 - Phase 5 riders TASK-33005.7-.15 are NOT in Phase 6 scope unless a Phase 6 task file names them.
 - A census or timing test (storage units, keystroke work) that fails also fails on clean dev intermittently (trace maintenance storage_admissions 2.125 > 2 is a known dev regression): run serially and compare with dev before acting.
+- Boot census (added 2026-10-02 after a dev regression): a NEW module that only user actions need must be imported inside the function that uses it, never at module level in a boot-path module (UI/Console_Modules/*, Widgets/Console/*, chat_screen). Check `Tests/Performance/test_ui_ready_module_census.py` with `PYTHONPATH=<worktree>` (without it the venv's editable install measures the MAIN checkout and passes falsely); the limit is 1033 and must not rise.
 - Workers: never run_worker(exclusive=True) without group=; gated UI pilot tests carry bootstrap_profile in the file itself.
 
 ## Task 1: Lay out Chat settings core-first with one field-row grammar (TASK-33006.1)
