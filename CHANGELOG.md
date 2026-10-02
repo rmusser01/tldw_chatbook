@@ -22,6 +22,8 @@ case-sensitivity fix from `main`.
 - Opt-in Dreams research discovery and daily digests, disabled by default.
 - OmniVoice ONNX TTS support and setup-wizard installation and playback checks.
 - Provider presets, expanded model settings, and a component pattern library.
+- Explicit cloud-key checks through supported, non-generating model listings,
+  plus local-server probes when opening the model switcher.
 - SSH remote workspace bindings (ADR-181): a named workspace can bind a folder
   on a remote host over SSH. Agent `fs_*` tools run there through a transient
   worker; nothing is installed on the host.
@@ -37,6 +39,8 @@ case-sensitivity fix from `main`.
   Obsidian synchronization controls.
 - Console hook configuration and consent review, character-card tools,
   conversation creation, and subagent workflows.
+- Shared connection-readiness evidence across Console, Settings, and model
+  selectors, with consistent verified, untested, and refused states.
 - Reduced synchronous startup, logging, configuration, and screen lifecycle work.
 - Continues the app-only release scope: ordinary speech recording remains
   available; experimental duplex voice stays disabled pending qualification.
@@ -64,6 +68,8 @@ case-sensitivity fix from `main`.
 - SSH workspaces: a tool call whose session was closed (idle, run end or app exit) just before it was sent now gets a fresh session (or the slower path after run end or app exit) instead of an error.
 
 ### Known issues
+- Periodic Console trace maintenance can exceed its storage-work budget
+  (TASK-33621.44).
 - Dispatch-recovery actions after a full app relaunch can remain unavailable
   (TASK-33662); Resend does not bypass an unresolved recovery card.
 

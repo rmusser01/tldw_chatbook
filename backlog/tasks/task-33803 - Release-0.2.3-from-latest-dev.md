@@ -83,3 +83,32 @@ UI test patch at the defining module, and added Resend to the existing
 first-paint absence assertion. Nine startup/import checks passed at 1033/1033;
 all 75 Resend unit/UI checks passed. Bounded review found no blockers. No
 budget or snapshot was raised. Required CI and publication remain pending.
+
+### Second latest-dev refresh
+
+Dev advanced to 185c845fe836bf452e4beaaf8853162ce49b1e8d (PR #2958)
+while preparation 835c1959fc906e250e952cfee851e7279983e5ca waited for
+its final required job. Its UI and PR lanes passed, and CI boot ratchets
+passed (20 passes, 2 skips; 1033/1033 UI-ready modules). The separate
+non-required trace-maintenance storage check failed at 2.125 admissions
+per tick against ceiling 2, identical to existing TASK-33621.44 and dev
+baseline run 37015097693 at ancestor ee1c1e7365c232a184e129bef1dec15afd85b24f.
+No ratchet was raised.
+
+Merged the latest dev model-configuration Phase 5 changes without conflicts,
+preserving the Resend deferral and release metadata. Added supported explicit
+cloud-key checks, local-switcher probes, and shared connection-readiness
+evidence to the changelog. This integrates already accepted ADR-012/033/114
+functionality and makes no new architectural decision. Affected checks,
+required CI, and publication remain pending.
+
+Latest refresh evidence: 119 release metadata, app-only, source-digest and
+UI-ready census checks passed, still 1033/1033 modules. Affected shared-evidence,
+readiness wording, session settings, local-switcher probing, cloud-key checks
+and Resend UI tests produced 410 passes and one identical baseline test-double
+failure: test_new_chats_resolve_the_chat_defaults_pair lacks the existing
+_console_default_settings_memo field on its SimpleNamespace. The single test
+fails identically against archived unmodified dev 185c845; critical source
+files were verified byte-for-byte against that commit before the control run.
+Bounded integration review found no blockers. The changelog now also records
+TASK-33621.44's periodic trace-maintenance performance limitation.
