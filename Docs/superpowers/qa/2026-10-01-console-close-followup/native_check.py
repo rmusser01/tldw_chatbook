@@ -329,7 +329,6 @@ def main() -> None:
                     if owner is None:
                         assert chat.id not in controller._active_stream_tasks
                         assert chat.id not in controller._active_cancel_events
-                        assert "Live agent turns:" not in dialog.message
                         assert "Temporary or unsaved messages:" not in dialog.message
                     for absent in (
                         "Unsent draft:",

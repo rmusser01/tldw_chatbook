@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 16:02'
+updated_date: '2026-10-02 18:57'
 labels:
   - performance
   - ci
@@ -48,6 +48,8 @@ AC adjustment (controller directive, 2026-09-28): a guard that fails on today's 
 6. Verify: full Tests/Performance vs a pristine 9cd9aad65f worktree baseline; preflight.sh.
 
 PR2953 CI follow-up (2026-10-02): ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-125/126 real admission seams. Reason: test-only correction of the existing settled-idle census, with no runtime, authority or ceiling change. Reproduce the cold pending migration counting17 admissions over8 ticks; run and assert its real one-time completion outside the measured phase; retain8 warm ticks, every real counter and anti-vacuity canary; run the exact plain guard and relevant trace completion/parking checks, lint and artifact preflight, then require all final-head PR gates and resolved Qodo before normal merge.
+
+PR2953 typing-fixture follow-up: ADR required: no; existing ADR-097/125/126 apply. Call-through diagnostics found the five-second media startup helper finishing within milliseconds of the first measured key; it is a plain asyncio task outside the Textual worker drain. Hold only this private fixture startup schedule and await the same real cleanup once before counting. Retain all measured operations, ticks, counters, canaries and ceilings; run the exact plain guard plus the existing census canaries and inspect actual cleanup evidence. The original aggregate typing-helper failure was not directly attributed; this removes the confirmed unowned setup window, without claiming production cost reduction.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -70,11 +72,17 @@ Also: lessons-testing-evidence.md entry (os.open wrapper trap; hold wall-clock l
 Files: .github/workflows/perf-guard.yml, Tests/Performance/{test_console_keystroke_work_census,run_console_mount_profile,test_console_mount_profile,test_screen_preimport_payload_budget,test_app_startup_performance,test_footer_token_timer_retired,test_console_three_turn_profile,test_boot_budget_ratchet_messages}.py, Tests/Performance/boot_budget_snapshots/preimport_payload.json, backlog/decisions/097-boot-budget-ratchets.md, backlog/docs/lessons-testing-evidence.md.
 
 PR2953 CI follow-up (2026-10-02): settled-idle setup now completes and asserts the real fresh trace migration before its eight measured batches. Diagnostic RED counted3+7*2 admissions (17/8); plain GREEN and four actual cold-completion/read-only/parking/wake contracts pass without errors/skips. Runtime, real seams, anti-vacuity canaries and ceilings unchanged. Ruff adds zero diagnostics against dev in22 modified Python files; census retains inherited import/format diagnostics. Read-only independent review clear; incident added to lessons-testing-evidence.md. Existing ADR-097/125/126 apply; no new ADR. QA: settled_idle_census_followup in Docs/superpowers/qa/2026-10-01-console-tool-ux-config-integration.json. PR2953 still requires fresh final-head CI/Qodo before normal merge.
+
+The private settled-typing fixture holds its media startup timer and awaits the same real cleanup before measuring keys. Two frozen call-through diagnostics observed the media helper finishing 116ms/508ms before the first key; neither captured the original aggregate helper1 failure, so this is setup-race prevention, not exact failure attribution or production cost reduction. The exact ordinary guard now passes with all admission/helper/open seams, eight idle batches, canaries and ceilings unchanged. Independent source review clear; current Ruff delta and artifact preflight pass. Existing ADR-097/125/126 apply; final PR2953 CI/review/merge checkpoint remains.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
+<!-- SECTION:FINAL_SUMMARY:BEGIN -->
+<!-- SECTION:FINAL_SUMMARY:END -->
+
+<!-- SECTION:FINAL_SUMMARY:END -->
 
 <!-- SECTION:FINAL_SUMMARY:END -->
 

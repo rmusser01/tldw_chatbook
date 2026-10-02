@@ -420,3 +420,20 @@ pre-existing import/format diagnostics. Independent setup review is clear.
 Current production remains qualified by30 plain cases and native approval17/
 Close19 on this base. All four published-head CI gates and fresh resolved Qodo
 remain required before normal merge. See settled_idle_census_followup in JSON.
+
+
+Final chat-confirmation follow-up (2026-10-02): source head
+`261887810a60cf091d5e9fe2b40111d0ff5b50b2`, dev
+`fccf70d3b0cd21b0d44a906ec3a68b0633887684`. Ninety focused Console/consent/
+Close/quit-neighbor checks pass without skips, followed by the ordinary storage
+census with its private real startup cleanup completed before counting.
+Native approval22 passes nine actual Ask-gated reads/denials; Close25 passes
+six actual decision-worker closes (including chat creation with no owning turn)
+and six-kind maximum-risk geometry at 80x24 resized to 80x18. All current
+production pins, process exit0, no-egress and real-profile invariants verified.
+Crowded geometry uses a synthetic impact; wider hooks/plugins/MCP behavior
+retains only the stated targeted checks and source review. The corrected Close
+runner removes an unsupported absence assertion: a pending decision counts as
+an occupied lifecycle slot even without a parent stream task. These fixtures
+and task notes are the only later changes; PR2953 requires fresh published-head
+CI and clean resolved Qodo before normal merge.

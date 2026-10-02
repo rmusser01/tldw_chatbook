@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 18:21'
+updated_date: '2026-10-02 18:57'
 labels:
   - console
   - approvals
@@ -29,7 +29,7 @@ Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/super
 - [x] #2 The pending-interrupt registry exposes the interrupt kind to the activity classifier and the inspector count agrees with it
 - [x] #3 A test pins one question card + one approval card → the line names the approval, and a lone question card → the question copy
 - [x] #4 Keyboard review focuses the visible pending decision card when a tool approval is queued behind another confirmation, while retaining visible approval priority.
-- [ ] #5 A pending agent chat-creation confirmation is classified as a confirmation, contributes zero tool-approval rounds, and stays reachable through keyboard Review and its attention tab; Close declines it without creating a chat.
+- [x] #5 A pending agent chat-creation confirmation is classified as a confirmation, contributes zero tool-approval rounds, and stays reachable through keyboard Review and its attention tab; Close declines it without creating a chat.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -69,4 +69,6 @@ Clean rebase onto devab4df9995954 (PR2903 warm-config settings/snapshot paths) p
 Fresh Qodo fixture-documentation finding corrected for all three new pending-projection tests with summary/Args; executable AST unchanged and Ruff/format pass. The previously qualified combined warm-config/projection behavior is unchanged. PR2953 fresh final-head gates/review remain required.
 
 PR2953 final-head Qodo finding bbb8ec52-4caf-42d4-987b-565ebe92410f exposed the standalone chat-create bridge using the generic approval kind. Reopened for this existing pending-kind projection gap; new AC records the confirmation/count/focus/Close outcomes before implementation.
+
+Standalone chat creation now registers its own confirmation kind, contributes zero tool approvals, and uses the shared keyboard/attention-tab Review route. Close declines exact-session standalone rounds and rejects both remembered grants and requests returning from enrichment after its committed fence. Real mounted regressions reproduce the old count and both Close gaps. Latest-dev fccf70d3b0 combined verification: 90 focused checks plus the exact ordinary storage census pass with zero failures/errors/skips; native approval22 passes nine journeys and Close25 six real worker closes plus six-kind short-terminal geometry. Real profiles unchanged, processes exit0, no egress, and current production/source pins verified. Existing ADR-067/094/150/195 apply; no new owner or permission policy. Fresh final-head CI/Qodo and normal merge remain required in PR2953.
 <!-- SECTION:NOTES:END -->

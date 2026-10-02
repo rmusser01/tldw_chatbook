@@ -17817,3 +17817,13 @@ check. The test had captured the scheduler, so its startup migration never
 ran. Assert that real one-time completion in uncounted setup before measuring
 settled idle; retain every measured tick, admission seam, canary and ceiling.
 The cold cost still exists. A passing idle guard does not claim it was removed.
+
+
+**PR #2953 typing fixture follow-up, 2026-10-02.** The aggregate guard saw one
+helper during typing, but no counted caller was captured. Two frozen call-through
+runs instead found the unowned five-second media startup helper ending 116 ms
+and 508 ms before the first key. Hold that private startup schedule and await
+its real cleanup before counting; a Textual worker drain cannot own this plain
+`asyncio.to_thread` task. The ordinary guard passes with unchanged seams,
+canaries and ceilings. This removes a proven setup timing window; it does not
+attribute the original aggregate failure or remove the production cold cost.
