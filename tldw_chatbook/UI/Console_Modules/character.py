@@ -46,9 +46,7 @@ from .session import (
 _EXPRESSION_SPEC_CACHE_MAX = 16
 
 ActorScope = tuple[str, str, str]
-AvatarRequestSource = Literal[
-    "idle", "operational", "explicit", "historical", "manual"
-]
+AvatarRequestSource = Literal["idle", "operational", "explicit", "historical", "manual"]
 AvatarRequest = tuple[
     ActorScope | None,
     str,
@@ -297,7 +295,9 @@ class ConsoleCharacterController:
                 runtime_backend="local",
                 assistant_kind="character",
                 assistant_id=str(choice.character_id),
-                assistant_authority_id=(expected_key.data_authority_id if expected_key is not None else None),
+                assistant_authority_id=(
+                    expected_key.data_authority_id if expected_key is not None else None
+                ),
                 character_id=choice.character_id,
                 character_name=seed.name,
             )
