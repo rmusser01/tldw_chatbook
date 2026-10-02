@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 17:15'
+updated_date: '2026-10-02 18:29'
 labels:
   - plugins
   - implementation
@@ -28,7 +28,7 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 SessionStart uses cancellable provisional admission and publishes dependent capabilities/context only after controlling requirements succeed; tab focus and package inspection emit no session events.
-- [x] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
+- [ ] #2 SubagentStart narrows inherited tools and budgets, and SubagentStop contributes only to an active parent checkpoint without restarting settled work.
 - [x] #3 PreCompact supplies required compactor input and PostCompact fences subsequent input after committed summaries; runtime context blocks are reassembled without duplication.
 - [x] #4 Manual-only UserPromptSubmit, idle hook-set replacement, SessionEnd, required-context failures and independent component success are covered at actual Console and agent boundaries.
 - [x] #5 Enabled standalone v2 definitions appear in Console review and canonical Settings, require exact persistent consent before execution, and changed or revoked definitions cannot bypass that consent at session admission, launch, or effect acceptance.
@@ -50,6 +50,8 @@ Review-Send repair integration onto live dev 30ca4552b3 (merged PR #2945): ADR r
 The targeted draft-snapshot file has 28 raw_source_selection_changed setup failures before its UI mounts; all 28 reproduce identically on immutable 30ca4552b3 and an isolated Enter node. Use the existing bootstrap_profile module marker for these real-config Console mounts, retaining all keypress capture, custody, draft, recovery and session-race assertions. Re-run the complete file after the profile correction. Do not change production admission, send code, doubles or deadlines to mask a failure.
 
 Final latest-dev integration onto 52620c3a08 (independently merged PR #2920 / TASK-33560): ADR required: no. ADR path: N/A; existing ADR-126/163/197/210 apply. Reason: retain the upstream 1 Hz native maintenance probe and its cancellation/off-loop contracts without changing feature behavior. Rebase the qualified hook candidate, verify all patches replay identically and both maintenance files remain byte-exact, run the complete native-poll file plus ordinary review-Send controls and required artifacts, then update closeout evidence. Preserve the previously verified baseline exclusions. Publish with only the verified c2d41d4aa9 lease; final exact-head CI/Qodo/live-dev remain required.
+
+PR2918 preserving integration repair, verified on e92b01515f9547aab2cfb14cd4d93a7a07419775: actual retained child resume creates a new provider run without SubagentStart, bypassing required deny/narrowing; private actual-runtime probes fail2cases after positive initial child/custody. 1. Pin pass/deny resume with actual SQLite/FleetChat and initial success. 2. Reuse the existing child initialization block at both real spawn and retained-resume admissions, before run/thread/handle creation, retaining exact final tools/budgets/context, single spawn-slot refund and scope closure; include prospective peer inventory only for live non-inline fleet children. 3. Qualify narrowed tools/budgets on resume, required refusal with no provider/row, frozen routing/managed custody and ordinary child controls. ADR required: no new ADR. ADR path: backlog/decisions/163-expanded-console-hook-runtime.md; ADR-162/199 also apply. Reason: direct repair of accepted child admission contract at both current callers; no new permission or lifecycle authority. Separate actual standalone SessionEnd disposal refusal is recorded as an upstream permission-lifecycle limit, not certified by session-close or injected-authorizer controls and not fixed by granting post-disposal ordinary authority.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

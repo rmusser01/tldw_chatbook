@@ -172,3 +172,20 @@ Actual dev e92b01515f9547aab2cfb14cd4d93a7a07419775 (PR #2946) makes published43
 4. Verify owned static/artifact/startup guards, record exact evidence, close affected criteria through CLI, and publish once with exact43b2059c6761eedaaf1722f7d505b0c017f66139 lease. Fresh Qodo and all four current-head jobs precede normal protected head-pinned merge.
 
 ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md (version clarification amended before code); existing ADR-052/126/162/163/197 govern. Reason: compose already accepted storage, scheduler, permission and lifecycle boundaries without changing owners. No dependency installs, gates/ceilings/warmup/work changes, full suite, admin bypass or foreign checkout cleanup.
+
+
+### Verified child admission overlap
+
+Independent real FleetChat/SQLite probes on the composed temporary tree prove retained resume bypasses SubagentStart: the pass path starts a second child but emits only one event, and a now-denying required handler still permits the second row/provider. Reopen incoming TASK-32679 AC2 and TASK-33430 AC1/4 before repair. Reuse one existing initialization block for spawn and resume, including the prospective peer inventory, before physical admission. Preserve current narrowed tools, budgets, context, authority, frozen routing and slot refund. ADR required: no new ADR; existing ADR-163/162/199 apply.
+
+The same reviewer proves actual saved/granted standalone SessionEnd is refused during host disposal, while exact session-close succeeds and all physical cleanup/tickets settle. Both disposed host and closed HookPermissions contribute; an event-name exception alone is insufficient. This upstream notification behavior is a separate permission-lifecycle limit, not a new SQL/custody failure or permission to reopen ordinary authority. Evidence: /private/tmp/pr2918-expanded-review-runtime.log and.xml (3 failed/1 passed,15.27s). No real-app Ctrl+Q or broader plugin qualification is claimed.
+
+
+### UI-ready import overlap
+
+Unchanged UI-ready census on root is RED1034/1033; exact incoming e92 archive is GREEN1033/1033. Audit-hook stacks identify the extra fleet_messages import in progress_pending_metadata before the conditional no-inbox return during controller construction/seed_progress_hints. Express that existing conditional return early and move its import after it, preserving saved preparation and exact authority; qualify the unchanged census and actual pending/refund/Save consumers. ADR required: no new ADR; existing ADR-097/199 apply. No pin, warmup, count or measured-work change.
+
+
+### Final observed modal-quit base
+
+Dev advanced to fccf70d3b0cd21b0d44a906ec3a68b0633887684 (PR2949 / TASK33622.10) before publication; published43 remains conflicted with no current Actions run. Preserve this required update without changing its quit/keybinding policy. Compare the qualified schema/child/runtime source, run only actual quit/Console cleanup overlap checks plus changed startup guards, and obtain immutable final schema/runtime review before exact43 lease publication. ADR required: no new ADR; preserve ADR-031 and the incoming task, existing ADR-126/163/199 apply. Do not close separate TASK33621.28 or broaden into keybinding repair.

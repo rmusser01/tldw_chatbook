@@ -1,11 +1,11 @@
 ---
 id: TASK-33430
 title: Scoped direct sibling messaging
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 01:08'
+updated_date: '2026-10-02 18:29'
 labels:
   - agents
   - console
@@ -20,10 +20,10 @@ Allow live sibling agents to exchange bounded untrusted messages within their ex
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [x] #1 Children can discover and message only live siblings under the exact current parent, coordinator and chain; self, foreign, terminal and revoked targets refuse.
+- [ ] #1 Children can discover and message only live siblings under the exact current parent, coordinator and chain; self, foreign, terminal and revoked targets refuse.
 - [x] #2 Peer delivery reuses bounded steering and shares the child reporting allowance; delivery receipts distinguish queued from consumed.
 - [x] #3 Message bodies never appear in step summaries or run logs; catalog anti-forgery, cancellation and existing budgets remain enforced.
-- [x] #4 Targeted runtime and coordinator tests prove delivery, drain ordering, queue limits, ownership replacement and privacy.
+- [ ] #4 Targeted runtime and coordinator tests prove delivery, drain ordering, queue limits, ownership replacement and privacy.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -40,6 +40,8 @@ Reason: Accepted ADR-199 amends ADR-136 for scoped direct sibling authority and 
 CI addendum 2026-10-01: retain exact runtime tool-name equality while adding the two implemented peer tools to its expected inventory; run the affected install-skill and peer checks. ADR required: no; direct qualification of ADR-199.
 
 Qodo addendum 2026-10-01: document peer admission inputs/receipts/refusals and validate tool arguments through a strict installed Pydantic model reusing _validate_text. Preserve exact shapes, original fixed refusal codes, Unicode/control/length checks, quotas and privacy. Strengthen the existing invalid-argument regression to prove refusal before capability invocation; run peer and startup guards. ADR required: no; direct boundary qualification under ADR-199.
+
+Expanded-hooks child authority qualification. 1. Reproduce an otherwise eligible child losing list/send peers through pass-only SubagentStart prospective planning; pin empty/narrow controls. 2. Include the existing peer capability in the same prospective runtime plan used by hook narrowing; do not bypass selected hook IDs or alter tokens, quotas, catalogs or permissions. 3. Qualify actual threaded private delivery and shared report allowance with hooks, refusal/narrowing and retained-resume admission. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and backlog/decisions/163-expanded-console-hook-runtime.md. Reason: preserve existing peers under the shared hook constraint boundary; no new capability owner.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

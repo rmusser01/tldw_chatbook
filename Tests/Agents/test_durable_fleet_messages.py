@@ -231,7 +231,10 @@ def test_explicit_save_commits_chat_and_pending_reports_atomically(
 
 
 @private_profile_test
-def test_chat_v75_installed_backup_and_shared_subscription_schema(tmp_path, request):
+def test_chat_v76_installed_backup_and_shared_subscription_schema(tmp_path, request):
+    from threading import Event
+
+    from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
     from tldw_chatbook.DB.recovery_core import core_adapters
     from tldw_chatbook.DB.recovery_operations import recovery_adapters
     from tldw_chatbook.DB.Subscriptions_DB import SubscriptionsDB
@@ -248,17 +251,27 @@ def test_chat_v75_installed_backup_and_shared_subscription_schema(tmp_path, requ
         core = next(
             a for a in core_adapters() if a.owner_id == "db.chachanotes.primary"
         )
-        assert core.schema_policy().schema_sql[0] == (75, actual)
+        assert core.schema_policy().schema_sql[0] == (76, actual)
         assert core.validate(path) == ()
-        with db.transaction() as cursor:
-            cursor.execute(
-                "UPDATE db_schema_version SET version = 74 WHERE schema_name = ?",
-                (db._SCHEMA_NAME,),
-            )
-        assert core.validate(path) == ("unsupported_schema_version",)
+        current = tmp_path / "core-current.sqlite"
+        assert db.backup_database(str(current))
+        assert validate_candidate(core, current, Event(), migrate=False) == ()
         with db.transaction() as cursor:
             cursor.execute(
                 "UPDATE db_schema_version SET version = 75 WHERE schema_name = ?",
+                (db._SCHEMA_NAME,),
+            )
+        assert core.validate(path) == ("unsupported_schema_version",)
+        old = tmp_path / "core-wrong-stamp.sqlite"
+        assert db.backup_database(str(old))
+        old_bytes = old.read_bytes()
+        assert validate_candidate(core, old, Event(), migrate=True) == (
+            "unsupported_schema_version",
+        )
+        assert old.read_bytes() == old_bytes
+        with db.transaction() as cursor:
+            cursor.execute(
+                "UPDATE db_schema_version SET version = 76 WHERE schema_name = ?",
                 (db._SCHEMA_NAME,),
             )
         subscriptions = SubscriptionsDB(path)
@@ -276,19 +289,13 @@ def test_chat_v75_installed_backup_and_shared_subscription_schema(tmp_path, requ
                 schema for _, schema in adapter.schema_policy().schema_sql
             )
             assert adapter.validate(path) == ()
-            from threading import Event
-
-            from tldw_chatbook.Backup_Recovery.sqlite_validation import (
-                validate_candidate,
-            )
-
             # Restricted recovery validates immutable staged bytes, not a live WAL.
             candidate = tmp_path / "shared-candidate.sqlite"
             assert db.backup_database(str(candidate))
             assert validate_candidate(adapter, candidate, Event(), migrate=False) == ()
             with db.transaction() as cursor:
                 cursor.execute(
-                    "UPDATE db_schema_version SET version = 74 WHERE schema_name = ?",
+                    "UPDATE db_schema_version SET version = 75 WHERE schema_name = ?",
                     (db._SCHEMA_NAME,),
                 )
             assert adapter.validate(path) == ("unsupported_schema_version",)
@@ -417,8 +424,35 @@ def test_saved_native_close_replacement_and_prepare_owner_fence(
         db.close()
 
 
+def _retain_hook_receipt(db, conversation_id):
+    parent = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "Assistant",
+            "role": "assistant",
+            "content": "Retained owner",
+        }
+    )
+    receipt = (
+        "retained-turn",
+        "retained-stop",
+        conversation_id,
+        parent,
+        "retained-child",
+        "retained-chain",
+        1,
+        "hook_continuation",
+    )
+    with db.transaction() as cursor:
+        cursor.execute(
+            "INSERT INTO console_hook_continuation_receipts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            receipt,
+        )
+    return receipt
+
+
 @private_profile_test
-@pytest.mark.parametrize("version", [73, 74])
+@pytest.mark.parametrize("version", [73, 74, 75])
 def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
     tmp_path, request, version
 ):
@@ -451,8 +485,8 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                     "PRAGMA table_info(console_auxiliary_attempts)"
                 )
             }
-        ) is (version == 74)
-        if version == 74:
+        ) is (version >= 74)
+        if version >= 74:
             with old.transaction() as cursor:
                 cursor.execute(
                     "INSERT INTO console_auxiliary_attempts "
@@ -464,6 +498,7 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                     "'2026-09-30T00:00:01+00:00', 'memory_commit_failed')",
                     (conversation_id,),
                 )
+        receipt = _retain_hook_receipt(old, conversation_id) if version == 75 else None
     db = CharactersRAGDB(path, "progress-test")
     try:
         assert (
@@ -473,9 +508,9 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                 (db._SCHEMA_NAME,),
             )
             .fetchone()[0]
-            == 75
+            == 76
         )
-        if version == 74:
+        if version >= 74:
             assert tuple(
                 db.get_connection()
                 .execute(
@@ -484,6 +519,15 @@ def test_existing_chat_migrates_and_progress_metadata_never_exposes_bodies(
                 )
                 .fetchone()
             ) == (conversation_id, "failed", "memory_commit_failed")
+        if receipt is not None:
+            assert (
+                tuple(
+                    db.get_connection()
+                    .execute("SELECT * FROM console_hook_continuation_receipts")
+                    .fetchone()
+                )
+                == receipt
+            )
         store, inbox = durable(db, conversation_id)
         logs = []
         token = logger.add(lambda event: logs.append(str(event)))
@@ -746,11 +790,11 @@ async def test_threaded_saved_child_report_retires_only_new_chat_db_cache(
 
 
 @private_profile_test
-def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
+def test_v75_progress_migration_rolls_back_partial_ddl_then_retries(
     tmp_path, request, monkeypatch
 ):
     path = tmp_path / "rollback.sqlite"
-    with chachanotes_db_at_version(path, 74) as old:
+    with chachanotes_db_at_version(path, 75) as old:
         conversation_id = old.add_conversation({"title": "Retained after rollback"})
         with old.transaction() as cursor:
             cursor.execute(
@@ -763,10 +807,11 @@ def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
                 "'2026-09-30T00:00:01+00:00', 'memory_commit_failed')",
                 (conversation_id,),
             )
+        receipt = _retain_hook_receipt(old, conversation_id)
     original = CharactersRAGDB._execute_migration_statements
 
     def fail_after_table(db, cursor, script, label):
-        assert label == "V74→V75"
+        assert label == "V75→V76"
         first_statement = script[: script.index(";") + 1]
         original(db, cursor, first_statement, label)
         assert (
@@ -781,7 +826,7 @@ def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
         patch.setattr(
             CharactersRAGDB, "_execute_migration_statements", fail_after_table
         )
-        with pytest.raises(SchemaError, match="V74 to V75"):
+        with pytest.raises(SchemaError, match="V75 to V76"):
             CharactersRAGDB(path, "failed-upgrade")
     with open_recovery_validation(
         "db.chachanotes.primary", path, writable=False
@@ -789,7 +834,7 @@ def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
         assert connection.execute(
             "SELECT version FROM db_schema_version WHERE schema_name = ?",
             (CharactersRAGDB._SCHEMA_NAME,),
-        ).fetchone() == (74,)
+        ).fetchone() == (75,)
         assert (
             connection.execute(
                 "SELECT name FROM sqlite_schema WHERE name IN "
@@ -801,9 +846,15 @@ def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
             "SELECT conversation_id, failure_reason FROM console_auxiliary_attempts "
             "WHERE operation_id = 'retained'"
         ).fetchone() == (conversation_id, "memory_commit_failed")
+        assert (
+            connection.execute(
+                "SELECT * FROM console_hook_continuation_receipts"
+            ).fetchone()
+            == receipt
+        )
     db = CharactersRAGDB(path, "retry-upgrade")
     try:
-        assert db._get_db_version(db.get_connection()) == 75
+        assert db._get_db_version(db.get_connection()) == 76
         assert tuple(
             db.get_connection()
             .execute(
@@ -812,6 +863,14 @@ def test_v74_progress_migration_rolls_back_partial_ddl_then_retries(
             )
             .fetchone()
         ) == (conversation_id, "memory_commit_failed")
+        assert (
+            tuple(
+                db.get_connection()
+                .execute("SELECT * FROM console_hook_continuation_receipts")
+                .fetchone()
+            )
+            == receipt
+        )
         store, inbox = durable(db, conversation_id)
         inbox.sender(source()).send("after retry")
         assert len(inbox.snapshot()) == 1
