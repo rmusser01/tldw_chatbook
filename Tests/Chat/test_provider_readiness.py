@@ -303,10 +303,13 @@ def test_exact_probe_result_can_settle_without_retaining_server_content():
     assert evidence == ProviderTestEvidence(
         identity, "reachable", ("model-a", "model-b")
     )
+    # TASK-33005.3: key_accepted is the listing's own bool verdict on the key
+    # it was sent -- no server content.
     assert [item.name for item in fields(ProviderProbeResult)] == [
         "endpoint",
         "model_ids",
         "category",
+        "key_accepted",
     ]
     assert not hasattr(probe, "__dict__")
 
@@ -576,6 +579,12 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
         "credential",
         "generation",
         "generation_category",
+        # TASK-33005.1 (AC#5): when the result was observed, local time.
+        "observed_at",
+        # TASK-33005.3 review round 1 (on purpose): the generation fact's time.
+        "generation_observed_at",
+        # Qodo #2958 (on purpose): the model a generation test sent.
+        "generation_model",
     ]
     assert not hasattr(identity, "__dict__")
     assert not hasattr(evidence, "__dict__")

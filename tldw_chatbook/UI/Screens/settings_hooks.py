@@ -146,6 +146,37 @@ class HooksSettingsPanel(Vertical):
             value=section.get("enabled", True) is True,
             id="settings-hooks-enabled",
         )
+        inventory = inspect_hooks_config({"hooks": section})
+        if inventory.v2_rows:
+            yield Static("V2 hooks", classes="destination-section")
+            for row in inventory.v2_rows:
+                state = (
+                    next(
+                        (
+                            item.state
+                            for item in self.snapshot.rows
+                            if item.entry
+                            and item.entry.key == row.key
+                            and item.entry.spec == row.spec
+                        ),
+                        "Unsaved",
+                    )
+                    if self.snapshot
+                    else "Unsaved"
+                )
+                details = row.error or json.dumps(
+                    row.spec.model_dump(mode="json"), ensure_ascii=True, indent=2
+                )
+                yield Static(
+                    f"V2 hook {row.index + 1} · {state}\n{details}",
+                    classes="hook-review-detail",
+                    markup=False,
+                )
+            yield Button(
+                "Edit v2 hooks in Advanced Config",
+                id="settings-hooks-advanced",
+                classes="settings-hooks-action",
+            )
         with Horizontal(classes="settings-hooks-actions"):
             yield Button(
                 "Add hook", id="settings-hooks-add", classes="settings-hooks-action"
@@ -202,7 +233,9 @@ class HooksSettingsPanel(Vertical):
         yield options
         if not rows:
             yield Static(
-                "No hooks configured. Events: " + ", ".join(sorted(HOOK_EVENTS)) + ".",
+                "No legacy hooks configured. Events: "
+                + ", ".join(sorted(HOOK_EVENTS))
+                + ".",
                 classes="settings-hooks-copy",
             )
             return

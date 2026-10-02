@@ -740,7 +740,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 74  # Compaction attempts record why they failed.
+    _CURRENT_SCHEMA_VERSION = 75  # Durable Stop continuation admission receipts.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8351,6 +8351,32 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v74_to_v75(self, conn: sqlite3.Connection) -> None:
+        """Retain machine continuation dedup independently of checkpoints."""
+        self._require_migration_entry_version(conn, 74, "V74→V75")
+        path = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v74_to_v75_hook_continuation_receipts.sql"
+        )
+        try:
+            with self.transaction() as cursor:
+                self._execute_migration_statements(
+                    cursor, path.read_text(encoding="utf-8"), "V74→V75"
+                )
+                updated = cursor.execute(
+                    "UPDATE db_schema_version SET version = 75 WHERE schema_name = ? AND version = 74",
+                    (self._SCHEMA_NAME,),
+                )
+                if updated.rowcount != 1:
+                    raise SchemaError("V74→V75 version update failed")
+            if self._get_db_version(conn) != 75:
+                raise SchemaError("V74→V75 version check failed")
+        except (OSError, sqlite3.Error, CharactersRAGDBError, SchemaError) as exc:
+            raise SchemaError(
+                f"Migration V74→V75 failed: {type(exc).__name__}"
+            ) from exc
+
     def _migrate_from_v18_to_v19(self, conn: sqlite3.Connection):
         """
         Migrates the database schema from version 18 to version 19.
@@ -8597,6 +8623,7 @@ UPDATE db_schema_version
                     71: self._migrate_from_v71_to_v72,
                     72: self._migrate_from_v72_to_v73,
                     73: self._migrate_from_v73_to_v74,
+                    74: self._migrate_from_v74_to_v75,
                 }
 
                 if current_db_version == 0:
@@ -9032,7 +9059,7 @@ UPDATE db_schema_version
         try:
             with self.transaction() as cursor:
                 char_id = self._insert_character_card_in_transaction(cursor, card_data)
-                logger.info(
+                logger.debug(
                     f"Added character card '{card_data['name']}' with ID: {char_id}."
                 )
 
@@ -9797,7 +9824,7 @@ UPDATE db_schema_version
         # If card_data is empty, treat as a no-op as per original behavior.
         # No version check, no transaction, no version bump.
         if not card_data:
-            logger.info(
+            logger.debug(
                 f"No data provided in card_data for character card update ID {character_id}. No-op."
             )
             # Log metrics for no-op
@@ -9930,7 +9957,7 @@ UPDATE db_schema_version
                     )
 
                 log_msg_fields_updated = f"Fields from payload processed: {fields_updated_log if fields_updated_log else 'None'}."
-                logger.info(
+                logger.debug(
                     f"Updated character card ID {character_id} (SINGLE UPDATE) from client-expected version {expected_version} to final DB version {next_version_val}. {log_msg_fields_updated}"
                 )
 
@@ -10095,7 +10122,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} already soft-deleted. Soft delete successful (idempotent)."
                         )
                         return True
@@ -10123,7 +10150,7 @@ UPDATE db_schema_version
                         msg = f"Character card ID {character_id} disappeared before soft delete (expected active version {expected_version})."
                     elif final_state["deleted"]:
                         # If it got deleted by another process. Consider this success if the state is 'deleted'.
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} was soft-deleted concurrently to version {final_state['version']}. Soft delete successful."
                         )
                         return True
@@ -10137,7 +10164,7 @@ UPDATE db_schema_version
                         msg, entity="character_cards", entity_id=character_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted character card ID {character_id} (was version {expected_version}), new version {next_version_val}."
                 )
                 # Log success metrics
@@ -10290,7 +10317,7 @@ UPDATE db_schema_version
                         entity_id=character_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(
+                    logger.debug(
                         f"Character card ID {character_id} already active. Restore is idempotent."
                     )
                     return True
@@ -10311,7 +10338,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Character card ID {character_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Character card ID {character_id} was restored concurrently. Success."
                         )
                         return True
@@ -10329,7 +10356,7 @@ UPDATE db_schema_version
                         msg, entity="character_cards", entity_id=character_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Restored character card ID {character_id} "
                     f"(was v{expected_version}), new version {next_version_val}."
                 )
@@ -11019,7 +11046,7 @@ UPDATE db_schema_version
         try:
             with self.transaction() as conn:
                 conn.execute(query, params)
-            logger.info(f"Added conversation ID: {conv_id}.")
+            logger.debug(f"Added conversation ID: {conv_id}.")
 
             # Log success metrics
             duration = time.time() - start_time
@@ -12638,7 +12665,7 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Updated conversation ID {conversation_id} from version {expected_version} to version {next_version_val}."
                 )
                 return True
@@ -12917,7 +12944,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} already soft-deleted. Success (idempotent)."
                         )
                         return True
@@ -12942,7 +12969,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
                     elif final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} was soft-deleted concurrently. Success."
                         )
                         return True
@@ -12954,7 +12981,7 @@ UPDATE db_schema_version
                         msg, entity="conversations", entity_id=conversation_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted conversation ID {conversation_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -13005,7 +13032,7 @@ UPDATE db_schema_version
                         entity_id=conversation_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info(
+                    logger.debug(
                         f"Conversation ID {conversation_id} already active. Restore is idempotent."
                     )
                     return True
@@ -13026,7 +13053,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Conversation ID {conversation_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Conversation ID {conversation_id} was restored concurrently. Success."
                         )
                         return True
@@ -13044,7 +13071,7 @@ UPDATE db_schema_version
                         msg, entity="conversations", entity_id=conversation_id
                     )
 
-                logger.info(
+                logger.debug(
                     f"Restored conversation ID {conversation_id} "
                     f"(was v{expected_version}), new version {next_version_val}."
                 )
@@ -13536,7 +13563,7 @@ UPDATE db_schema_version
                     message_id=msg_id,
                     creation_reason="message_create",
                 )
-            logger.info(
+            logger.debug(
                 f"Added message ID: {msg_id} to conversation {msg_data['conversation_id']} (Image: {'Yes' if msg_data.get('image_data') else 'No'})."
             )
             return msg_id
@@ -15123,7 +15150,7 @@ UPDATE db_schema_version
         if (
             not fields_to_update_sql
         ):  # If only image was cleared, this list might be empty now if no other fields
-            logger.info(
+            logger.debug(
                 f"No updatable content fields provided for message ID {message_id}, but metadata will be updated if version matches."
             )
             # Proceed to metadata update; SQL query will be constructed accordingly
@@ -15323,7 +15350,7 @@ UPDATE db_schema_version
                     if descendant_rows:
                         self._advance_semantic_graph_epoch(conn)
 
-                logger.info(
+                logger.debug(
                     f"Updated message ID {message_id} from version {expected_version} to version {next_version_val}. Fields updated: {fields_to_update_sql if fields_to_update_sql else 'None'}"
                 )
                 return True
@@ -15946,7 +15973,7 @@ UPDATE db_schema_version
                     )
                     record_status = check_status_cursor.fetchone()
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Message ID {message_id} already soft-deleted. Success (idempotent)."
                         )
                         return True
@@ -15975,7 +16002,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Message ID {message_id} disappeared."
                     elif final_state["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"Message ID {message_id} was soft-deleted concurrently. Success."
                         )
                         return True
@@ -15988,7 +16015,7 @@ UPDATE db_schema_version
                 self._attach_chat_delete_base_hashes(conn, delete_proofs)
                 self._advance_semantic_graph_epoch(conn)
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted message ID {message_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -16093,6 +16120,67 @@ UPDATE db_schema_version
                 }
                 for row in rows
             ]
+
+    def restore_message_subtree(
+        self, tombstones: Sequence[tuple[str, int]]
+    ) -> List[Dict[str, Any]]:
+        """Atomically undelete exactly the tombstones one subtree delete wrote.
+
+        The Undo half of ``soft_delete_message_subtree`` (TASK-33628.2). Each
+        ``(message_id, version)`` must still be a tombstone at exactly that
+        version -- the version the delete returned -- or nothing is restored,
+        so an Undo can never resurrect a row something else changed since.
+        Content was never touched by the delete, so the ``messages_sync_
+        undelete`` trigger records an ordinary ``update`` intent.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs.
+
+        Returns:
+            One ``message_id``/``conversation_id``/``version`` mapping per
+            restored row, carrying its new version.
+
+        Raises:
+            ConflictError: A row is missing, live, or at another version.
+        """
+        pairs = [(str(message_id), int(version)) for message_id, version in tombstones]
+        if not pairs:
+            return []
+        now = self._get_current_utc_timestamp_iso()
+        placeholders = ",".join("?" for _ in pairs)
+        with self.transaction(immediate=True) as conn:
+            current = {
+                row["id"]: row
+                for row in conn.execute(
+                    "SELECT id, conversation_id, version, deleted FROM messages "
+                    f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
+                    tuple(message_id for message_id, _version in pairs),
+                ).fetchall()
+            }
+            for message_id, version in pairs:
+                row = current.get(message_id)
+                if row is None or not row["deleted"] or row["version"] != version:
+                    raise ConflictError(
+                        f"Message ID {message_id} changed after it was deleted.",
+                        entity="messages",
+                        entity_id=message_id,
+                    )
+            for message_id, version in pairs:
+                conn.execute(
+                    "UPDATE messages SET deleted = 0, last_modified = ?, "
+                    "version = version + 1, client_id = ? "
+                    "WHERE id = ? AND version = ? AND deleted = 1",
+                    (now, self.client_id, message_id, version),
+                )
+            self._advance_semantic_graph_epoch(conn)
+        return [
+            {
+                "message_id": message_id,
+                "conversation_id": current[message_id]["conversation_id"],
+                "version": version + 1,
+            }
+            for message_id, version in pairs
+        ]
 
     @staticmethod
     def _chat_sync_payload_hash_from_row(row: Mapping[str, Any]) -> str:
@@ -16393,7 +16481,7 @@ UPDATE db_schema_version
                     (variant_stats["count"] + 1, root_variant_id, root_variant_id),
                 )
 
-                logger.info(
+                logger.debug(
                     f"Created variant {new_msg_id} (#{variant_number}) of message {original_message_id}"
                 )
                 return new_msg_id
@@ -16517,7 +16605,7 @@ UPDATE db_schema_version
                 )
                 self._advance_semantic_graph_epoch(conn)
 
-                logger.info(f"Selected variant {variant_id}")
+                logger.debug(f"Selected variant {variant_id}")
                 return True
 
         except InputError:
@@ -16747,7 +16835,7 @@ UPDATE db_schema_version
                             entity=table_name,
                             entity_id=conflict_entity_id,
                         )
-                    logger.info(
+                    logger.debug(
                         f"Undeleted and updated {table_name} '{logged_value}' with ID: {item_id}, new version {next_version}."
                     )
                     return item_id
@@ -16755,7 +16843,7 @@ UPDATE db_schema_version
                 # If not undeleting, proceed with insert
                 cursor_insert = conn.execute(query, params_tuple_insert)
                 item_id_insert = cursor_insert.lastrowid
-                logger.info(
+                logger.debug(
                     f"Added {table_name} '{logged_value}' with ID: {item_id_insert}."
                 )
                 return item_id_insert
@@ -16944,7 +17032,7 @@ UPDATE db_schema_version
             # For safety, ensure metadata is only updated if there are actual field changes or if it's an explicit "touch".
             # The calling methods (e.g., update_note) handle this: "if not fields_to_update_sql: return True"
             # This helper should proceed if there's anything to set.
-            logger.info(
+            logger.debug(
                 f"No recognized updatable fields provided in update_data for {table_name} ID {item_id}. Will only update metadata if version matches."
             )
             # If we must update metadata anyway if version matches:
@@ -17004,7 +17092,7 @@ UPDATE db_schema_version
                         msg = f"{table_name} ID {item_id} version changed to {final_state['version']} concurrently (expected {expected_version} for update)."
                     raise ConflictError(msg, entity=table_name, entity_id=item_id)
 
-                logger.info(
+                logger.debug(
                     f"Updated {table_name} ID {item_id} from version {expected_version} to version {next_version_val}."
                 )
                 return True
@@ -17100,7 +17188,7 @@ UPDATE db_schema_version
                     record_status = check_deleted_cursor.fetchone()
 
                     if record_status and record_status["deleted"]:
-                        logger.info(
+                        logger.debug(
                             f"{table_name} ID {item_id} already soft-deleted. Operation considered successful (idempotent)."
                         )
                         return True
@@ -17133,7 +17221,7 @@ UPDATE db_schema_version
                     if changed_record["deleted"]:
                         # If it got deleted by another process, and the new version matches what we intended, it's fine.
                         if changed_record["version"] == next_version_val:
-                            logger.info(
+                            logger.debug(
                                 f"{table_name} ID {item_id} was soft-deleted concurrently to version {next_version_val}. Operation successful."
                             )
                             return True
@@ -17159,7 +17247,7 @@ UPDATE db_schema_version
                         entity_id=item_id,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted {table_name} ID {item_id} (was version {expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -17624,7 +17712,7 @@ UPDATE db_schema_version
 
         cursor.execute(query, params)
         self.replace_note_links(cursor, final_note_id, content)
-        logger.info(f"Added note ID: {final_note_id}.")
+        logger.debug(f"Added note ID: {final_note_id}.")
         return final_note_id
 
     def add_note(
@@ -19119,7 +19207,7 @@ UPDATE db_schema_version
                 )
 
         if not fields_to_update_sql:
-            logger.info(f"No updatable fields provided for note ID {note_id}.")
+            logger.debug(f"No updatable fields provided for note ID {note_id}.")
             return True
 
         next_version_val = expected_version + 1
@@ -19165,7 +19253,7 @@ UPDATE db_schema_version
         if "content" in update_data:
             self.replace_note_links(cursor, note_id, update_data["content"])
 
-        logger.info(
+        logger.debug(
             f"Updated note ID {note_id} from version {expected_version} to version {next_version_val}."
         )
         return True
@@ -19370,7 +19458,7 @@ UPDATE db_schema_version
                         cancelled_at=now,
                     )
 
-                logger.info(
+                logger.debug(
                     f"Soft-deleted note ID {note_id} (was v{expected_version}), new version {next_version_val}."
                 )
                 return True
@@ -19453,7 +19541,7 @@ UPDATE db_schema_version
                         entity_id=note_id,
                     )
                 if not current_state["deleted"]:
-                    logger.info("Note restore was already active")
+                    logger.debug("Note restore was already active")
                     return True
                 if current_state["version"] != expected_version:
                     raise ConflictError(
@@ -19472,7 +19560,7 @@ UPDATE db_schema_version
                     if not final_state:
                         msg = f"Note ID {note_id} disappeared."
                     elif not final_state["deleted"]:
-                        logger.info("Note restore completed concurrently")
+                        logger.debug("Note restore completed concurrently")
                         return True
                     elif final_state["version"] != expected_version:
                         msg = (
@@ -19486,7 +19574,7 @@ UPDATE db_schema_version
                         )
                     raise ConflictError(msg, entity="notes", entity_id=note_id)
 
-                logger.info("Note restore completed normally")
+                logger.debug("Note restore completed normally")
                 return True
         except ConflictError:
             raise
@@ -19631,7 +19719,7 @@ UPDATE db_schema_version
                         f"Logged sync event for {link_table}: {sync_op} on {sync_entity_id}"
                     )
 
-            logger.info(
+            logger.debug(
                 f"{operation.capitalize()}ed {link_table}: {col1_name}={col1_val}, {col2_name}={col2_val}. Rows affected: {rows_affected}"
             )
             return rows_affected > 0

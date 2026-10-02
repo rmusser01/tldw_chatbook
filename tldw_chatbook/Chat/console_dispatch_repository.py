@@ -159,6 +159,53 @@ class ConsoleDispatchRepository:
                 raise ConsoleDispatchCheckpointValidationError(
                     "Parent message is unavailable."
                 )
+        receipt = acceptance.continuation_receipt
+        if receipt is not None:
+            from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+
+            if (
+                type(receipt) is not ContinuationReceipt
+                or receipt.initiator != "hook_continuation"
+                or acceptance.origin != "queued"
+                or type(receipt.admitted_turns) is not int
+                or not 1 <= receipt.admitted_turns <= 3
+                or any(
+                    type(value) is not str or not value or len(value) > 256
+                    for value in (
+                        receipt.parent_turn_id,
+                        receipt.stop_event_id,
+                        receipt.parent_assistant_message_id,
+                        receipt.chain_id,
+                    )
+                )
+                or receipt.parent_assistant_message_id != acceptance.parent_message_id
+            ):
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid continuation receipt."
+                )
+            parent = cursor.execute(
+                "SELECT role FROM messages WHERE id = ? AND conversation_id = ? AND deleted = 0",
+                (receipt.parent_assistant_message_id, acceptance.conversation_id),
+            ).fetchone()
+            if parent is None or parent["role"] != "assistant":
+                raise ConsoleDispatchCheckpointValidationError(
+                    "Invalid continuation parent."
+                )
+            cursor.execute(
+                "INSERT INTO console_hook_continuation_receipts "
+                "(parent_turn_id, stop_event_id, conversation_id, parent_assistant_message_id, "
+                "assistant_message_id, chain_id, admitted_turns, initiator) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    receipt.parent_turn_id,
+                    receipt.stop_event_id,
+                    acceptance.conversation_id,
+                    receipt.parent_assistant_message_id,
+                    acceptance.assistant_message_id,
+                    receipt.chain_id,
+                    receipt.admitted_turns,
+                    receipt.initiator,
+                ),
+            )
         attachments = self._validated_attachments(acceptance)
         first_attachment = next(
             (row for row in attachments if row[0] == 0),
@@ -175,7 +222,7 @@ class ConsoleDispatchRepository:
                 usage_json, metadata_json, provider_continuation_json,
                 assistant_generation_state
             ) VALUES (?, ?, ?, 'user', ?, ?, ?, ?, NULL,
-                      ?, ?, 1, 0, 'user', NULL, NULL, NULL, NULL)
+                      ?, ?, 1, 0, 'user', NULL, ?, NULL, NULL)
             """,
             (
                 acceptance.user_message_id,
@@ -187,6 +234,18 @@ class ConsoleDispatchRepository:
                 now,
                 now,
                 self.db.client_id,
+                (
+                    json.dumps(
+                        {
+                            "origin": "hook",
+                            "initiator": "hook_continuation",
+                            "parent_turn_id": receipt.parent_turn_id,
+                            "stop_event_id": receipt.stop_event_id,
+                        }
+                    )
+                    if receipt
+                    else None
+                ),
             ),
         )
         cursor.executemany(

@@ -145,6 +145,21 @@ temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
 committed, reachable source resolved those harness defects. Keep that headless
 bridge evidence separate from the full Console UI and durable persistence.
 
+## A refused `localhost` is an exception group, not one ECONNREFUSED
+
+**TASK-33005.5, 2026-10-02.** Every unit test of the "refused :PORT" word
+passed, because each faked a refusal as one `ConnectError` whose cause was
+one `OSError(ECONNREFUSED)`. In the live switcher, the shipped defaults
+(Aphrodite `localhost:2242`, the custom slots, llama.cpp's own
+`localhost:8080`) read "Not ready · unreachable" instead. `localhost` resolves
+to ::1 and 127.0.0.1, and httpx then reports `ConnectError <- OSError <-
+ExceptionGroup(two ConnectionRefusedError)`. `connect_error_is_refused`
+walked only `__cause__`/`__context__`, so it never saw the errno. A numeric
+`127.0.0.1` host gave the plain chain and read "refused" correctly, so the
+bug only showed against a host name. Build a fake failure from a real one:
+print the live exception chain once (plain httpx, no app import), then copy
+its shape into the test.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
@@ -359,6 +374,23 @@ top-to-bottom — no unit test would ever say so.
 **What to do.** For anything user-facing, run the app and look at it. Ask: does the
 screen read correctly top-to-bottom, and does the affordance actually lead somewhere?
 
+**TASK-32680, pending Stop hooks, 2026-09-17.** The initial mounted test called
+`_stop_console_generation_from_visible_action` directly during streaming; the
+91-test core run passed. Review then reproduced Stop failing while a completed
+parent's Stop hook was still running. Fixing the callable controller entry still
+left both composer Stop buttons hidden because visibility followed the completed
+parent's generation state. Two actual-button tests failed on `display=False`.
+The final fix projects pending-hook Stop separately from generation/Redirect and
+keeps the original cancellation Event through that exact settlement. Four mounted
+actual Send/Stop cases at 80x24 and 120x35 verify cancellation, once-only Interrupt,
+retained process cleanup and a fresh Send. These targeted checks do not resolve
+the separately recorded aggregate descriptor warning or predecessor UI failures.
+
+**Add to the check.** Exercise the visible action in each lifecycle phase where
+users need it, including after generation ends while follow-up work is pending.
+A mounted app plus direct handler invocation proves neither button reachability
+nor transfer of cancellation ownership across that phase boundary.
+
 Headless recipe (no repo tooling required):
 
 ```bash
@@ -372,6 +404,30 @@ tmux -L verify kill-server                  # done
 Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state (see
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
+
+---
+
+## A widget fed only by a sync method is blank on the first frame
+
+**TASK-33005.3, 2026-10-01.** The new Console readiness chip was filled only by
+`sync_readiness_chip`, which the settings-summary sync calls. Every integration test
+passed, because each one drives a sync before asserting. Live at 211x44 the chip was
+missing when the Console opened. It appeared only after an unrelated rail toggle
+happened to run the sync, because nothing runs that sync after the first mount
+when readiness has not changed. The fix was the existing F1 precedent in
+`ConsoleStatusChips` (`ephemeral`, `cost_state`, `run_copy`): pass the
+compose-time value into the constructor (`readiness_word`). Review round 1 then
+deleted the chip and `sync_readiness_chip` (the word moved to the header badge, see
+below), so neither name exists any more; the lesson stands. Whenever a new widget is
+refreshed by a sync method, open the screen fresh and capture it before touching
+anything. A test that syncs first cannot see the first frame.
+
+The same captures hid a second defect that only a reviewer saw: the status strip
+already overflowed at 211x44 before the chip existed (it ended "Context 0% · Current
+$0.00 · O…"), so the new chip pushed the Context/cost chip off-screen in every
+capture, and with "Not ready · refused :9199" it vanished entirely. Review round 1
+moved the word into the header badge instead. When you add to a row, diff its last
+visible cells against a base capture at the primary size, not just the new widget.
 
 ---
 
@@ -2620,6 +2676,31 @@ clean worker exit in addition to generated audio and model-owner counters.
 Resolve the loaded native library path and hash when comparing environments;
 the Python package version alone does not identify the native implementation.
 
+## Native imports can change fork safety when a test leaves the sandbox
+
+**TASK-32675, 2026-09-16.** Native APFS root tests needed a narrowly elevated
+`kern.bootsessionuuid` read. Their covering run then warned at an existing real
+`os.fork()` ownership test. Python thread enumeration showed only MainThread
+both before fork and after lifecycle teardown, but that did not establish a
+single-threaded process: a native sample showed CoreAudio
+`caulk.messenger.shared` threads through libportaudio.
+
+Fresh isolated controls distinguished the cause. With only stdlib imports,
+fork produced no warning; adding only `import sounddevice` reproduced the
+warning under elevation, still with only MainThread visible to Python. Neither
+arm warned in the normal sandbox. Attribute such differences with a minimal
+import control and native sampling before blaming a new service's teardown or
+calling a warning unchanged baseline. Python enumeration cannot see all native
+library threads.
+
+The resolution preserved the real inherited-owner and replaced-lock refusal
+assertions in `Tests/Plugins/test_runtime_owner.py`, running them in a fresh
+`-I -W error::DeprecationWarning` subprocess with a 20-second bound, exact
+worktree provenance, isolated profile, null keyring and network refusal. No
+warning filter or ownership assertion was removed. The final covering run
+passed 440 tests without warnings; native test elevation remained limited to
+the OS API that required it.
+
 ## Wheel identity includes deleted files, and dependency checks can open profiles
 
 **PR #2545, TTS qualification, 2026-09-09.** After rebasing onto the Library
@@ -3492,3 +3573,13 @@ a scratch HOME, XDG dirs, `TLDW_CONFIG_PATH` and `[paths].data_dir`, all set **b
 the first `tldw_chatbook` import. A `--rootdir` flag or a `sys.path` insert gives no
 isolation. Check afterwards: the real `config.toml` sha256 and the mtimes under
 `~/.local/share/tldw_cli/default_user` must be unchanged.
+
+
+## Finite native Console readers must retire their own worker connections
+
+**TASK-32680, 2026-09-30.** H5 mounted qualification accumulated native SQLite
+leases despite passing visible Send/Stop assertions. Registration stacks traced
+fresh handles to archive, hook configuration, run-log selection and fleet history
+reads. Reusing operation-owned connection retirement fixed the actual workers;
+closing only the main-thread database or collecting Python objects did not.
+The final 105-case run passed without resource warnings or raised FD thresholds.

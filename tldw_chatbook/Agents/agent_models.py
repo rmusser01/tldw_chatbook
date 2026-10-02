@@ -14,7 +14,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal, TypeAlias
+from typing import TYPE_CHECKING, Literal, Self, TypeAlias
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.local_reasoning import ReasoningReplayPolicy
@@ -434,6 +434,168 @@ def normalize_tool_review(value: ToolReviewValue) -> ToolReviewDecision:
 
 
 @dataclass(frozen=True)
+class PluginContextOrigin:
+    """Content-free host attribution for one whole plugin instruction block."""
+
+    installation_id: str
+    component_id: str
+    revision: str
+    byte_count: int
+    allowed_tools: tuple[str, ...] | None = None
+
+
+def plugin_tool_ceiling(
+    messages: list[dict], eligible: tuple[str, ...]
+) -> tuple[str, ...]:
+    """Live package constraints only narrow the actual host catalog."""
+    allowed = set(eligible)
+    for row in messages:
+        content = row.get("content")
+        parts = (
+            [content]
+            if not isinstance(content, list)
+            else [part.get("text") for part in content if isinstance(part, dict)]
+        )
+        for text in parts:
+            if not isinstance(text, PluginContextText):
+                continue
+            for origin in text.checked_origins():
+                if origin.allowed_tools is not None:
+                    allowed.intersection_update(origin.allowed_tools)
+    return tuple(name for name in eligible if name in allowed)
+
+
+@dataclass(frozen=True)
+class HookContextOrigin:
+    """Host attribution for one whole hook contribution, independent of Plugins."""
+
+    event_id: str
+    handler_id: str
+    byte_count: int
+    package_origins: tuple[PluginContextOrigin, ...] = ()
+
+
+class PluginContextText(str):
+    """Live-only host attribution; JSON and transcript text contain no sidecar.
+
+    Ordinary strings, including text resembling plugin delimiters, never acquire
+    this type through parsing. Formatting must explicitly carry the origins.
+    """
+
+    def __new__(
+        cls,
+        text: str,
+        origins: tuple[PluginContextOrigin, ...],
+        hook_origins: tuple[HookContextOrigin, ...] = (),
+    ) -> Self:
+        instance = super().__new__(cls, text)
+        instance.origins = tuple(origins)
+        instance.hook_origins = tuple(hook_origins)
+        instance.text_digest = hashlib.sha256(text.encode("utf-8")).digest()
+        return instance
+
+    def __getnewargs__(self) -> tuple:
+        return str(self), self.origins, self.hook_origins
+
+    def checked_hook_origins(self) -> tuple[HookContextOrigin, ...]:
+        self.checked_origins()
+        if any(
+            not isinstance(origin, HookContextOrigin) for origin in self.hook_origins
+        ):
+            raise ValueError("hook_context_origin_invalid")
+        return self.hook_origins
+
+    def checked_origins(self) -> tuple[PluginContextOrigin, ...]:
+        if hashlib.sha256(self.encode("utf-8")).digest() != self.text_digest:
+            raise ValueError("plugin_context_text_changed")
+        if any(not isinstance(origin, PluginContextOrigin) for origin in self.origins):
+            raise ValueError("plugin_context_origin_invalid")
+        return self.origins
+
+
+def carry_plugin_context(text: str, *sources: str) -> str:
+    """Carry host attribution across one explicit, whole-block assembly."""
+    origins = tuple(
+        origin
+        for source in sources
+        if isinstance(source, PluginContextText)
+        for origin in source.checked_origins()
+    )
+    hook_origins = tuple(
+        origin
+        for source in sources
+        if isinstance(source, PluginContextText)
+        for origin in source.checked_hook_origins()
+    )
+    return (
+        PluginContextText(text, origins, hook_origins)
+        if origins or hook_origins
+        else text
+    )
+
+
+def check_host_context(messages: list[dict], *, strip: bool = True) -> list[dict]:
+    """Validate whole attributed blocks on the exact text/multimodal send."""
+    from collections import Counter
+
+    total = 0
+    event_bytes: Counter[str] = Counter()
+
+    def checked(content):
+        nonlocal total
+        if not isinstance(content, PluginContextText):
+            return content
+        packages = Counter(content.checked_origins())
+        for origin in content.checked_hook_origins():
+            if (
+                not origin.event_id
+                or not origin.handler_id
+                or not 0 <= origin.byte_count <= 4096
+            ):
+                raise ValueError("hook_context_block_too_large")
+            total += origin.byte_count
+            event_bytes[origin.event_id] += origin.byte_count
+            for package in origin.package_origins:
+                if (
+                    not isinstance(package, PluginContextOrigin)
+                    or packages[package] <= 0
+                ):
+                    raise ValueError("hook_context_package_origin_invalid")
+                packages[package] -= 1
+        for origin, count in packages.items():
+            if not 0 <= origin.byte_count <= 8192:
+                raise ValueError("plugin_context_block_too_large")
+            total += origin.byte_count * count
+        return str(content) if strip else content
+
+    result = []
+    for row in messages:
+        content = row.get("content")
+        if isinstance(content, PluginContextText):
+            row = {**row, "content": checked(content)}
+        elif isinstance(content, list):
+            row = {
+                **row,
+                "content": [
+                    (
+                        {**part, "text": checked(part["text"])}
+                        if isinstance(part, dict)
+                        and part.get("type") == "text"
+                        and "text" in part
+                        else part
+                    )
+                    for part in content
+                ],
+            }
+        result.append(row)
+    if any(size > 16384 for size in event_bytes.values()):
+        raise ValueError("hook_context_event_too_large")
+    if total > 32768:
+        raise ValueError("plugin_context_send_too_large")
+    return result
+
+
+@dataclass(frozen=True)
 class ToolResult:
     ok: bool
     content: str = ""
@@ -441,6 +603,8 @@ class ToolResult:
     # Optional refusal provenance lets the runtime distinguish a permission
     # block from an ordinary failed dispatch without interpreting payload text.
     outcome: ToolOutcome | None = None
+    # Host dispatch ownership, never inferred from a remote result body.
+    dispatch_state: Literal["not_started", "settled", "uncertain"] | None = None
     approval_decision: ApprovalDecision | None = field(default=None, kw_only=True)
 
     @classmethod
@@ -462,6 +626,7 @@ class ToolResult:
             error=error,
             outcome=TOOL_OUTCOME_BLOCKED,
             approval_decision=approval_decision,
+            dispatch_state="not_started",
         )
 
 
@@ -791,6 +956,23 @@ def validate_agent_definition(defn: AgentDefinition) -> list[str]:
                 )
     errors.extend(validate_sampling_params(params_to_dict(defn.params)))
     return errors
+
+
+def compose_agent_instructions(
+    definition: AgentDefinition,
+    system_prompt: str,
+    allowed_tools: tuple[str, ...],
+) -> tuple[str, tuple[str, ...], tuple[dict, ...]]:
+    """Keep managed material in its attributed user lane; narrow tools only."""
+    owned = isinstance(definition.instructions, PluginContextText)
+    if definition.tool_allowlist or owned:
+        wanted = frozenset(definition.tool_allowlist)
+        allowed_tools = tuple(name for name in allowed_tools if name in wanted)
+    if owned:
+        rows = ({"role": "user", "content": definition.instructions},)
+        check_host_context(list(rows), strip=False)
+        return system_prompt, allowed_tools, rows
+    return system_prompt + "\n\n" + definition.instructions, allowed_tools, ()
 
 
 def definition_fingerprint(defn: AgentDefinition) -> str:

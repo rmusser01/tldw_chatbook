@@ -66,7 +66,9 @@ async def storage_call(service: Any, method: str, *args: Any, **kwargs: Any) -> 
     call = getattr(service, method)
     if getattr(getattr(service, "db", None), "is_memory_db", False):
         return call(*args, **kwargs)
-    return await asyncio.to_thread(call, *args, **kwargs)
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    return await run_owned_db_call(getattr(service, "db", None), call, *args, **kwargs)
 
 
 def capture_console_archive_draft(app: Any, *, screen: Any = None) -> None:

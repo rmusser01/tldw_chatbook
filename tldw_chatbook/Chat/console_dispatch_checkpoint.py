@@ -7,7 +7,7 @@ import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, cast
 from urllib.parse import urlsplit
 
 from tldw_chatbook.Chat.console_library_policy import (
@@ -24,6 +24,10 @@ from tldw_chatbook.Chat.console_transaction_contribution import (
     ConsolePromotionTransactionContribution,
     ConsoleTransactionContribution,
 )
+
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
 
 
 CHECKPOINT_AUTHORITY_MAX_BYTES = 4096
@@ -190,6 +194,7 @@ class ConsoleDurableTurnAcceptance:
     resolved_destination: ConsoleResolvedDestination
     reconstructability: ConsoleDispatchReconstructability
     contributions: tuple[ConsoleTransactionContribution, ...]
+    continuation_receipt: ContinuationReceipt | None = None
 
 
 @dataclass(frozen=True, slots=True)

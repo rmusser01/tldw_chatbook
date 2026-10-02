@@ -57,6 +57,8 @@ class _Skills:
             for item in (*context["available_skills"], *context["blocked_skills"])
         }
 
+    _visible_records = _load_index
+
     def _summary_for_record(self, record):
         return dict(record)
 
@@ -121,6 +123,8 @@ class _RecordingGateway:
         if self.fail:
             raise RuntimeError("stream failed")
 
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 def _controller(skills):
     store = persisted_console_store()
@@ -974,3 +978,41 @@ async def test_real_canvas_skill_refusal_is_not_silently_substituted(
     assert refusal is None
     assert len(notes) == 1 and "canvas" in notes[0]
     assert bindings == () and block == ""
+
+
+@pytest.mark.parametrize("multimodal", [False, True])
+def test_evidence_prefix_preserves_host_plugin_budget_without_markers(multimodal):
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.context import check_send_context, instruction_block
+
+    block = instruction_block("install", "skill:test", "revision", "x" * 6800)
+    image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    content = [{"type": "text", "text": block}, image] if multimodal else block
+    source = [{"role": "user", "content": content}]
+    prefixed = ConsoleChatController._prepend_evidence_context(
+        source, "retrieved evidence"
+    )
+    carried = (
+        prefixed[0]["content"][0]["text"] if multimodal else prefixed[0]["content"]
+    )
+    assert isinstance(carried, PluginContextText)
+    assert (
+        len(check_send_context(prefixed + [{"role": "tool", "content": block}] * 3))
+        == 4
+    )
+    with pytest.raises(PluginUnavailable, match="send_too_large"):
+        check_send_context(prefixed + [{"role": "tool", "content": block}] * 4)
+    transport = check_send_context(prefixed)
+    plain = (
+        transport[0]["content"][0]["text"] if multimodal else transport[0]["content"]
+    )
+    assert type(plain) is str
+    assert source[0]["content"] is content
+    if multimodal:
+        assert transport[0]["content"][1] is image
+    # The same bytes from an ordinary user do not manufacture host attribution.
+    ordinary = ConsoleChatController._prepend_evidence_context(
+        [{"role": "user", "content": str(block) * 5}], "retrieved evidence"
+    )
+    assert check_send_context(ordinary) == ordinary

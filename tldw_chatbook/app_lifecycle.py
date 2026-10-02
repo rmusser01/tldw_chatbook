@@ -36,6 +36,7 @@ from textual import work
 from textual.message_pump import active_message_pump
 from textual.worker import Worker, WorkerCancelled, WorkerState
 
+from tldw_chatbook.app_keep_alive import keep_alive_notice, retire_dead_pump
 from tldw_chatbook.app_service_wiring import TldwCli  # class proxy (see its docstring)
 from tldw_chatbook.Chat.console_runtime import dispose_console_runtime
 from tldw_chatbook.Chat.console_settings_durability import (
@@ -52,7 +53,13 @@ from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.UI.Navigation.shell_destinations import get_shell_destination
 from tldw_chatbook.Utils.app_shutdown import arm_exit_watchdog, unregister_running_app
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
-from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+from tldw_chatbook.Widgets.confirmation_dialog import (
+    ConfirmationDialog,
+    await_quit_prompt,
+    confirm_quit_screens,
+    prepare_quit_screens,
+    quit_confirmation_screens,
+)
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
     from tldw_chatbook.Chunking.lab_coordinator import LabCoordinator
@@ -541,6 +548,9 @@ class LifecycleMixin:
             )
             self._console_runtime_shutdown_task = task
         await asyncio.shield(task)
+        plugin_service = getattr(self, "_plugin_service", None)
+        if plugin_service is not None:
+            await plugin_service.aclose()
 
     async def _shutdown_raw_cli_runtime(self) -> None:
         """Disarm and boundedly drain the app-owned raw CLI runtime once."""
@@ -910,20 +920,14 @@ class LifecycleMixin:
                 for module, function, _line in frames
             )
         )
-        if keep_alive:
-            if site[0].startswith("tldw_chatbook."):
-                where = site[1]
-            elif pump is not None:
-                pump_id = getattr(pump, "id", None)
-                where = type(pump).__name__ + (f"#{pump_id}" if pump_id else "")
-            else:
-                where = site[1] or type(raised).__name__
+        # TASK-33621.13 (GAP4-01): a pump whose loop the error ENDED must not
+        # stay in charge of input: `retire_dead_pump` pops a dead SCREEN (and
+        # above), or refocuses off a dead widget; None (nothing live left) exits.
+        if keep_alive and (kind := retire_dead_pump(self, pump, frames)) is not None:
             try:
                 self.bell()
                 self.notify(
-                    f"Something went wrong in {where} — the screen was kept open. "
-                    "That panel may stop responding or disappear until you "
-                    "reopen it; details are in the log file.",
+                    keep_alive_notice(site, pump, raised, kind),
                     severity="error",
                     timeout=12,
                     markup=False,
@@ -1434,10 +1438,12 @@ class LifecycleMixin:
         worker_name = event.worker.name
         worker_group = event.worker.group
 
-        # Log the state change
+        # Log the state change (formatted only when DEBUG is on: PERF-03)
         self.loguru_logger.debug(
-            f"on_worker_state_changed: Worker '{worker_name}' "
-            f"(Group: {worker_group}, State: {event.state})"
+            "on_worker_state_changed: Worker '{}' (Group: {}, State: {})",
+            worker_name,
+            worker_group,
+            event.state,
         )
 
         # TASK-22215. The same "one hook sees every transition" property the
@@ -1494,14 +1500,9 @@ class LifecycleMixin:
                 # transition in the app passes through.
                 pass
 
-        # Delegate to the handler registry
-        handled = await self.worker_handler_registry.handle_event(event)
-
-        if not handled:
-            # Log unhandled workers for debugging
-            self.loguru_logger.warning(
-                f"No handler found for worker '{worker_name}' (Group: {worker_group})"
-            )
+        # Delegate to the handler registry; it reports unhandled workers, at
+        # WARNING only when one failed (PERF-03).
+        await self.worker_handler_registry.handle_event(event)
 
     def chat_wrapper(self, strip_thinking_tags: bool = True, **kwargs: Any) -> Any:
         """Delegate a retained non-streaming media call.
@@ -1775,7 +1776,7 @@ class LifecycleMixin:
             }:
                 self._workflow_quit_approved_view = view
                 return True
-            decision = await self.push_screen_wait(
+            decision = await self._await_quit_prompt(
                 ConfirmationDialog(
                     title="Quit with a workflow in progress?",
                     message=(
@@ -1864,15 +1865,10 @@ class LifecycleMixin:
                 begin_quit = getattr(promotion_owner, "begin_quit", None)
                 if callable(begin_quit):
                     promotion_token = begin_quit()
-                current_screen = self.screen
-                confirm_quit = getattr(current_screen, "confirm_quit", None)
-                if callable(confirm_quit):
-                    decision = confirm_quit()
-                    if inspect.isawaitable(decision):
-                        decision = await decision
-                    if decision is False:
-                        self._quit_in_progress = False
-                        return
+                quit_screens = quit_confirmation_screens(self)
+                if not await confirm_quit_screens(quit_screens):
+                    self._quit_in_progress = False
+                    return
                 if not await self._confirm_console_runtime_quit():
                     self._quit_in_progress = False
                     return
@@ -1924,11 +1920,7 @@ class LifecycleMixin:
                 workflow_authoring = getattr(self, "_workflow_authoring", None)
                 if workflow_authoring is not None:
                     await workflow_authoring.prepare_quit()
-                prepare_for_quit = getattr(current_screen, "prepare_for_quit", None)
-                if callable(prepare_for_quit):
-                    preparation = prepare_for_quit()
-                    if inspect.isawaitable(preparation):
-                        await preparation
+                await prepare_quit_screens(quit_screens)
             except Exception:
                 loguru_logger.warning(
                     "Pre-quit shutdown guard failed; staying in the app"
@@ -2030,7 +2022,11 @@ class LifecycleMixin:
     async def _await_console_quit_confirmation(self, dialog: Any) -> bool:
         """Await one app-level Console-loss dialog from the quit worker."""
 
-        return bool(await self.push_screen_wait(dialog))
+        return await self._await_quit_prompt(dialog)
+
+    async def _await_quit_prompt(self, dialog: Any) -> bool:
+        """Await one app-level quit dialog; unanswered means Stay (TASK-33622.10)."""
+        return bool(await await_quit_prompt(self, dialog, no_answer=False))
 
     async def _confirm_console_runtime_quit(self) -> bool:
         """Revision-pin Console loss even when a non-Console screen is mounted."""

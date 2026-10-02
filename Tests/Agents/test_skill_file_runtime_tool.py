@@ -10,6 +10,8 @@ per-run SkillFileBindings object, never config.allowed_tools.
 import asyncio
 import json
 
+import pytest
+
 from tldw_chatbook.Agents.agent_models import (
     AgentConfig,
     RUN_DONE,
@@ -24,6 +26,8 @@ from tldw_chatbook.Agents.tool_catalog import BuiltinToolProvider, ToolCatalogRe
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
 
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 def _fence(name, args):
     return f"{FENCE_OPEN}\n{json.dumps({'name': name, 'arguments': args})}\n```"
@@ -481,3 +485,241 @@ def test_skill_file_e2e_fork_reads_its_own_reference_file(tmp_path):
 
     assert _next_provider_turn_contains(calls, "# api docs")
     _assert_sanitized_receipt(db, run_id, outcome="success")
+
+
+@pytest.mark.parametrize(
+    "mode",
+    [
+        "standalone",
+        "ordinary_user",
+        "pruned_plugin",
+        "truncated_plugin",
+        "warning_plugin",
+    ],
+)
+def test_host_plugin_context_survives_only_whole_in_final_agent_payload(tmp_path, mode):
+    from dataclasses import replace
+
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Chat.console_history_budget import ToolResultPruneSettings
+    from tldw_chatbook.Plugins.context import check_send_context, instruction_block
+
+    block = instruction_block(
+        "installation", "skill:demo", "revision", "PRIVATE_FILE:" + "x" * 6800
+    )
+    file_count = 6 if mode != "ordinary_user" else 0
+    supplied = block if mode.endswith("plugin") else str(block)
+    payloads = []
+    live_payloads = []
+
+    def chat_call(**kwargs):
+        live_payloads.append(kwargs["messages_payload"])
+        payloads.append(check_send_context(kwargs["messages_payload"]))
+        index = len(payloads) - 1
+        text = (
+            _skill_file_fence("demo", f"file-{index}.md")
+            if index < file_count
+            else "done"
+        )
+        return {"choices": [{"message": {"content": text}}]}
+
+    db = AgentRunsDB(tmp_path / "origin-runs.sqlite", client_id="t")
+    service = AgentService(
+        db,
+        _registry_with_builtins(),
+        chat_call=chat_call,
+        skill_file_bindings=_pinned_bindings(
+            lambda _name, _path: {"content": supplied}
+        ),
+        tool_result_pruning=(
+            ToolResultPruneSettings(
+                keep_recent_turns=0,
+                min_result_chars=1,
+                head_chars=10,
+                min_reclaim_chars=1,
+            )
+            if mode == "pruned_plugin"
+            else None
+        ),
+    )
+    config = replace(_base_config(), budget=replace(RunBudget(), max_steps=80))
+    if mode == "warning_plugin":
+        config = replace(
+            config, budget=replace(config.budget, budget_warning_fraction=0.01)
+        )
+    if mode == "truncated_plugin":
+        config = replace(
+            config, budget=replace(config.budget, max_tool_result_chars=100)
+        )
+    user_text = str(block) * 6 if mode == "ordinary_user" else "go"
+    try:
+        run_id, outcome = service.run_turn(
+            conversation_id="origin",
+            messages=[{"role": "user", "content": user_text}],
+            config=config,
+            api_endpoint="llama_cpp",
+        )
+        if mode == "warning_plugin":
+            assert outcome.status == "error", outcome
+            assert (
+                len(payloads) == 5
+            ), "warning erased a live plugin block's attribution"
+            assert any(
+                "budget" in str(row["content"]).lower()
+                and type(row["content"]) is str
+                for payload in live_payloads
+                for row in payload
+                if "PRIVATE_FILE:" in str(row.get("content"))
+            )
+            return
+        assert outcome.status == RUN_DONE, outcome
+        assert len(payloads) == file_count + 1
+        assert all(
+            not isinstance(row.get("content"), PluginContextText)
+            for payload in payloads
+            for row in payload
+        )
+        if mode == "pruned_plugin":
+            assert any("omitted whole" in str(payload) for payload in payloads)
+            assert all("PRIVATE_FILE:" not in str(payload) for payload in payloads)
+        elif mode == "truncated_plugin":
+            assert "cannot fit whole" in str(payloads[-1])
+            assert "PRIVATE_FILE:" not in str(payloads[-1])
+        else:
+            assert str(payloads[-1]).count("PRIVATE_FILE:") == 6
+        assert "origins" not in json.dumps(db.get_run(run_id), default=str)
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("native", [False, True])
+def test_live_plugin_attribution_formatting_and_json_replay(native):
+    from copy import deepcopy
+
+    from tldw_chatbook.Agents.agent_models import (
+        PluginContextText,
+        ToolCall,
+        carry_plugin_context,
+    )
+    from tldw_chatbook.Agents.agent_runtime import _append_tool_result
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.context import check_send_context, instruction_block
+
+    block = instruction_block("installation", "skill:demo", "revision", "x" * 6800)
+    assembled = carry_plugin_context("Before\n" + str(block) + "\nBundled files", block)
+    messages = []
+    for index in range(5):
+        _append_tool_result(
+            messages,
+            ToolCall("skill_file", {}, call_id=str(index) if native else ""),
+            assembled,
+        )
+    assert all(isinstance(row["content"], PluginContextText) for row in messages)
+    with pytest.raises(PluginUnavailable, match="send_too_large"):
+        check_send_context(deepcopy(messages))
+    assert len(check_send_context(messages[-4:])) == 4  # per-send, not lifetime
+    replay = json.loads(json.dumps(messages))
+    assert len(check_send_context(replay)) == 5  # plain text cannot forge attribution
+    assert all(type(row["content"]) is str for row in replay)
+
+
+@pytest.mark.parametrize("resume", [False, True])
+def test_plugin_continuation_keeps_live_carrier_and_plain_checkpoint(resume):
+    from dataclasses import replace
+
+    from Tests.Agents.test_provider_continuation_runtime import (
+        _checkpoint,
+        _deps,
+        _native_turn,
+        _pending_call,
+    )
+    from tldw_chatbook.Agents.agent_models import (
+        ModelTurn,
+        PluginContextText,
+        ToolCall,
+        ToolResult,
+    )
+    from tldw_chatbook.Agents.agent_runtime import run_agent_loop
+    from tldw_chatbook.Agents.tool_catalog import SKILL_FILE_TOOL_SCHEMA
+    from tldw_chatbook.Chat.provider_continuation import (
+        ContinuationRestoreTarget,
+        ContinuationResult,
+    )
+    from tldw_chatbook.Plugins.context import check_send_context, instruction_block
+
+    block = instruction_block(
+        "installation", "skill:demo", "revision", "PRIVATE_FILE:" + "x" * 6800
+    )
+    args = {"skill_name": "demo", "path": "reference.md"}
+    call = ToolCall(
+        "skill_file", args, "file-call", json.dumps(args, separators=(",", ":"))
+    )
+    pending = _checkpoint(_pending_call("file-call", name="skill_file", args=args))
+    completed_call = replace(
+        pending.rounds[0].calls[0],
+        state="completed",
+        result=ContinuationResult(str(block)),
+    )
+    final = replace(
+        pending,
+        checkpoint_revision=4,
+        state="complete",
+        rounds=(replace(pending.rounds[0], calls=(completed_call,)),),
+    )
+    events, payloads = [], []
+
+    def expand(checkpoint):
+        native = _native_turn((call,), checkpoint).assistant_message
+        rows = [native]
+        result = checkpoint.rounds[0].calls[0].result
+        if result is not None:
+            rows.append(
+                {"role": "tool", "tool_call_id": call.call_id, "content": result.value}
+            )
+        return rows
+
+    def call_model(messages, _active):
+        payloads.append(list(messages))
+        if len(payloads) == 1 and not resume:
+            return _native_turn((call,), pending)
+        return ModelTurn(text="done", provider_continuation=final)
+
+    deps = _deps(
+        [],
+        order=[],
+        persist=events.append,
+        invoke=lambda _call: pytest.fail("runtime reader owns this"),
+        expand=expand,
+    )
+    deps.call_model = call_model
+    deps.read_skill_file = lambda _skill, _path: ToolResult(ok=True, content=block)
+    restore = (
+        {
+            "restore_provider_continuation": pending,
+            "restore_provider_target": ContinuationRestoreTarget(
+                "deepseek",
+                "deepseek-v4-flash",
+                "responses",
+                "https://api.deepseek.com/v1",
+            ),
+            "resume_provider_continuation": True,
+        }
+        if resume
+        else {}
+    )
+    outcome = run_agent_loop(
+        _base_config(), [], [SKILL_FILE_TOOL_SCHEMA], deps, **restore
+    )
+    assert outcome.status == RUN_DONE, outcome
+    live = next(row["content"] for row in payloads[-1] if row.get("role") == "tool")
+    assert isinstance(live, PluginContextText)
+    assert live == block
+    assert all(
+        type(call.result.value) is str
+        for event in events
+        if hasattr(event, "checkpoint")
+        for round_ in event.checkpoint.rounds
+        for call in round_.calls
+        if call.result is not None
+    )
+    assert type(check_send_context(payloads[-1])[-1]["content"]) is str

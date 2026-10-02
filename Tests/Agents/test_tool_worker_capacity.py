@@ -14,6 +14,8 @@ from tldw_chatbook.Agents.execution_capacity import RuntimeCapacity, WorkOrigin
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 class BlockingTool(RunIdProbeProvider):
     def __init__(self):
@@ -26,7 +28,8 @@ class BlockingTool(RunIdProbeProvider):
         with self._lock:
             self.workers.append(threading.current_thread())
         self.entered.set()
-        assert self.release.wait(10)
+        # Keep physical workers held across real recovery-admission startup.
+        assert self.release.wait(30)
         return ToolResult(ok=True, content="late tool result")
 
 
@@ -85,13 +88,17 @@ def test_finished_runs_and_retries_cannot_hide_eight_live_workers(tmp_path):
     try:
         run_ids = []
         for i in range(6):
+            tool.entered.clear()
             run_id, _ = run_tools(db, capacity, tool, f"auto-{i}", WorkOrigin.AUTOMATIC)
+            assert tool.entered.wait(5), "automatic worker never started"
             run_ids.append(run_id)
         _, refused = run_tools(db, capacity, tool, "auto-refused", WorkOrigin.AUTOMATIC)
         assert len(tool.workers) == 6
         assert "automatic_tool_capacity" in str(refused.calls)
         for i in range(2):
+            tool.entered.clear()
             run_id, _ = run_tools(db, capacity, tool, f"manual-{i}", WorkOrigin.MANUAL)
+            assert tool.entered.wait(5), "manual worker never started"
             run_ids.append(run_id)
         _, refused = run_tools(db, capacity, tool, "manual-refused", WorkOrigin.MANUAL)
         assert "tool_capacity" in str(refused.calls)

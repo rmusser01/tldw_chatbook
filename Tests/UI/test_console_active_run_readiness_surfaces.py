@@ -97,11 +97,14 @@ def _edge_badge(console) -> str:
     return console.query_one("#console-inspector-rail-handle", ConsoleRailHandle).badge
 
 
-def _model_recovery_display(console) -> str:
-    """The Context rail Model section's "Not ready" line (display value)."""
-    return str(
-        console.query_one("#console-model-section-recovery", Static).styles.display
-    )
+def _model_recovery_line(console) -> tuple[str, bool]:
+    """The Context rail Model section's readiness line: (word, painted red).
+
+    TASK-33005.3 always shows the readiness word here (spec §5), so "hidden"
+    is no longer the healthy state; "Ready ·" without the error class is.
+    """
+    line = console.query_one("#console-model-section-recovery", Static)
+    return _static_text(line), line.has_class("conversation-attention-error")
 
 
 def _right_rail_text(console) -> str:
@@ -150,8 +153,11 @@ def _run_surface_violations(console) -> list[str]:
         violations.append("AC#2 'Provider setup needed' rendered in the rail")
     if badge != "running":
         violations.append(f"AC#3 edge badge {badge!r} (want 'running')")
-    if _model_recovery_display(console) != "none":
-        violations.append("AC#2 the Model section's 'Not ready' line is shown")
+    # Rewritten on purpose (TASK-33005 final review I-2): the line now always
+    # shows the word, so a healthy run reads "Ready · ..." and is never red.
+    model_word, model_blocked = _model_recovery_line(console)
+    if not model_word.startswith("Ready ·") or model_blocked:
+        violations.append(f"AC#2 the Model section's line reads {model_word!r}")
     return violations
 
 
@@ -406,9 +412,10 @@ async def test_missing_api_key_still_reads_blocked_with_a_recovery_action():
         assert run_line == "Run: Recovery required", run_line
         assert _edge_badge(console) == "setup"
         assert "Not ready" in _settings_readiness_line(console)
-        # The Model section's "Not ready" line is live for a real blocker
-        # (so the held-run test's "hidden mid-run" check is not vacuous).
-        assert _model_recovery_display(console) == "block"
+        # The Model section's line reads Not ready, red, for a real blocker
+        # (so the held-run test's "Ready mid-run" check is not vacuous).
+        model_word, model_blocked = _model_recovery_line(console)
+        assert model_word.startswith("Not ready ·") and model_blocked, model_word
         reason = str(composer._send_disabled_reason or "")
         assert "api key" in reason.lower(), reason
         assert composer.has_class("console-composer-setup-blocked"), (

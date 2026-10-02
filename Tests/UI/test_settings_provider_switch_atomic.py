@@ -210,7 +210,13 @@ async def test_provider_save_writer_exception_fails_closed_and_settles_lease(
         assert "file was not written" in copy.lower()
         assert "secret-writer-detail" not in copy
         assert SettingsCategoryId.PROVIDERS_MODELS in screen._settings_drafts
-        assert screen._provider_evidence_store().evidence_for(identity) is None
+        # TASK-33005.1, rewritten on purpose: the failed save still clears the
+        # Settings draft store and consumes its lease (fail closed). The
+        # observation itself stays in the app's shared owner, because the
+        # unchanged draft is still exactly the connection that was tested.
+        assert screen._provider_evidence_store().latest_evidence() is None
+        shared = screen._provider_evidence_store().evidence_for(identity)
+        assert shared is not None and shared.endpoint == "reachable"
 
     assert len(calls) == 1
     assert app.app_config["api_settings"]["openai"] == "malformed-provider-table"

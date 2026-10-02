@@ -38,6 +38,15 @@ from .hub_tool_catalog import (
     schema_argument_names,
 )
 from .local_control_service import MCPGovernanceDenied
+from .tool_results import (
+    DispatchState,
+    MCPDispatchObservation,
+    MCPToolResult,
+    current_dispatch,
+    observe_dispatch,
+    project_tool_result,
+    transport_failure,
+)
 from .local_runtime_delegate import (
     PERMISSION_STATE_UNRESOLVED_CLAUSE,
     RAW_TOOL_CALL_REFUSED_MESSAGE,
@@ -322,6 +331,8 @@ class UnifiedMCPControlPlaneService:
         )
         self._execution_log: MCPExecutionLog | None = None
         self._execution_log_init_lock = threading.Lock()
+        self._bridge_audit_lock = threading.Lock()
+        self._bridge_audit_in_flight = False
         self._permission_store: MCPPermissionStore | None = None
         self._hub_test_state_lock = threading.Lock()
         self._hub_test_previews: ToolTestPreviewRegistry | None = None
@@ -2453,6 +2464,7 @@ class UnifiedMCPControlPlaneService:
         result: Any,
         initiator: str = "test",
         decision: str = "allowed",
+        _audit_observation: MCPDispatchObservation | None = None,
     ) -> None:
         # Recording is best-effort: it must never mask the tool result or
         # the tool error being propagated (Phase 2 masking lesson). N1: the
@@ -2469,6 +2481,8 @@ class UnifiedMCPControlPlaneService:
         # pass them (there are none left in this module, but external
         # callers via reflection/monkeypatching should not break) keep the
         # original byte-compatible record shape.
+        if _audit_observation is not None and not _audit_observation.claim_audit():
+            return
         try:
             log = self.execution_log
             if log is None:
@@ -2495,6 +2509,104 @@ class UnifiedMCPControlPlaneService:
                 type(exc).__name__,
             )
 
+    def _record_bridge_failure(
+        self,
+        server_key: str,
+        tool_name: str,
+        *,
+        observation: MCPDispatchObservation,
+        dispatch_state: DispatchState,
+        duration_ms: int,
+        argument_names: set[str],
+        registered_argument_names: set[str],
+        decision: str,
+    ) -> None:
+        """Offer one nonqueued metadata audit to the existing execution-log owner.
+
+        Admission never waits for append I/O. A stalled append retains one daemon
+        per service; saturation/start/write failure may lose a best-effort row.
+        Only the started worker claims publication, so unscheduled work cannot
+        suppress the service's own eventual record.
+        """
+        if not self._bridge_audit_lock.acquire(blocking=False):
+            return
+        try:
+            if self._bridge_audit_in_flight:
+                return
+            self._bridge_audit_in_flight = True
+        finally:
+            self._bridge_audit_lock.release()
+
+        def publish() -> None:
+            try:
+                self._record_tool_execution(
+                    server_key,
+                    tool_name,
+                    ok=False,
+                    duration_ms=duration_ms,
+                    status="error",
+                    error_category=(
+                        "bridge_not_started"
+                        if dispatch_state == "not_started"
+                        else "completion_uncertain"
+                    ),
+                    exception_type=None,
+                    status_code=None,
+                    arguments=dict.fromkeys(argument_names),
+                    registered_argument_names=registered_argument_names,
+                    result=None,
+                    initiator="agent",
+                    decision=decision,
+                    _audit_observation=observation,
+                )
+            except Exception as exc:  # noqa: BLE001 -- audit is best-effort
+                logger.warning(
+                    "MCP bridge audit failed (exception_type={})", type(exc).__name__
+                )
+            finally:
+                with self._bridge_audit_lock:
+                    self._bridge_audit_in_flight = False
+
+        try:
+            threading.Thread(
+                target=publish, name="mcp-bridge-audit", daemon=True
+            ).start()
+        except Exception as exc:  # noqa: BLE001 -- audit is best-effort
+            with self._bridge_audit_lock:
+                self._bridge_audit_in_flight = False
+            logger.warning(
+                "MCP bridge audit start failed (exception_type={})", type(exc).__name__
+            )
+
+    @guarded
+    @producer_call
+    async def execute_hub_tool_result(
+        self,
+        server_key: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+        *,
+        initiator: str = "test",
+        decision: str = "allowed",
+        timeout_seconds: float | None = None,
+        registered_argument_names: set[str] | None = None,
+    ) -> MCPToolResult | dict[str, Any]:
+        """Typed external results through the shared execution/audit owner.
+
+        Builtins and legacy adapters retain their unqualified display mappings.
+        Hook callers must require a qualified MCPToolResult, never those mappings.
+        """
+        return await self.execute_hub_tool(
+            server_key,
+            tool_name,
+            arguments,
+            initiator=initiator,
+            decision=decision,
+            timeout_seconds=timeout_seconds,
+            registered_argument_names=registered_argument_names,
+            _typed_result=True,
+        )
+
     @guarded
     @producer_call
     async def execute_hub_tool(
@@ -2507,7 +2619,8 @@ class UnifiedMCPControlPlaneService:
         decision: str = "allowed",
         timeout_seconds: float | None = None,
         registered_argument_names: set[str] | None = None,
-    ) -> dict[str, Any]:
+        _typed_result: bool = False,
+    ) -> MCPToolResult | dict[str, Any]:
         """Execute one tool call against a local or built-in server.
 
         The shared execute seam for the Hub's Test Tool runner and the
@@ -2564,9 +2677,15 @@ class UnifiedMCPControlPlaneService:
 
         if normalized_key.startswith("local:"):
             profile_id = normalized_key.split(":", 1)[1]
-            coro = self.local_service.execute_external_tool(
-                profile_id, normalized_tool_name, normalized_arguments
+            typed_call = getattr(
+                self.local_service, "execute_external_tool_result", None
             )
+            external_call = (
+                typed_call
+                if _typed_result and callable(typed_call)
+                else self.local_service.execute_external_tool
+            )
+            coro = external_call(profile_id, normalized_tool_name, normalized_arguments)
         elif normalized_key.startswith("builtin:"):
             coro = self.local_service.execute_tool(
                 normalized_tool_name, normalized_arguments
@@ -2582,9 +2701,11 @@ class UnifiedMCPControlPlaneService:
             else self._tool_call_timeout()
         )
         started = time.monotonic()
+        observation = current_dispatch()
         try:
-            async with asyncio.timeout(timeout):
-                result = await coro
+            with observe_dispatch(observation):
+                async with asyncio.timeout(timeout):
+                    result = await coro
         except asyncio.TimeoutError:
             duration_ms = int((time.monotonic() - started) * 1000)
             message = f"Timed out after {timeout:.0f}s"
@@ -2599,10 +2720,13 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 decision=decision,
             )
+            if _typed_result and normalized_key.startswith("local:"):
+                return transport_failure("mcp_tool_timeout", observation)
             raise RuntimeError(message) from None
         except asyncio.CancelledError:
             if initiator == "test":
@@ -2618,6 +2742,7 @@ class UnifiedMCPControlPlaneService:
                     status_code=None,
                     arguments=normalized_arguments,
                     registered_argument_names=registered_argument_names,
+                    _audit_observation=observation,
                     result=None,
                     initiator=initiator,
                     decision=decision,
@@ -2663,6 +2788,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=None,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 # task-32280 fix round: governance refused this; no card was
@@ -2696,6 +2822,7 @@ class UnifiedMCPControlPlaneService:
                 status_code=status_code,
                 arguments=normalized_arguments,
                 registered_argument_names=registered_argument_names,
+                _audit_observation=observation,
                 result=None,
                 initiator=initiator,
                 decision=decision,
@@ -2703,18 +2830,30 @@ class UnifiedMCPControlPlaneService:
             raise
 
         duration_ms = int((time.monotonic() - started) * 1000)
+        failed = isinstance(result, MCPToolResult) and (
+            result.is_error or result.transport_error is not None
+        )
         self._record_tool_execution(
             normalized_key,
             normalized_tool_name,
-            ok=True,
+            ok=not failed,
             duration_ms=duration_ms,
-            status="success",
-            error_category=None,
+            status="error" if failed else "success",
+            error_category=(
+                ("transport_failed" if result.transport_error else "tool_error")
+                if failed
+                else None
+            ),
             exception_type=None,
             status_code=None,
             arguments=normalized_arguments,
             registered_argument_names=registered_argument_names,
-            result=result,
+            _audit_observation=observation,
+            result=(
+                project_tool_result(result)
+                if isinstance(result, MCPToolResult)
+                else result
+            ),
             initiator=initiator,
             decision=decision,
         )
@@ -4023,6 +4162,17 @@ class UnifiedMCPControlPlaneService:
                 ):
                     return _ResolvedHubTest(tool=candidate)
         return None
+
+    def tool_definition_current(self, tool: HubTool) -> bool:
+        """Check one captured tool against the existing live catalog owner."""
+        resolved = self._resolve_hub_test(tool.server_key, tool.name)
+        return bool(
+            resolved is not None
+            and resolved.tool.executable
+            and not resolved.tool.stale
+            and definition_hash(resolved.tool.description, resolved.tool.input_schema)
+            == definition_hash(tool.description, tool.input_schema)
+        )
 
     def _resolve_hub_test_for_profile(
         self, server_key: str, tool_name: str, profile_id: str

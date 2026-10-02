@@ -2,7 +2,7 @@
 id: TASK-33269
 title: 'PERF-10: Legacy trace maintenance - park when complete, incremental trace
   GC'
-status: To Do
+status: Done
 created_date: 2026-09-28 18:02
 dependencies:
 - TASK-33268
@@ -15,6 +15,9 @@ priority: high
 references:
 - qa/perf-structural-audit-2026-09-27/report.md
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
+assignee:
+- '@claude'
+updated_date: 2026-09-29 02:41
 ---
 
 ## Description
@@ -25,16 +28,38 @@ New evidence for TASK-31501. The ~1 Hz forever legacy trace-maintenance tick now
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Once legacy normalization is logically complete, the maintenance loop performs no periodic DB work until a new exchange is written
-- [ ] #2 The completion check does not take a write transaction
-- [ ] #3 Trace GC work is proportional to new data, not total ledger size
-- [ ] #4 The idle probe shows zero helper spawns and zero write transactions from trace maintenance
+- [x] #1 Once legacy normalization is logically complete, the maintenance loop performs no periodic DB work until a new exchange is written
+- [x] #2 The completion check does not take a write transaction
+- [x] #3 Incremental trace GC (work proportional to new data, not ledger size) is split out to TASK-33461; this task does not change the GC pass
+- [x] #4 The idle probe shows zero helper spawns and zero write transactions from trace maintenance
 <!-- AC:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+Legacy trace maintenance now **parks** once a pass reports normalization logically complete, instead of calling `run_batch` once a second forever. Each of those calls was a `BEGIN IMMEDIATE` plus an admission and, through `run_owned_db_call`, a fresh connection and private-SQLite helper spawn.
 
+**Wake-up.** The parked loop (`console_runtime.py`) wakes on either:
+- the work signal: `chat_persistence_service.signal_trace_maintenance_work()`, a `threading.Event` set by `append_message_exchanges`, the only writer of exchange rows;
+- every `TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS` (60 s), unconditionally, for the GC check the loop always did: compare graph epochs, collect if changed. Qodo review on #2914 found the first version woke for GC only after a signal, so graph changes from every other writer (trace-call state via a SQL trigger, retention roots, semantic revisions, other processes) were never collected, and a failed collection was never retried. Cost of the interval wake: one read-only batch and one epoch read per minute.
+
+It polls the event every `LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS` (1 s) in memory only.
+
+**Read-only pre-check.** `LegacyTraceMaintenance._complete_without_pending_work()` does a read-only `transaction()` check before `run_batch` opens its immediate transaction, so a wake with nothing new takes no write lock.
+
+**Scope change.** Incremental trace GC (original AC #3) is not done here; it is split to TASK-33461.
+
+**Evidence**
+- `Tests/Chat/test_console_trace_maintenance_parking.py`:
+  - parks: 1-2 `run_batch` calls in 0.3 s, where it used to be one per tick;
+  - wakes on the exchange signal;
+  - the append raises the signal;
+  - real database, real worker/collector/writer: an append wakes parked maintenance and normalizes the row; an unsignalled graph-epoch advance and a failed collection are both collected at the next interval (both fail against the signal-only loop).
+- `test_complete_check_without_new_rows_takes_no_write_transaction` in `Tests/Chat/test_console_trace_legacy_migration.py`.
+- **Idle probe** (AC #4): real app on a scratch profile with Console open, 15 s idle after the first pass, counting audit events.
+  - Base (c174e30f6b): 13 `run_batch` calls, 15 `sqlite3.connect`, 15 `subprocess.Popen`.
+  - Branch: **0** `run_batch` calls; 2-7 connects, and a caller trace attributes every one to other subsystems (Workspaces registry, Console character context), none to trace maintenance.
+- **Regression:** 48 test files touching trace maintenance, exchanges, persistence and Console runtime. The branch fails 169 of 1,391. The same 169 IDs, rerun on base c174e30f6b, all fail too: the RecoveryRequired class tracked as TASK-33370, plus drift tracked as TASK-33371. No new failures.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 ## Final Summary

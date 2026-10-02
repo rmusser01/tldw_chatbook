@@ -251,6 +251,10 @@ async def test_successful_viewless_manual_turn_records_first_send(monkeypatch) -
     runtime.set_chat_store(store)
 
     class SuccessfulController:
+        prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda _request, *, origin: None
+        )
+
         async def run_prompt_chain(self, *, session_id, initial_turn):
             assert session_id == session.id
             return await initial_turn()
@@ -1616,6 +1620,7 @@ def _post_reconciliation_admission_screen(monkeypatch, live_reason=None):
             snapshot=lambda: SimpleNamespace(pending=int(live_reason == "review"))
         )
     )
+    runtime.has_custodied_turns = lambda: live_reason == "custody"
     screen._task_resume_state = SimpleNamespace(followed_watchlists_operations=())
     screen._resume_navigation_startup_in_progress = False
     screen._pending_character_return_focus_id = None
@@ -1704,7 +1709,9 @@ def test_idle_reconciled_view_does_not_admit_transcript_poll(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize("live_reason", ("viewed", "other", "wake", "review"))
+@pytest.mark.parametrize(
+    "live_reason", ("viewed", "other", "wake", "review", "custody")
+)
 def test_reconciled_view_keeps_each_live_poll_reason_and_one_timer(
     monkeypatch, live_reason
 ):
@@ -1924,7 +1931,9 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
 
     class BlockingController:
         fleet_wake = SimpleNamespace(delivering_session_ids=lambda: ())
-        prompt_queue_coordinator = SimpleNamespace()
+        prompt_queue_coordinator = SimpleNamespace(
+            bind_turn_request=lambda _request, *, origin: None
+        )
 
         async def run_prompt_chain(self, *, session_id, initial_turn):
             return await initial_turn()
@@ -1965,7 +1974,7 @@ async def test_active_runtime_custody_does_not_retain_the_detached_chat_screen()
             ),
         )
     )
-    await started.wait()
+    await asyncio.wait_for(started.wait(), 2)
     dead_screen = weakref.ref(screen)
 
     assert runtime.detach_view(screen, generation)

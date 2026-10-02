@@ -275,7 +275,7 @@ def test_schema_allows_later_round_after_prior_calls_are_terminal() -> None:
             lambda value: value["rounds"][0]["calls"][0].update(timestamp=1),
             "call extra",
         ),
-        (lambda value: value.update(schema_version=2), "unknown version"),
+        (lambda value: value.update(schema_version=99), "unknown version"),
         (lambda value: value.update(checkpoint_revision=True), "bool revision"),
         (lambda value: value.update(checkpoint_revision=0), "zero revision"),
         (lambda value: value.update(checkpoint_revision=1.0), "float revision"),

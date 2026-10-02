@@ -117,6 +117,86 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+## Compare against the branch's merge base, not whatever `origin/dev` is now
+
+**TASK-33005 final fix wave, 2026-10-02.** The branch was rebased onto
+`origin/dev` = `92a95170a5`. Half an hour later another session's
+`git fetch` moved the shared `origin/dev` ref twice (to `ebf7dc4b06`, then
+`385d09e8b7`), and the "dev" tree extracted for the failure-name comparison
+came from the moved ref. That baseline carried 11 commits and two test files
+the branch did not have, and a covering-file list built from
+`git diff --name-only origin/dev..HEAD` named both of those files as branch
+changes. pytest then stopped on "file or directory not found" with "no tests
+ran". Worktrees share remote refs, so extract the baseline with
+`git archive $(git merge-base HEAD origin/dev)`, and build file lists with
+`git diff --name-only $(git merge-base HEAD origin/dev)..HEAD`.
+
+## A call counter on a function's home module misses every `from`-import
+
+**TASK-33005 final review I-6, 2026-10-02.** The keystroke census patched
+`console_session_settings.build_console_settings_readiness` to count readiness
+builds, and a task note said "readiness builds per key within budget". ChatScreen,
+Home, Library and the defaults module all bind that name at import, so the
+counter read 0 in every run and the budget assert could never fail. Patched on
+each binding it read 34 and 39 builds for the same 24 keys: the 0.25 s
+credential poll builds readiness too, and the slower 400-message run fitted
+more of its ticks into the burst. Holding the poll still for the burst gave 25
+and 25, until six runs in parallel gave 25 and 31-34: the 0.2 s trailing draft
+repaint also builds readiness, and fires mid-burst whenever a loaded machine
+leaves a gap between two presses. The scale test now bounds that count per key
+instead of requiring equality. Patch every module that binds the name, assert
+the count is above zero, and re-run a new count equality under parallel load
+before trusting it.
+
+## Matching failure names at base and head does not mean matching failures
+
+**TASK-33661 review round, 2026-10-02.** The first Resend commit was cleared by
+comparing the failing test names in a 24-file suite: 125 at base, 125 at head, an
+identical set. One of those tests,
+`test_console_run_and_sync_workers_use_disjoint_groups`, failed on both sides for
+different reasons:
+- **Base:** one known missing dispatch site, `_summarize_console_up_to`.
+- **Head:** that site and also `_retry_console_message`. The commit had routed
+  Retry through `run = ...; run_worker(run(controller, id))`, and the AST guard
+  looks only for a direct call.
+
+The regression stayed hidden until the fix round reran that test file and read
+its assertion. A per-test diff of the first `E` line in the two logs then showed
+this as the only reason that differed.
+
+**What to do:** when a base-vs-head comparison clears a change, compare each
+shared failure's message as well as its name, at least for tests in the code the
+change touched. A test that already fails at base shields every new reason it
+could fail for.
+
+## A CI-only pilot failure can be a product race that only a slow runner hits
+
+**TASK-33661, PR #2956, 2026-10-02.** Two real-send Console pilots failed in the
+UI fast lane with "No messages yet." on screen. Locally they passed alone, with
+neighbours, and in a full CI-equivalent census run in a fast-lane venv (920
+passed). In CI they took 16 s; locally, 5 s.
+
+Running pytest under `taskpolicy -b` (macOS background QoS, so efficiency cores
+only) brought them to about 15 s and reproduced the failure. A temporary
+start/stop log on the transcript poll then showed the cause. The poll stopped
+while the runtime held the accepted turn but the controller had not started it,
+so the poll counted the run as idle. Nothing synced the screen afterwards. It was
+a product race, not test flakiness, so a longer wait would not fix it: a
+600-attempt wait failed too.
+
+A false lead cost a step on the way. Three sibling pilots in
+`test_console_native_chat_flow.py` also "failed under slow QoS". They fail the
+same way at normal speed in that venv, with a `RecoveryRequired` raised at
+setup. Their failure said nothing about slowness.
+
+**What to do:**
+- When a mounted test fails only in CI and the CI duration is several times
+  the local one, rerun it locally under `taskpolicy -b` before blaming
+  pollution or fixtures.
+- Read each corroborating failure's message before counting it as evidence.
+- To pin the fix, stall the gap deterministically (here, hold `submit_draft`
+  across several poll ticks). Do not rely on the slow runner.
+
 ## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
 
 `_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)
@@ -1397,6 +1477,25 @@ modules to the absent-at-ready contract; retain a little platform headroom
 instead of landing exactly at the local cap.
 
 ---
+
+## A boot census run from a worktree can measure the main checkout instead (TASK-33661, 2026-10-02)
+
+**Incident.** PR #2956 (Resend) added `Chat/console_turn_resend.py` and
+imported it at module level from three boot-path modules. That made the
+module resident at `_ui_ready`, and dev's push-run Perf Guard failed:
+`1034 tldw_chatbook modules resident at _ui_ready (ratchet limit 1033)`.
+The PR's own local census runs had passed, and so did one PR-head Perf Guard
+run. The shared `.venv` has an editable install that points at the MAIN
+checkout, so a census run from a worktree can import the main checkout's
+code and never load the new module.
+
+**What to do.**
+- A module that only user actions need is imported inside the function
+  that uses it.
+- Measure a boot census from a worktree with `PYTHONPATH=<worktree>`. That
+  outranks the editable install's `.pth`, and subprocesses inherit it.
+- The RED reproduced at 1034 only that way. The lazy-import fix then
+  measured 1033.
 
 ## A census taken on the next tick is not a census taken at the flag
 
@@ -17155,3 +17254,368 @@ indistinguishable from "still frozen".
 known bug (the tests now use `FreezeObserved(Exception)`), mark with
 `raises=FreezeObserved`, and keep preconditions as plain asserts, so they FAIL.
 Prove it once with a deliberately broken precondition: it must go red, not xfail.
+
+## 2026-09-28 — A pytest runner fed from a file list silently ran the whole suite (TASK-33262)
+
+A scratch runner read test paths with `mapfile -t files < list` and called
+`pytest "${files[@]}"`. On macOS, `/usr/bin/env bash` is bash 3.2, which has no
+`mapfile`: the command failed, the array stayed empty, and pytest -- given no
+paths -- fell back to `testpaths = ["Tests"]` and started the full ~4,000-file
+suite. It showed up only as a ten-minute run printing `[ 0%]`, and stopping it
+with `pkill -f "<pytest flags>"` could just as well have killed another
+session's pytest that used the same flags.
+
+**What to do.** In any runner that builds a pytest argument list, read it with a
+`while IFS= read -r` loop and refuse an empty list (`[ ${#files[@]} -gt 0 ] ||
+exit 2`) before calling pytest. Stop your own background runs by task id or
+PID, never by a command-line pattern: several sessions share this machine.
+
+## 2026-09-30 — A harness Ctrl+Q test proves the pump, not the app's quit (TASK-33621.28)
+
+**Incident.** The hook-review Send freeze fix added a test that opens the
+review from Enter and presses Ctrl+Q; it passed in `ConsoleHarness`. In the
+live app (APP_WT fix build, `EXTRA_TOML` with one unconsented hook) the same
+Ctrl+Q with the review open did nothing: no `Application quit initiated` in
+the log, while Escape still dismissed the review. The harness is a stock
+Textual `App`, whose `ctrl+q` is a **priority** binding. `TldwCli.BINDINGS`
+declares its own non-priority `ctrl+q`, and `DOMNode._merge_bindings` lets a
+subclass's list for a key *replace* the base's. Non-priority bindings are
+resolved through `Screen._modal_binding_chain`, which stops at the topmost
+`ModalScreen`. So in the real app Ctrl+Q is ignored under **every** modal:
+the Ctrl+K session switcher on the same build ignored it too.
+
+**What to do.** A Ctrl+Q (or any app-binding) assertion made under a
+harness app says the app pump is alive, nothing more. Before claiming "Ctrl+Q
+works while X is open", check the real `TldwCli` binding's `priority` or
+drive the live app. Name such a harness test for what it proves.
+
+## 2026-09-30 — `get_current_worker()` answers "worker" on a pump started from a worker (TASK-33621.28 review)
+
+**Incident.** The hook-review freeze fix decided whether to hand a Send's
+review to a worker by asking `get_current_worker()`. All 12 harness tests and
+three live runs passed. An independent review then opened the Console by
+clicking its tab (`default_tab = "library"`) and clicked Send: the log showed
+`ui_dispatch status=refused duration_ms=16328`, i.e. the review had been
+awaited inline on the Console pump for 16 s, against `awaiting_review` at
+191 ms when the Console was the startup screen. `active_worker` is a
+contextvar, and Textual starts each message pump with `create_task`, which
+copies the caller's context. Tab navigation runs in the app's
+`screen-navigation` worker, so every handler on a navigated screen's pump
+"is in" that long-finished worker. `ConsoleHarness` pushes `ChatScreen` from
+`on_mount` on the app pump, and every live run booted straight into the
+Console, so neither could see it.
+
+**What to do.** To ask "am I running in a worker?", compare tasks:
+`asyncio.current_task() is worker._task` (`hooks.in_worker_task`), never
+the contextvar alone. A test of any "am I in a worker / on a pump" decision
+needs a negative control that pushes the screen from a worker
+(`Tests/UI/test_console_hook_review_send_freeze.py::NavigatedConsoleHarness`,
+or the pure-Textual `_dispatch_from_textual` in
+`Tests/Chat/test_console_hook_admission.py`), and a live check should reach
+the screen by navigation, not only as the startup screen.
+
+**Second trap, same round.** The task-identity fix passed every test, and the
+first live run then logged the new "review awaited outside a worker task"
+ERROR from inside a worker. Textual's `App.run_async` (the real app) installs
+`asyncio.eager_task_factory`; `App.run_test` does not. Under the eager
+factory a worker's first step runs inside `create_task`, before
+`Worker._task` is assigned, so the check was False exactly there. Anything
+that depends on when a task first runs (task identity, ordering between a
+caller and the task it starts) needs a test under the eager factory too:
+`loop.set_task_factory(asyncio.eager_task_factory)` around the test (the
+`_task_factory` helper in the freeze test file), restored in `finally`.
+
+## TASK-32679: close the actual worker owner before tuning GC
+
+The combined lifecycle/child/compaction run passed 404 cases but grew over 200
+file descriptors. Per-test GC still grew 209. A per-case census identified the
+new runtime fixtures and direct AgentService calls: closing hooks left runtime
+resources alive, and closing AgentRunsDB on the UI thread did not close worker
+thread caches. Reusing runtime.dispose and the production worker_guard in those
+fixtures made the final 404-case run pass without a descriptor warning.
+
+Use the owner's shutdown and native worker wrapper at a proven settlement
+boundary. GC and a larger leak threshold cannot retire strongly retained native
+leases, and foreign-thread forced close would violate borrower ownership.
+
+## TASK-32672: qualify the actual protected store and native worker lifetime
+
+The reviewed native-skill worker built `profile/trust/plugins`, while the shared
+protected accessor built `profile/skills/trust/plugins`. An accessor-only test
+passed but never inspected the live worker. A regression starting PluginService
+proved the mismatch; the worker now uses that accessor, and actual snapshot,
+intent, certificate and reset paths are tested against the sensitive-path boundary.
+
+The first 62 passing native checks still grew 231 descriptors. A per-case native
+file census identified storage-thread WorkspaceDB caches and Console work-chain
+AgentRunsDB caches. Calling their owners from the UI thread could not retire them.
+Reusing `operation_owned_connection` across the storage worker and the existing
+Console agent worker wrapper for work-chain offloads closes newly opened caches
+on their owning threads. Real lease checks first failed at both settlement
+boundaries; GC thresholds and borrower safeguards were left unchanged.
+
+The same integration exposed a conditional context-carrier import that shadowed
+its global import during continuation restoration, and stale standalone test
+doubles advertising `_load_index` instead of current `_visible_records`. Remove
+the redundant local import and update the double; never bypass current profile
+admission or restore an obsolete production catalog path to make those tests pass.
+
+## TASK-32674: select the runtime profile and close fixture-owned databases
+
+The F7 neighbor probes refused 61 fleet/Console/archive cases before provider
+entry because their profile differed from the runtime participant. Adding the
+existing bootstrap-profile fixture marker preserved the production admission
+guard and made all 125 controls execute. That passing run still grew 238 file
+descriptors: a return-only AgentRunsDB fixture and direct archive test databases
+had no owner teardown. Yield/finally and the existing content-operation scope
+closed their actual handles, including direct manual calls to archive helpers.
+The final 125-case run passed without a descriptor warning. Do not hide profile
+refusals, change leak thresholds, or rely on GC to close strongly owned fixtures.
+
+## A bridge timeout does not prove an audit was never published
+
+**TASK-32681, original review 2026-09-17, integrated 2026-09-30.** A delayed
+Future publication after the actual service audit append produced contradictory
+service/fallback rows for one invocation. One per-call publication claim before
+I/O preserves best-effort audit semantics and uncertain caller completion.
+Current controlled-peer checks reach the real append using an event before
+claiming this race; a short timeout that expires during admission proves only
+a refusal before dispatch. Test-owned stalled writers are released and joined.
+
+## HTTP admission closure is not pool cleanup proof
+
+**TASK-32682 integration, 2026-09-30.** A real keep-alive peer plus injected lower
+HTTPX close failure showed `is_closed=True` while the captured connection remained
+open. The retained close task failed, and repeating client close could not repair
+that lower failure. Separately, this branch's native maintenance owner initially
+refused every HTTP session because it qualified subprocess handles only.
+
+**What to do.** Keep raw HTTP effects under the existing producer/source guards,
+qualify the concrete resource owner and retain one cleanup operation across waits.
+Require successful pool cleanup, not a closed flag or missing catalog, before
+reopening maintenance. Failed cleanup remains unready; a stalled cleanup can
+finish later. Test actual pools and subprocess neighbors before changing shared
+connection retirement.
+
+## Retained worker capacity must survive failed start correctly
+
+**TASK-32683 integration, 2026-09-30.** Injecting failure at the actual credential
+thread start exposed the original exception body and left its reserved future
+pending forever, so later authenticated requests could not acquire capacity.
+
+**What to do.** If no worker started, release its reservation and complete the
+original future with a fixed error. Keep capacity for workers that actually did
+start until real completion. Verify the real transport refuses before wire and
+can retry successfully; do not conflate failed start with cancelled waiting.
+
+### M4: separate explicit cancellation from a short timeout race
+
+While qualifying scoped MCP connections, the credential cancellation control waited for an unrelated real HTTP request before cancelling a 30 ms blocked lookup. It failed with TimeoutError both on M4 and frozen committed M3 production (`hooks-m4-credential-cancel-probe.xml`, `hooks-m4-auth-m3-baseline.xml`). The cancellation case now cancels the positively started actual backend call before peer I/O, with its separate finite bound; the timeout and second-lookup controls retain 30 ms and the no-late-wire assertions. A competing earlier timeout is not evidence that cancellation was exercised.
+
+## Python statvfs does not expose macOS MNT_LOCAL
+
+**TASK-32669, managed plugin runtime owner, 2026-09-15.** A qualification probe
+against the actual local APFS worktree returned `os.statvfs(path).f_flag == 0`.
+Using that field as a Darwin mount-flags bitmask would either reject the working
+local control or encourage an unsafe local-default fallback. Native Darwin
+`statfs64`, with its layout verified against the installed SDK `sys/mount.h`,
+reported the required `MNT_LOCAL` and APFS identity. Read filesystem-specific
+flags through the qualified platform API, test a real successful local path,
+and refuse missing/unknown probe results. A successful OS lock still does not
+establish that a local directory is not synchronized by third-party software.
+
+## A successful subprocess suite can depend on an uncommitted child bootstrap
+
+**TASK-32677 / H2 review F3, 2026-09-16.** The recorded 173-pass five-file run
+used `/private/tmp/h2-profile/run_py.sh`, whose PYTHONPATH injected a temporary
+`sitecustomize.py` into command-hook children. The committed tests asserted that
+shim existed and that every profile path started with `/private/tmp/`. The
+custom-environment run was valid for that setup, but did not establish standalone
+committed-test reproducibility. A fresh parent without the shim produced **1
+failed, 1 passed** for real-command/normalization controls; a repository-local
+basetemp produced **1 failed, 1 error** at the hard-coded prefix assertion.
+
+The fix moved child isolation into `Tests/hooks_v2_process_support.py`. Children
+use `python -I`, import the explicit checkout, install network/DNS refusal before
+application imports, and assert null keyring and the actual precreated fixture
+data directory. The same two controls then passed under the repository-local
+basetemp without an external child shim. Keep subprocess bootstrap/policy in the
+repository and qualify the documented command from a fresh parent environment;
+record exact checkout and fixture-root provenance instead of assuming one OS's
+temporary-directory spelling.
+
+## Development dependencies can hide missing runtime package declarations
+
+**TASK-32678 / H3 packaging qualification, 2026-09-16.** Offline schema
+controls passed in the development environment while `jsonschema` appeared only
+in the `dev` extra and the production pipeline directly imported `referencing`
+without a core declaration. Actual setuptools base-distribution metadata checks
+then produced **2 failed, 1 passed**: both schema requirements were absent while
+the existing Pydantic control passed. Declaring both production dependencies in
+core produced **3 passed**; built-wheel metadata confirmed they had no extra
+marker. An isolated `python -I -S` smoke imported 165 application modules from
+the extracted wheel and exercised internal-reference validation and external
+reference refusal against controlled existing dependencies.
+
+A development test pass does not establish a normal installation's dependency
+closure. Check built distribution requirements for every new production import
+and verify wheel-code provenance separately. The controlled smoke above reused
+read-only installed dependencies; it did not prove fresh full dependency
+resolution or another platform's package set.
+
+## Real Console acceptance must feed compaction lineage checks
+
+During TASK-32679/H4 hook integration, helper compaction tests passed while the
+actual Console plus SQLite path refused its memory commit: cached newly accepted
+user/assistant rows did not yet carry their persisted parent links. The existing
+`_durable_context_snapshots` projection trusted those cached fields, and the
+repository correctly rejected a lineage that was not one ordered parent chain.
+The same projection made a just-committed manual hook-context handoff look stale.
+
+A controlled probe executed the exact pre-H4 `_durable_context_snapshots` method
+from BASE `8192f1fb1fdd0da929b2c776db1a2c8ee95f0457` and the corrected method against
+the same genuine durable Console acceptance. It observed two parent mismatches
+for the baseline method and zero for the corrected projection. This was a method
+comparison in the current isolated test environment, not a full baseline-checkout
+qualification. Production correction reads the authoritative persisted parent
+and version, retaining the existing commit guard.
+
+For changes spanning Console acceptance and branch-memory commits, include the
+real durable submit/cache hydration path and the real repository guard. A helper
+that appends already-hydrated rows or accepts a fabricated compaction result
+cannot expose this boundary. Preserve the refusal and successful control rather
+than changing the fixture to bypass authoritative ancestry checks.
+
+## A Future timeout does not prove the service has not published its audit
+
+**TASK-32681 / M1 review I1, 2026-09-17.** The controlled stdio/client/service/
+provider run passed399 targeted tests, but a focused review probe delayed the
+service immediately after its real audit append and before cross-thread Future
+publication. One new tool invocation grew the log from one control row to three:
+`blocked`, `success`, `success`. The first two rows described the same call.
+The provider correctly returned uncertain completion, yet its fallback assumed
+the timeout meant the service had not audited and wrote a contradictory row.
+
+The repaired owner shares one per-invocation publication claim before audit I/O.
+Actual-path tests in `Tests/MCP/test_typed_tool_results.py` stall both sides of
+publication, exercise bridge-first and service-first orderings, and cover write/
+thread-start failure and bounded fallback saturation. Test-owned writers are
+released and joined before profile teardown. Final targeted coverage passed266
+tests; the original and final counts overlap. R59 preserves best-effort audit
+semantics: claiming publication is not proof that a row reached disk.
+
+When a synchronous caller times out while an async owner is completing, test
+the publication window itself. Future cancellation acknowledges the bridge
+handle; it does not prove the operation, cleanup or audit never happened.
+Coordinate publication before I/O, preserve uncertainty, and keep slow logging
+out of caller waits without adding unbounded background work.
+
+## A transport closed flag can precede actual resource closure
+
+**TASK-32682, direct MCP transport Fix1, 2026-09-17.** The initial HTTP close path cancelled whole caller tasks before entering its resource-close finally block. A caller performing asynchronous cancellation cleanup outlived the client owner's five-second bound; the owner was dropped while the HTTP pool remained open, and a closed-admission latch made repeated close return early. During repair, inspection of installed HTTPX 0.28.1 showed that `AsyncClient.aclose()` sets CLOSED before awaiting the lower transport. An injected lower-close failure then proved `is_closed=True` while an actual keep-alive connection remained open; retrying client close could silently do nothing.
+
+**What to do.** Track completion of the connection-owned request scope separately from arbitrary caller finalization, retain one cleanup operation across interrupted waits, and distinguish admission closure from successful resource cleanup. Verify captured real connections and the pool, not only flags. A still-pending close can finish later; a failed close cannot be declared successful from a no-op retry. Keep failed ownership unready instead of replacing it, and never treat local socket closure as proof that a remote invocation settled. The final 558-test targeted run also preserved stdio slow-reap ordering after a shared-field type check initially selected both transports.
+
+## A retained generation counter does not protect a recreated reference
+
+**TASK-32683, MCP credential owner self-review, 2026-09-17.** Revocation tombstones prevented ordinary reuse, but completely deleting the fake protected credential record let the original setter recreate the same reference at generation one. An opaque binding could then match an older reviewed reference/generation despite containing replacement credentials. The actual deletion regression reproduced the accepted upsert; the authenticated authority model also capped generations at signed64-bit values, so merely widening or randomizing the generation would change the existing contract.
+
+**What to do.** Distinguish new reference creation from mutation of an existing reference. The MCP owner now mints immutable UUID references for creation, requires the current protected record for named mutations, retains tombstones and refuses generation overflow. After record loss, create and review a fresh reference rather than implicitly recreating old authority. Keep successful new-reference creation and normal same-binding renewal controls beside the missing-record refusal; this fixture evidence does not claim actual OS keychain interoperability.
+
+## An adapter must preserve authority checks across its new awaits
+
+**TASK-32684, owned MCP Fix1, 2026-09-17.** The initial owned-tool integration passed789 targeted tests, but review found two gaps in the newly composed path. Existing best-effort persona and kill-switch helpers treated read failures as usable underlying authority. A new owned dispatch branch also returned before the standalone path's post-connect automatic-work check. Nine real-peer regressions then failed after successful controls: unavailable required policy still permitted calls or advertisement, and pausing a real accepted automatic-work ledger during connect/reserve/publish still allowed dispatch.
+
+**What to do.** Check the failure semantics of reused policy helpers and carry the actual accepted-work context through every new setup await. Recheck at the final scheduled dispatch boundary, keep pre-dispatch reservation cleanup exact, and preserve settled or uncertain lower outcomes when authority changes after dispatch. The repaired tests cover all three setup waits, failed catalog recomposition, late settled responses and actual lost HTTP responses without replay. Final affected verification passed163 tests plus111 ordinary feature tests, with overlapping counts. This evidence qualifies those paths; it does not establish arbitrary external-server or cross-process restart behavior.
+
+## Tool dispatch permission must remain current when hook effects are accepted
+
+**TASK-32685, H6 review I1, 2026-09-17.** The initial MCP hook executor used the normal permission owner for dispatch, then waited for required post hooks before accepting returned context. A real stdio review probe changed that tool to Deny during the wait. A fresh ordinary call correctly refused, yet the earlier result still supplied native instructions: one failing revocation case beside one passing unchanged-authority control. Rechecking only hook authority after the wait did not check the original tool permission.
+
+The fix attaches a private read-only owner check to the exact returned result and original call identity. It runs after post settlement and after the final asynchronous hook-authority wait, preserving the original one-time approval without prompting or dispatching again. Actual owned-service controls hold the second check after the MCP request has already completed: cancellation or deadline expiry must retain the same lifetime ticket until that worker really exits. Final affected verification passed252 tests; the ordinary exact-three run passed83, overlapping. The earlier larger run's FD growth418 remains unexplained and is not resolved by these smaller passing runs.
+
+**What to do.** Test revocation across every asynchronous boundary before effects become visible, using the same normal owner and a successful control. Preserve exact original grant identity, and track validation completion separately from request or waiter completion.
+
+
+### R74 — MCP hook notification currentness must qualify actual dispatch
+
+During current-dev H6 integration, real Console Interrupt/SessionEnd counters
+showed no notification dispatch although the observer saw zero execution
+tickets. Repeated full catalog capture inside lifecycle polling consumed the
+original one/three-second clocks; an observation worker could also still be
+running after execution tickets reached zero. Reusing the exact normal live
+catalog check at dispatch/result acceptance removed the duplication without
+caching permission or extending deadlines. The tests now join observation and
+worker custody and use actual peer counters, including changed live discovery.
+Native custody fixtures also separate their configured budget plus existing
+settlement wait from observer bounds; cancelling an observer is not completion.
+Evidence: `hooks-h6-live-boundaries.xml`, `hooks-h6-custody-final.xml` and
+`hooks-h6-final-boundaries.xml` in the 2026-09-30 integration review.
+
+## Native integration exposed an agent test profile switch
+
+**TASK-32686, 2026-10-01.** A combined native-plugin/agent run passed 164 integration
+cases but the older agent file switched its raw config source after native authority
+had bound the private profile. Recovery correctly refused it. Selecting the existing
+`bootstrap_profile` marker for every real-config case in that file cleared those
+failures. A separate stale cancellation test had always requested cancellation before
+dispatch while asserting an in-flight message; actual start/release/finish events now
+exercise the intended behavior. Keep profile selection explicit and test ordering out
+of authority expectations; do not weaken production recovery checks to quiet tests.
+
+## A display-only copy broke approved MCP hook evidence
+
+**PR #2946, 2026-10-01.** After rebasing onto dev's denial-reason support, the
+connected SessionStart initializer's approval branch failed while allow-state
+controls passed. The approval and tool execution both succeeded, but an
+unconditional `replace(result, error=unchanged_text)` produced a new result
+identity after the MCP owner transferred its typed evidence. Returning the
+original result when text is unchanged fixed it without relaxing exact evidence
+consumption. The connected approval initializer plus normal MCP/strict hook
+neighbors passed 140 cases. Exercise both persisted Allow and actual Ask/approval
+when verifying result projections across an identity-bound evidence boundary.
+
+## Optional Interrupt execution is not a guaranteed mounted callback
+
+**PR #2946, 2026-10-01.** During latest-dev qualification, mounted navigation
+outlived a controlled Stop process's default ten-second timeout, and UI repaint
+exhausted Interrupt's one-second observation window. The run cancelled correctly
+while the optional child marker was absent with a fixed `event_deadline` or
+`cancelled` diagnostic. Keep the controlled process pending within its permitted
+60-second limit, then assert exact host emission, cancellation, resource settlement
+and no later replay. Preserve a separate control requiring real command execution;
+when an optional observer does execute, assert its exact parent and single payload.
+Do not extend production deadlines to make mounted tests guarantee best effort.
+
+## Migration rebases also change exact recovery declarations
+
+**PR #2946, 2026-10-01.** Dev's compaction failure-reason migration claimed v74
+before the hook receipt branch merged. Moving receipts to v75 preserved genuine
+v73/v74 upgrades, but the actual core-constructor check still failed because its
+recovery declaration described v74 without receipts. Capture the fresh core and
+combined-store catalogs from their real constructors and update exact version
+checks together; preserve the standalone subscription variant. The repaired
+covering recovery cases and 25 hook-compaction/migration controls pass. Changing
+only the version label would still reject the actual schema during recovery.
+
+## Injected inventory must follow the actual initial producer
+
+**PR #2946, 2026-10-01.** The Windows delayed-selector test failed once with a
+handoff and once without it while local runs passed. A controlled app-owned
+startup worker proved its legitimate empty discovery could arrive after the
+test's manual nonempty injection and overwrite that fixture. Await the actual
+initial worker before injecting the discovery being tested; retain the real
+label-mount hold and exact reference/authority assertions. Do not lengthen the
+observer clock or change correct production inventory handling to hide ordering
+between two fixture producers. The worker belongs to the app, not the window.
+
+## Select long retention stress checks explicitly
+
+**PR #2946 / TASK-32679, 2026-10-02.** A queue-rebase check selected the entire
+round-1 recovery file and unintentionally entered its existing 1,000-turn,
+1,800-second retention test. The invocation was interrupted after 675.57s;
+170 earlier passes and two independently reproduced fixture failures survived
+in JUnit, but the stress case had no completed verdict. Inspect loops and markers
+before adding whole files to a targeted run. A quiet long-running stress body
+is not proof of a hang. Select stress separately when its retention contract
+changes, and record interrupted runs as partial evidence.

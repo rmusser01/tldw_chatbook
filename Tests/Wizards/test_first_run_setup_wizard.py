@@ -2610,6 +2610,22 @@ def test_settings_probe_outcomes_convert_to_exact_provider_probe_results(
     assert result.model_ids == model_ids
 
 
+def test_a_listing_403_converts_to_the_non_blocking_listing_result():
+    """Qodo #2958 follow-up (owner ruling): the wizard records a 403 listing as
+    every other surface does -- listing not permitted, never key rejected."""
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        SettingsEndpointProbeOutcome,
+    )
+
+    outcome = SettingsEndpointProbeOutcome(
+        state="unreachable", summary="unreachable: forbidden", category="forbidden"
+    )
+    assert ProviderStep._provider_probe_result_from_outcome(outcome) == (
+        ProviderProbeResult("model_listing_unavailable", (), "http_status")
+    )
+
+
 def test_probe_conversion_rejects_duck_type_without_property_access():
     class HostileDuck:
         touched = False

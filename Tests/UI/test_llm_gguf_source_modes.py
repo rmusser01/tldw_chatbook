@@ -537,6 +537,15 @@ async def test_inventory_during_lazy_selector_mount_is_replayed_after_leaving_pa
 
     monkeypatch.setattr(SelectCurrent, "mount_composed_widgets", hold_label_mount)
     try:
+        # Settle the actual initial empty read before injecting this test's
+        # inventory; a late startup result would otherwise overwrite it.
+        await asyncio.gather(
+            *(
+                worker.wait()
+                for worker in app.workers
+                if worker.node is app and worker.group == "managed_gguf_inventory"
+            )
+        )
         window.active_view = "llamafile"
         await asyncio.wait_for(started.wait(), timeout=10)
         managed = window.query_one("#llamafile-gguf-managed-select", Select)

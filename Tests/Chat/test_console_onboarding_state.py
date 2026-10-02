@@ -11,7 +11,10 @@ from tldw_chatbook.Chat.console_onboarding_state import (
     coerce_console_first_send_completed,
     console_setup_is_blocking,
 )
-from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSettingsReadiness,
+    readiness_words,
+)
 from tldw_chatbook.Chat.local_server_discovery import DiscoveredLocalServer
 
 
@@ -90,7 +93,47 @@ def test_provider_ready_without_model_activates_model_step():
     assert state.mode == "card"
     assert [step.state for step in state.steps] == ["done", "active", "pending"]
     assert state.steps[0].glyph == "✓"
-    assert state.steps[0].detail == "OpenAI ready"
+    # TASK-33005.3 (rewritten on purpose): was "OpenAI ready", a readiness
+    # claim outside the one vocabulary; the done step now names the provider.
+    assert state.steps[0].detail == "OpenAI"
+
+
+def test_the_active_step_carries_the_one_readiness_word():
+    """TASK-33005.3 (AC#8): the card shows the word every other surface shows."""
+    refused = ConsoleSettingsReadiness(
+        "Not ready",
+        "",
+        False,
+        operability="not_ready",
+        blocker="endpoint_unreachable",
+        recovery_action="retry_connection",
+        configuration="configured",
+        credential="not_required",
+        endpoint="unreachable",
+        endpoint_category="connection_refused",
+        model="unconfirmed",
+    )
+    no_model = ConsoleSettingsReadiness(
+        "Missing model",
+        "",
+        False,
+        operability="not_ready",
+        blocker="model_missing",
+        recovery_action="select_model",
+        configuration="configured",
+        credential="not_required",
+        model="missing",
+    )
+
+    blocked = _build(readiness=refused)
+    assert blocked.steps[0].label == "Reconnect the provider server"
+    assert blocked.steps[0].detail == readiness_words(refused)
+    assert blocked.steps[0].detail == "Not ready · refused"
+    pick = _build(readiness=no_model, has_model=False)
+    assert [step.detail for step in pick.steps[:2]] == [
+        "OpenAI",
+        "Not ready · no model",
+    ]
 
 
 def test_setup_complete_collapses_to_ready_line():

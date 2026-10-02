@@ -285,3 +285,59 @@ async def test_saved_hook_reload_updates_clean_draft_and_preserves_dirty_draft(
         await pilot.pause()
         assert panel.query_one("#settings-hooks-review") is review
         assert host.focused is review
+
+
+async def test_v2_definitions_use_saved_review_and_advanced_editor(hook_file):
+    import sys
+
+    from textual.widgets import Static
+
+    from tldw_chatbook.UI.Screens.settings_hooks import HooksSettingsPanel
+    from tldw_chatbook.Widgets.Console.console_hooks_review_modal import (
+        ConsoleHooksReviewModal,
+    )
+
+    raw = toml.loads(hook_file.read_text())
+    definition = {
+        "id": "session-review",
+        "event": "SessionStart",
+        "type": "command",
+        "effects": ["context"],
+        "required": True,
+        "argv": [sys.executable, "-c", "pass", "[bold]\nargument"],
+        "env": {"REVIEW_VALUE": "literal"},
+        "timeout_seconds": 7,
+    }
+    raw["hooks"] = {"handler": [definition]}
+    hook_file.write_text(toml.dumps(raw))
+    host = DestinationHarness(_build_test_app(), "settings")
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = _active_destination_screen(host)
+        screen.apply_navigation_context({"category": "hooks"})
+        await _wait_for_selector(screen, pilot, "#settings-hooks-advanced")
+        panel = screen.query_one(HooksSettingsPanel)
+        section, _ = panel.submission()
+        assert section["handler"] == [definition]
+        assert len(panel.snapshot.rows) == 1
+        screen.query_one("#settings-hooks-review").focus()
+        await pilot.press("enter")
+        await _wait_for_selector(host.screen, pilot, "#console-hooks-review", timeout=5)
+        modal = host.screen
+        assert isinstance(modal, ConsoleHooksReviewModal)
+        modal.query_one("#hook-review-details-0").focus()
+        await pilot.press("enter")
+        await _wait_for_selector(modal, pilot, ".hook-review-detail")
+        details = str(modal.query_one(".hook-review-detail", Static).render())
+        assert "SessionStart" in details and "REVIEW_VALUE" in details
+        assert "timeout_seconds" in details and "[bold]\\nargument" in details
+        assert not modal.query("#hook-review-disable-0")
+        modal.query_one("#console-hooks-allow-all").focus()
+        await pilot.press("enter")
+        async with asyncio.timeout(5):
+            while not modal.snapshot.ready:
+                await pilot.pause(0.01)
+        await pilot.press("escape")
+        screen.query_one("#settings-hooks-advanced").focus()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen.active_category == SettingsCategoryId.ADVANCED_CONFIG.value

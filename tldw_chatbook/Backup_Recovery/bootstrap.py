@@ -6,12 +6,15 @@ There is no cleanup, catalog fallback, config parsing, or native qualification h
 
 from __future__ import annotations
 
+import functools
 import hashlib
 import json
 import stat
+import threading
 from collections.abc import Callable, Iterable, Mapping
 from contextlib import contextmanager
 from pathlib import Path
+from typing import ParamSpec, TypeVar
 
 from tldw_chatbook.Utils.platform_files import fcntl, os
 
@@ -24,6 +27,45 @@ MAX_RECORDS = 4096
 
 class RecoveryRequired(RuntimeError):
     """A bounded reason code, never a local locator or original exception."""
+
+
+#: PERF-07/08 (ADR-126 amendment, 2026-09-29). Advanced by in-process writers
+#: of admission state so reused admission evidence is dropped at once. This is
+#: hardening: per-call stamps are what detect every writer, other processes too.
+_admission_epoch = 0
+_admission_epoch_lock = threading.Lock()
+
+
+def advance_admission_epoch() -> None:
+    """Invalidate every piece of reused admission evidence in this process."""
+    global _admission_epoch
+    with _admission_epoch_lock:
+        _admission_epoch += 1
+
+
+_P = ParamSpec("_P")
+_R = TypeVar("_R")
+
+
+def advances_admission_epoch(function: Callable[_P, _R]) -> Callable[_P, _R]:
+    """Advance the admission epoch before and after a writer of admission state.
+
+    Args:
+        function: A writer of admission records, the registry, or the profile.
+
+    Returns:
+        The writer, wrapped; its arguments, result and exceptions pass through.
+    """
+
+    @functools.wraps(function)
+    def wrapper(*args: _P.args, **kwargs: _P.kwargs) -> _R:
+        advance_admission_epoch()
+        try:
+            return function(*args, **kwargs)
+        finally:
+            advance_admission_epoch()
+
+    return wrapper
 
 
 def default_bootstrap_root() -> Path:

@@ -120,7 +120,11 @@ def preserve_owned_binding(source, selected, serialized):
                 != temporary_identity
             ):
                 raise bootstrap.RecoveryRequired("config_binding_stage_changed")
-            os.replace(temporary, name, src_dir_fd=staging, dst_dir_fd=parent)
+            bootstrap.advance_admission_epoch()  # PERF-07/08: drop reused evidence
+            try:
+                os.replace(temporary, name, src_dir_fd=staging, dst_dir_fd=parent)
+            finally:
+                bootstrap.advance_admission_epoch()
             flush_directory(parent)
             flush_directory(staging)
             check_publication()

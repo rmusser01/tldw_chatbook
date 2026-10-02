@@ -56,6 +56,8 @@ from tldw_chatbook.Chat.library_preparation import (
     LibraryPreparationEvent,
 )
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 
 def _set_auto_policy(store, auto_retrieve: ConsoleAutoRetrieve) -> None:
     store.stage_session_library_policy(

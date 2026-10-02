@@ -430,7 +430,7 @@ After the current turn is accepted, **Send** changes to **Queue**. Each Console
 tab can hold up to 10 text-only follow-up prompts. The one-row shelf at the
 top of the control deck (above the status row) shows `Queue N/10`, whether it is draining or paused, a safe preview
 of the next prompt, and **Manage** plus a state-specific action such as
-**Pause**, **Retry**, **Resume next**, **Review**, or **Try again**.
+**Pause**, **Resume**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
 - **Preparing...** means the turn has not crossed the accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
@@ -447,13 +447,34 @@ of the next prompt, and **Manage** plus a state-specific action such as
 - Attachments and staged evidence are never captured by a queued text turn.
   Remove them or wait and send the complete message normally.
 - Recognized slash commands still run immediately and are never queued.
-- **Manage** opens a modal pinned to this tab. You can edit, move, remove, or
-  clear waiting prompts; a prompt marked **Starting...** is already locked.
-  Remove and Clear ask for confirmation. Only the prompt actively opened for
-  editing has its full body loaded.
-- A failed or stopped turn pauses the queue. Use **Retry failed**, **Retry
-  stopped**, or **Resume next**. Context changes require **Review** followed by
-  **Use current** before draining resumes.
+- Queued prompts are sent one after another, in order, for as long as each
+  turn succeeds. **Pause** takes effect once the turn in progress finishes;
+  it never cuts that turn short.
+- **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
+  and the queue's state is written at the top, for example
+  `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
+  marked **Starting...** is already locked. Remove and Clear ask for
+  confirmation. Only the prompt actively opened for editing has its full body
+  loaded. Actions that do not apply to the current state are hidden, and a
+  disabled action explains why when you hover it.
+- A failed turn pauses the queue and the shelf names it, for example
+  `Turn failed: "Summarize the draft"`. **Retry** (or **Retry failed** in
+  Manage) runs that turn again and then keeps draining; **Resume next** in
+  Manage leaves it as it is and sends the next prompt. A stopped turn shows
+  `Turn stopped` with **Resume next**; Manage also offers **Retry stopped**
+  when the stopped reply is the latest one. A queue you paused, or one
+  paused without a failed turn behind it, shows `Paused` with **Resume**. A
+  prompt that could not start shows `Start refused` with **Try again**.
+  Context changes require **Review** followed by **Use current** before
+  draining resumes. An edit, a delete, a compaction, or a failed **Retry
+  stopped** all change the conversation. After such a change, **Resume**,
+  **Resume next**, **Try again**, and **Retry** (or **Retry failed** and
+  **Retry stopped** in Manage) send nothing: a notice says the conversation
+  has changed, and the shelf switches to `Context changed` with **Review**.
+  A pending response's **Retry response**, **Retry anyway**, or **Discard**
+  still settles that response, but the prompts waiting behind it stop at the
+  same review. **Use current** then sends the next waiting prompt; it does
+  not re-run the failed or stopped turn.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
@@ -465,13 +486,14 @@ selection through the transcript. **Enter** shows the selected message's
 actions; **Tab**/**Shift+Tab** cycle through the row, **Enter** activates
 the focused action, and **Esc** clears the selection. Four shortcuts act
 on the selected message directly: **c** Copy, **e** Edit, **f** Fork, and
-**r** Regenerate.
+**r** Regenerate — or, on a row that shows **Retry** or **Resend** in that
+slot, that action.
 While a reply is still generating, every action is disabled with the
 tooltip "Wait for response to finish before using message actions."
 
 The stable direct row is **Copy**, **Speak/Stop** when available, **Edit**,
 text-response **< / >** controls when applicable, **Fork**,
-**Regenerate/Retry** when applicable, **Continue** when applicable, and
+**Regenerate/Retry/Resend** when applicable, **Continue** when applicable, and
 **More…**. The menu contains **Save as…**, **Helpful**, **Not helpful**,
 **Delete**, and — on a finished assistant reply — the three note actions
 **Capture as note**, **Summarize up to** (here as note) and **Save
@@ -490,7 +512,8 @@ fifteen characters, which is why the last two read short.
 | ♻ | Regenerate — fork another assistant variant for this turn; the old answer is kept, not overwritten — see [branching & rewind](branching-and-rewind.md). | Assistant replies |
 | ---> | Continue — extend the selected message with more generated text. | All messages |
 | Retry | Retry a failed reply. | Failed assistant replies |
-| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete still requires confirmation and removes the message plus everything under it. | User and Assistant messages with an available overflow action |
+| Resend | Re-runs a broken turn in place — see [Resend a broken turn](#resend-a-broken-turn). It takes the ♻ slot, and Continue is not offered on that row. | Your last message, only when its turn is broken |
+| More… | Opens the captured message's **Save as…**, **Helpful**, **Not helpful**, **Delete** and note actions. Delete removes the message plus every later message under it, so it first asks on the message's own row and offers **Undo** afterwards — see [Delete a message and its follow-ups](#delete-a-message-and-its-follow-ups). | User and Assistant messages with an available overflow action |
 | Capture as note | Saves this one reply into Library ▸ Notes: the note is titled with the reply's first line of text (a leading code fence or heading mark is dropped), holds the reply verbatim, and is tagged `console`, `conversation:<id>` and `message:<id>` so it records where it came from. Nothing is sent to a model. | Finished assistant replies (disabled in a temporary chat) |
 | View / Save Image | Cycle how an inline image renders / save the message's images to disk. These controls live on the image card — see [attachments, images & voice](attachments-images-voice.md). | Messages with images |
 | Play / Save copy | Play a generated video or save its ephemeral bytes. These controls live on the video card. | Generated videos while their bytes remain available |
@@ -508,6 +531,8 @@ fifteen characters, which is why the last two read short.
    composer row) or press **Ctrl+G**.
 2. The partial reply stays, tagged "[stopped]", and a System row reads
    "Response stopped by user." Send again to keep the conversation going.
+   If you stopped it before any text arrived, select your message and use
+   **Resend** to ask again.
 
 ### Copy a reply
 1. Click the reply, or move to it with j/k.
@@ -515,13 +540,76 @@ fifteen characters, which is why the last two read short.
 
 ### Retry a failed reply
 1. Select the reply tagged "[failed]".
-2. Click **Try** — the reply is retried in place.
+2. Click **Retry** or press **r** — the reply is retried in place.
+
+### Resend a broken turn
+When a send fails or gets stuck, select your own message and click
+**Resend** (or press **r**). Resend appears only on your **last** message,
+and only when its turn is broken:
+
+- the send was refused before it was accepted (for example, the provider was
+  not ready);
+- it has no reply;
+- its reply failed during this session; or
+- its reply is empty and was stopped, discarded, or restored as
+  "Response failed." after a restart.
+
+A turn that already holds work is not broken, because Resend would throw that
+work away:
+
+- a reply with text that you stopped (use **Continue**);
+- a reply with text that was restored as failed after a restart (use
+  **Continue**);
+- text from an earlier reply, for example after **Continue**;
+- any tool output, even when the reply failed (a failed reply keeps its own
+  **Retry**).
+
+Use **Retry** on a failed reply, or **Edit**, instead.
+Resend is not offered while a run is live in the tab (use **Stop** first)
+or while a response-recovery card is unresolved (the card's own **Retry
+anyway** / **Discard** decide that case).
+
+Resend re-runs the same turn in place. It never forks, creates a sibling, or
+copies your message: the failed or empty reply and the failure or stop rows
+after it are cleared, and the new reply appears directly under the same
+message. A failed reply is retried on the same row. A message that was
+refused before it was accepted is sent again with its own text and
+attachments as exactly one message; if your composer still holds that same
+text, it is cleared, and the shelf's "Unsent turn" copy is used up, so
+nothing is left to send twice. If your composer holds different text, or
+files you attached after the refusal, Resend asks you to send or clear them
+first instead of overwriting them or sending them along.
+
+Every gate a normal send applies still applies — provider readiness, the
+image (vision) check for attached images, and skill checks. A backup pause
+refuses Resend before anything is cleared. A refused Resend shows the same
+message a refused send would, and the turn keeps offering **Resend**.
 
 ### Delete a message and its follow-ups
-1. Select the message, click **More…**, then choose **Delete** — "Press Delete
-   again to remove this message."
-2. Open **More…** and choose **Delete** again. The message and everything
-   beneath it are removed.
+Delete removes the selected message **and every later message under it**,
+including later turns on other branches. It always asks first, on the message
+itself, and offers Undo afterwards.
+
+1. Select the message, click **More…**, then choose **Delete**. Nothing is
+   removed yet: the message's own action row turns into **Delete N messages**
+   and **Cancel**, and the line beneath it states the scope — for example
+   "Delete this message and 7 later messages?", with "(2 on other branches)"
+   added when some of them sit on branches you can't see. Focus moves to
+   **Cancel**. The Inspector's Selected Message section repeats the question,
+   but you never need it open.
+2. Click **Delete N messages** to confirm. **Cancel**, **Esc**, or selecting
+   another message clears the confirmation and removes nothing. If the
+   messages under it change before you confirm (a new turn arrives under it,
+   say), Delete asks again with the new count rather than removing more than
+   you saw.
+3. A **Deleted N messages** receipt opens. **Undo** (focused) puts exactly
+   those messages back where they were and returns the conversation to the
+   branch you were on; they stay restored after you close and reopen the
+   chat. **Done** or **Esc** keeps the delete, and from then on it can't be
+   undone in the app. If Undo can't finish (the database is busy, say), the
+   messages stay deleted and the receipt opens again so you can retry; if
+   something changed them after the delete, Undo is refused and the delete
+   stands.
 
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose
@@ -580,7 +668,7 @@ Transcript:
 | j / k (or down / up) | Select the next / previous message |
 | Enter | Show the selected message's actions; activate a focused action |
 | Tab / Shift+Tab | Cycle through the action row |
-| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message |
+| c / e / f / r | Copy / Edit / Fork chat / Regenerate the selected message (r runs Retry or Resend when the row shows it instead) |
 | Esc | Clear the selection |
 
 ## Related settings & docs

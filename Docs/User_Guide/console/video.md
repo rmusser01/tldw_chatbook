@@ -61,6 +61,11 @@ What that means in practice:
   `retention_ttl_hours` (default 24). A total store cap
   (`max_store_mb`, default 2048) always applies — the oldest videos are
   evicted first, even within a session.
+- If a finished video exceeds that cap, or cannot be stored, a
+  **Generated video** choice opens: **Keep here (remove other videos)** — or
+  **Retry** when storing failed — **Save to disk**, or **Discard**. The result is lost if you
+  discard it, so Escape asks first, and so does **Ctrl+Q** while the choice is
+  open (**Discard generated video and quit?**; **Stay** keeps the choice).
 - **"Save"** on a ready video card copies the file to
   `[chat.videos] save_location` (default `~/Downloads`) — the only way a
   video escapes ephemerality, and always an explicit act.

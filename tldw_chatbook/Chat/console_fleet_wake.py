@@ -32,7 +32,7 @@ from tldw_chatbook.Chat.console_fleet_attention import (
     clear_fleet_unseen_completion,
     set_fleet_unseen_completion,
 )
-from tldw_chatbook.DB.base_db import run_owned_db_call
+from tldw_chatbook.DB.base_db import operation_owned_connection, run_owned_db_call
 
 if TYPE_CHECKING:  # pragma: no cover -- typing only
     from tldw_chatbook.app import TldwCli
@@ -872,19 +872,20 @@ class ConsoleFleetWakeCoordinator:
         db = self._runs_db() if database is None else database
         if self._disposed or db is None:
             return 0
-        seeded = 0
-        for cid in db.pending_wake_conversation_ids():
-            rows = db.pending_wake_results(cid)
-            if not rows:
-                continue
-            with self._registry_lock:
-                if self._disposed or cid in self._conversation_fences:
+        with operation_owned_connection(db):
+            seeded = 0
+            for cid in db.pending_wake_conversation_ids():
+                rows = db.pending_wake_results(cid)
+                if not rows:
                     continue
-                bucket = self._pending.setdefault(cid, {})
-                for row in rows:
-                    bucket.setdefault(str(row["id"]), str(row["status"]))
-            seeded += 1
-        return seeded
+                with self._registry_lock:
+                    if self._disposed or cid in self._conversation_fences:
+                        continue
+                    bucket = self._pending.setdefault(cid, {})
+                    for row in rows:
+                        bucket.setdefault(str(row["id"]), str(row["status"]))
+                seeded += 1
+            return seeded
 
     def start_recovery(self) -> None:
         """Request the runtime's single recovery audit and block wake admission.

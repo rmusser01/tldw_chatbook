@@ -2103,6 +2103,7 @@ class ConsoleCompactionService:
         prompt: CompactionPromptSnapshot,
         current_admission: Callable[[], BranchMemoryCommit | None],
         prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+        hooks=None,
     ) -> CompactionTransactionResult:
         """Execute one exact manual prefix/range summary and guarded commit."""
         if not _manual_admission_matches(
@@ -2150,6 +2151,28 @@ class ConsoleCompactionService:
             completion = None
             summary_engine = "local"
             for attempt_index, attempt_messages in enumerate(message_attempts):
+                if hooks is not None:
+                    try:
+                        attempt_messages = await hooks.before(
+                            attempt_messages, plan.requested_output_cap
+                        )
+                    except asyncio.CancelledError:
+                        self._finish(
+                            operation_id,
+                            AuxiliaryAttemptStatus.CANCELLED,
+                            started_tick,
+                            failure_reason="cancelled",
+                        )
+                        raise
+                    except Exception as exc:  # noqa: BLE001 -- hook boundary
+                        return self._end(
+                            operation_id,
+                            AuxiliaryAttemptStatus.FAILED,
+                            started_tick,
+                            "required_pre_compact_failed",
+                            error_type=type(exc).__name__,
+                            attempted=False,
+                        )
                 # Same executor-thread ceiling as compact()'s bound above;
                 # additionally a FOCUSED plan may spend up to 2x the bound
                 # (steered + unsteered attempts each get the full timeout).
@@ -2356,6 +2379,8 @@ class ConsoleCompactionService:
                     usage=completion.usage,
                     terminal=CompactionTerminal.STALE,
                 )
+            if hooks is not None:
+                hooks.committed(memory)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
@@ -2382,6 +2407,7 @@ class ConsoleCompactionService:
         prefix_messages: Sequence[DurableMessageSnapshot],
         retry_fence: CompactionRetryFence | None = None,
         honor_failure_latch: bool = True,
+        hooks=None,
     ) -> CompactionTransactionResult:
         """Run one admitted automatic compaction transaction.
 
@@ -2417,6 +2443,7 @@ class ConsoleCompactionService:
             current_admission=current_admission,
             prepare_main=prepare_main,
             prefix_messages=prefix_messages,
+            hooks=hooks,
         )
         if result.terminal is CompactionTerminal.SUCCEEDED:
             self._failed_compactions.pop(conversation_id, None)
@@ -2442,6 +2469,7 @@ class ConsoleCompactionService:
         current_admission: Callable[[], CompactionAdmission | None],
         prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
         prefix_messages: Sequence[DurableMessageSnapshot],
+        hooks=None,
     ) -> CompactionTransactionResult:
         if not _automatic_admission_matches(
             admission=admission,
@@ -2500,11 +2528,34 @@ class ConsoleCompactionService:
             # released -- the user-facing wedge is fixed. Upgrade path: cap
             # the provider HTTP timeout at/below this bound for auxiliary
             # calls in the gateway.
+            auxiliary_messages = plan.auxiliary_messages
+            if hooks is not None:
+                try:
+                    auxiliary_messages = await hooks.before(
+                        auxiliary_messages, plan.requested_output_cap
+                    )
+                except asyncio.CancelledError:
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.CANCELLED,
+                        started_tick,
+                        failure_reason="cancelled",
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- hook boundary
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "required_pre_compact_failed",
+                        error_type=type(exc).__name__,
+                        attempted=False,
+                    )
             summary_engine = "local"
             try:
                 completion, summary_engine = await self._summary_completion(
                     resolution=resolution,
-                    messages=plan.auxiliary_messages,
+                    messages=auxiliary_messages,
                     max_output_tokens=plan.requested_output_cap,
                     route=ConsoleRequestRoute.AUTO_COMPACTION,
                 )
@@ -2684,6 +2735,8 @@ class ConsoleCompactionService:
                     usage=usage,
                     terminal=CompactionTerminal.STALE,
                 )
+            if hooks is not None:
+                hooks.committed(record)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
@@ -2817,6 +2870,7 @@ class ConsoleCompactionService:
         usage: ProviderUsage | None = None,
         terminal: CompactionTerminal = CompactionTerminal.FAILED,
         error_type: str | None = None,
+        attempted: bool = True,
     ) -> CompactionTransactionResult:
         """Finish a started attempt that did not succeed, recording why.
 
@@ -2838,7 +2892,7 @@ class ConsoleCompactionService:
                 error_type or "none",
             )
         return CompactionTransactionResult(
-            terminal, reason=reason, usage=usage, attempted=True
+            terminal, reason=reason, usage=usage, attempted=attempted
         )
 
     @staticmethod

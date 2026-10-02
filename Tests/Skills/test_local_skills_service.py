@@ -1107,3 +1107,26 @@ async def test_library_skill_detail_and_file_are_fail_closed_for_blocked_skills(
         await service.get_library_skill_file(
             "blocked-skill", "file:U0tJTEwubWQ", start=0, max_chars=100
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "available",
+    [
+        None,
+        [],
+        [{"name": "plugin_other", "tool_name": "other:skill", "record_id": "other"}],
+    ],
+)
+async def test_missing_owned_library_skill_uses_documented_error(tmp_path, available):
+    from types import SimpleNamespace
+
+    service = LocalSkillsService(
+        store_dir=tmp_path,
+        allow_untrusted_without_trust_service=True,
+        plugin_service=None
+        if available is None
+        else SimpleNamespace(list_skills=lambda: available),
+    )
+    with pytest.raises(ValueError, match="Unknown skill"):
+        await service.get_library_skill("plugin_missing")

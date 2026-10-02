@@ -11,7 +11,7 @@ import threading
 import time
 from collections import OrderedDict, deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from copy import deepcopy
 from dataclasses import asdict, dataclass, field, fields, is_dataclass, replace
 from collections.abc import Iterator
@@ -819,6 +819,7 @@ class ConsoleChatPersistence(Protocol):
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn."""
 
@@ -1959,7 +1960,6 @@ class ConsoleChatStore:
         #: it is untouched by tree mutations (create/delete/sibling). ``(None,
         #: None)`` = no summary. Write-through is ``_persist_context_summary``.
         self._context_summary_by_session: dict[str, tuple[str | None, str | None]] = {}
-        self._deferred_project_instruction_state_session_ids: set[str] = set()
         self._unresolved_promotion_operations: dict[str, str] = {}
         self._pending_workspace_projections: dict[str, str] = {}
         self._pending_persistence_message_ids: set[str] = set()
@@ -2084,7 +2084,6 @@ class ConsoleChatStore:
         # chat keeps its draft across app restarts (TASK-32482 AC #4).
         # Process-local, like the epochs above.
         self._pending_agent_handoff_clears: dict[str, None] = {}
-
 
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
@@ -2380,7 +2379,6 @@ class ConsoleChatStore:
                 "Console active-session subscriber raised (exception_type={})",
                 type(exc).__name__,
             )
-
 
     def _consume_pending_agent_handoff_clear(self, session_id: str) -> None:
         """Clear a restored handoff key when its session first activates.
@@ -5036,7 +5034,6 @@ class ConsoleChatStore:
         self._children_by_parent.pop(session_id, None)
         self._active_leaf_by_session.pop(session_id, None)
         self._context_summary_by_session.pop(session_id, None)
-        self._deferred_project_instruction_state_session_ids.discard(session_id)
         self._roleplay_system_projection_candidates.pop(session_id, None)
         self._payload_revisions.pop(session_id, None)
         self._library_activity_revisions.pop(session_id, None)
@@ -5834,6 +5831,9 @@ class ConsoleChatStore:
             "user_content_sha256": hashlib.sha256(
                 acceptance.user_content.encode("utf-8")
             ).hexdigest(),
+            "continuation_receipt": cls._canonical_fingerprint_value(
+                acceptance.continuation_receipt
+            ),
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
             "origin": acceptance.origin,
@@ -6069,6 +6069,7 @@ class ConsoleChatStore:
                         session.speech_preferences
                     )
                 first_persist = session.persisted_conversation_id is None
+                project_state = session.project_instruction_state  # TASK-33621.13
                 roleplay_context = ConsoleRoleplayContext(
                     user_name_override=session.user_display_name_override,
                     character_system_template=session.character_system_template,
@@ -6209,6 +6210,11 @@ class ConsoleChatStore:
                 raise RuntimeError(
                     "Durable Console persistence cannot store staged context settings."
                 )
+            # TASK-33621.13: a new chat's project controls commit with it, off-loop.
+            project_stored = first_persist and self._persistence_accepts_kwarg(
+                durable_commit, "project_context_json"
+            )
+            project_json = encode_project_context_json(project_state)
             checkpoint = durable_commit(
                 acceptance=acceptance,
                 policy_candidate=policy_candidate,
@@ -6216,9 +6222,9 @@ class ConsoleChatStore:
                 **(
                     {"context_policy_overrides": context_policy_overrides}
                     if context_policy_overrides is not None
-                    and context_kwarg_supported
                     else {}
                 ),
+                **({"project_context_json": project_json} if project_stored else {}),
             )
             with self._preparation_lock:
                 identity_reservation = self._first_identity_reservations.get(
@@ -6277,6 +6283,10 @@ class ConsoleChatStore:
                     assistant_message_id=owners.assistant_message_id,
                     fingerprint=fingerprint,
                 )
+            if first_persist and (  # a folder re-chosen mid-commit, or no kwarg
+                not project_stored or session.project_instruction_state != project_state
+            ):
+                self._persist_project_instruction_state(session)
             return commit
         except Exception:
             if reservation is None:
@@ -6638,8 +6648,7 @@ class ConsoleChatStore:
         context_base_installed = False
         if commit.first_persist:
             lifecycle = self._settings_persistence_lifecycles.setdefault(
-                session_id,
-                _ConsoleSettingsPersistenceLifecycle(),
+                session_id, _ConsoleSettingsPersistenceLifecycle()
             )
             conversation_id = commit.identity.conversation_id
             if conversation_id not in lifecycle.generation_bases:
@@ -10456,29 +10465,22 @@ class ConsoleChatStore:
         return session
 
     def _persist_project_instruction_state(self, session: ConsoleChatSession) -> None:
-        """Best-effort write one durable session's local control state."""
-        conversation_id = session.persisted_conversation_id
-        if (
-            session.ephemeral
-            or conversation_id is None
-            or session.id in self._deferred_project_instruction_state_session_ids
-        ):
+        """Never-raising write of controls to the saved (or just-committed) chat."""
+        with self._preparation_lock:  # TASK-33621.13: committed, unpublished first send
+            reservation = self._first_identity_reservations.get(session.id)
+        owner, staged, durable = reservation or (None, None, False)
+        committed = staged.conversation_id if owner and durable else None
+        conversation_id = session.persisted_conversation_id or committed
+        if session.ephemeral or conversation_id is None:
             return
-        setter = getattr(
-            self.persistence, "set_conversation_console_project_context", None
-        )
-        if callable(setter):
-            try:
-                setter(
-                    conversation_id=conversation_id,
-                    project_context_json=encode_project_context_json(
-                        session.project_instruction_state
-                    ),
-                )
-            except Exception:
-                pass
-            else:
-                return
+        with suppress(Exception):  # incl. AttributeError: no persistence or setter
+            self.persistence.set_conversation_console_project_context(
+                conversation_id=conversation_id,
+                project_context_json=encode_project_context_json(
+                    session.project_instruction_state
+                ),
+            )
+            return
         logger.warning(
             "project_instruction_state_write_failed: the updated choice "
             "may not survive restart."
@@ -19224,7 +19226,6 @@ class ConsoleChatStore:
                 self.on_scope_flushed(identity.conversation_id, held_scope)
             except Exception:
                 logger.exception("on_scope_flushed callback failed after promotion.")
-        self._persist_project_instruction_state(session)
         self._flush_context_policy_on_first_persist(session)
         return identity.conversation_id
 
@@ -21040,6 +21041,10 @@ class ConsoleChatStore:
     def persist_provider_continuation_event(
         self,
         event: ProviderContinuationEvent,
+        *,
+        checkpoint_finalizer: (
+            Callable[..., ProviderContinuationCheckpoint] | None
+        ) = None,
     ) -> None:
         """Commit one runtime continuation event before its next side effect.
 
@@ -21072,6 +21077,17 @@ class ConsoleChatStore:
             )
 
         checkpoint, content = self._continuation_event_value(message, event)
+        if checkpoint_finalizer is not None:
+            session_id = self._message_session_index[message.id]
+            conversation_id = self.persist_session_if_needed(session_id)
+            if not conversation_id:
+                raise RuntimeError("Durable managed continuation owner is unavailable.")
+            checkpoint = checkpoint_finalizer(
+                checkpoint,
+                conversation_id,
+                message.persisted_message_id or message.id,
+                context.run_id,
+            )
         private_json = dump_provider_continuation_json(checkpoint)
         if private_json is None:
             raise RuntimeError("Durable continuation state is unavailable.")

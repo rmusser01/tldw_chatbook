@@ -328,3 +328,6 @@ idx_note_links_target	plan-pinned	Tests/Notes/test_note_backlink_query.py::test_
 idx_collkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_convkw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
 idx_notekw_kw	pre-convention	present in ChaChaNotes since a10dc99754 (2025-05-26); recovery validates existing schema only
+
+# Native foreign-key conversation cleanup searches body-free Stop receipts.
+idx_hook_continuation_receipts_conversation	plan-pinned	Tests/DB/test_chachanotes_v74_hook_continuation_receipts_migration.py::test_conversation_cascade_uses_receipt_index_without_statistics

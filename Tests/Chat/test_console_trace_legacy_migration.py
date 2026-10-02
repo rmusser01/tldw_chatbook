@@ -385,3 +385,48 @@ def test_new_legacy_row_after_logical_completion_reopens_checkpoint(
     assert reopened.processed_rows == 1
     assert reopened.logical_complete is True
     assert LegacyTraceNormalizer(db).read_calls(second_message_id)
+
+
+def test_complete_check_without_new_rows_takes_no_write_transaction(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """PERF-10 (TASK-33269): an idle completion check reads, it does not BEGIN IMMEDIATE.
+
+    With nothing new to normalize the check used to run inside a write
+    transaction, holding the lock user sends contend for. A read-only
+    pre-check now answers it; new rows still take the write path.
+
+    Args:
+        db: A real ChaChaNotes database.
+        monkeypatch: Spies on the transactions the check opens.
+    """
+    conversation_id = db.add_conversation({"title": "idle completion"})
+    assert conversation_id is not None
+    first_message_id = _message(db, conversation_id, "answer-0")
+    _insert_exchange(db, message_id=first_message_id, capture=_capture(0))
+    maintenance = LegacyTraceMaintenance(db)
+    assert maintenance.run_batch().logical_complete is True
+
+    immediate_calls: list[bool] = []
+    real_transaction = db.transaction
+
+    def spying_transaction(*, immediate: bool = False):
+        immediate_calls.append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(db, "transaction", spying_transaction)
+
+    idle = maintenance.run_batch()
+
+    assert idle.logical_complete is True
+    assert idle.processed_rows == 0
+    assert True not in immediate_calls, "the idle completion check took the write lock"
+
+    second_message_id = _message(db, conversation_id, "answer-1")
+    _insert_exchange(db, message_id=second_message_id, capture=_capture(1))
+    immediate_calls.clear()
+
+    reopened = maintenance.run_batch()
+
+    assert reopened.processed_rows == 1
+    assert True in immediate_calls, "new rows must still be normalized under the write lock"

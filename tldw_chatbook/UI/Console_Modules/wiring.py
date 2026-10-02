@@ -300,6 +300,24 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
     return turn_id
 
 
+async def _resend_refused_console_echo(screen: Any, echo: Any) -> str | None:
+    """TASK-33661: re-send a refused echo through the normal send path."""
+    # Lazy: keeps console_turn_resend off the boot path (_ui_ready census).
+    from tldw_chatbook.Chat.console_turn_resend import resend_refused_echo
+
+    store = screen._ensure_console_chat_store()
+    visible = screen._console_visible_draft_session_id == store.active_session_id
+    return await resend_refused_echo(
+        echo,
+        store=store,
+        runtime=screen._console_runtime(),
+        composer=screen._console_composer_or_none() if visible else None,
+        dispatch=lambda draft, stash, session_id: screen._dispatch_console_draft_send(
+            draft, stash, session_id=session_id
+        ),
+    )
+
+
 def _commit_captured_console_draft(screen: Any, session_id: str, stash: Any) -> None:
     """Commit and persist a custody handoff only in its owning session view."""
     composer = screen._console_composer_or_none()
@@ -1933,6 +1951,7 @@ def build_console_controllers(
         prefill_canvas_repair=(
             lambda repair: screen._prefill_console_canvas_repair(repair)
         ),
+        resend_refused_echo=lambda echo: _resend_refused_console_echo(screen, echo),
     )
     screen._console_fork_eligibility = screen._message.console_fork_eligibility
     screen._console_auto_speak = ConsoleAutoSpeakCoordinator(
@@ -2297,6 +2316,12 @@ def build_console_controllers(
         on_state=lambda snapshot: screen._apply_console_hooks_state(snapshot),
         notify=lambda text, severity: screen.app_instance.notify(
             text, severity=severity
+        ),
+        # TASK-33621.28: a Send from a handler or Enter's app.call_later
+        # callback reviews hooks here, never on the pump that must deliver
+        # the review's keys.
+        start_worker=lambda continuation: screen.run_worker(
+            continuation, group="console-hook-send-review"
         ),
     )
     screen._review_selection = ConsoleReviewSelectionController(

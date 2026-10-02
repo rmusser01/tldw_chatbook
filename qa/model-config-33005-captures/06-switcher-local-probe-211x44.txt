@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                Speak replies   ▌   Hands-free   ▌     Not ready · refused :9199
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────╭─ Switch model · now: llama.cpp · model-a ────────────────────────────────────────────────────────────────────────────────────────────────╮────────────────────────────────────
+                                   │ Find type to search 29 models in 4 providers · Enter applies                                                                             │                         │
+                         Context ◂ │ RECENT · your last 50 chats                                                                                                              │                         │
+   Terminal                        │ ▶ model-a                      llama.cpp             ~32k  Not ready · refused :9199    ● CURRENT                                        │                         │
+ ───────────────────────────────── │ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │                         │
+ Workspaces                    ▸   │   gpt-5.6-terra                OpenAI                 ~4k  Ready · not tested                                                            │                         │
+ ───────────────────────────────── │   gpt-5.6-sol                  OpenAI                 ~4k  Ready · not tested                                                            │                         │
+ Conversations                 ▾   │   gpt-5.6-luna                 OpenAI                 ~4k  Ready · not tested                                                            │                         │
+        Archive this chat          │     … 11 more OpenAI models                                                                                                              │                         │
+          Archived chats           │     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │                         │
+        Search all chats…          │   gemma3:12b                   Ollama                ~32k  Ready · reachable 07:29                                                       │                         │
+   Chat 1                          │   gemma3:4b                    Ollama                ~32k  Ready · reachable 07:29                                                       │                         │
+                                   │   gemma3:27b                   Ollama                ~32k  Ready · reachable 07:29                                                       │                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear   │     … 8 more Ollama models                                                                                                               │                         │
+  ▊  Filter visible     ▎          │   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                                            │                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎          │   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                                            │                         │
+                                   │   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                                            │                         │◂ Inspect
+   New conversation                │     … 1 more vLLM models                                                                                                                 │                         │
+  Chats                        ▾   │ NEEDS SETUP · Enter opens the fix or explains it                                                                                         │                         │
+   Chat 1                     💬   │   (any model)                  llama.cpp                   Not ready · refused :9199    start it; rechecked on open                      │                         │
+                                   │   (any model)                  Aphrodite Engine            Not ready · refused :2242    start it; rechecked on open                      │                         │
+ ───────────────────────────────── │   (any model)                  TabbyAPI                    Not ready · refused :8080    start it; rechecked on open                      │                         │
+ Character · No chats          ▸   │   (any model)                  Custom OpenAI-co…ble        Not ready · refused :1234    start it; rechecked on open                      │                         │
+ ───────────────────────────────── │   (any model)                  Custom OpenAI-co… #2        Not ready · refused :5678    start it; rechecked on open                      │                         │
+ Model                         ▾   │   (any model)                  Anthropic                   Not ready · no key           Enter: add key in Settings                       │                         │
+  Temperature 0.60                 │   (any model)                  Arcee AI                    Not ready · no key           Enter: add key in Settings                       │                         │
+  Max tokens  4096                 │   (any model)                  Azure OpenAI                Not ready · no key           Enter: add key in Settings                       │                         │
+  Streaming   On                  ▃│     … 43 more providers need setup · type a name to find one                                                                             │                         │
+  Not ready · refused :9199        │ Values for model-a · llama.cpp                                                                                                           │                         │
+  System: none ▸                   │ Temperature 0.6      Console Behavior  Max tokens 4096     provider          Streaming On    ▼  provider                                 │                         │
+   Change  Alt+M                   │  Enter apply to this chat  · Tab edit values ·  Ctrl+N default for new chats  ·  Ctrl+O chat settings  · Esc cancel                      │                         │
+ ▼ Agent · Details                 │  Save as model default  saves Temperature, Max tokens, Streaming                                             Applies to: this chat only  │                         │
+                                   ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                         │  setup
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: llama.cpp     Model: model-a     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 · O
+
+│  Composer ▾  Menu  Ask, command, or paste task...                                                                 Send blocked — retry the connection to continue ›       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q
