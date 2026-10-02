@@ -5,7 +5,7 @@ title: 'RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired an
 status: In Progress
 assignee: []
 created_date: 2026-09-28 20:12
-updated_date: 2026-10-02 18:43
+updated_date: 2026-10-02 22:16
 labels:
 - testing
 - rag
@@ -58,15 +58,20 @@ Final paired static /private/tmp/backup2955-qodo-final-static-3n3y_mz7/summary.j
 Normal rebases preserved the six reviewed Python files byte/mode-identically: 7d19→c9ec20aa on dev30ca (30PASS), then c9→d61613af16d1aef9d50cfc5143df2c41614187a3 on deve92b01515f9547aab2cfb14cd4d93a7a07419775. Each13-patch range-diff has12equal patches and one document-context-only change; official document editor preserved both lessons sections and LF. Fresh42 actual cases passed at exactd616, 0fail/error/skip, with7,736 tracked Python/SQL byte/stat pins stable and zero undrained parent network attempts. This includes schema75 upgrade/rollback, backup validation, mounted Console continuations and benchmark/dependency controls. Independent /private/tmp/backup2955-expanded-final-independent-review.json (SHA8437e129dcee05d264a37203456799da32d5169afc308b4daa649aad4b92cf33) joined all7,736 pins to immutableGit and all20selectors to42JUnit cases; no actionable findings. Source-stat/network history remain receipt limits; no numeric, idle or native qualification is inferred.
 
 Evidence: /private/tmp/backup2955-qodo-independent-spec-review.md; /private/tmp/backup2955-qodo-independent-quality-review.md; /private/tmp/backup2955-expanded-rebase-proof-ddziepmo/summary.json; /private/tmp/backup2955-expanded-rebase-check-h0terovr/summary.json. PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains pending publication of this reviewed source, exact-current-head required CI, review resolution and protected integration. Historical phases retain their own identities and unsuccessful results.
+Final followup source is f95c25e0f5c14a06e580ce9e0ddacac1c609faab on latest dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6. Normal rebase preserves all15 patch matches and22 named followup source blobs/modes. Independent upstream applicability confirms the actual benchmark/controller/store/config/transaction/migration route is unchanged by model-readiness and lazy Resend changes; no repeat benchmark/native/performance sweep is justified. Original benchmark72/72 and affected432 evidence retain their reviewed source identities, original inputs/assertions/budgets and private profile lifetime through every group.
+
+Latest finite actual rebase/source-lifetime/UI selection is21=18PASS/3known upstream FAIL/0ERROR/0SKIP/network0, with7749stable Python/SQL pins and1568joined actual imports, /private/tmp/backup2955-readiness-finite-70_2hr2v/combined/summary.json. TASK-33370 records the two unchanged worker AST diagnostics and exact-dev-reproduced readiness9-versus3669 failure under Console owner TASK-33005.2. No production guard, source authority, benchmark corpus/budget/deadline or cache oracle changed. Parent network0 does not establish arbitrary-child network0. Published-head CI/review/protected integration remain pending; separate TASK-33560 performance goals remain binding and open.
+
+Independent exact-f95 result attestation PASS for bounded evidence joins, /private/tmp/backup2955-readiness-result-independent-review.md and JSON: actual21=18PASS3FAIL, all candidate/upstream source/import/stat/JUnit/rebase joins verified, no new backup issue established. This is not an all-green, native/performance or merge verdict. Profiler counts are named config-function calls including pure normalization, not measured disk reads. Run identity staysf95 after any Task-only evidence commit.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-The citation benchmark uses one private HOME/USERPROFILE/config/data lifetime through validation and all original groups, including repository storage and migrations. Direct callers require a private profile; original budgets, inputs and host/privacy assertions remain intact.
+The citation benchmark owns one private HOME/USERPROFILE/config/data lifetime through validation and every original measured group, including repository storage and migrations. Direct callers require a selected private profile; original inputs, budgets, deadlines and host/secret/privacy assertions remain intact.
 
-The original benchmark module passed72/72 on current source06165659cdf72f947554cf23ec1cd44f9ba430e2/dev eba4305 inside the777-case finite phase(776 passed,0 failed/errors,1 inapplicable upstream oracle skip). All7622 Python/SQL source pins remained stable, with private environment/Null keyring/network guard established before app imports. Evidence /private/tmp/backup2955-final-rebase-o7vk5h6b and /private/tmp/backup-followup-check-d1aocb76. Static upstream assessment confirms ChaChaNotes remainsv74; exercised transaction/migration methods are unchanged, and only the actual readiness/modal CSS checks were added.
+Original benchmark72/72 and affected432 evidence retain their reviewed source identities. Latest followup runtime f95c25e0f5c14a06e580ce9e0ddacac1c609faab is rebased on dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6; named executed benchmark/controller/store/config/transaction routes are unchanged by incoming readiness and lazy Resend changes. The affected actual21-case phase is18PASS/3known upstreamFAIL/0ERROR/0SKIP, with7749 stable pins and1568 source-joined imports. Independent /private/tmp/backup2955-readiness-result-independent-review.md passed bounded source/JUnit/import/rebase/control joins, without claiming all-green, native or performance qualification. TASK-33370 records the distinct Console owners and retained failures.
 
-PR #2955 current-head required CI and protected integration remain pending. These are benchmark-followup checks, not new admission-performance qualification; Task33560 retains the approved performance work.
+PR https://github.com/rmusser01/tldw_chatbook/pull/2955 remains In Progress pending fresh exact-published-head required CI, current reviews and protected integration. Separate TASK-33560 retains all approved admission performance/native/numerical gates.
 <!-- SECTION:FINAL_SUMMARY:END -->
 ## Definition of Done
 <!-- DOD:BEGIN -->
