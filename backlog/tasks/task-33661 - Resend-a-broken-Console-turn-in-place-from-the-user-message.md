@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-01 17:30'
-updated_date: '2026-10-02 04:37'
+updated_date: '2026-10-02 06:17'
 labels:
   - console
   - transcript
@@ -196,4 +196,32 @@ Resend re-runs a broken LAST user turn in place from the user message. It never 
 - **M6, Ruling:** a persisted user leaf with no reply can still have an inactive reply on another branch, for example after deleting the active one of two sibling replies. Resend then adds the new reply beside it. Accepted: nothing is lost, `<`/`>` shows both, and the store exposes no child-count API to the transcript. Cost: AC#2's no-sibling property does not hold in that edge.
 - **M7:** `Tests/UI/test_console_turn_resend_ui.py` added to `scripts/ui_pr_gate_census.txt`, and `MINIMUM_FILES` raised from 119 to 120. Verified 10/10 green in a scratch venv with only the fast-lane dependencies (`pip install -e . pytest pytest-asyncio pytest-timeout packaging`, no xdist, `--timeout=180`).
 - **A regression in the first commit, found while fixing.** Routing Retry through `run = ...; run_worker(run(...))` hid `_retry_console_message`'s dispatch site from `test_console_run_and_sync_workers_use_disjoint_groups`. The name-set comparison missed it because that test already failed at base for another missing site. Fixed by keeping direct calls. `_resend_console_turn` added to the test's `RUN_COROUTINES`. Lesson added to `lessons-testing-evidence.md`.
+
+**Qodo fixes (PR #2956)**
+1. **Docs rule.** `is_refused_echo` and `continue_from_message` now have Google-style Args/Returns sections. The controller stays at origin/dev's exact line count: one blank line in that method was dropped.
+   - Test: `test_resend_entry_points_document_args_and_returns` checks all five entry points.
+2. **Tool output.** Any TOOL row with content after the user message makes the turn partial, whatever the reply's state (owner ruling, extending I1). The live failed reply keeps its own Retry.
+   - Test: `test_resend_never_offers_a_failed_turn_with_tool_output[live|relaunch]`, plus detection cases.
+3. **Backup pause.** `resend_turn` now holds the controller's `_maintenance_boundary("turn")` admission for the whole resend. A paused admission therefore refuses with "Console generation is paused for backup maintenance." before anything is cleared. The nested retry and continue calls run under the same depth, and `maintenance_drain` waits for the resend.
+   - Test: `test_a_backup_pause_refuses_resend_before_anything_is_cleared[failed|stopped]` checks ids, content and the deleted flag.
+4. **Restored failed reply with text.** A failed reply restored with text is partial, so it gets no Resend (Continue covers it). Only a LIVE failed reply (`status == "failed"`) stays resendable with partial text, through the in-place `retry_message`.
+   - Tests: `test_resend_never_offers_a_restored_failed_reply_that_has_text`; `test_resend_retries_a_failed_reply_in_place[partial-error]`.
+5. **Staged attachments.** `resend_refused_echo` refuses with "Send or remove the staged attachments before resending this message." before deleting anything, when files are staged. The one exception: with no live recovery, the staged files may be exactly the echo's own, as after a shelf Restore.
+   - Tests: `test_refused_echo_resend_refuses_newer_staged_attachments[recovery|no recovery]`; the positive case `test_refused_echo_resend_sends_its_own_restaged_attachments_once`.
+
+**AC#1 as implemented after these fixes**
+- **Broken:**
+  - a refused echo;
+  - a persisted last user message with no reply;
+  - a reply that failed in this session (live status failed), even with partial text;
+  - an empty reply that was stopped, discarded, or restored as "Response failed.".
+- **Never broken:**
+  - any tool output in the turn;
+  - text from an earlier reply of the turn;
+  - a restored failed reply with text;
+  - a partial stopped reply.
+
+**New Rulings**
+- **Backup pause mid-resend.** Holding the admission covers everything in the resend's own task. For a refused echo, the send path hands the turn to a runtime custody task, and that task is admitted separately by `submit_draft`. Remaining race: a backup that pauses admission between the resend's admission and the custody task's own refuses that custody submit. The text is not lost: the runtime records it as an unsent turn on the shelf.
+- **Staged-attachment check compares bytes.** It compares the staged files' bytes with the echo's attachment bytes. Cost: a staged inline (text) attachment always refuses the resend, which is conservative.
 <!-- SECTION:NOTES:END -->

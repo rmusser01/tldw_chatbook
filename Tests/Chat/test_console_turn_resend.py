@@ -11,6 +11,7 @@ database holds exactly one live user row and one live assistant row.
 from __future__ import annotations
 
 import asyncio
+import inspect
 from types import SimpleNamespace
 
 import pytest
@@ -42,6 +43,8 @@ from tldw_chatbook.Chat.console_dispatch_checkpoint import (
 from tldw_chatbook.Chat.console_turn_resend import (
     RESEND_COMPOSER_BUSY_COPY,
     RESEND_NOT_BROKEN_COPY,
+    RESEND_STAGED_ATTACHMENTS_COPY,
+    is_refused_echo,
     resend_refused_echo,
     resend_target_id,
     resend_turn,
@@ -68,6 +71,7 @@ class _Gateway:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.seen: list[list[dict]] = []
+        self.on_stream = None
 
     async def resolve_for_send(self, _selection):
         if self.mode == "blocked":
@@ -89,6 +93,8 @@ class _Gateway:
 
     async def stream_chat(self, _resolution, messages, **_kwargs):
         self.seen.append(list(messages))
+        if self.on_stream is not None:
+            self.on_stream()
         if self.mode == "error":
             raise RuntimeError("provider exploded")
         if self.mode == "partial-error":
@@ -303,6 +309,19 @@ def _m(role, *, status="complete", content="x", persisted=True, state=None):
         ("tool output, no reply", [
             _m(USER), _m(TOOL, content="read_file -> 3 lines"),
         ], False),
+        # Qodo #2: any tool output keeps the turn partial, whatever the reply.
+        ("failed reply with tool output", [
+            _m(USER), _m(ASSISTANT, status="failed", content=""),
+            _m(TOOL, content="read_file -> 3 lines"), _m(SYSTEM),
+        ], False),
+        ("restored failed reply with tool output", [
+            _m(USER), _m(ASSISTANT, content="", state="failed"),
+            _m(TOOL, content="read_file -> 3 lines"),
+        ], False),
+        # Qodo #4: a restored failed reply with text is partial (Continue).
+        ("restored failed reply with text", [
+            _m(USER), _m(ASSISTANT, content="partial text", state="failed"),
+        ], False),
     ],
 )
 def test_resend_target_is_the_last_user_row_of_a_broken_turn_only(label, rows, broken):
@@ -316,7 +335,7 @@ def test_resend_target_is_the_last_user_row_of_a_broken_turn_only(label, rows, b
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["error", "empty"])
+@pytest.mark.parametrize("mode", ["error", "empty", "partial-error"])
 async def test_resend_retries_a_failed_reply_in_place(tmp_path, databases, mode):
     console = _console(tmp_path, databases, mode)
     await console.controller.submit_draft("hello there")
@@ -775,6 +794,211 @@ async def test_a_refused_clear_is_reported_without_re_running(
         "Resolve pending dispatch before deleting this message.",
     )
     assert len(console.gateway.seen) == contacts
+
+
+@pytest.mark.parametrize(
+    "function",
+    [
+        is_refused_echo,
+        resend_target_id,
+        resend_turn,
+        resend_refused_echo,
+        ConsoleChatController.continue_from_message,
+    ],
+)
+def test_resend_entry_points_document_args_and_returns(function):
+    """Qodo #1: Google-style Args/Returns name every parameter."""
+    doc = inspect.getdoc(function) or ""
+    assert "Args:" in doc and "Returns:" in doc, function.__name__
+    for name in inspect.signature(function).parameters:
+        if name != "self":
+            assert f"{name}:" in doc, (function.__name__, name)
+
+
+def _all_db_rows(console) -> list[tuple]:
+    conversation_id = console.store._sessions[
+        console.session_id
+    ].persisted_conversation_id
+    return sorted(
+        tuple(row)
+        for row in console.db.get_connection().execute(
+            "SELECT id, content, deleted FROM messages WHERE conversation_id = ?",
+            (conversation_id,),
+        )
+    )
+
+
+def _path_snapshot(console) -> list[tuple]:
+    return [(row.id, row.role, row.status, row.content) for row in _path(console)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shape", ["failed", "stopped"])
+async def test_a_backup_pause_refuses_resend_before_anything_is_cleared(
+    tmp_path, databases, shape
+):
+    """Qodo #3: the maintenance boundary used to refuse inside retry/continue,
+    after the reply and its failure rows were already tombstoned."""
+    console = _console(tmp_path, databases, "error")
+    if shape == "failed":
+        await console.controller.submit_draft("hello there")
+    else:
+        await _stopped_empty_turn(console)
+    user = _user(console)
+    assert resend_target_id(_path(console)) == user.id
+    before_path, before_db = _path_snapshot(console), _all_db_rows(console)
+    console.controller.maintenance_close_admission()
+
+    result = await resend_turn(console.controller, user.id)
+
+    assert _path_snapshot(console) == before_path
+    assert _all_db_rows(console) == before_db
+    assert (result.accepted, result.visible_copy) == (
+        False,
+        "Console generation is paused for backup maintenance.",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relaunch", [False, True])
+async def test_resend_never_offers_a_failed_turn_with_tool_output(
+    tmp_path, databases, relaunch
+):
+    """Qodo #2: a failed reply with tool output kept stale tool markers on the
+    in-place retry. Any tool output now makes the turn partial; the live
+    failed reply keeps its own Retry."""
+    console = _console(tmp_path, databases, "error")
+
+    def tool_marker():
+        console.store.append_message(
+            console.session_id, role=TOOL, content="read_file -> 3 lines"
+        )
+
+    console.gateway.on_stream = tool_marker
+    await console.controller.submit_draft("hello there")
+    if relaunch:
+        console = _restart(console)
+        # The relaunch overlays the run's tool markers on the restored reply.
+        tool_marker()
+    user = _user(console)
+    console.gateway.mode = "ok"
+    before_path, before_db = _path_snapshot(console), _all_db_rows(console)
+
+    result = await resend_turn(console.controller, user.id)
+
+    assert _path_snapshot(console) == before_path
+    assert _all_db_rows(console) == before_db
+    assert (result.accepted, result.visible_copy) == (False, RESEND_NOT_BROKEN_COPY)
+    assert resend_target_id(_path(console)) is None
+
+
+@pytest.mark.asyncio
+async def test_resend_never_offers_a_restored_failed_reply_that_has_text(
+    tmp_path, databases
+):
+    """Qodo #4 (data loss): after a relaunch a failed reply with partial text
+    reads complete+failed; Resend used to tombstone it. It is partial."""
+    console = _console(tmp_path, databases, "partial-error")
+    await console.controller.submit_draft("hello there")
+    restarted = _restart(console)
+    reply = _path(restarted)[1]
+    assert (reply.status, reply.assistant_generation_state, reply.content) == (
+        "complete",
+        "failed",
+        "partial text",
+    )
+    before_path, before_db = _path_snapshot(restarted), _all_db_rows(restarted)
+
+    result = await resend_turn(restarted.controller, _user(restarted).id)
+
+    assert _path_snapshot(restarted) == before_path
+    assert _all_db_rows(restarted) == before_db
+    assert (result.accepted, result.visible_copy) == (False, RESEND_NOT_BROKEN_COPY)
+    assert resend_target_id(_path(restarted)) is None
+
+
+def _image(name: str, data: bytes) -> PendingAttachment:
+    return PendingAttachment(
+        file_path=f"/tmp/{name}",
+        display_name=name,
+        file_type="image",
+        insert_mode="attachment",
+        data=data,
+        mime_type="image/png",
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_recovery", [True, False])
+async def test_refused_echo_resend_refuses_newer_staged_attachments(
+    tmp_path, databases, with_recovery
+):
+    """Qodo #5: an attachment staged after the refusal rode along with (or
+    replaced) the echo's own on Resend."""
+    console = _console(tmp_path, databases, "blocked")
+    await console.controller.submit_draft("hello there")
+    echo = _user(console)
+    console.store.add_pending_attachment(
+        console.session_id, _image("newer.png", b"newer-bytes")
+    )
+    runtime = (
+        _Recoveries(
+            SimpleNamespace(turn_id="turn-1", draft="hello there", attachments=())
+        )
+        if with_recovery
+        else None
+    )
+    dispatched: list = []
+
+    async def dispatch(draft, stash, _session_id):
+        dispatched.append(draft)
+        return True
+
+    copy = await resend_refused_echo(
+        echo,
+        store=console.store,
+        runtime=runtime,
+        composer=_Composer(),
+        dispatch=dispatch,
+    )
+
+    assert copy == RESEND_STAGED_ATTACHMENTS_COPY
+    assert dispatched == []
+    assert [item.display_name for item in console.store.pending_attachments(
+        console.session_id
+    )] == ["newer.png"]
+    assert _user(console).id == echo.id
+    if runtime is not None:
+        assert runtime.discarded == []
+
+
+@pytest.mark.asyncio
+async def test_refused_echo_resend_sends_its_own_restaged_attachments_once(
+    tmp_path, databases, monkeypatch
+):
+    """The staged-attachment refusal must not refuse the echo's own files when
+    they are what is staged (a Restore from the unsent-turn shelf)."""
+    monkeypatch.setattr(controller_module, "is_vision_capable", lambda _p, _m: True)
+    console = _console(tmp_path, databases, "blocked")
+    console.store.add_pending_attachment(
+        console.session_id, _image("photo.png", b"own-bytes")
+    )
+    await console.controller.submit_draft("look at this")
+    echo = _user(console)
+    assert [item.display_name for item in console.store.pending_attachments(
+        console.session_id
+    )] == ["photo.png"]
+    console.gateway.mode = "ok"
+
+    result = await resend_turn(
+        console.controller,
+        echo.id,
+        resend_echo=_echo_resender(console, composer=_Composer("look at this")),
+    )
+
+    assert result.accepted
+    user, _reply = _path(console)
+    assert [item.display_name for item in user.attachments] == ["photo.png"]
 
 
 # --- negatives -------------------------------------------------------------

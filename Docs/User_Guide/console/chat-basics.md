@@ -550,14 +550,21 @@ and only when its turn is broken:
 - the send was refused before it was accepted (for example, the provider was
   not ready);
 - it has no reply;
-- its reply failed; or
+- its reply failed during this session; or
 - its reply is empty and was stopped, discarded, or restored as
   "Response failed." after a restart.
 
-A reply with text that you stopped is not broken — use **Continue** on it.
-Nor is a turn that already holds text from an earlier reply (for example
-after **Continue**) or any tool output: Resend would throw that work away, so
-use **Retry** on the failed reply or **Edit** instead.
+A turn that already holds work is not broken, because Resend would throw that
+work away:
+
+- a reply with text that you stopped (use **Continue**);
+- a reply with text that was restored as failed after a restart (use
+  **Continue**);
+- text from an earlier reply, for example after **Continue**;
+- any tool output, even when the reply failed (a failed reply keeps its own
+  **Retry**).
+
+Use **Retry** on a failed reply, or **Edit**, instead.
 Resend is not offered while a run is live in the tab (use **Stop** first)
 or while a response-recovery card is unresolved (the card's own **Retry
 anyway** / **Discard** decide that case).
@@ -569,13 +576,14 @@ message. A failed reply is retried on the same row. A message that was
 refused before it was accepted is sent again with its own text and
 attachments as exactly one message; if your composer still holds that same
 text, it is cleared, and the shelf's "Unsent turn" copy is used up, so
-nothing is left to send twice. If your composer holds different text, Resend
-asks you to send or clear it first instead of overwriting it.
+nothing is left to send twice. If your composer holds different text, or
+files you attached after the refusal, Resend asks you to send or clear them
+first instead of overwriting them or sending them along.
 
 Every gate a normal send applies still applies — provider readiness, the
-image (vision) check for attached images, and skill checks. A refused Resend
-shows the same message a refused send would, and the turn keeps offering
-**Resend**.
+image (vision) check for attached images, and skill checks. A backup pause
+refuses Resend before anything is cleared. A refused Resend shows the same
+message a refused send would, and the turn keeps offering **Resend**.
 
 ### Delete a message and its follow-ups
 Delete removes the selected message **and every later message under it**,

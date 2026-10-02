@@ -20519,10 +20519,14 @@ class ConsoleChatController:
     async def continue_from_message(
         self, message_id: str, *, resend: bool = False
     ) -> ConsoleSubmitResult:
-        """Stream a new assistant turn after a message (``resend``: TASK-33661).
+        """Stream a new assistant turn after a message.
 
-        ``resend`` re-runs a broken last turn, so it adds what a normal send
-        applies and Continue skips: the thinking preflight and pinned prefill.
+        Args:
+            message_id: The message to continue from.
+            resend: Add a normal send's thinking preflight and pinned prefill.
+
+        Returns:
+            The submit result; a refusal carries its visible copy.
         """
         active_rejection = self._active_run_rejection()
         if active_rejection is not None:
@@ -20561,7 +20565,6 @@ class ConsoleChatController:
             )
         ) is not None:
             return thinking_block
-
         provider_messages = self._provider_messages_through_message(
             session_id,
             message_id,

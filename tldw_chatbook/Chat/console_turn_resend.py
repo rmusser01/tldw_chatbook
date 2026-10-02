@@ -5,8 +5,8 @@ assistant reply, its reply failed, or its reply is empty and stopped,
 discarded, or restored after a restart as "Response failed.". Only the last
 user turn on the active path qualifies: a failed reply higher up keeps its own
 Retry, and a partial (non-empty) stopped reply has Continue. A turn that holds
-any text an earlier reply produced (a Continue chain) or any tool output is
-partial, never broken: Resend would discard that work.
+any tool output, text from an earlier reply (a Continue chain), or a restored
+reply with text is partial, never broken: Resend would discard that work.
 
 Resend never forks: no ``create_sibling``, no ``edit_and_resend_message``.
 A failed live reply is retried in place on the same assistant row. Every other
@@ -40,10 +40,21 @@ RESEND_OTHER_SESSION_COPY = "Open the original session before resending this mes
 RESEND_COMPOSER_BUSY_COPY = (
     "Send or clear the composer draft before resending this message."
 )
+RESEND_STAGED_ATTACHMENTS_COPY = (
+    "Send or remove the staged attachments before resending this message."
+)
 
 
 def is_refused_echo(message: ConsoleChatMessage) -> bool:
-    """Whether ``message`` is a USER echo refused before the send was accepted."""
+    """Whether ``message`` is a USER echo refused before the send was accepted.
+
+    Args:
+        message: A transcript row.
+
+    Returns:
+        True for a failed, never-persisted USER row (the optimistic echo a
+        refused send leaves behind), otherwise False.
+    """
     return (
         message.role is ConsoleMessageRole.USER
         and message.status == "failed"
@@ -71,9 +82,10 @@ def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
         The id of the user message Resend re-runs, or ``None`` when the last
         turn is healthy, partial, still running, or has no user message. An
         unpersisted user row with no reply is an in-flight send (validating,
-        or paused for preparation), never a broken one. Text from an earlier
-        reply of the turn, or any tool output, makes the turn partial: the
-        clear would tombstone it (review C1/I1).
+        or paused for preparation), never a broken one. Any tool output, text
+        from an earlier reply, or a restored (not live) failed reply with text
+        makes the turn partial: the clear would tombstone it. A live failed
+        reply keeps Resend even with partial text; it is retried in place.
     """
     index = next(
         (
@@ -91,27 +103,26 @@ def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
     ]
     if is_refused_echo(user):
         return None if replies else user.id
-    if user.status != "complete":
-        return None
-    tool_output = any(
+    if user.status != "complete" or any(
         row.role is ConsoleMessageRole.TOOL and row.content.strip()
         for row in messages[index + 1 :]
-    )
+    ):
+        return None
     if not replies:
-        persisted = user.persisted_message_id is not None
-        return user.id if persisted and not tool_output else None
+        return user.id if user.persisted_message_id is not None else None
     last = replies[-1]
     if last.status in {"pending", "streaming"}:
         return None
     if any(_reply_text(reply) for reply in replies[:-1]):
         return None
-    if last.status == "failed" or last.assistant_generation_state == "failed":
+    if last.status == "failed":
         return user.id
-    ended_empty = (
-        last.status == "stopped"
-        or last.assistant_generation_state in {"stopped", "discarded"}
-    ) and not (_reply_text(last) or tool_output)
-    return user.id if ended_empty else None
+    ended = last.status == "stopped" or last.assistant_generation_state in {
+        "failed",
+        "stopped",
+        "discarded",
+    }
+    return user.id if ended and not _reply_text(last) else None
 
 
 def _delete_rows_after(store: Any, session_id: str, anchor_id: str) -> str | None:
@@ -151,18 +162,20 @@ async def resend_turn(
 ) -> ConsoleSubmitResult:
     """Re-run a broken last turn in place from its user message.
 
-    Only some gates run before anything is cleared: the send-refusal copy (a
-    live run, a queue, an unresolved dispatch recovery), the broken-turn
-    check, and the vision gate for the turn's own attachments. A refused echo
-    then goes to ``resend_echo`` (the normal send path, with its own gates). A
-    failed reply's trailing rows are cleared and it is retried in place;
-    otherwise the empty reply and the rows after the user message are
-    tombstoned and the turn re-runs from the user message. Readiness, skill
-    refusal, the thinking preflight and the maintenance (backup) pause run
-    inside ``retry_message``/``continue_from_message``, after that clear: a
-    refusal there leaves the turn still broken (Resend stays on offer) but the
-    cleared rows stay cleared. In a temporary chat nothing is persisted, so a
-    cleared empty reply is simply gone.
+    The controller's maintenance (backup) admission is taken first and held
+    for the whole resend, so a backup pause refuses before anything is cleared
+    and cannot start between the clear and the re-run. Then, still before any
+    clear: the send-refusal copy (a live run, a queue, an unresolved dispatch
+    recovery), the broken-turn check, and the vision gate for the turn's own
+    attachments. A refused echo then goes to ``resend_echo`` (the normal send
+    path, with its own gates). A failed reply's trailing rows are cleared and
+    it is retried in place; otherwise the empty reply and the rows after the
+    user message are tombstoned and the turn re-runs from the user message.
+    Readiness, skill refusal and the thinking preflight run inside
+    ``retry_message``/``continue_from_message``, after that clear: a refusal
+    there leaves the turn still broken (Resend stays on offer) but the cleared
+    rows stay cleared. In a temporary chat nothing is persisted, so a cleared
+    empty reply is simply gone.
 
     Args:
         controller: The Console chat controller owning the session.
@@ -172,6 +185,18 @@ async def resend_turn(
     Returns:
         The re-run's submit result; a refusal carries its visible copy.
     """
+    from tldw_chatbook.Chat.console_chat_controller import _maintenance_boundary
+
+    admitted = _maintenance_boundary("turn")(_resend_turn)
+    return await admitted(controller, message_id, resend_echo=resend_echo)
+
+
+async def _resend_turn(
+    controller: ConsoleChatController,
+    message_id: str,
+    *,
+    resend_echo: Callable[[ConsoleChatMessage], Awaitable[str | None]] | None,
+) -> ConsoleSubmitResult:
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
 
     store = controller.store
@@ -265,8 +290,8 @@ async def resend_refused_echo(
     exact copy of what was refused: its draft and attachment objects are used
     and the recovery is consumed, so the shelf never offers a duplicate. A
     composer already holding the same text is committed by the send, so it is
-    not left holding a duplicate either. A composer holding other text is
-    never overwritten.
+    not left holding a duplicate either. A composer holding other text, or
+    staged attachments other than the echo's own, refuses the resend instead.
 
     Args:
         echo: The refused USER echo row.
@@ -284,6 +309,13 @@ async def resend_refused_echo(
     composer_text = composer.draft_text() if composer is not None else ""
     if composer_text.strip() and composer_text.strip() != draft.strip():
         return RESEND_COMPOSER_BUSY_COPY
+    # Admission sends every staged attachment, so anything staged after the
+    # refusal would ride along. The only staged files allowed are the echo's
+    # own, put back by a shelf Restore (a live recovery still holds them).
+    staged = [item.data for item in store.pending_attachments(session_id)]
+    own = [item.data for item in echo.attachments if item.data is not None]
+    if staged and (recovery is not None or staged != own):
+        return RESEND_STAGED_ATTACHMENTS_COPY
     try:
         store.delete_message(echo.id)
     except (ValueError, RuntimeError) as exc:
