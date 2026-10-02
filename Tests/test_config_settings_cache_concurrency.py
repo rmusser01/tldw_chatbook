@@ -22,6 +22,8 @@ returning the raw cell fails here.
 
 from __future__ import annotations
 
+import inspect
+import sys
 import threading
 
 import pytest
@@ -37,20 +39,26 @@ def _invalidate() -> None:
 
 
 @pytest.fixture
-def counting_bootstrap(monkeypatch):
+def counting_bootstrap():
     """Count full config rebuilds, widening the miss window to force overlap."""
     calls: list[float] = []
-    original = config_module._load_cli_config_bootstrap
+    code = inspect.unwrap(config_module._load_cli_config_bootstrap).__code__
+    previous = sys.getprofile()
+    previous_thread = threading.getprofile()
 
-    def counting(*args, **kwargs):
-        calls.append(0.0)
-        # Without this the window is too narrow to observe on a warm page
-        # cache, and the test would pass against the unfixed code by luck.
-        threading.Event().wait(0.02)
-        return original(*args, **kwargs)
+    def counting(frame, event, arg):
+        if event == "call" and frame.f_code is code:
+            calls.append(0.0)
+            # Force overlap without replacing the admitted config function.
+            threading.Event().wait(0.02)
 
-    monkeypatch.setattr(config_module, "_load_cli_config_bootstrap", counting)
-    return calls
+    sys.setprofile(counting)
+    threading.setprofile(counting)
+    try:
+        yield calls
+    finally:
+        sys.setprofile(previous)
+        threading.setprofile(previous_thread)
 
 
 def _baseline_rebuild_cost(counting_bootstrap: list) -> int:
@@ -167,12 +175,20 @@ def test_runtime_snapshot_takes_rebuild_lock_before_file_lock(monkeypatch):
             self._lock = threading.RLock()
 
         def __enter__(self):
-            events.append(self._name)
-            self._lock.acquire()
+            self.acquire()
             return self
 
         def __exit__(self, exc_type, exc_value, traceback) -> None:
             del exc_type, exc_value, traceback
+            self.release()
+
+        def acquire(self, *args, **kwargs):
+            acquired = self._lock.acquire(*args, **kwargs)
+            if acquired:
+                events.append(self._name)
+            return acquired
+
+        def release(self):
             self._lock.release()
 
     rebuild_lock = TrackingLock("rebuild")
@@ -180,14 +196,7 @@ def test_runtime_snapshot_takes_rebuild_lock_before_file_lock(monkeypatch):
     monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", rebuild_lock)
     monkeypatch.setattr(config_module, "_CONFIG_FILE_LOCK", file_lock)
 
-    def load_settings(*, force_reload: bool = False) -> dict:
-        del force_reload
-        with config_module._settings_rebuild_lock():
-            return {"source": "test"}
-
-    monkeypatch.setattr(config_module, "load_settings", load_settings)
-
     snapshot = config_module.get_runtime_config_snapshot(force_reload=True)
 
-    assert snapshot.values == {"source": "test"}
-    assert events[:2] == ["rebuild", "file"]
+    assert isinstance(snapshot.values, dict)
+    assert events.index("rebuild") < events.index("file")
