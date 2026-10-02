@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from dataclasses import asdict, replace
 import json
+from pathlib import Path
 import zlib
 
 import pytest
+
+from Tests.private_profile import private_profile_test
 
 from tldw_chatbook.Chat.console_exchange_capture import (
     CaptureDetail,
@@ -476,3 +479,53 @@ def test_complete_check_without_new_rows_takes_no_write_transaction(
 
     assert reopened.processed_rows == 1
     assert True in immediate_calls, "new rows must still be normalized under the write lock"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_fresh_worker_batches_share_one_repository_admission(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, request: pytest.FixtureRequest
+) -> None:
+    """The cold write fallback and warm read each keep the two-admission budget.
+
+    Args:
+        tmp_path: Private file-backed database directory.
+        monkeypatch: Counts the real admission seam without replacing its behavior.
+        request: Retains the selected profile in the existing child-test helper.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+    from tldw_chatbook.DB.base_db import run_owned_db_call
+
+    database = CharactersRAGDB(tmp_path / "trace-admissions.db", "trace-admissions")
+    try:
+        conversation_id = database.add_conversation({"title": "cold trace batch"})
+        assert conversation_id is not None
+        message_id = _message(database, conversation_id, "answer")
+        _insert_exchange(database, message_id=message_id, capture=_capture(0))
+        database.close_connection()
+        assert database.registered_connection_count() == 0
+        maintenance = LegacyTraceMaintenance(database)
+        admissions: list[int] = []
+        acquire = storage_admission._acquire_storage
+
+        def counted_acquire(
+            *args: object, **kwargs: object
+        ) -> storage_admission.StorageLease:
+            admissions.append(1)
+            return acquire(*args, **kwargs)
+
+        monkeypatch.setattr(storage_admission, "_acquire_storage", counted_acquire)
+        first = await run_owned_db_call(database, maintenance.run_batch)
+        assert first.processed_rows == 1 and first.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, "cold normalization pays duplicate admission"
+
+        admissions.clear()
+        idle = await run_owned_db_call(database, maintenance.run_batch)
+        assert idle.processed_rows == 0 and idle.logical_complete
+        assert database.registered_connection_count() == 0
+        assert 1 <= len(admissions) <= 2, (
+            "idle completion exceeded its admission budget"
+        )
+    finally:
+        database.close_connection()
