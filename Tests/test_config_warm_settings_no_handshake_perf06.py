@@ -248,20 +248,21 @@ def test_a_warm_snapshot_never_blocks_behind_a_held_config_lock(
         assert result == [marker]
 
 
-@pytest.mark.parametrize("change", ["replaced", "symlinked"])
+@pytest.mark.parametrize("change", ["replaced", "symlinked", "parent-symlinked"])
 def test_a_replaced_config_file_is_not_served_warm(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
 ) -> None:
-    """A warm hit re-checks the config file's identity (Qodo, #2903).
+    """A warm hit re-checks the identity of the config path (Qodo, #2903).
 
-    Before PERF-06 every read ran the guarded member checks, which reject a
-    config file swapped for another inode or a symlink. A warm hit now
-    compares one ``lstat`` stamp, so the swap is a miss and reaches them.
+    Before PERF-06 every read ran the guarded checks, which reject a config
+    file swapped for another inode or a symlink, and a symlinked parent. A
+    warm hit now compares an ``lstat`` stamp of every path component, so any
+    such swap is a miss that reaches them.
 
     Args:
         monkeypatch: Replaces the guarded rebuild with a marker.
-        tmp_path: pytest fixture; holds the replacement file.
-        change: How the config file is swapped.
+        tmp_path: pytest fixture; holds the swapped-out originals.
+        change: What is swapped.
     """
     _warm_settings()
     path = config_module._get_effective_config_path()
@@ -272,16 +273,31 @@ def test_a_replaced_config_file_is_not_served_warm(
     assert config_module.load_settings() is not marker  # still warm
 
     original = path.read_bytes()
+    # Everything the swap needs exists before the original moves, and the
+    # finally block restores it whatever fails in between.
+    target = tmp_path / "elsewhere.toml"
+    target.write_bytes(original)
+    if change == "parent-symlinked":
+        moved, restore = path.parent, tmp_path / "moved-parent"
+        os.replace(moved, restore)
+        try:
+            moved.symlink_to(restore, target_is_directory=True)
+            assert (moved / path.name).read_bytes() == original  # same file, new route
+            assert config_module.load_settings() is marker
+        finally:
+            if moved.is_symlink():
+                moved.unlink()
+            os.replace(restore, moved)
+        return
     backup = tmp_path / "original.toml"
     os.replace(path, backup)
     try:
         if change == "replaced":
-            path.write_bytes(original)
+            os.replace(target, path)
         else:
-            target = tmp_path / "elsewhere.toml"
-            target.write_bytes(original)
             path.symlink_to(target)
         assert config_module.load_settings() is marker
     finally:
-        path.unlink()
+        if path.is_symlink() or path.exists():
+            path.unlink()
         os.replace(backup, path)

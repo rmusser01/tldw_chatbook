@@ -1446,8 +1446,8 @@ def coerce_float_setting(
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
-#: PERF-06: the config file's identity, stamped before the cached settings
-#: were read; a warm hit requires it unchanged (see _settings_cache_hit).
+#: PERF-06: the config path's identity (every component), stamped before the
+#: cached settings were read; a warm hit requires it unchanged.
 _SETTINGS_CACHE_POSTURE: Optional[tuple] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: Serializes the miss->rebuild->store sequence (task-3503).
@@ -1899,38 +1899,47 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
-def _config_file_posture(config_path: Path) -> tuple | None:
-    """Identity of the config file itself: ``lstat`` (dev, ino, type, mode, uid, nlink).
+def _config_file_posture(config_path: Path) -> tuple:
+    """``lstat`` identity of every component from ``/`` down to the config file.
 
-    ``None`` when absent. A replaced file, a symlink swap or a new hard link
-    all change it.
+    Each entry is (dev, ino, type, mode, uid), plus nlink for the file itself,
+    or ``None`` for a missing component. A replaced file, a new hard link, a
+    symlink swap of the file, or a parent renamed and replaced by a symlink to
+    itself all change it (Qodo, #2903). ``lstat`` only: nothing is opened or
+    followed.
     """
     import stat as _stat
 
-    try:
-        info = os.lstat(config_path)
-    except FileNotFoundError:
-        return None
-    except OSError:
-        return ("unreadable",)
-    return (
-        info.st_dev,
-        info.st_ino,
-        _stat.S_IFMT(info.st_mode),
-        _stat.S_IMODE(info.st_mode),
-        info.st_uid,
-        info.st_nlink,
-    )
+    posture = []
+    for component in (*reversed(config_path.parents), config_path):
+        try:
+            info = os.lstat(component)
+        except FileNotFoundError:
+            posture.append(None)
+            continue
+        except OSError:
+            posture.append(("unreadable",))
+            continue
+        entry = (
+            info.st_dev,
+            info.st_ino,
+            _stat.S_IFMT(info.st_mode),
+            _stat.S_IMODE(info.st_mode),
+            info.st_uid,
+        )
+        posture.append(entry + (info.st_nlink,) if component == config_path else entry)
+    return tuple(posture)
 
 
 def _settings_cache_hit(active_config_path: Path) -> dict | None:
     """Return the installed settings for ``active_config_path``, or None.
 
-    One short lock and one ``lstat``. Shared by the unguarded warm paths and
-    the guarded rebuild's re-check. The config file's identity must still be
-    the one stamped before the cached settings were read: the guarded path
-    rejected a replaced or symlinked config member on every read, and a warm
-    hit must not hide one (Qodo, #2903), so any change is a miss.
+    One short lock and one ``lstat`` per path component. Shared by the
+    unguarded warm paths and the guarded rebuild's re-check. The config
+    path's identity must still be the one stamped before the cached settings
+    were read: the guarded path rejected a replaced or symlinked config
+    member, or a symlinked parent, on every read, and a warm hit must not
+    hide one (Qodo, #2903), so any change is a miss.
     """
     global _SETTINGS_CACHE_LOCK
 
