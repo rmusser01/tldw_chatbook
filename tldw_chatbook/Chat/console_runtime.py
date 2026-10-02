@@ -3689,7 +3689,10 @@ class ConsoleRuntime:
             while not self._disposed:
                 if parked:
                     await asyncio.sleep(LEGACY_TRACE_MAINTENANCE_PARK_POLL_SECONDS)
-                    if trace_maintenance_work_generation() != seen_work or (
+                    if trace_maintenance_work_generation() != seen_work:
+                        maintenance.expect_work = True  # an exchange was written
+                        parked = False
+                    elif (
                         time.monotonic() - last_physical_attempt
                         >= TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS
                     ):

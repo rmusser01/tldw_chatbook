@@ -111,6 +111,42 @@ async def test_an_exchange_write_signal_wakes_parked_maintenance(
 
 
 @pytest.mark.asyncio
+async def test_a_signal_wake_tells_the_pass_it_has_work(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33801: a pass woken by an exchange write skips the idle check.
+
+    Args:
+        monkeypatch: Swaps in the fake worker and shortens the loop's sleeps.
+    """
+    flags: list[bool] = []
+
+    class _Maintenance:
+        def __init__(self, _database: object, **_kwargs: object) -> None:
+            self.expect_work = True
+
+        def run_batch(self) -> SimpleNamespace:
+            flags.append(self.expect_work)
+            self.expect_work = False
+            return SimpleNamespace(logical_complete=True, admitted=True)
+
+    module = ModuleType("tldw_chatbook.Chat.console_trace_maintenance")
+    module.LegacyTraceMaintenance = _Maintenance  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, module.__name__, module)
+    runtime = _fast_runtime(monkeypatch)
+
+    runtime._schedule_legacy_trace_maintenance(object(), object)
+    await _real_sleep(0.2)
+    parked_at = len(flags)
+    chat_persistence_service.signal_trace_maintenance_work()
+    await _real_sleep(0.2)
+    await runtime.dispose()
+
+    assert len(flags) > parked_at, "the work signal did not wake maintenance"
+    assert flags[parked_at] is True, f"the woken pass was not told it has work: {flags}"
+
+
+@pytest.mark.asyncio
 async def test_one_signal_wakes_every_parked_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
