@@ -23,14 +23,14 @@ The [implementation plan](../../Docs/superpowers/plans/2026-09-29-agent-orchestr
 tracks this scope. All 13 tasks are Done with checked acceptance criteria and implementation
 notes. The [final review and qualification record](../../Docs/superpowers/reviews/2026-09-29-agent-orchestration-burndown.md)
 records the corrections, independent approvals, passing targeted selections and disclosed limits.
-The branch is rebased onto dev `31d4f9b764`. October 1 CI corrections and the
+The branch is rebased onto dev `84247cb843` (PR #2948). October 1 CI corrections and the
 new upstream hook-refusal integration defect are repaired and independently
 reviewed: 145 affected messaging/schema checks, 147 lifecycle/UI checks and
 focused real-gateway wake/refund checks pass. Selections overlap and are not
 summed. Exact tool inventory, canonical timestamps, real query-plan pins, table
 allowlist and audited diagnostic inventory are qualified.
 Qodo's four findings are also corrected and independently re-reviewed: strict
-peer arguments, public docs/type hints and immutable close membership. The
+peer arguments, public docs/type hints and immutable close membership. Final readiness-rebase qualification passes 13 affected checks and five independently reviewed control cases after correcting test preparation/publication assumptions. The diagnostic combined run is not claimed green; production limits and authority are unchanged. Final static qualification covers 78 Python files; all 13 tasks remain Done. The
 boot CSS breach is repaid with one scoped shared editor class, preserving actual
 paint and the original 608090 B ratchet (measured 608088 B). Fresh targeted
 checks and final 76-file changed-code/diagnostic checks pass; all 13 tasks are Done.

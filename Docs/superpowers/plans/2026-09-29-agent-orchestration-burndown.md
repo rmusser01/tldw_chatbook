@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** latest fetched dev 31d4f9b76492120706ba8e3ad7d355f1aa4e0273.
+**Integration base:** latest fetched dev 84247cb8435fcf59b6d8e2d97c6b2f0913934dd0.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -73,3 +73,16 @@ Affected messaging/schema checks pass 145 cases; fallback/sampling/saved-close/h
 - [x] Independently re-review all four Qodo findings and close the reopened tasks after fresh targeted/static/diagnostic checks.
 
 ADR required: no; direct qualification and mechanical repairs under ADR-097/150/173/199/200. All 13 tasks are Done. Fresh evidence:17 CSS/authoring/token/bundle cases, 88 peer/inventory/fallback cases, 2 startup guards, 44 queue cases and 4 mounted lifecycle cases. Independent final review approves 22 focused cases; selections overlap and are not summed. Final static scan covers 76 changed Python files and ten new files with zero added-line/new-file findings; diagnostics match the audited inventory. Publish the follow-up to ready PR #2918 and require fresh checks on that head. No merge is claimed.
+
+
+## Final latest-dev qualification
+
+Rebase base: dev `84247cb8435fcf59b6d8e2d97c6b2f0913934dd0` (PR #2948).
+ADR required: no. This is integration of the existing readiness repair with ADR-199/200 behavior; no boundary or authority change is planned.
+
+- [x] Rebase and independently review the incoming active-run readiness overlap.
+- [x] Verify the 78-file changed-code static boundary and owned test-range formatting against the final base.
+- [x] Investigate the combined failures and qualify the corrected preparation/publication oracles with fresh affected checks and precise negative controls.
+- [x] Prepare the verified rebase for exact-lease publication; confirm the PR head and fresh CI state immediately after the push.
+
+Final evidence: 13 affected checks pass in 177.22s; independent review approves five corrected controls in 209.78s. Frozen terminal painting and never-first-chunk controls fail at their intended assertions. The stopped 138-pass/7-fail selection is retained as diagnostic evidence, not claimed green. Production behavior and limits remain unchanged; all 13 tasks are Done. Fresh GitHub checks remain part of PR delivery.

@@ -2,7 +2,7 @@
 
 Status: all 13 tasks completed, independently reviewed and rebased; ready for PR review.
 Implementation base: dev `64579cce2c8dc64053fb50c00eb4f59b56716b01`.
-Integration base: latest fetched dev `31d4f9b76492120706ba8e3ad7d355f1aa4e0273`.
+Integration base: latest fetched dev `84247cb8435fcf59b6d8e2d97c6b2f0913934dd0`.
 Delivery: PR #2918 against dev; no merge is claimed.
 Branch: `codex/agent-orchestration-burndown`.
 Scope: all 13 tasks authorized by the user's request to burn down the remaining work.
@@ -120,3 +120,19 @@ Qodo posted four findings on that head, all addressed:
 Fresh qualification: **88 peer/inventory/fallback cases in 49.27s** (`/private/tmp/pr2918-qodo-peer-api-green.log`); **2 startup guards in 25.12s** (`/private/tmp/pr2918-qodo-startup-green.log`), with imports 679/686 and UI-ready 1031/1033; **44 queue cases** and **4 actual mounted disposal/cancelled-disposal/replacement-disposal/durable-reopen cases in 31.68s** (`/private/tmp/pr2918-close-membership-green.log`, `/private/tmp/pr2918-close-membership-lifecycle-green.log`). Independent final re-review approves **22 focused checks**, covering malformed peer boundary, real delivery, private trace/log output, shared allowance, controlled close/replacement and actual HTTP machine-code classification. Selections overlap and are not summed.
 
 Final changed-code verification covers **76 Python files**, with fatal checks clean, all ten new files fully Ruff/format-clean, zero added-line/new-file findings and clean whitespace (`/private/tmp/pr2918-qodo-final-static.log`). The unchanged audited diagnostic inventory passes again (`/private/tmp/pr2918-qodo-final-diagnostics.log`). Existing inherited static/size/resource qualification limits remain. CodeRabbit automatically skipped because `dev` is not the configured default base; its success status is not a review approval. Qodo's actual findings and independent scoped review are recorded above. The follow-up must pass fresh GitHub checks after publication; no merge is claimed.
+
+
+## Final rebase onto the active-run readiness repair
+
+Rebased cleanly onto dev `84247cb8435fcf59b6d8e2d97c6b2f0913934dd0` (PR #2948). The only reviewed patch Python file changed by this rebase is `UI/Screens/chat_screen.py`, where incoming readiness display stops treating an active run as provider setup failure. Controller submission, slot ownership, native wake priority, caps and acceptance authority retain their gates.
+
+Independent read-only review approves this overlap. Four focused chainless/manual preparing, actual wake acceptance, mounted wake-copy/keypress and held healthy-run readiness checks pass in 100.19s; nine structured active/nonactive rail badge cases pass in 1.94s. The base-relative static scan remains clean across 76 changed Python files and ten new files (`/private/tmp/pr2918-latest-dev-static.log`). These focused selections are separate from the integration qualification below and are not summed.
+
+
+The combined integration run was stopped for diagnosis after **138 passed / 7 failed in 1147.92s** (`/private/tmp/pr2918-final-rebase-green.log`); it is not claimed green. Five failures expired the held fixture's first-chunk precondition before valid dispatch. Independent observation recorded dispatch at 9.578s and first yield 4.6ms later, normal commit/cleanup and a controller/store/gateway path unchanged from the previously reviewed head. Only preparation now waits up to 15s; all control-action waits retain 5s. Two wake tests use the same preparation bound while paint, ledger and timer settles retain 8s.
+
+The off-viewed wake assertion also assumed an awaited sync acknowledged paint and a fixed 1.2s sleep acknowledged completion. A sync may instead coalesce behind an existing worker. The regression now observes actual Running and completed glyph publication through its existing bounded helper, preserving no interaction and both idle-poll self-stop assertions. Production behavior, deadlines, caps and authority remain unchanged.
+
+Fresh final qualification passes **13 targeted checks in 177.22s** (`/private/tmp/pr2918-final-rebase-affected-green.log`): all four mounted wake cases, both real hook-refund gateways, boot CSS/bundle guards and UI-ready census 1031/1033. Independent review approves both test corrections and passes **all five previously failing controls in 209.78s** (`/private/tmp/review-pr2918-final-controls-green.log`). A private frozen-terminal-publication control reaches real streaming and ledger completion, then fails the exact settled-glyph assertion; a private never-first-chunk control fails its bounded 15s precondition. Disabling only the delivery hook passed because a coalesced tail could still repaint, so that experiment is not claimed as necessary-hook evidence. The testing lesson records this distinction.
+
+Final static verification covers **78 changed Python files**, with fatal and added-line/new-file checks clean, all ten new files fully Ruff/format-clean, owned test-range formatting clean and whitespace clean (`/private/tmp/pr2918-final-rebase-static.log`). The final predicate formatting preserves the tested AST. TASK-33432's rebase qualification is closed through the Backlog CLI with all five criteria checked; all 13 original tasks are Done. The previous published head's GitHub latency job passes; fresh checks must run on this rebased follow-up. No full suite or merge is claimed.
