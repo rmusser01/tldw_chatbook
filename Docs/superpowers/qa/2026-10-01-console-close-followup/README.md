@@ -146,3 +146,11 @@ which changed no Close method; receipts are under
 `/tmp/console-tool-ux-close/timing-consolidation/after-green.log`. Earlier
 RED/GREEN receipts remain under `/tmp/console-tool-ux-close/qodo-*.log`; the
 independent full-finalize probe folded 165 tokens after the state correction.
+
+
+After dev's queue/trace/GC additions, run16 repeated the unchanged native matrix
+on head97b2816d03f0/baseee1c1e7365c2. Four actual closes and80×18 keyboard/geometry
+pass with28 current/stable source pins, app/process/socket0, no network and515
+real data mtimes unchanged. Current receipts live in
+[`latest_dev_queue_gc_integration`](../2026-10-01-console-tool-ux-config-integration.json);
+historical run14 exports remain preserved.

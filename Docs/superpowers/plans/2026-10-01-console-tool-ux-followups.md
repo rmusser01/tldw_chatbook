@@ -125,3 +125,13 @@ evidence;30 targeted checks, current native approval14/Close15, preflight and
 baseline Ruff pass. The unrelated-error fixture retains its original privacy
 assertions and actual retry. See the combined QA/receipt for scope and source
 pins. Final published-head CI/Qodo/normal merge remains the PR checkpoint.
+
+### Latest dev queue/trace/GC rebase
+
+All10 patches remain unchanged on ee1c1e7365c2; existing ADR-094/098 and upstream
+ADR-198 apply, no new decision. Requalify Close/runtime/queue custody, pending
+projection and compact approvals with inherited GC/trace scheduling.47 plain
+targeted checks and two explicitly scoped supplemental modal probes pass,
+preflight/Ruff21 are clear, and native approval15/Close16 source pins match.
+Original modal setup errors remain documented. Final published-head CI/Qodo/
+normal merge remains the separate checkpoint.

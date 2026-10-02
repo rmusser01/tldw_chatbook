@@ -359,3 +359,34 @@ These checks qualify the pinned working source bytes on dev92a, before the
 review-fix commit. Final published-head GitHub gates and fresh clean/resolved
 Qodo remain the separate normal-merge checkpoint. No full local sweep, new
 incarnation machinery, cleared authority, dependency or CI-limit change.
+
+## Latest dev queue, trace and GC integration
+
+Clean rebase onto `ee1c1e7365c2` preserves all10 feature/review patches with no
+conflict. Dev adds queue recovery and app-owned manager actions (PR2943),
+parked trace-maintenance wake scheduling (PR2914), boot/pre-import heap freezing
+(PR2913/ADR-198) and an ADR-126 documentation amendment (PR2911).
+
+**47 plain targeted checks pass**, zero skips:30 review/lifecycle/style checks,
+six current approval/projection cases, two GC contracts including actual
+`_ui_ready` heap freezing, four trace wake/interval cases and five joined queue
+ownership/drain checks. Two supplemental manager removal/clear and app-owned
+Resume probes also pass with the existing `bootstrap_profile` opt-in in separate
+private processes. Their initial `raw_source_selection_changed` setup errors are
+retained; repository test bodies, assertions and markers remain unchanged.
+Final plain GitHub UI Fast Lane is still required.
+
+Fresh preflight passes, census122, and current boot CSS measures607,171 bytes
+under the unchanged608,090 cap. Ruff adds zero diagnostics in21 modified Python
+files against this dev. Read-only combined-tree review found no actionable
+queue/pending-kind/modal/Close/trace-disposal collision.
+
+Native approval15 passes all nine actual Ask-gated read/deny journeys with30
+current/stable pins. Close16 passes the four actual worker closes and80×18
+60-cell keyboard-scroll matrix with28 current/stable pins. Both apps/processes/
+sockets exit0, attempt no network and leave real config/data unchanged
+(533/515 file mtimes). The approval receipt's loose-object lookup failed after
+Git packed the commit; read-only Git recovered the exact unchanged identity,
+separate from the successful native journey. Its failure log is retained.
+Current source hashes and scope are in `latest_dev_queue_gc_integration` of the
+sanitized receipt; historical native exports remain identified as such.

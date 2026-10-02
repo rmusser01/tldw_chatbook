@@ -993,5 +993,242 @@
       "No full local sweep, CI cap, global configuration, branch-protection or dependency changes"
     ],
     "published_head_github_ci_and_qodo": "Required separately before normal merge; no predecessor CI is counted as final-head success."
+  },
+  "latest_dev_queue_gc_integration": {
+    "qualified_head": "97b2816d03f046fa419d058dff1e5ed755b4a95f",
+    "qualified_tree": "98fa77506f3ce6b00d99117034c1cf30140d89cf",
+    "upstream_base": "ee1c1e7365c232a184e129bef1dec15afd85b24f",
+    "rebase": "All10 feature/review patches range-diff unchanged from309d6539ce; no conflicts. Inherited queue recovery, trace parking and GC freeze changes qualify the combined tree.",
+    "source_sha256": {
+      "tldw_chatbook/Utils/ui_responsiveness.py": "7a095d18f6f5ecc3e3de67e142fde7543617f58f1a65b62d6b6df8e414e8a07a",
+      "tldw_chatbook/Utils/ui_responsiveness_artifacts.py": "ce08517300c756ecfa399d4747ed8d31c3abc31f38e66f111e0bad620918ed3d",
+      "Tests/conftest.py": "d61a6627d4e093d5e0118333964cea8be4fb1da7536a77b18a4c864f6e773ac8",
+      "Tests/UI/conftest.py": "e2e073e96cc969d1182ed25efd7a113b448d72c058de3a14cd06b1b80b60da58",
+      "Tests/UI/test_console_native_chat_flow.py": "ae9cd0ead85d2f01e12de7d32304f6acc2453c8d0aec0742ecf3bdf152007bba",
+      "Tests/UI/app_factory.py": "a9be6291cef891d10546ea8abc3672b50cf3fb005a815b8bec57cf520b76f0bf",
+      "tldw_chatbook/Chat/console_runtime.py": "097f828477e1ec8e9ac981897e10fc46edcbe2cd3cc1c28f3cc5e558220cec9f",
+      "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": "b77ad79318ed8297d3413ede3776bf83d6c5c5be7234a08569276d0600474262",
+      "tldw_chatbook/app.py": "21cb210dcd07cc5c88c7e5e6b5136c7e5ac2131ebc1ea72d06d64ff0ff224fc3",
+      "tldw_chatbook/Logging_Config.py": "1f2b7d86684a58b9829eab940b089aacfa1526de588c16972f39c672f90a068a",
+      "tldw_chatbook/Utils/startup_logging.py": "4873546719e5dfe01c1dbc45afa961a1724cf8d1d010739323cfa30a42181d82",
+      "tldw_chatbook/Event_Handlers/worker_handlers/base_handler.py": "d902ce49af720e43345aa1318071e0f43c4d0f8c8fa040f654c518efc7b68c27",
+      "tldw_chatbook/Metrics/metrics_logger.py": "1fb77851fe885105cc787b389d1bd6eb3643a15a63ae61948225fc566c03fc74",
+      "tldw_chatbook/DB/ChaChaNotes_DB.py": "edd4ec0dde98376a28a70a6683df9cf4a8863577bdba7bdbdc0962c73138d259",
+      "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+      "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+      "tldw_chatbook/Widgets/confirmation_dialog.py": "b9e67df05e3777b791d8134e2fbee39817c097945dd98a5027dbb35aea64fed4",
+      "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+      "tldw_chatbook/Chat/console_chat_controller.py": "d4277596b61f696aa261bcbb3e6633bdf5eb63dd9eb374c548674e44fcfb8348",
+      "tldw_chatbook/UI/Screens/chat_screen.py": "ecf6bf34fe6d59a3451c241b821bfa387f0696d582cb2ab6e71eb8a21d537e08",
+      "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+      "tldw_chatbook/Chat/console_display_state.py": "716748622b441c056d38bad7021f439944e1caa6feb1ae56996586cc2293b10d",
+      "tldw_chatbook/css/tldw_cli_modular.tcss": "e1731b135a3c70e61dab56a6727cdb15a78bb883cee228099d953f6ed70a09e8",
+      "tldw_chatbook/css/widget_defaults_scoped.tcss": "0f7b985af2f000da9d01ffbf91685c7851c6e587db78d0222f84455ef0646be0",
+      "tldw_chatbook/css/widget_defaults_self.tcss": "fc258a27a43742c3c0de324e31197d23739bac45f1dd772f43349704c1570a3e",
+      "tldw_chatbook/css/core/_variables.tcss": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
+      "tldw_chatbook/css/components/_dialogs.tcss": "2ffc3df81ea999d523e46322896007618aa08b06a2c6ec73a03306878c3acaf2",
+      "tldw_chatbook/css/features/_console.tcss": "9e13a20c4d207fa1319f5ecb1c8c66851878385b2d860b9e39edff1ce755e535",
+      "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+      "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": "20023d46b23d7112ce5566725d5b275828d5189bf8941bca9d2b88bd729fac47",
+      "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+      "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4",
+      "tldw_chatbook/Chat/chat_persistence_service.py": "1f679d92c89e4f6410b4460d7c970c6a283b8f465e9b7fb602abaf1dddf32fe3",
+      "tldw_chatbook/Chat/console_prompt_queue.py": "e372967a5ab6db6d6b04a0cb8fb2eb116d61a03736f7188ba504c2e07e6d5133",
+      "tldw_chatbook/Chat/console_prompt_queue_coordinator.py": "53bea43d2329dc90245d0d5e90c0f2e1279b639e41c55c80a0113a8785bf0de0",
+      "tldw_chatbook/Chat/console_trace_maintenance.py": "c16de179f7ac74041fb91fbe3a6c6d0ca887135462b3a819b4af36cd71a2e4dc",
+      "tldw_chatbook/UI/Console_Modules/prompt_queue.py": "f9f8ca8a8d7ae681975c4ddf0eceb8844e2bfdef1e2023c9fea072e2e97baa7c",
+      "tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py": "e52a205c0c823e576028d2452f614a1c01b5ee48a7c1e99a7c3758b69a4ca4a3",
+      "Tests/Chat/test_console_runtime_shutdown.py": "84c5eb64fa08d6ab1b15516eb52e73c3d36a6338e6ae6a9443fbe7d7e34289ca",
+      "Tests/UI/test_console_session_tab_close.py": "c38012e85a048efaf8bfcecc55d54045eb93a6cf9097576e1cef21caf1896643",
+      "Tests/Widgets/test_confirmation_dialog_literal_text.py": "0e7b042c56e13f35d03c3aa2a4a26f0ee7140289bf49477560b1e8d98699a516"
+    },
+    "plain_targeted_checks": {
+      "primary": 45,
+      "additional_coordinator": 2,
+      "total": 47,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "supplemental_modal_checks": {
+      "cases": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "scope": "Two existing queue-modal cases use the existing bootstrap_profile opt-in in separate private processes; original two raw_source_selection_changed setup errors retained. Test bodies/assertions and repository markers unchanged. Final plain GitHub UI gate remains required."
+    },
+    "receipts": {
+      "primary": "/tmp/console-tool-ux-queue-gc-receipt.json",
+      "initial_boundary": "/tmp/console-tool-ux-queue-gc-boundary-receipt.json",
+      "supplemental": "/tmp/console-tool-ux-modal-optin-receipt.json",
+      "preflight": "/tmp/console-tool-ux-queue-gc-preflight.txt",
+      "ruff": "/tmp/console-tool-ux-queue-gc-lint.json"
+    },
+    "boot_css": {
+      "bytes": 607171,
+      "unchanged_cap": 608090,
+      "gated_ui_files": 122
+    },
+    "ruff": {
+      "modified_python_files": 21,
+      "base": "ee1c1e7365c232a184e129bef1dec15afd85b24f",
+      "new_diagnostics": 0
+    },
+    "preflight_passed": true,
+    "independent_combined_tree_review": "No actionable queue, pending-kind, modal worker, Close or trace-disposal collision.",
+    "native_approval15": {
+      "passed": true,
+      "journeys": 9,
+      "approved_local_executor_journeys": 3,
+      "denied_journeys": 6,
+      "app_exit_code": 0,
+      "process_exit_code": 0,
+      "exact_app_process_gone": true,
+      "driver": "LinuxDriver",
+      "tty_streams": true,
+      "lock_acquired": true,
+      "network_attempts": [],
+      "real_config_directory_unchanged": true,
+      "real_config_entries_tracked": 21,
+      "real_data_mtimes_unchanged": true,
+      "real_data_files_tracked": 533,
+      "frozen_source_hashes_unchanged": true,
+      "native_source_pins_current": true,
+      "owned_tmux_socket_removed": true
+    },
+    "native_close16": {
+      "passed": true,
+      "profile": "run16",
+      "terminal": {
+        "pane_dead": true,
+        "process_exit_code": 0,
+        "qualified_profile": "run16",
+        "pane_status": "1 0",
+        "app_pid_exited": true,
+        "owned_socket_released": true,
+        "socket_cleanup_exit_code": 0
+      },
+      "cells": [
+        {
+          "size": [
+            235,
+            52
+          ],
+          "kind": "approval",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "close-call": "deny"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            235,
+            52
+          ],
+          "kind": "question",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "answered": false,
+            "reason": "cancelled"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            80,
+            24
+          ],
+          "kind": "approval",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "close-call": "deny"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            80,
+            24
+          ],
+          "kind": "question",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "answered": false,
+            "reason": "cancelled"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        }
+      ],
+      "max_risk_dialog": {
+        "size": [
+          80,
+          24
+        ],
+        "title_characters": 60,
+        "all_six_nonzero_counts": true,
+        "all_five_pending_kinds": true,
+        "title_and_actions_fully_painted": true,
+        "default_stay": true,
+        "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",
+        "short_height": {
+          "size": [
+            80,
+            18
+          ],
+          "title_characters": 60,
+          "all_six_nonzero_counts": true,
+          "all_five_pending_kinds": true,
+          "original_dialog_width": 60,
+          "title_fully_painted_at_top": true,
+          "actions_fully_painted_and_hit_testable_before_and_after_scroll": true,
+          "default_stay": true,
+          "native_keyboard_scroll": true,
+          "scroll_y_before": 0.0,
+          "scroll_y_after": 6,
+          "last_consequence_readable_after_scroll": true,
+          "native_home_and_tab_restored_stay": true
+        }
+      },
+      "sources_stable_and_current": true,
+      "real_config_unchanged": true,
+      "real_data_mtimes_unchanged": true,
+      "real_data_file_count": 515,
+      "network_attempts": [],
+      "fixture_scope": "Actual TldwCli and LinuxDriver. Real request_user_questions and request_mcp_approvals worker rounds; deterministic registered owning asyncio task, no provider, tool dispatch or external server. Actual ConsoleRuntime closes the requested background session. Terminal SGR mouse input presses both tab close and confirmation buttons.",
+      "same_id_recovery_refusal_scope": "Covered separately by focused mounted/controller/runtime tests; existing native matrix qualifies normal worker closes and shared confirmation geometry."
+    },
+    "native_approval_pins": 30,
+    "native_close_pins": 28,
+    "native_receipts": {
+      "approval": "/tmp/console-tool-ux-approval-run15-sanitized/isolation-qualified.json",
+      "close": "/tmp/console-tool-ux-close-native/run16/qualification.json"
+    },
+    "receipt_bookkeeping": "Approval receipt initially could not read a now-packed commit as a loose object; read-only Git identity recovered the immutable tree. Native execution was unaffected; failure log retained.",
+    "scope": "No source/runner edit during requalification, new ownership state, logging/trace/GC throughput claim, full local sweep, dependency or CI cap change. Published-head CI and Qodo remain required."
   }
 }
