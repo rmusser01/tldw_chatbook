@@ -288,10 +288,14 @@ generic diagnostics. No new settings surface, visual theme, or keybinding is nee
 The budget/attempt foundation is one implementation slice; tool/schema, creation,
 draft custody, approval, and Console integration form the next. Create concrete
 atomic implementation tasks only after written-spec approval. AgentRunsDB needs
-a versioned migration for allowance references and launch attempts; select the
-next version from the actual implementation branch. Existing roots retain their
-current limits and ownership. Conversation settings and handoff revisions use the
-existing persistence owners and local metadata contracts.
+a versioned migration for allowance references and launch attempts. The
+conversation database also needs a migration: existing dispatch checkpoints
+accept only manual/queued origins, and the new machine-origin receipt must retain
+its identity through recovery. Select both next versions from the actual
+implementation branch and preserve existing rows, constraints, and local
+ownership. Existing roots retain their current limits and ownership. Conversation
+settings and handoff revisions use the existing persistence owners and local
+metadata contracts.
 
 Focused automated evidence must cover:
 
