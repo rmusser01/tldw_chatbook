@@ -101,7 +101,9 @@ async def test_native_send_applies_conversation_world_info_provider_branch(wb_db
 
 
 @pytest.mark.asyncio
-async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, monkeypatch):
+async def test_native_send_world_info_disabled_by_config_not_injected(
+    wb_db, monkeypatch
+):
     assert save_setting_to_cli_config("console", "agent_runtime", False)
     app = _build_test_app()
     attach_chachanotes_db(app)
@@ -127,9 +129,7 @@ async def test_native_send_world_info_disabled_by_config_not_injected(wb_db, mon
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _fake_get_cli_setting
-    )
+    monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_get_cli_setting)
 
     async with ConsoleHarness(app).run_test(size=(180, 48)) as pilot:
         screen = pilot.app.screen_stack[-1]
@@ -162,9 +162,7 @@ def test_console_world_info_applier_honors_enable_world_info_setting(monkeypatch
             return False
         return real_get_cli_setting(section, key, default)
 
-    monkeypatch.setattr(
-        chat_screen_module, "get_cli_setting", _fake_get_cli_setting
-    )
+    monkeypatch.setattr(chat_screen_module, "get_cli_setting", _fake_get_cli_setting)
 
     def _fail_if_called(*args, **kwargs):
         raise AssertionError(

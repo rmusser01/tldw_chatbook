@@ -123,6 +123,7 @@ async def test_stop_click_acknowledges_synchronously_and_records_stop_row():
         # AC3: an explicit stopped-by-user record exists in the transcript.
         messages = store.messages_for_session(store.active_session_id)
         assert any(
-            m.role is ConsoleMessageRole.SYSTEM and "stopped by user" in m.content.lower()
+            m.role is ConsoleMessageRole.SYSTEM
+            and "stopped by user" in m.content.lower()
             for m in messages
         ), "no explicit stopped-by-user transcript record"
