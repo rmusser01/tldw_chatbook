@@ -339,13 +339,23 @@ async def test_mounted_shelf_and_neighboring_composer_fit_terminal(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("size", [(80, 24), (100, 30), (160, 40)])
+@pytest.mark.parametrize(
+    ("size", "narrow"),
+    [((80, 24), True), ((100, 30), False), ((160, 40), False)],
+)
 @private_profile_test
 async def test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen(
-    request, size
+    request, size, narrow
 ) -> None:
     """TASK-33621.19 review: the named 'Turn failed: "..."' summary is the
-    shelf's longest label; it truncates instead of pushing Retry off-screen."""
+    shelf's longest label; it truncates instead of pushing Retry off-screen.
+
+    The 80-column case is the narrow shelf, and its label is genuinely wider
+    than the space left beside the buttons, so the painted line must end in
+    an ellipsis. The wide cases paint the whole label.
+    """
+
+    from rich.cells import cell_len
 
     from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 
@@ -389,10 +399,23 @@ async def test_mounted_shelf_naming_a_failed_turn_keeps_retry_on_screen(
         retry = region.query_one("#console-prompt-queue-pause", Button)
 
         assert str(retry.label) == "Retry"
-        assert "Turn failed" in str(summary.render())
+        label = str(summary.render())
+        assert "Turn failed" in label
         assert summary.region.right <= manage.region.x
         assert manage.region.right <= retry.region.x
         assert retry.region.right <= region.region.right
+        assert "Retry" in retry.render_line(0).text
+
+        painted = summary.render_line(0).text.rstrip()
+        assert region.has_class("-narrow") is narrow
+        if narrow:
+            assert not region.query_one("#console-prompt-queue-preview").display
+            assert cell_len(label) > summary.region.width
+            assert painted.endswith("…")
+            assert label.startswith(painted[:-1])
+            assert "Turn failed" in painted
+        else:
+            assert painted == label
 
 
 @pytest.mark.asyncio

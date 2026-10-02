@@ -306,11 +306,16 @@ def derive_prompt_queue_presentation(
 class ConsolePromptQueueRegion(Widget):
     """Always-mounted one-row queue shelf directly above the composer."""
 
+    # Every byte below is parsed at boot (ADR-097's boot CSS ratchet), so
+    # nothing here restates what already holds (TASK-33621.19). The
+    # #console-prompt-queue-row Horizontal has no rule: its own defaults
+    # (1fr x 1fr, horizontal layout) fill this region, which max-height
+    # clamps to one row. No min-height sits beside a fixed `height: 1`:
+    # it could never take effect.
     BUNDLED_CSS = """
     ConsolePromptQueueRegion {
         display: none;
         height: 1;
-        min-height: 1;
         max-height: 1;
         width: 100%;
         background: $panel;
@@ -319,12 +324,6 @@ class ConsolePromptQueueRegion(Widget):
 
     ConsolePromptQueueRegion.-visible {
         display: block;
-    }
-
-    ConsolePromptQueueRegion > #console-prompt-queue-row {
-        height: 1;
-        width: 100%;
-        layout: horizontal;
     }
 
     #console-prompt-queue-summary {
@@ -345,7 +344,6 @@ class ConsolePromptQueueRegion(Widget):
         width: 8;
         min-width: 8;
         height: 1;
-        min-height: 1;
         padding: 0 1;
     }
 
@@ -353,7 +351,6 @@ class ConsolePromptQueueRegion(Widget):
         width: 15;
         min-width: 15;
         height: 1;
-        min-height: 1;
         padding: 0 1;
     }
 
