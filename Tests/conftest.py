@@ -1209,6 +1209,17 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+            # TASK-19642.11: the managed model-artifact transfer suites drive
+            # the real fetch hot path against loopback fixture servers
+            # (stream_fetch -> check_url_or_raise_async -> egress
+            # ._config_enabled -> get_cli_setting on the guarded config
+            # loader); same admission signature as the hosted-chat class
+            # above. They fake the HTTP transport, not the config getters,
+            # so they keep the bootstrap profile.
+            "test_stream_fetch.py",
+            "test_provision_fetch.py",
+            "test_source_map.py",
+            "test_credentials_and_boundaries.py",
         }
     )
     test_data_dir = (
