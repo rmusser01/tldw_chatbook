@@ -12,6 +12,7 @@ import tomllib
 
 import pytest
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module  # noqa: E402
 
 
@@ -27,7 +28,7 @@ def test_default_config_tree_carries_chunking_section():
 
 def test_real_loader_emits_chunking_section(tmp_path, monkeypatch):
     """A fresh profile (missing config file) still resolves the section."""
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(tmp_path / "missing-config.toml"))
+    select_config_source(monkeypatch, str(tmp_path / "missing-config.toml"), globals())
 
     settings = config_module.load_settings(force_reload=True)
 
@@ -42,7 +43,7 @@ def test_user_configured_default_template_wins(tmp_path, monkeypatch):
         '[chunking]\ndefault_template = "tiny-words"\n',
         encoding="utf-8",
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     settings = config_module.load_settings(force_reload=True)
 

@@ -1,5 +1,6 @@
 """Tests for config_module.delete_settings_from_cli_config."""
 
+import inspect
 import json
 import os
 import subprocess
@@ -12,6 +13,7 @@ from pathlib import Path
 import pytest
 import toml
 
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 
 
@@ -39,7 +41,7 @@ def test_deletes_existing_keys_from_nested_section(tmp_path, monkeypatch):
             }
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.delete_settings_from_cli_config(
         "console.rail_state",
@@ -58,7 +60,7 @@ def test_deletes_existing_keys_from_nested_section(tmp_path, monkeypatch):
 def test_missing_section_is_a_noop_returning_true(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"chat_defaults": {"streaming": True}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_content = config_path.read_text(encoding="utf-8")
     original_mtime_ns = config_path.stat().st_mtime_ns
 
@@ -73,7 +75,9 @@ def test_missing_section_is_a_noop_returning_true(tmp_path, monkeypatch):
 
 def test_missing_file_returns_true(tmp_path, monkeypatch):
     config_path = tmp_path / "does-not-exist" / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    config_path.parent.mkdir(mode=0o700)
+    select_config_source(monkeypatch, str(config_path), globals())
+    config_path.unlink()
 
     assert config_module.delete_settings_from_cli_config(
         "console.rail_state",
@@ -98,7 +102,7 @@ def test_non_matching_delete_leaves_file_byte_identical(tmp_path, monkeypatch):
             }
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
     original_mtime_ns = config_path.stat().st_mtime_ns
 
@@ -127,7 +131,7 @@ def test_other_sections_and_keys_are_untouched(tmp_path, monkeypatch):
             "chat_defaults": {"streaming": True, "temperature": 0.33},
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.delete_settings_from_cli_config(
         "console.rail_state",
@@ -154,7 +158,7 @@ def test_delete_preserves_existing_file_permissions(tmp_path, monkeypatch):
         },
     )
     os.chmod(config_path, 0o600)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.delete_settings_from_cli_config(
         "console.rail_state",
@@ -169,7 +173,7 @@ def test_save_preserves_existing_file_permissions(tmp_path, monkeypatch):
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"chat_defaults": {"streaming": True}})
     os.chmod(config_path, 0o600)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     assert config_module.save_settings_to_cli_config(
         {"chat_defaults": {"temperature": 0.5}}
@@ -201,9 +205,8 @@ def test_structured_mutation_sets_and_deletes_with_one_atomic_replace(
         },
     )
     os.chmod(config_path, 0o600)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     atomic_write = config_module.atomic_private_write_text
-    load_settings = config_module.load_settings
     write_calls = 0
     reload_calls = 0
 
@@ -212,36 +215,42 @@ def test_structured_mutation_sets_and_deletes_with_one_atomic_replace(
         write_calls += 1
         return atomic_write(*args, **kwargs)
 
-    def counted_load_settings(*args, **kwargs):
+    load_code = inspect.unwrap(config_module.load_settings).__code__
+
+    def counted_load_settings(frame, event, arg):
         nonlocal reload_calls
-        reload_calls += 1
-        return load_settings(*args, **kwargs)
+        if event == "call" and frame.f_code is load_code:
+            reload_calls += 1
 
     monkeypatch.setattr(
         config_module,
         "atomic_private_write_text",
         counted_atomic_write,
     )
-    monkeypatch.setattr(config_module, "load_settings", counted_load_settings)
+    previous_profile = sys.getprofile()
+    sys.setprofile(counted_load_settings)
 
-    result = config_module.apply_settings_mutation_to_cli_config(
-        {
-            "app_tts": {
-                "default_provider": "audio_cpp",
-                "default_model_mode": "first_available",
-                "default_voice_mode": "server_default",
-                "default_format": "wav",
-                "default_speed": 1.0,
-            }
-        },
-        delete_keys={
-            "app_tts": ("default_model", "default_voice"),
-            "tts_settings": (
-                "default_openai_tts_model",
-                "default_tts_voice",
-            ),
-        },
-    )
+    try:
+        result = config_module.apply_settings_mutation_to_cli_config(
+            {
+                "app_tts": {
+                    "default_provider": "audio_cpp",
+                    "default_model_mode": "first_available",
+                    "default_voice_mode": "server_default",
+                    "default_format": "wav",
+                    "default_speed": 1.0,
+                }
+            },
+            delete_keys={
+                "app_tts": ("default_model", "default_voice"),
+                "tts_settings": (
+                    "default_openai_tts_model",
+                    "default_tts_voice",
+                ),
+            },
+        )
+    finally:
+        sys.setprofile(previous_profile)
 
     assert result == config_module.ConfigMutationResult(
         file_replaced=True,
@@ -273,7 +282,7 @@ def test_structured_mutation_rejects_set_delete_overlap_before_write(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_model": "old"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
     original_mtime_ns = config_path.stat().st_mtime_ns
     write_calls = 0
@@ -311,7 +320,7 @@ def test_structured_mutation_contains_malformed_input_as_validation_failure(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_model": "old"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
 
     result = config_module.apply_settings_mutation_to_cli_config(
@@ -332,7 +341,7 @@ def test_structured_mutation_reports_cache_reload_failure_after_replace(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_provider": "openai"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     def fail_cache_reload(*args, **kwargs):
         raise RuntimeError("injected cache reload failure")
@@ -374,7 +383,7 @@ def test_structured_mutation_reports_write_failure_before_replace(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_provider": "openai"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
     original_mtime_ns = config_path.stat().st_mtime_ns
 
@@ -428,7 +437,7 @@ def test_batch_save_delete_keys_delegates_to_one_structured_mutation(
             }
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     atomic_write = config_module.atomic_private_write_text
     write_calls = 0
 
@@ -467,7 +476,7 @@ def test_empty_batch_save_remains_a_successful_noop(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_provider": "audio_cpp"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
     original_mtime_ns = config_path.stat().st_mtime_ns
 
@@ -483,7 +492,7 @@ def test_batch_save_with_only_empty_sections_remains_a_successful_noop(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_provider": "audio_cpp"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original_bytes = config_path.read_bytes()
     original_mtime_ns = config_path.stat().st_mtime_ns
 
@@ -509,7 +518,7 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
             }
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     real_atomic_write = config_module.atomic_private_write_text
     set_at_write = threading.Event()
     release_set_write = threading.Event()
@@ -520,33 +529,44 @@ def test_shared_lock_prevents_lost_concurrent_set_and_delete_updates(
             self._lock = lock
             self._state_lock = threading.Lock()
             self._owner: str | None = None
+            self._depth = 0
             self.blocked_threads: list[str] = []
 
-        def __enter__(self):
+        def acquire(self, *args, **kwargs):
             thread_name = threading.current_thread().name
             with self._state_lock:
-                if self._owner is not None:
+                if (
+                    self._owner is not None
+                    and self._owner != thread_name
+                    and thread_name not in self.blocked_threads
+                ):
                     self.blocked_threads.append(thread_name)
             if thread_name == "delete-worker":
                 delete_attempting_lock.set()
-            self._lock.acquire()
-            with self._state_lock:
-                self._owner = thread_name
+            acquired = self._lock.acquire(*args, **kwargs)
+            if acquired:
+                with self._state_lock:
+                    self._owner = thread_name
+                    self._depth += 1
+            return acquired
+
+        def __enter__(self):
+            self.acquire()
             return self
 
         def __exit__(self, exc_type, exc_value, traceback) -> None:
             del exc_type, exc_value, traceback
+            self.release()
+
+        def release(self):
             with self._state_lock:
-                self._owner = None
+                self._depth -= 1
+                if not self._depth:
+                    self._owner = None
             self._lock.release()
 
     instrumented_lock = InstrumentedLock(config_module._settings_rebuild_lock())
     monkeypatch.setattr(config_module, "_SETTINGS_REBUILD_LOCK", instrumented_lock)
-    monkeypatch.setattr(
-        config_module,
-        "load_settings",
-        lambda *, force_reload=False, reload_bootstrap=None: {},
-    )
 
     def controlled_atomic_write(*args, **kwargs):
         if threading.current_thread().name == "set-worker":
@@ -622,7 +642,7 @@ def test_revisioned_section_replace_is_atomic_and_preserves_other_sections(
             "global": {"credential": "preserved", "enabled": True},
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     result = config_module.replace_revisioned_settings_section_to_cli_config(
         "speech_studio",
@@ -655,7 +675,7 @@ def test_revisioned_section_replace_reports_conflict_without_writing(
         config_path,
         {"speech_studio": {"schema_version": 1, "revision": 4}},
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original = config_path.read_bytes()
 
     result = config_module.replace_revisioned_settings_section_to_cli_config(
@@ -710,16 +730,16 @@ write_path = Path(sys.argv[3])
 other_write_path = Path(sys.argv[4])
 provider_id = sys.argv[5]
 writer_kind = sys.argv[6]
-real_write = config_module._write_raw_cli_config_unlocked
+real_write = config_module.atomic_private_write_text
 
-def coordinated_write(config_path, config_data):
+def coordinated_write(*args, **kwargs):
     write_path.write_text("ready", encoding="utf-8")
     deadline = time.monotonic() + 0.75
     while not other_write_path.exists() and time.monotonic() < deadline:
         time.sleep(0.01)
-    real_write(config_path, config_data)
+    return real_write(*args, **kwargs)
 
-config_module._write_raw_cli_config_unlocked = coordinated_write
+config_module.atomic_private_write_text = coordinated_write
 ready_path.write_text("ready", encoding="utf-8")
 while not go_path.exists():
     time.sleep(0.01)
@@ -828,7 +848,7 @@ def test_revisioned_section_replace_recovers_missing_or_corrupt_revision_zero(
     if current is not None:
         raw["speech_studio"] = current
     _write_config(config_path, raw)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     result = config_module.replace_revisioned_settings_section_to_cli_config(
         "speech_studio",
@@ -853,7 +873,7 @@ def test_generic_mutation_cannot_bypass_revisioned_section_owner(
         config_path,
         {"speech_studio": {"schema_version": 1, "revision": 4}},
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original = config_path.read_bytes()
 
     result = config_module.apply_settings_mutation_to_cli_config(
@@ -877,7 +897,7 @@ def test_settings_mutation_precondition_rejects_inside_atomic_writer(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"global": {"keep": True}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original = config_path.read_bytes()
     checks = []
 
@@ -906,7 +926,7 @@ def test_settings_locked_snapshot_precondition_observes_authoritative_config(
         config_path,
         {"api_settings": {"moonshot": {"api_region": "china"}}},
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     snapshot = config_module.get_atomic_config_snapshot()
     assert config_module.apply_settings_mutation_to_cli_config(
         {"api_settings.moonshot": {"api_region": "global"}}
@@ -1043,7 +1063,7 @@ def test_whole_config_replacement_preserves_revisioned_owned_section(
             "global": {"old": True},
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     stale_replacement = {
         "speech_studio": {"schema_version": 1, "revision": 1},
         "global": {"new": True},
@@ -1074,7 +1094,7 @@ def test_revisioned_section_replace_rejects_invalid_revision_transition(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"global": {"keep": True}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original = config_path.read_bytes()
 
     result = config_module.replace_revisioned_settings_section_to_cli_config(
@@ -1097,7 +1117,7 @@ def test_delete_wrapper_performs_one_atomic_write_for_actual_mutation(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"app_tts": {"default_model": "stale"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     atomic_write = config_module.atomic_private_write_text
     write_calls = 0
 
@@ -1137,7 +1157,7 @@ def test_literal_transaction_keeps_punctuated_model_id_as_one_mapping_key(
             }
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     observed = []
 
     def build(snapshot):
@@ -1199,7 +1219,7 @@ def test_literal_transaction_deletes_exact_field_and_preserves_siblings(
             "unrelated": {"newer": True},
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     result = config_module.apply_literal_settings_transaction_to_cli_config(
         lambda _snapshot: config_module.LiteralSettingsMutation(
@@ -1250,7 +1270,7 @@ def test_literal_transaction_rejects_invalid_targets_before_write(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"chat_defaults": {"model": "old"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     original = config_path.read_bytes()
     write_calls = []
     monkeypatch.setattr(
@@ -1279,7 +1299,7 @@ def test_literal_transaction_contains_builder_exception_and_invokes_once(
 ) -> None:
     config_path = tmp_path / "config.toml"
     _write_config(config_path, {"chat_defaults": {"model": "old"}})
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     calls = 0
 
     def fail_builder(_snapshot):
@@ -1308,7 +1328,7 @@ def test_literal_transaction_detaches_builder_owned_containers_before_validation
         config_path,
         {"shared": {"remove": "old", "late_delete": "preserved"}},
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     path = ("shared",)
     values = {"payload": {"nested": ["original"]}}
     deletes = ["remove"]
@@ -1358,7 +1378,7 @@ def test_legacy_dotted_mutation_detaches_inputs_before_entering_writer(
         config_path,
         {"shared": {"remove": "old", "late_delete": "preserved"}},
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
     values = {"payload": {"nested": ["original"]}}
     deletes = ["remove"]
     section_values = {"shared": values}
@@ -1403,7 +1423,7 @@ def test_legacy_dotted_mutation_snapshots_stateful_mappings_once_before_validati
             "speech_studio": {"revision": 7, "retain": "protected"},
         },
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(config_path))
+    select_config_source(monkeypatch, str(config_path), globals())
 
     class SwitchingMapping(dict):
         def __init__(self, first, second):

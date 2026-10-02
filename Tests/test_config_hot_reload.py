@@ -12,6 +12,7 @@ import pytest
 
 from Tests.Backup_Recovery.test_bound_config_companions import _SCRIPT
 from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook import config as config_module
 
 
@@ -27,7 +28,7 @@ def _clear():
 
 def test_external_edit_is_picked_up_on_next_read(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, target, globals())
     monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 0.0)
     _clear()
 
@@ -45,7 +46,7 @@ def test_external_edit_is_picked_up_on_next_read(tmp_path, monkeypatch):
 
 def test_unchanged_file_is_not_re_read(tmp_path, monkeypatch):
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, target, globals())
     monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 0.0)
     _clear()
     target.write_text('[general]\nusers_name = "Alice"\n')
@@ -60,7 +61,7 @@ def test_throttle_suppresses_the_stat_within_the_window(tmp_path, monkeypatch):
     """AC#6: within the throttle window no stat happens, so the hot path
     keeps its near-zero cost even if the file changed."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, target, globals())
     # a large window: the second read must NOT stat, so the edit is not seen
     monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 3600.0)
     _clear()
@@ -78,7 +79,7 @@ def test_throttle_suppresses_the_stat_within_the_window(tmp_path, monkeypatch):
 def test_manual_reload_still_works(tmp_path, monkeypatch):
     """AC#5."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, target, globals())
     monkeypatch.setattr(config_module, "_CONFIG_STAT_THROTTLE_SECONDS", 3600.0)
     _clear()
     target.write_text('[general]\nusers_name = "Alice"\n')
@@ -95,7 +96,7 @@ def test_self_write_is_not_a_phantom_external_edit_across_throttle(tmp_path, mon
     treat its own write as an external edit and force a locked re-read. The
     earlier test only read within the throttle window and missed this."""
     target = tmp_path / "config.toml"
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
+    select_config_source(monkeypatch, target, globals())
     config_module._CONFIG_CACHE = None
     config_module._CONFIG_CACHE_SOURCE = None
     config_module._SETTINGS_CACHE = None

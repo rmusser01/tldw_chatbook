@@ -7,10 +7,11 @@ verbatim and auth fails. Also verifies that ``set_encryption_password`` drops th
 stale ciphertext cache primed before the startup unlock prompt.
 """
 
-import toml
 import pytest
+import toml
 
 import tldw_chatbook.config as cfg
+from Tests.Backup_Recovery.config_test_support import select_config_source
 from tldw_chatbook.Utils.config_encryption import config_encryption
 
 PASSWORD = "test-master-pw"
@@ -47,7 +48,7 @@ def test_load_settings_decrypts_api_settings_when_encrypted(
 ):
     cfg_path = tmp_path / "config.toml"
     _write_encrypted_config(cfg_path)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
+    select_config_source(monkeypatch, str(cfg_path), globals())
     cfg.set_encryption_password(PASSWORD)
 
     result = cfg.load_settings(force_reload=True)
@@ -68,7 +69,7 @@ def test_check_encryption_needed_detects_real_plaintext_provider_key(
     cfg_path.write_text(
         '[SearchEngines]\nbing_search_api_key = "bing-real-plaintext-secret"\n'
     )
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
+    select_config_source(monkeypatch, str(cfg_path), globals())
     cfg._CONFIG_CACHE = None
     cfg._CONFIG_CACHE_SOURCE = None
 
@@ -82,7 +83,7 @@ def test_set_encryption_password_invalidates_stale_ciphertext_cache(
     prompt, then the password is entered — the next load must decrypt."""
     cfg_path = tmp_path / "config.toml"
     _write_encrypted_config(cfg_path)
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(cfg_path))
+    select_config_source(monkeypatch, str(cfg_path), globals())
 
     # 1) No password yet: load primes the cache with ciphertext.
     cfg.clear_encryption_password()
