@@ -175,3 +175,64 @@ def test_an_override_changed_while_the_inputs_build_is_not_memoized(request, mon
     context = sensitive_paths.resolve_sensitive_context()
     assert original.resolve() in context.direct_child_denied_dirs
     assert sensitive_paths.is_sensitive_path(original / "chroma.sqlite3", context)
+
+
+@private_profile_test
+def test_a_warm_context_reuses_the_raw_inputs_until_their_key_moves(request, monkeypatch, tmp_path):
+    """The memo is real: a second context does not re-run the database-path
+    accessors, and an environment change makes the next one rebuild (Qodo, #2924).
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: Counts the accessor calls and changes an override.
+        tmp_path: Holds the override's directory.
+    """
+    from tldw_chatbook.Utils import sensitive_paths
+
+    _warm(monkeypatch)
+    builds = [0]
+    real_db_paths = sensitive_paths._sensitive_db_paths
+
+    def counted_db_paths():
+        builds[0] += 1
+        return real_db_paths()
+
+    monkeypatch.setattr(sensitive_paths, "_sensitive_db_paths", counted_db_paths)
+    sensitive_paths.resolve_sensitive_context()
+    built = builds[0]
+    sensitive_paths.resolve_sensitive_context()
+    assert builds[0] == built, "a warm context re-ran the database-path accessors"
+
+    moved = tmp_path / "moved-chroma"
+    moved.mkdir()
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(moved))
+    sensitive_paths.resolve_sensitive_context()
+    assert builds[0] == built + 1, "an environment change did not rebuild the inputs"
+
+
+@private_profile_test
+def test_a_relative_database_override_follows_the_working_directory(request, monkeypatch, tmp_path):
+    """A relative custom database path resolves against the working directory,
+    so a directory change must rebuild the deny list (Qodo, #2924).
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: Makes the database path relative and changes directory.
+        tmp_path: Holds the two working directories.
+    """
+    from tldw_chatbook import config
+    from tldw_chatbook.Utils import sensitive_paths
+
+    _warm(monkeypatch)
+    first, second = tmp_path / "first", tmp_path / "second"
+    for directory in (first, second):
+        (directory / "db").mkdir(parents=True)
+    monkeypatch.setattr(
+        config, "get_chachanotes_db_path", lambda: Path(os.path.abspath("db/ChaChaNotes.db"))
+    )
+    monkeypatch.chdir(first)
+    sensitive_paths.resolve_sensitive_context()
+    monkeypatch.chdir(second)
+
+    context = sensitive_paths.resolve_sensitive_context()
+    assert sensitive_paths.is_sensitive_path(second / "db" / "ChaChaNotes.db", context)

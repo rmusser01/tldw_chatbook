@@ -626,10 +626,12 @@ def _raw_inputs() -> tuple:
 
     The key is the config cache object (by identity) and its generation, the
     effective config path, the user data directory -- itself re-verified on
-    every call by ``config.get_user_data_dir`` -- and the whole environment,
+    every call by ``config.get_user_data_dir`` -- the whole environment,
     since accessors read overrides such as ``RAG_PERSIST_DIR`` that outrank
-    config. So a config reload or write, any environment change, or a moved
-    data directory is observed on the very next call. A snapshot built while
+    config, and the working directory a relative custom database path is
+    resolved against. So a config reload or write, any environment change, a
+    moved data directory or a directory change is observed on the very next
+    call. A snapshot built while
     any accessor failed is never kept: it would carry a gap in the deny list.
 
     Returns:
@@ -680,8 +682,10 @@ def _raw_inputs_key() -> tuple:
         user_data_dir = None
     try:
         config_path = str(_config._get_effective_config_path())
+        # A relative custom database path is made absolute against it.
+        cwd = os.getcwd()
     except Exception:  # noqa: BLE001 - an unkeyable call is simply not memoized
-        config_path = None
+        config_path = cwd = None
     key = (
         _config._CONFIG_CACHE,
         _config._CONFIG_GENERATION,
@@ -689,6 +693,7 @@ def _raw_inputs_key() -> tuple:
         config_path,
         str(user_data_dir),
         os.environ.copy(),
+        cwd,
     )
     return user_data_dir, config_path, key
 
