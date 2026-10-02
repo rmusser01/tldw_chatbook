@@ -224,3 +224,43 @@ def test_cleanup_uses_existing_fenced_owner_closure_before_retirement(tmp_path):
     result = module.run_child(selected, tmp_path / "profile", "transaction", 1)
     assert result["retired"] is True
     assert result["error_type"] == "RuntimeError" and result["exit_code"] == 1
+
+
+def test_cleanup_uses_public_quiescence_for_registered_foreign_thread_handles(tmp_path):
+    module = probe()
+    selected = source(module, tmp_path / "source")
+    backup = selected / "tldw_chatbook/Backup_Recovery"
+    (backup / "storage_admission.py").write_text(
+        "import threading\n_lock = threading.RLock()\n_live_leases = {1}\n_fenced = False\n"
+        "class Pause:\n def resume(self):\n  pass\n"
+        "def _begin_local_pause():\n global _fenced\n _fenced = True\n return Pause()\n"
+        "def _shutdown():\n pass\n"
+    )
+    with (backup / "participants.py").open("a") as output:
+        output.write(
+            "_installed_repositories = []\n"
+            "def _retire_current_thread_caches(pause):\n pass\n"
+        )
+    (selected / "tldw_chatbook/config.py").write_text(
+        "import os\nfrom pathlib import Path\n"
+        "def get_chachanotes_db_path():\n return Path(os.environ['XDG_DATA_HOME']) / 'probe.db'\n"
+    )
+    (selected / "tldw_chatbook/DB/ChaChaNotes_DB.py").write_text(
+        "import contextlib\nfrom types import SimpleNamespace\n"
+        "from tldw_chatbook.Backup_Recovery import participants, storage_admission as storage\n"
+        "class CharactersRAGDB:\n"
+        " def __init__(self, *args):\n  raise RuntimeError('preserved failure')\n"
+        " @contextlib.contextmanager\n"
+        " def quiesce_connections(self, *, timeout_seconds):\n"
+        "  assert timeout_seconds == 0 and storage._fenced\n"
+        "  storage._live_leases.clear()\n  yield\n"
+        "owned = object.__new__(CharactersRAGDB)\n"
+        "participants._installed_repositories.append(SimpleNamespace(\n"
+        " owner_id='db.chachanotes.primary', repository=lambda: owned))\n"
+    )
+    manifest = json.loads((selected / module.MANIFEST).read_text())
+    manifest["content_sha256"] = module.source_digest(selected)
+    (selected / module.MANIFEST).write_text(json.dumps(manifest))
+    result = module.run_child(selected, tmp_path / "profile", "transaction", 1)
+    assert result["retired"] is True
+    assert result["error_type"] == "RuntimeError" and result["exit_code"] == 1

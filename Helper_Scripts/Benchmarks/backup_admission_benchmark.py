@@ -268,14 +268,29 @@ def prepare_imports(source: Path):
 
 def retired_state(children):
     """Check observable native ownership after public close and startup close."""
+    from tldw_chatbook.Backup_Recovery import participants
     from tldw_chatbook.Backup_Recovery import storage_admission as storage
-    from tldw_chatbook.Backup_Recovery.participants import _retire_current_thread_caches
 
     # App teardown and asyncio.run have already settled accepted producers.
     # Existing owner closure is thread-qualified; foreign/unknown caches stay visible.
     pause = storage._begin_local_pause()
     try:
-        _retire_current_thread_caches(pause)
+        participants._retire_current_thread_caches(pause)
+        # A joined worker's registered connection remains visible. Use only its
+        # exact owner's public barrier, which rejects active uses/transactions.
+        loaded = sys.modules.get("tldw_chatbook.DB.ChaChaNotes_DB")
+        repository_type = getattr(loaded, "CharactersRAGDB", None)
+        if repository_type is not None:
+            for participant in tuple(participants._installed_repositories):
+                repository = participant.repository()
+                if (
+                    participant.owner_id == "db.chachanotes.primary"
+                    and type(repository) is repository_type
+                ):
+                    with repository_type.quiesce_connections(
+                        repository, timeout_seconds=0
+                    ):
+                        pass
         storage._shutdown()
     finally:
         pause.resume()
