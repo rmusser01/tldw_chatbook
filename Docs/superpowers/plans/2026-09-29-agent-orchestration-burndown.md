@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** dev 185c845fe836bf452e4beaaf8853162ce49b1e8d (shared provider readiness), preserving the qualified compaction, hook, Resend and recovery integrations below.
+**Integration base:** dev ef8fd5d38a512be299af17b1e0d5b367a352a5d6 (upstream deferred Resend imports), preserving the qualified compaction, hook, Resend, readiness and recovery integrations below.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -287,3 +287,8 @@ Reason: preserve incoming PR2962 implementation of the same accepted lazy-import
 2. Retain incoming three deferred imports, legitimate module mock seam and complete new lesson, composing our shared hook/readiness/queue/publication repairs without broad source replacement. Compare all source bytes and exact changed methods.
 3. Qualify affected actual Resend/slow-preflight/readiness/media consumers and unchanged original budgets proportionately; obtain focused immutable review. Current budget subprocesses already force PYTHONPATH to their exact REPO_ROOT and are unchanged.
 4. Record exact source and evidence; recheck AC3 and close through CLI, then publish once observed003 lease with fresh-head Qodo/four jobs and normal protected merge.
+
+
+### Final preserving publication qualification
+
+Both independent reviews approvea7d9dcbad73ac12ecbc7bd3f515e48a139e0eae9. Whole13-case Resend UI passes54.462s; final original five-case budgets pass75.893s with681/686imports,1033/1033UI-ready and exact incoming performance sources. Final93-file/new-ten static/format/whitespace and CSS reproduction pass. Task33664 AC3 is closed through CLI after preserving import/mocks/lessons; all16 scoped tasks are Done. Detailed evidence and inherited limits remain in the final review; documentation-only closure preserves the exact approved source manifest. Exact003 lease publication and fresh-head Qodo/four CI jobs/protected merge remain.
