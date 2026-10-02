@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import contextlib
 import inspect
+import os
+from pathlib import Path
 
 import pytest
 
@@ -177,3 +179,109 @@ def test_a_warm_load_settings_does_not_stall_behind_an_in_flight_write() -> None
         reader.start()
         assert finished.wait(5.0), "the warm read stalled behind the write locks"
     reader.join(5.0)
+
+
+def test_a_warm_snapshot_copies_the_hit_it_checked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The warm snapshot never looks the cache up twice (Qodo, #2903).
+
+    A second lookup through ``load_settings`` could miss after a lock-free
+    cache clear and run the guarded rebuild while REBUILD and FILE are held.
+
+    Args:
+        monkeypatch: Replaces ``load_settings`` with a tripwire.
+    """
+    _warm_settings()
+
+    def tripwire(*args: object, **kwargs: object) -> dict:
+        raise AssertionError("the warm snapshot looked the cache up a second time")
+
+    monkeypatch.setattr(config_module, "load_settings", tripwire)
+    snapshot = config_module.get_runtime_config_snapshot()
+    assert snapshot.values
+
+
+def test_a_warm_snapshot_never_blocks_behind_a_held_config_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A contended lock sends the snapshot to the guarded, pause-aware path.
+
+    Blocking here would ignore a recovery pause the guarded wait observes
+    (Qodo, #2903).
+
+    Args:
+        monkeypatch: Replaces the guarded snapshot with a marker.
+    """
+    import threading
+
+    _warm_settings()
+    marker = object()
+    monkeypatch.setattr(
+        config_module,
+        "_get_runtime_config_snapshot_guarded",
+        lambda **kwargs: marker,
+    )
+    for lock in (config_module._settings_rebuild_lock(), config_module._config_file_lock()):
+        held, release = threading.Event(), threading.Event()
+
+        def hold(lock=lock) -> None:
+            with lock:
+                held.set()
+                release.wait(10)
+
+        holder = threading.Thread(target=hold, daemon=True)
+        holder.start()
+        assert held.wait(10)
+        result: list[object] = []
+        reader = threading.Thread(
+            target=lambda: result.append(config_module.get_runtime_config_snapshot()),
+            daemon=True,
+        )
+        reader.start()
+        reader.join(5)
+        blocked = reader.is_alive()
+        release.set()
+        holder.join(10)
+        reader.join(10)
+        assert not blocked, "the warm snapshot blocked behind a held lock"
+        assert result == [marker]
+
+
+@pytest.mark.parametrize("change", ["replaced", "symlinked"])
+def test_a_replaced_config_file_is_not_served_warm(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, change: str
+) -> None:
+    """A warm hit re-checks the config file's identity (Qodo, #2903).
+
+    Before PERF-06 every read ran the guarded member checks, which reject a
+    config file swapped for another inode or a symlink. A warm hit now
+    compares one ``lstat`` stamp, so the swap is a miss and reaches them.
+
+    Args:
+        monkeypatch: Replaces the guarded rebuild with a marker.
+        tmp_path: pytest fixture; holds the replacement file.
+        change: How the config file is swapped.
+    """
+    _warm_settings()
+    path = config_module._get_effective_config_path()
+    if not path.exists():
+        pytest.skip("no config file to swap in this environment")
+    marker: dict = {"guarded": True}
+    monkeypatch.setattr(config_module, "_load_settings_guarded", lambda **kwargs: marker)
+    assert config_module.load_settings() is not marker  # still warm
+
+    original = path.read_bytes()
+    backup = tmp_path / "original.toml"
+    os.replace(path, backup)
+    try:
+        if change == "replaced":
+            path.write_bytes(original)
+        else:
+            target = tmp_path / "elsewhere.toml"
+            target.write_bytes(original)
+            path.symlink_to(target)
+        assert config_module.load_settings() is marker
+    finally:
+        path.unlink()
+        os.replace(backup, path)

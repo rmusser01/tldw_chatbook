@@ -1446,6 +1446,9 @@ def coerce_float_setting(
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
+#: PERF-06: the config file's identity, stamped before the cached settings
+#: were read; a warm hit requires it unchanged (see _settings_cache_hit).
+_SETTINGS_CACHE_POSTURE: Optional[tuple] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: Serializes the miss->rebuild->store sequence (task-3503).
 #:
@@ -1896,11 +1899,38 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
+def _config_file_posture(config_path: Path) -> tuple | None:
+    """Identity of the config file itself: ``lstat`` (dev, ino, type, mode, uid, nlink).
+
+    ``None`` when absent. A replaced file, a symlink swap or a new hard link
+    all change it.
+    """
+    import stat as _stat
+
+    try:
+        info = os.lstat(config_path)
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return ("unreadable",)
+    return (
+        info.st_dev,
+        info.st_ino,
+        _stat.S_IFMT(info.st_mode),
+        _stat.S_IMODE(info.st_mode),
+        info.st_uid,
+        info.st_nlink,
+    )
+
+
 def _settings_cache_hit(active_config_path: Path) -> dict | None:
     """Return the installed settings for ``active_config_path``, or None.
 
-    One short lock, no I/O. Shared by the unguarded warm paths and the
-    guarded rebuild's re-check.
+    One short lock and one ``lstat``. Shared by the unguarded warm paths and
+    the guarded rebuild's re-check. The config file's identity must still be
+    the one stamped before the cached settings were read: the guarded path
+    rejected a replaced or symlinked config member on every read, and a warm
+    hit must not hide one (Qodo, #2903), so any change is a miss.
     """
     global _SETTINGS_CACHE_LOCK
 
@@ -1909,9 +1939,14 @@ def _settings_cache_hit(active_config_path: Path) -> dict | None:
 
         _SETTINGS_CACHE_LOCK = threading.Lock()
     with _SETTINGS_CACHE_LOCK:
-        if _SETTINGS_CACHE is not None and _SETTINGS_CACHE_SOURCE == active_config_path:
-            return _SETTINGS_CACHE
-    return None
+        cached = _SETTINGS_CACHE
+        source = _SETTINGS_CACHE_SOURCE
+        posture = _SETTINGS_CACHE_POSTURE
+    if cached is None or source != active_config_path:
+        return None
+    if _config_file_posture(active_config_path) != posture:
+        return None
+    return cached
 
 
 def load_settings(
@@ -2029,7 +2064,11 @@ def _load_settings_uncached(
         Dictionary containing all configuration settings.
     """
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
+    global _SETTINGS_CACHE_POSTURE
     active_config_path = _get_effective_config_path()
+    # Stamped before anything is read: a file swapped mid-read leaves a stale
+    # stamp, so the next warm read misses rather than trusting it.
+    posture = _config_file_posture(active_config_path)
 
     # Initialize lock on first use to avoid import issues
     if _SETTINGS_CACHE_LOCK is None:
@@ -2042,6 +2081,7 @@ def _load_settings_uncached(
         if (
             _SETTINGS_CACHE is not None
             and _SETTINGS_CACHE_SOURCE == active_config_path
+            and _SETTINGS_CACHE_POSTURE == posture
             and not force_reload
         ):
             logger.debug("load_settings: Returning cached configuration (cache hit)")
@@ -3653,6 +3693,7 @@ def _load_settings_uncached(
         with _SETTINGS_CACHE_LOCK:
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
+            _SETTINGS_CACHE_POSTURE = posture
             logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
@@ -7590,12 +7631,27 @@ def get_runtime_config_snapshot(
     """
 
     if not force_reload:
-        with _settings_rebuild_lock(), _config_file_lock():
-            if _settings_cache_hit(_get_effective_config_path()) is not None:
-                return RuntimeConfigSnapshot(
-                    generation=_CONFIG_GENERATION,
-                    values=copy.deepcopy(load_settings()),
-                )
+        # Never block here: a held lock means a write is in flight, and the
+        # guarded path waits for it pause-aware, so recovery can cancel the
+        # wait (Qodo, #2903).
+        rebuild, file_lock = _settings_rebuild_lock(), _config_file_lock()
+        if rebuild.acquire(blocking=False):
+            try:
+                if file_lock.acquire(blocking=False):
+                    try:
+                        # Copy the hit that was checked: a second lookup could
+                        # miss after a lock-free clear and rebuild under the
+                        # locks, reversing admission-then-locks (Qodo, #2903).
+                        cached = _settings_cache_hit(_get_effective_config_path())
+                        if cached is not None:
+                            return RuntimeConfigSnapshot(
+                                generation=_CONFIG_GENERATION,
+                                values=copy.deepcopy(cached),
+                            )
+                    finally:
+                        file_lock.release()
+            finally:
+                rebuild.release()
     return _get_runtime_config_snapshot_guarded(force_reload=force_reload)
 
 
