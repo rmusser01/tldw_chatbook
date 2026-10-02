@@ -9167,11 +9167,13 @@ class ConsoleAgentBridge:
         self, session_id: str
     ) -> tuple[tuple[str, MessageIdentity], ...]:
         """Read current IDs/source metadata for a native session; never consume."""
+        inbox = self._session_progress_inbox(session_id)
+        if inbox is None:
+            return ()
         from tldw_chatbook.Agents.fleet_messages import MessageError
 
-        inbox = self._session_progress_inbox(session_id)
         try:
-            return inbox.pending_metadata() if inbox is not None else ()
+            return inbox.pending_metadata()
         except MessageError:
             return ()
 

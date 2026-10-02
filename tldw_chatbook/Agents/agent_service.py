@@ -6134,6 +6134,89 @@ class AgentService:
                     finally:
                         child_owner.finish_root()
 
+        def initialize_child_hooks(child_kwargs, child_task, *, inline=False):
+            nonlocal sub_agent_spawns
+            if hook_run is None:
+                return None
+            child_config = child_kwargs["config"]
+            from .hooks_v2.lifecycle import narrow_child
+            from .hooks_v2.validation import CAPS
+            from .tool_catalog import ToolDefinitionSnapshot
+
+            child_plan = build_first_request_schema_plan(
+                self.registry,
+                child_config.allowed_tools,
+                child_config,
+                child_kwargs["api_endpoint"],
+                child_kwargs["messages"],
+                skill_file_enabled=bool(
+                    self.skill_file_bindings is not None
+                    and self.skill_file_bindings.authorized
+                ),
+                install_skill_enabled=False,
+                run_skill_script_enabled=self._run_skill_script_tool is not None,
+                run_log_active=False,
+                agent_kind=AGENT_KIND_SUBAGENT,
+                reporting_available=bool(fleet is not None and not inline),
+                peers_available=bool(fleet is not None and not inline),
+            )
+            tool_ids = {
+                name: self.registry.snapshot_for_hook(name).tool_id
+                for name in child_config.allowed_tools
+            }
+            tool_ids.update(
+                {
+                    schema.name: ToolDefinitionSnapshot.from_schema(
+                        schema, "runtime", 0, id(schema)
+                    ).tool_id
+                    for schema in child_plan.runtime_schemas
+                }
+            )
+            child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
+            event = self._hooks_v2_lifecycle.event(
+                "SubagentStart",
+                run_id=run_id,
+                turn_id=self._hooks_v2_turn_id,
+                data={
+                    "child_task": child_task,
+                    "tool_ids": list(tool_ids.values()),
+                    "budget_caps": {
+                        key: getattr(child_config.budget, key) for key in CAPS
+                    },
+                    **({"model": child_config.model} if child_config.model else {}),
+                    **(
+                        {"provider": child_config.provider}
+                        if child_config.provider
+                        else {}
+                    ),
+                },
+                initiator="child",
+            )
+            try:
+                result = self._hooks_v2_engine._sync(
+                    self._hooks_v2_lifecycle.fire(
+                        event, child_scope, current=lambda: not should_cancel()
+                    )
+                )
+                child_config, selected_ids = narrow_child(
+                    child_config, result, tool_ids
+                )
+                child_kwargs["config"] = child_config
+                child_kwargs["hook_tool_ids"] = selected_ids
+                child_kwargs["messages"] += list(
+                    self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
+                )
+            except Exception:  # noqa: BLE001 -- hook boundary
+                sub_agent_spawns -= 1
+                return ToolResult(
+                    ok=False,
+                    error="sub-agent initialization refused",
+                    dispatch_state="settled",
+                )
+            finally:
+                self._hooks_v2_lifecycle.close_scope(child_scope)
+            return None
+
         def spawn(
             spawn_task: str,
             *,
@@ -6572,82 +6655,10 @@ class AgentService:
                         f"{refusal.message}"
                     ),
                 )
-            if hook_run is not None:
-                from .hooks_v2.lifecycle import narrow_child
-                from .hooks_v2.validation import CAPS
-                from .tool_catalog import ToolDefinitionSnapshot
-
-                child_plan = build_first_request_schema_plan(
-                    self.registry,
-                    child_config.allowed_tools,
-                    child_config,
-                    api_endpoint,
-                    child_kwargs["messages"],
-                    skill_file_enabled=bool(
-                        self.skill_file_bindings is not None
-                        and self.skill_file_bindings.authorized
-                    ),
-                    install_skill_enabled=False,
-                    run_skill_script_enabled=self._run_skill_script_tool is not None,
-                    run_log_active=False,
-                    agent_kind=AGENT_KIND_SUBAGENT,
-                    reporting_available=bool(fleet is not None and not inline),
-                )
-                tool_ids = {
-                    name: self.registry.snapshot_for_hook(name).tool_id
-                    for name in child_config.allowed_tools
-                }
-                tool_ids.update(
-                    {
-                        schema.name: ToolDefinitionSnapshot.from_schema(
-                            schema, "runtime", 0, id(schema)
-                        ).tool_id
-                        for schema in child_plan.runtime_schemas
-                    }
-                )
-                child_scope = self._hooks_v2_lifecycle.open_scope(parent=run_id)
-                event = self._hooks_v2_lifecycle.event(
-                    "SubagentStart",
-                    run_id=run_id,
-                    turn_id=self._hooks_v2_turn_id,
-                    data={
-                        "child_task": spawn_task,
-                        "tool_ids": list(tool_ids.values()),
-                        "budget_caps": {
-                            key: getattr(child_config.budget, key) for key in CAPS
-                        },
-                        **({"model": child_config.model} if child_config.model else {}),
-                        **(
-                            {"provider": child_config.provider}
-                            if child_config.provider
-                            else {}
-                        ),
-                    },
-                    initiator="child",
-                )
-                try:
-                    result = self._hooks_v2_engine._sync(
-                        self._hooks_v2_lifecycle.fire(
-                            event, child_scope, current=lambda: not should_cancel()
-                        )
-                    )
-                    child_config, selected_ids = narrow_child(
-                        child_config, result, tool_ids
-                    )
-                    child_kwargs["config"] = child_config
-                    child_kwargs["hook_tool_ids"] = selected_ids
-                    child_kwargs["messages"] += list(
-                        self._hooks_v2_lifecycle.context.blocks(child_scope, "child")
-                    )
-                except Exception:  # noqa: BLE001 -- hook boundary
-                    sub_agent_spawns -= 1
-                    return ToolResult(
-                        ok=False,
-                        error="sub-agent initialization refused",
-                        dispatch_state="settled",
-                    )
-                finally:
-                    self._hooks_v2_lifecycle.close_scope(child_scope)
+            failure = initialize_child_hooks(child_kwargs, spawn_task, inline=inline)
+            if failure is not None:
+                return failure
+            child_config = child_kwargs["config"]
             if fleet is None or inline:
                 # -- INLINE path: byte-identical to every release before
                 # PR2a. Kept, not merely tolerated: with no fleet there is
@@ -7283,6 +7294,9 @@ class AgentService:
             child_kwargs["spawn_parent_event_id"] = (
                 child_kwargs["spawn_event_id"] or f"agent-run:{run_id}"
             )
+            failure = initialize_child_hooks(child_kwargs, retained.task)
+            if failure is not None:
+                return failure
             handle, failure = _launch_fleet_child(
                 retained.task,
                 (resolved.name if resolved else None),
