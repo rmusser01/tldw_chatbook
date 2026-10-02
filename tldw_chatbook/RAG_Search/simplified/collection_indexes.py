@@ -3,6 +3,7 @@
 Persistent-backend only. See
 Docs/superpowers/specs/2026-07-21-rag-index-isolation-design.md.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -33,6 +34,7 @@ def _close_client(client: Any) -> None:
 def _client(persist_directory) -> Any:
     import chromadb
     from chromadb.config import Settings
+
     # NOTE: chromadb (1.5.8) caches one client instance per persist path
     # within a process (SharedSystemClient) and raises ValueError on any
     # later PersistentClient(...) call at the same path whose Settings
@@ -187,12 +189,14 @@ def list_indexes(persist_directory) -> list[dict]:
         client = _client(persist_directory)
         for col in client.list_collections():
             meta = dict(col.metadata or {})
-            out.append({
-                "name": col.name,
-                "fp": meta.get("fp"),
-                "provenance": meta,
-                "count": col.count(),
-            })
+            out.append(
+                {
+                    "name": col.name,
+                    "fp": meta.get("fp"),
+                    "provenance": meta,
+                    "count": col.count(),
+                }
+            )
     except Exception as e:
         logger.error(f"list_indexes failed: {e}")
     finally:
@@ -220,13 +224,18 @@ def delete_index(persist_directory, name: str) -> bool:
 
 def index_status(config: RAGConfig) -> dict:
     """Resolved-collection state for ``config``: absent | empty | built."""
-    if not (str(config.vector_store.type) == "chroma"
-            and config.vector_store.persist_directory is not None):
+    if not (
+        str(config.vector_store.type) == "chroma"
+        and config.vector_store.persist_directory is not None
+    ):
         return {"state": "absent", "count": 0, "provenance": {}}
     target = fingerprinted_collection_name(config)
     for entry in list_indexes(config.vector_store.persist_directory):
         if entry["name"] == target:
             state = "built" if entry["count"] > 0 else "empty"
-            return {"state": state, "count": entry["count"],
-                    "provenance": entry["provenance"]}
+            return {
+                "state": state,
+                "count": entry["count"],
+                "provenance": entry["provenance"],
+            }
     return {"state": "absent", "count": 0, "provenance": {}}
