@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 21:43'
+updated_date: '2026-10-02 21:51'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -46,4 +46,6 @@ Reason: preserve incoming PR2962 implementation of the same accepted lazy-import
 <!-- SECTION:NOTES:BEGIN -->
 Deferred the three existing eager Resend imports to actual message resend, refused-echo dispatch and transcript action projection consumers; updated the existing legitimate test mock to the owning module. No new owner, dependency, UI behavior or budget. ADR097 directly governs the repair; no new ADR required.
 Original UI-ready RED1034/1033 also reproduces on exact incoming Resend source. Final original five-case tested/untested storage/import/UI/CSS selection passes85.975s with681/686imports and1033/1033UI-ready, unchanged performance-source bytes and original drift warnings/no UI headroom. Real click/keyboard/duplicate worker, held-preflight publication and task33663 authority controls pass; final independent UI/runtime reviews approve2cfbb01c76. Static94patchPython/tennewRuff+format/whitespace and diagnostic/worker/index/UI/timestamp/CSS artifacts pass. Evidence and inherited limits are retained in the final review; no raw-suite/full-suite/live-provider/Windows result is claimed.
+
+Preserved incoming PR2962 implementation of the same three deferred Resend imports, owning-module test mock and full boot-source lesson. Only the upstream module alias method/comments and local test alias differ from approved2cf;92other reviewed Python/CSS files remain exact. Both independent preservation reviews approve immutablea7d9dcbad73ac12ecbc7bd3f515e48a139e0eae9. Whole13-case Resend UI selection passes54.462s and final original five-case tested/untested storage/import/UI/CSS budgets pass75.893s, exit0. Imports remain681/686,UI-ready1033/1033 with unchanged sources, limits and drift warnings. Current subprocess guards explicitly pin PYTHONPATH to exactREPO_ROOT; no main-checkout measurement is claimed. Final93-file fatal/added-line,tennewRuff/format/whitespace and CSS reproduction pass. Exact source/AST and full lesson preservation proofs are retained; inherited upstream task33661 EOF whitespace is outside diff against actualef8. No new ADR; existing ADR097/199 apply. Detailed positive/non-green evidence and separate limits remain in the final review. Fresh published-head Qodo/four checks and protected merge remain.
 <!-- SECTION:NOTES:END -->
