@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
-from dataclasses import replace
+import hashlib
+import itertools
+from dataclasses import astuple, fields, replace
 
 import pytest
 
+from tldw_chatbook.Utils import adaptive_reader_state
 from tldw_chatbook.Utils.adaptive_reader_state import (
     PANE_GRIP_WIDTH,
     READER_COMFORT_WIDTH,
+    AdaptivePaneLayout,
+    AdaptivePanePreferences,
+    AdaptivePaneProfile,
     AdaptiveReaderEffectiveLayout,
     AdaptiveReaderLayoutPreferences,
     AdaptiveReaderLayoutProfile,
     normalize_adaptive_reader_preferences,
+    resolve_adaptive_pane_layout,
     resolve_adaptive_reader_layout,
 )
 from tldw_chatbook.Library.library_media_reader_state import (
@@ -858,3 +865,152 @@ def test_an_items_priority_is_untouched_once_the_work_pane_has_something(
         )
         assert layout.priority_pane == "items"
         assert layout.reader_width > 0
+
+
+# ---------------------------------------------------------------------------
+# Roleplay frame B0 (the shared adaptive-pane-shell ADR): the golden resolver grid.
+#
+# The neutral aliases are the SAME objects as the reader names, so comparing
+# their outputs with each other would prove nothing. ``_GOLDEN_DIGEST`` was
+# captured on UNMODIFIED ``adaptive_reader_state.py`` (origin/dev fccf70d3b0,
+# 2026-10-02) before B0 touched the module: a change to it is a resolver
+# behaviour change, never an alias side effect. The profiles are literals,
+# not ``screen_constants`` reads, so a Library profile retune elsewhere cannot
+# move this digest -- it pins the resolver and nothing else. They cover every
+# behaviour switch a declared profile uses today.
+# ---------------------------------------------------------------------------
+
+_GOLDEN_PROFILES = (
+    ("default", AdaptiveReaderLayoutProfile()),
+    (
+        "media",
+        AdaptiveReaderLayoutProfile(
+            work_min_width=46, list_grows=True, list_first_when_empty=True
+        ),
+    ),
+    (
+        "notes",
+        AdaptiveReaderLayoutProfile(
+            work_min_width=48,
+            list_comfort_width=64,
+            list_grows=True,
+            list_first_when_empty=True,
+        ),
+    ),
+    (
+        "collections",
+        AdaptiveReaderLayoutProfile(work_min_width=48, work_comfort_width=56),
+    ),
+    ("prompts_skills", AdaptiveReaderLayoutProfile(work_min_width=48)),
+    ("artifacts", AdaptiveReaderLayoutProfile(list_first_when_empty=True)),
+    ("one_cell_grips", AdaptiveReaderLayoutProfile(grip_width=1)),
+)
+_GOLDEN_WIDTHS = tuple(sorted(set(range(0, 301, 3)) | set(range(56, 73))))
+_GOLDEN_WALK = tuple(range(40, 241, 4)) + tuple(range(240, 39, -4))
+_GOLDEN_DIGEST = "7234b56ac02aa1491b3e96fe02288ce0229ce5dd07dfe8ed68e80326d362bd85"
+
+
+def _golden_preferences() -> tuple[AdaptiveReaderLayoutPreferences, ...]:
+    """Every preference the grid feeds the resolver, built by the normaliser.
+
+    Open flags x {automatic, custom x library {1, 36, 999} x items {1, 50,
+    999}}: 40 distinct normalised preferences, the out-of-range widths
+    exercising the clamps.
+    """
+    raws: list[dict[str, object]] = []
+    for library_open, items_open in itertools.product((True, False), repeat=2):
+        raws.append({"library_open": library_open, "items_open": items_open})
+        for library_width, items_width in itertools.product(
+            (1, 36, 999), (1, 50, 999)
+        ):
+            raws.append(
+                {
+                    "library_open": library_open,
+                    "items_open": items_open,
+                    "custom_widths_enabled": True,
+                    "library_width": library_width,
+                    "items_width": items_width,
+                }
+            )
+    return tuple(normalize_adaptive_reader_preferences(raw) for raw in raws)
+
+
+def _golden_digest(resolve) -> str:
+    """SHA-256 over every resolved layout in the grid, plus hysteresis walks.
+
+    Args:
+        resolve: The resolver under test (a reader name or a neutral alias).
+
+    Returns:
+        The hex digest of the ``repr`` of every input/output tuple, in order.
+    """
+    digest = hashlib.sha256()
+    for (name, profile), prefs in itertools.product(
+        _GOLDEN_PROFILES, _golden_preferences()
+    ):
+        for width, priority, reader_has_item in itertools.product(
+            _GOLDEN_WIDTHS, (None, "library", "items"), (True, False)
+        ):
+            out = resolve(
+                width,
+                prefs,
+                profile,
+                priority=priority,
+                reader_has_item=reader_has_item,
+            )
+            digest.update(
+                repr(
+                    (
+                        name,
+                        astuple(prefs),
+                        width,
+                        priority,
+                        reader_has_item,
+                        astuple(out),
+                    )
+                ).encode()
+            )
+        previous = None
+        for width in _GOLDEN_WALK:
+            previous = resolve(width, prefs, profile, previous=previous)
+            digest.update(
+                repr((name, astuple(prefs), width, "walk", astuple(previous))).encode()
+            )
+    return digest.hexdigest()
+
+
+@pytest.mark.parametrize(
+    "resolver_name", ["resolve_adaptive_reader_layout", "resolve_adaptive_pane_layout"]
+)
+def test_resolver_golden_grid_is_byte_identical(resolver_name: str) -> None:
+    resolve = getattr(adaptive_reader_state, resolver_name)
+    assert len(set(_golden_preferences())) == 40
+    assert _golden_digest(resolve) == _GOLDEN_DIGEST
+
+
+def test_neutral_pane_aliases_are_the_reader_objects() -> None:
+    """Same objects, never subclasses: behaviour is identical by construction."""
+    assert AdaptivePaneProfile is AdaptiveReaderLayoutProfile
+    assert AdaptivePanePreferences is AdaptiveReaderLayoutPreferences
+    assert AdaptivePaneLayout is AdaptiveReaderEffectiveLayout
+    assert resolve_adaptive_pane_layout is resolve_adaptive_reader_layout
+
+
+def test_nav_properties_read_the_library_fields_without_becoming_fields() -> None:
+    """``nav_*`` are read-only views; a FIELD would change equality and astuple.
+
+    It would also break positional construction of the layout (six required
+    positional fields, then ``grip_width``).
+    """
+    layout = AdaptiveReaderEffectiveLayout(True, False, 31, 0, 60, None)
+    assert (layout.nav_open, layout.nav_width) == (True, 31)
+    prefs = AdaptiveReaderLayoutPreferences(library_open=False, library_width=40)
+    assert (prefs.nav_open, prefs.nav_width) == (False, 40)
+    for dataclass_type in (
+        AdaptiveReaderEffectiveLayout,
+        AdaptiveReaderLayoutPreferences,
+    ):
+        names = {field.name for field in fields(dataclass_type)}
+        assert not names & {"nav_open", "nav_width"}, dataclass_type
+    with pytest.raises(AttributeError):
+        layout.nav_open = False  # type: ignore[misc]
