@@ -1948,11 +1948,14 @@ def _is_plain_owned_file(posture: tuple) -> bool:
     import stat as _stat
 
     leaf = posture[-1] if posture else None
+    # Windows has no geteuid and reports no owner in st_uid; ownership is
+    # only comparable where it exists (Qodo, #2903).
+    geteuid = getattr(os, "geteuid", None)
     return (
         leaf is not None
         and len(leaf) == 6
         and leaf[2] == _stat.S_IFREG
-        and leaf[4] == os.geteuid()
+        and (geteuid is None or leaf[4] == geteuid())
         and leaf[5] == 1
     )
 

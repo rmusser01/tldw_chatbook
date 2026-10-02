@@ -364,3 +364,19 @@ def test_only_a_plain_owned_file_may_replace_a_missing_stamp(tmp_path: Path) -> 
     assert not config_module._is_plain_owned_file(
         config_module._config_file_posture(tmp_path / "absent.toml")
     )
+
+
+def test_the_owned_file_check_works_without_geteuid(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Windows has no ``os.geteuid``; a fresh profile's first load must not raise.
+
+    Args:
+        monkeypatch: Removes ``os.geteuid`` as on Windows.
+        tmp_path: pytest fixture; holds the probed file.
+    """
+    plain = tmp_path / "config.toml"
+    plain.write_text("x")
+    posture = config_module._config_file_posture(plain)
+    monkeypatch.delattr(config_module.os, "geteuid", raising=False)
+    assert config_module._is_plain_owned_file(posture)
