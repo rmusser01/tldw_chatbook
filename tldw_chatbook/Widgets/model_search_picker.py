@@ -6,7 +6,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from functools import partial
 
-from tldw_chatbook.Utils.input_validation import escape_markup
 from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
@@ -33,6 +32,9 @@ _CLOUD_CATALOG_PROVIDER_KEYS = {
     provider_config_key(provider) for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
 }
 MODEL_ID_MAX_LENGTH = 256
+#: The committed model's row says so in words, not colour alone (shared with
+#: Switch model).
+CURRENT_MARK = "● CURRENT"
 _BLUR_RESTORE_DELAY_SECONDS = 0.05
 _PROVENANCE_GROUP_LABELS = {
     ConsoleModelProvenance.SERVED_NOW: "Served now",
@@ -40,6 +42,28 @@ _PROVENANCE_GROUP_LABELS = {
     ConsoleModelProvenance.SAVED_FALLBACK: "Saved fallback",
     ConsoleModelProvenance.CUSTOM_UNVERIFIED: "Custom / unverified",
 }
+
+
+def normalize_model_id(value: object | None) -> str | None:
+    """Return a model id as bounded single-line text, or None (TASK-14812 AC#7).
+
+    Shared by this picker and Switch model's typed-id row.
+    """
+    raw_text = str(value or "")
+    text = raw_text.strip()
+    if not text or text.lower() in {"none", "null"}:
+        return None
+    if (
+        sanitize_string(raw_text, max_length=MODEL_ID_MAX_LENGTH) != raw_text
+        or any(character in raw_text for character in "\r\n\t")
+        or not validate_text_input(
+            raw_text,
+            max_length=MODEL_ID_MAX_LENGTH,
+            allow_html=False,
+        )
+    ):
+        return None
+    return text
 
 
 def _count(count: int, noun: str) -> str:
@@ -192,6 +216,7 @@ class ModelSearchPicker(Widget):
         self._options_by_provider: dict[str, tuple[object, ...]] = {}
         self._provenance_provider_keys: set[str] = set()
         self._result_model_ids_by_option_id: dict[str, str] = {}
+        self._committed_index: int | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
@@ -247,23 +272,7 @@ class ModelSearchPicker(Widget):
         else:
             self._set_status("Choose a provider first.")
 
-    @staticmethod
-    def _normalize_model(value: object | None) -> str | None:
-        raw_text = str(value or "")
-        text = raw_text.strip()
-        if not text or text.lower() in {"none", "null"}:
-            return None
-        if (
-            sanitize_string(raw_text, max_length=MODEL_ID_MAX_LENGTH) != raw_text
-            or any(character in raw_text for character in "\r\n\t")
-            or not validate_text_input(
-                raw_text,
-                max_length=MODEL_ID_MAX_LENGTH,
-                allow_html=False,
-            )
-        ):
-            return None
-        return text
+    _normalize_model = staticmethod(normalize_model_id)
 
     def _current_provider(self) -> str | None:
         try:
@@ -439,9 +448,9 @@ class ModelSearchPicker(Widget):
         normalized = self._normalize_model(model_id)
         if normalized is None:
             return None
-        if provider is not None and provider_config_key(provider) != provider_config_key(
-            self._provider
-        ):
+        if provider is not None and provider_config_key(
+            provider
+        ) != provider_config_key(self._provider):
             return None
         if self._custom_mode:
             return ConsoleModelProvenance.CUSTOM_UNVERIFIED
@@ -584,9 +593,7 @@ class ModelSearchPicker(Widget):
         """
         if self._custom_mode:
             if self.is_mounted:
-                custom_value = self.query_one(
-                    "#model-search-picker-input", Input
-                ).value
+                custom_value = self.query_one("#model-search-picker-input", Input).value
                 if custom_value and self._normalize_model(custom_value) is None:
                     self._set_status(
                         "Invalid model ID. Use a single-line value of at most "
@@ -661,6 +668,7 @@ class ModelSearchPicker(Widget):
         results = self.query_one("#model-search-picker-results", OptionList)
         self._matches = []
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         results.display = False
 
@@ -685,11 +693,12 @@ class ModelSearchPicker(Widget):
         elif not show_empty_query:
             self._hide_results()
             return
-        self._matches = model_ids[: self.MAX_RESULTS]
+        self._matches = self._capped(model_ids, str)
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         for model_id in self._matches:
-            results.add_option(Option(escape_markup(model_id)))
+            self._add_result(results, model_id)
         results.display = bool(self._matches)
         self._render_match_status(normalized_query, len(model_ids))
 
@@ -732,8 +741,9 @@ class ModelSearchPicker(Widget):
             for option in options
             if self._display_provenance(option) == provenance
         ]
-        self._matches = ordered_options[: self.MAX_RESULTS]
+        self._matches = self._capped(ordered_options, lambda option: option.model_id)
         self._result_model_ids_by_option_id = {}
+        self._committed_index = None
         results.clear_options()
         for provenance, group_label in _PROVENANCE_GROUP_LABELS.items():
             group = [
@@ -753,14 +763,37 @@ class ModelSearchPicker(Widget):
             for option in group:
                 option_id = f"model-provenance-option-{len(self._result_model_ids_by_option_id)}"
                 self._result_model_ids_by_option_id[option_id] = option.model_id
-                results.add_option(
-                    Option(
-                        Text(option.model_id),
-                        id=option_id,
-                    )
-                )
+                self._add_result(results, option.model_id, option_id)
         results.display = bool(self._matches)
         self._render_match_status(normalized_query, len(ordered_options))
+
+    def _capped(self, entries: list, model_id_of) -> list:
+        """The first MAX_RESULTS entries; a committed model past the cap takes
+        the last slot, so large catalogs keep its mark and Down (C7(b))."""
+        shown = entries[: self.MAX_RESULTS]
+        committed = next(
+            (
+                entry
+                for entry in entries[self.MAX_RESULTS :]
+                if model_id_of(entry) == self._selected_model
+            ),
+            None,
+        )
+        if committed is not None and self._selected_model not in map(
+            model_id_of, shown
+        ):
+            shown[-1] = committed
+        return shown
+
+    def _add_result(
+        self, results: OptionList, model_id: str, option_id: str | None = None
+    ) -> None:
+        """Add one literal model row; the committed model says so in words."""
+        prompt = Text(model_id)
+        if model_id == self._selected_model:
+            self._committed_index = results.option_count
+            prompt.append(f"  {CURRENT_MARK}")
+        results.add_option(Option(prompt, id=option_id))
 
     def _commit_catalog_model(self, model_id: str) -> None:
         normalized = self._normalize_model(model_id)
@@ -910,11 +943,13 @@ class ModelSearchPicker(Widget):
         if event.key == "down" and self._matches:
             results = self.query_one("#model-search-picker-results", OptionList)
             results.focus()
+            # The committed model first (C7(b)), else the first enabled row.
             results.highlighted = next(
                 (
                     index
                     for index, option in enumerate(results.options)
-                    if not option.disabled
+                    if index == self._committed_index
+                    or (self._committed_index is None and not option.disabled)
                 ),
                 None,
             )

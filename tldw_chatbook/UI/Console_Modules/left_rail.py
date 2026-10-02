@@ -2352,8 +2352,8 @@ class ConsoleLeftRail(Vertical):
                 owner=self,
             )
 
-            # Model (provider/model readout lines plus a
-            # Configure shortcut into the Console session settings).
+            # Model (sampling readout lines plus "Change  Alt+M", which
+            # opens Switch model, TASK-33004.7).
             yield self._section_header(
                 "model",
                 rail_state.model_open,
@@ -2364,9 +2364,6 @@ class ConsoleLeftRail(Vertical):
             # TASK-32338: structured fields on the summary state replace
             # regex-parsing of the formatted sampling_row (which rendered a
             # silent em-dash whenever the copy's wording shifted).
-            temperature_value = summary_state.temperature or "—"
-            max_tokens_value = summary_state.max_tokens or "—"
-
             # TASK-23196: the Provider and Model rows that stood here were
             # the third simultaneous rendering of the same two values -- the
             # persistent status bar and the Inspector's run recipe both
@@ -2374,37 +2371,29 @@ class ConsoleLeftRail(Vertical):
             # width where this rail is shown at all (below 100 columns the
             # rail force-collapses). This was the copy that cost scarce
             # vertical space, so it is the copy that went. What remains is
-            # what is NOT duplicated: the sampling parameters, the
-            # system-prompt row, and Configure.
-            model_rows = (
+            # what is NOT duplicated: the sampling parameters (Streaming
+            # back since TASK-33004.7, task-338), the system-prompt row, and
+            # the Change action.
+            model_rows = tuple(
                 Horizontal(
                     Static(
-                        "Temperature",
+                        label,
                         classes="console-model-section-label",
                         markup=False,
                     ),
                     Static(
-                        temperature_value,
+                        value or "—",
                         classes="console-model-section-value",
                         markup=False,
                     ),
-                    id="console-model-section-temperature",
+                    id=f"console-model-section-{row_id}",
                     classes="console-model-section-line",
-                ),
-                Horizontal(
-                    Static(
-                        "Max tokens",
-                        classes="console-model-section-label",
-                        markup=False,
-                    ),
-                    Static(
-                        max_tokens_value,
-                        classes="console-model-section-value",
-                        markup=False,
-                    ),
-                    id="console-model-section-max-tokens",
-                    classes="console-model-section-line",
-                ),
+                )
+                for row_id, label, value in (
+                    ("temperature", "Temperature", summary_state.temperature),
+                    ("max-tokens", "Max tokens", summary_state.max_tokens),
+                    ("streaming", "Streaming", summary_state.streaming),
+                )
             )
             readiness = (summary_state.readiness_label or "").strip()
             recovery = Static(
@@ -2485,13 +2474,14 @@ class ConsoleLeftRail(Vertical):
             system_line.styles.text_wrap = "nowrap"
             system_line.styles.text_overflow = "ellipsis"
             system_line.set_class(self._system_line_dim, "console-rail-system-line-dim")
+            # The id predates the label; rail tests key on it.
             configure = Button(
-                "Configure",
+                "Change  Alt+M",
                 id="console-model-section-configure",
                 classes="console-workspace-action",
                 compact=True,
             )
-            configure.tooltip = "Configure Console session settings"
+            configure.tooltip = "Switch model: this chat's provider·model pair (Alt+M)"
             model_body = self._section_body(
                 "model",
                 rail_state.model_open,
@@ -2654,10 +2644,10 @@ class ConsoleLeftRail(Vertical):
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
 
-        Every other button inside this rail's subtree (Configure, the
-        agent drill-down Back/View-full-log buttons, the rail collapse
-        button) has a handler whose body reaches beyond this rail -- the
-        Console settings modal, the agent run-log viewer, a screen-wide
+        Every other button inside this rail's subtree (the Model section's
+        Change, the agent drill-down Back/View-full-log buttons, the rail
+        collapse button) has a handler whose body reaches beyond this rail --
+        Switch model, the agent run-log viewer, a screen-wide
         chat-UI sync, or Console rail preference persistence that also
         drives the Inspector rail. Those stay on ``ChatScreen`` and keep
         working unchanged: this method does not stop or otherwise touch

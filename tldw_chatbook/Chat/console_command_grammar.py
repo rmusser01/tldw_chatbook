@@ -112,9 +112,11 @@ DOCTOR_COMMAND_HANDLER_ID = "doctor"
 # one handler_id; the screen maps each name to the action method that already
 # implements it (see ChatScreen._CONSOLE_ACTION_COMMAND_TARGETS). No new
 # capability -- every one maps to a palette entry / key binding that works today.
+# A command with an argument hint receives its arguments (TASK-33004.7:
+# `/model son` opens Switch model with `son` in Find); the rest take none.
 CONSOLE_ACTION_COMMAND_HANDLER_ID = "console-action"
 CONSOLE_ACTION_COMMANDS: tuple[tuple[str, str], ...] = (
-    ("model", ""),
+    ("model", "[query]"),
     ("sessions", ""),
     ("workspace", ""),
     ("new", ""),

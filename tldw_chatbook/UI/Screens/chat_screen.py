@@ -176,9 +176,7 @@ from ...Chat.citation_trace_repository import ActiveCitationTraceState
 from ...Chat.console_chat_controller import (
     ConsoleChatController,
     ConsoleSubmitResult,
-)
-from tldw_chatbook.Chat.console_chat_controller import (
-    resolve_console_selection_core,
+    build_console_provider_selection_from_settings,
 )
 from ...Chat.console_context_compaction import (
     EffectiveMemoryKind,
@@ -200,7 +198,6 @@ from ...Chat.console_context_policy import (
 )
 from ...Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
-    QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleSettingsAction,
     ConsoleSettingsCommittedSubmission,
     ConsoleSettingsDraftState,
@@ -240,7 +237,6 @@ from ...Chat.console_roleplay_identity import (
     normalize_chat_display_name,
     normalize_console_transcript_style,
     resolve_console_message_presentation,
-    resolve_send_system_prompt,
 )
 from ...Chat.prompt_history import PromptHistory
 from ...Backup_Recovery import raw_participants as raw
@@ -362,7 +358,6 @@ from ...Chat.console_session_endpoint_policy import (
     ConsoleEndpointRollbackOutcome,
     ConsoleEphemeralEndpointPolicy,
 )
-from ...Chat.console_endpoint_provenance import ConsoleEndpointProvenance
 from ...Chat.console_chat_store import (
     MAX_PENDING_ATTACHMENTS,
     ConsoleChatSession,
@@ -668,9 +663,6 @@ from ...Widgets.Console.console_prompt_comparison_modal import (
     PromptComparisonResult,
 )
 from ...Widgets.Console.console_scope_picker_modal import ConsoleScopePickerModal
-from ...Widgets.Console.console_model_popover import (
-    ConsoleModelPopover,
-)
 from ...Widgets.Console.console_style_picker_modal import ConsoleStylePickerModal
 from ...Widgets.Console.console_setup_modal import (
     CONSOLE_SETUP_MODAL_DETECTED_WORKBENCH_ACTION,
@@ -1194,10 +1186,9 @@ def _consume_console_roleplay_repair_for_current_screen(
 
 CONSOLE_WORKBENCH_SHORTCUTS = (
     ("F6", "next pane"),
-    ("Shift+F6", "previous pane"),
     ("F1", "help"),
-    ("Enter", "send / queue"),
-    ("Y", "trace"),
+    ("Alt+M", "switch model"),  # TASK-33004.7: mockup (a)'s order
+    ("Ctrl+O", "chat settings"),
     ("Ctrl+K", "switch session"),
     ("Ctrl+T", "new tab"),
     # TASK-24604: the rail's own accelerator has to be advertised here or it
@@ -1210,6 +1201,9 @@ CONSOLE_WORKBENCH_SHORTCUTS = (
     ("Alt+A", "approval"),
     ("Alt+C", "context rail"),
     ("Ctrl+P", "palette"),
+    ("Y", "trace"),  # Y/Enter/Shift+F6 last: 211x44 keeps Alt+I/A/C (33004.7)
+    ("Enter", "send / queue"),
+    ("Shift+F6", "previous pane"),
 )
 
 #: TASK-24703: `AppFooterStatus` degrades by keeping a PREFIX of the hint
@@ -1233,9 +1227,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SINGLE_PANE = (
 #: advertising "Enter send" is a lie -- Enter activates the focused setup-card
 #: action instead. The blocked variant hides the send hint and names the real
 #: action. `_register_console_footer_shortcuts` swaps between the two.
-CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
-    ("Enter", "continue setup") if pair == ("Enter", "send / queue") else pair
-    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = (
+    ("Enter", "continue setup"),  # the real action leads, as collapsed's Esc does
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
 )
 
 #: TASK-25733: the same lie as the setup-blocked case above, from a different
@@ -1243,9 +1237,9 @@ CONSOLE_WORKBENCH_SHORTCUTS_SETUP_BLOCKED = tuple(
 #: sends nothing, yet the footer kept offering "Enter send / queue". Escape is
 #: the way back (see the `expand_collapsed_console_composer` priority binding),
 #: so the send hint is replaced by the one action that matters while hidden.
-CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = tuple(
-    ("Esc", "show composer") if pair == ("Enter", "send / queue") else pair
-    for pair in CONSOLE_WORKBENCH_SHORTCUTS
+CONSOLE_WORKBENCH_SHORTCUTS_COMPOSER_COLLAPSED = (
+    ("Esc", "show composer"),  # the way back leads, so a narrow footer keeps it
+    *(pair for pair in CONSOLE_WORKBENCH_SHORTCUTS if pair[0] != "Enter"),
 )
 
 #: TASK-362: the full Console keyboard vocabulary for the F1 help panel, grouped
@@ -1318,7 +1312,9 @@ CONSOLE_WORKBENCH_SHORTCUT_GROUPS = (
         (
             ("F1", "help"),
             ("Ctrl+P", "command palette"),
-            ("Alt+M", "quick change model"),
+            ("Alt+M", "Switch model: this chat's provider·model pair"),
+            ("/model [query]", "Switch model with Find filled in"),
+            ("Ctrl+O", "Chat settings: every setting for this chat"),
             ("F2", "rename a session (in the Ctrl+K switcher)"),
         ),
     ),
@@ -1948,7 +1944,8 @@ class ChatScreen(BaseAppScreen):
         # hint is registered via CONSOLE_WORKBENCH_SHORTCUTS like the rest
         # of the Console vocabulary.
         Binding("y", "open_trajectory_view", "Trace", show=True),
-        Binding("alt+m", "open_console_model_popover", "Model", show=True),
+        Binding("alt+m", "open_console_model_popover", "Switch model", show=True),
+        Binding("ctrl+o", "open_console_session_settings", "Chat settings", show=True),
         Binding("alt+w", "open_console_workspace_switcher", "Workspace", show=True),
         # TASK-24604: the Inspect rail ships CLOSED (unlike the left rail) and
         # F6 filters out non-displayed panes, so before this binding the only
@@ -5520,61 +5517,11 @@ class ChatScreen(BaseAppScreen):
         """Open Trace for the active Console conversation (``y``)."""
         self._review_selection.open_trajectory_view()
 
-    async def action_open_console_model_popover(self) -> None:
-        """Open the Alt+M quick provider/model/temperature/streaming popover."""
-        if self._console_setup_modal_blocking():
-            return
-        store = self._ensure_console_chat_store()
-        session_id = store.active_session_id
-        if session_id is None:
-            return
-        origin = store.capture_console_settings_origin(session_id)
-        settings = store.session_settings(session_id)
-        if settings is None:
-            return
-        context_policy = store.session_context_policy_overrides(session_id)
-        session = store.switch_session(session_id)
-        initial_draft = self._console_settings_initial_draft(
-            settings,
-            context_policy,
-            exposed_fields=QUICK_MODEL_DEFAULT_FIELDS,
-        )
-        providers_models = await self._providers_models_for_console_settings(
-            settings.provider,
-            current_model=settings.model,
-        )
-        effective_thinking_policy = await self._ensure_console_chat_controller().effective_thinking_history_policy_for_session(
-            origin.session_id
-        )
-        context_state = self._console_context_control_state_for_session(
-            origin.session_id,
-            settings=settings,
-            thinking_history_effective_policy=effective_thinking_policy,
-        )
-        self.app.push_screen(
-            ConsoleModelPopover(
-                origin=origin,
-                app_config=self._provider_readiness_app_config(),
-                initial_draft=initial_draft,
-                providers_models=providers_models,
-                context_state=context_state,
-                context_window_resolver=lambda settings: self._ensure_console_provider_gateway().resolve_context_window(settings),
-                scope_copy="Applies to this conversation",
-                durability_copy=(
-                    "Temporary until this chat is promoted"
-                    if session.ephemeral
-                    else "Saved with the conversation after its first message"
-                    if session.persisted_conversation_id is None
-                    else "Saved with this conversation"
-                ),
-                draft_rebaser=(
-                    self._ensure_console_chat_controller().rebase_console_settings_draft
-                ),
-                live_committer=self._commit_console_settings_submission_live,
-                default_readiness_resolver=self._console_default_readiness,
-            ),
-            callback=self._apply_console_model_popover_result,
-        )
+    async def action_open_console_model_popover(self, query: str = "") -> None:
+        """Open Switch model (Alt+M, ``/model [query]``) with Find set to ``query``."""
+        from ..Console_Modules.model_switcher import open_model_switcher
+
+        await open_model_switcher(self, query)
 
     def on_console_workspace_details_tray_default_persona_requested(self, event) -> None:
         """Route the workspace details action to its explicit workspace owner."""
@@ -6163,7 +6110,7 @@ class ChatScreen(BaseAppScreen):
     def action_open_console_session_settings(self) -> None:
         """Open the full Console session settings modal, guarded by the setup modal.
 
-        Routes the command-palette "Console: Session settings…" entry through
+        Routes Ctrl+O and the palette's "Console: Chat settings…" entry through
         the same blocking check every other Console action honors, instead of
         the palette calling ``_open_console_settings`` directly and bypassing
         the first-run setup modal.
@@ -9413,28 +9360,19 @@ class ChatScreen(BaseAppScreen):
         else:
             # The child owns its bounded-body and rail invalidation.
             summary.sync_state(summary_state)
-        # TASK-32811.7: read the structured values the state already carries
-        # (TASK-32338 added `temperature`/`max_tokens` for exactly this) rather
-        # than regex-parsing them back out of the formatted `sampling_row`,
-        # which drifts the moment that display string is reworded.
-        temperature_value = summary_state.temperature or "—"
-        max_tokens_value = summary_state.max_tokens or "—"
-        readiness = summary_state.readiness
-
-        # TASK-32811.7: the Provider and Model rows were removed from this
-        # section (TASK-23196 -- the status bar owns them), so querying their
-        # ids here raised NoMatches on the FIRST lookup and the temperature
-        # and max-token writes below it never ran, leaving those two rows
-        # frozen at their compose-time values. Query only the ids that are
-        # actually composed. Each is guarded on its own so a future removal
-        # of one cannot silently freeze the other.
+        # TASK-32811.7: read the structured values (TASK-32338; `streaming` since
+        # TASK-33004.7) rather than regex-parse `sampling_row`, and query only
+        # composed ids: the Provider/Model rows TASK-23196 removed raised
+        # NoMatches on the FIRST lookup and froze the rest. Each row is guarded.
         for section_id, value in (
-            ("console-model-section-temperature", temperature_value),
-            ("console-model-section-max-tokens", max_tokens_value),
+            ("console-model-section-temperature", summary_state.temperature),
+            ("console-model-section-max-tokens", summary_state.max_tokens),
+            ("console-model-section-streaming", summary_state.streaming),
         ):
             rows = self.query(f"#{section_id} .console-model-section-value")
             if rows:
-                rows.first(Static).update(value)
+                rows.first(Static).update(value or "—")
+        readiness = summary_state.readiness
 
         try:
             recovery = self.query_one("#console-model-section-recovery", Static)
@@ -9709,113 +9647,35 @@ class ChatScreen(BaseAppScreen):
         *,
         legacy_model: object,
     ) -> ConsoleProviderSelection:
-        """Build a provider selection from one immutable settings snapshot."""
-        app_config = self._provider_readiness_app_config()
+        """Build a provider selection from one immutable settings snapshot.
+
+        TASK-33004.2: the one builder lives in console_chat_controller; the
+        screen supplies only its inputs (workspace, endpoint policy, identity).
+        """
         store = self._ensure_console_chat_store()
-        # TASK-32859: the provider/model/base-url core resolves through the
-        # ONE shared implementation in console_chat_controller (the
-        # PR-2668 identity fix now lives only there); this superset builder
-        # keeps only what it genuinely adds (endpoint policy, workspace
-        # context, identity re-expansion).
-        core = resolve_console_selection_core(
-            selection_settings, app_config=app_config, legacy_model=legacy_model
-        )
-        provider = core.provider
-        explicit_model = core.explicit_model
-        configured_model = core.configured_model
-        base_url = core.base_url
-
-        current_workspace_context = self._workspace._current_console_workspace_context()
-        if target_session_id is None:
-            workspace_context = current_workspace_context
-        else:
-            workspace_id = store.session_workspace_id(target_session_id)
-            workspace_context = (
-                current_workspace_context
-                if current_workspace_context.active_workspace_id == workspace_id
-                else ConsoleWorkspaceContext(active_workspace_id=workspace_id)
-            )
-
-        endpoint_policy = (
-            store.session_ephemeral_endpoint_policy(target_session_id)
-            if target_session_id is not None
-            else None
-        )
-        endpoint_policy_owns_selection = (
-            endpoint_policy is not None
-            and endpoint_policy.provider == selection_settings.provider
-            and endpoint_policy.model == selection_settings.model
-        )
-        selection = ConsoleProviderSelection(
-            provider=provider,
-            base_url=base_url,
-            configured_endpoint_fallback_allowed=(not endpoint_policy_owns_selection),
-            endpoint_provenance=(
-                ConsoleEndpointProvenance.EPHEMERAL_SESSION
-                if endpoint_policy_owns_selection
-                else ConsoleEndpointProvenance.DURABLE_CONFIGURATION
-            ),
-            explicit_model=explicit_model,
-            configured_model=configured_model,
-            temperature=selection_settings.temperature,
-            top_p=selection_settings.top_p,
-            min_p=selection_settings.min_p,
-            top_k=selection_settings.top_k,
-            max_tokens=selection_settings.max_tokens,
-            seed=selection_settings.seed,
-            presence_penalty=selection_settings.presence_penalty,
-            frequency_penalty=selection_settings.frequency_penalty,
-            reasoning_effort=selection_settings.reasoning_effort,
-            reasoning_summary=selection_settings.reasoning_summary,
-            verbosity=selection_settings.verbosity,
-            thinking_effort=selection_settings.thinking_effort,
-            thinking_budget_tokens=selection_settings.thinking_budget_tokens,
-            streaming=selection_settings.streaming,
-            system_prompt=selection_settings.system_prompt,
-            workspace_context=workspace_context,
-        )
-        # task-32484: the controller's per-send identity re-expansion never
-        # reached this production path (its persona/character branch only
-        # fires for bare controllers without a wired turn-context provider),
-        # so sends here reused the settings' last materialized projection.
-        # Apply the same shared resolver: a named persona/character session
-        # with a trusted template sends a fresh expansion against the current
-        # effective display name; anything else keeps the settings prompt.
+        workspace_context = self._workspace._current_console_workspace_context()
+        endpoint_policy = identity_session = None
         if target_session_id is not None:
+            workspace_id = store.session_workspace_id(target_session_id)
+            if workspace_context.active_workspace_id != workspace_id:
+                workspace_context = ConsoleWorkspaceContext(
+                    active_workspace_id=workspace_id
+                )
+            endpoint_policy = store.session_ephemeral_endpoint_policy(target_session_id)
             identity_session = next(
                 (item for item in store.sessions() if item.id == target_session_id),
                 None,
             )
-            if (
-                identity_session is not None
-                and identity_session.assistant_kind in {"persona", "character"}
-            ):
-                is_persona = identity_session.assistant_kind == "persona"
-                try:
-                    global_default = self._global_chat_display_name()
-                except Exception:
-                    global_default = "User"
-                selection = replace(
-                    selection,
-                    system_prompt=resolve_send_system_prompt(
-                        identity_name=(
-                            identity_session.assistant_name
-                            if is_persona
-                            else identity_session.character_name
-                        ),
-                        identity_template=(
-                            identity_session.persona_system_template
-                            if is_persona
-                            else identity_session.character_system_template
-                        ),
-                        user_name_override=(
-                            identity_session.user_display_name_override
-                        ),
-                        global_default=global_default,
-                        fallback=selection.system_prompt,
-                    ),
-                )
-        return selection
+        return build_console_provider_selection_from_settings(
+            selection_settings,
+            app_config=self._provider_readiness_app_config(),
+            workspace_context=workspace_context,
+            legacy_model=legacy_model,
+            endpoint_policy=endpoint_policy,
+            identity_session=identity_session,
+            # Lazy, as before: only an identity session reads the name.
+            global_user_name=lambda: self._global_chat_display_name(),
+        )
 
     def _active_console_provider_model_display(
         self,
@@ -12186,7 +12046,7 @@ class ChatScreen(BaseAppScreen):
     async def _console_model_chip_activated(
         self, event: ConsoleModelChip.OpenRequested
     ) -> None:
-        """Open the quick model popover from the Provider/Model chips.
+        """Open Switch model from the Provider/Model chips.
 
         task-1670: a second entry point into the same opener Alt+M uses,
         following the scope-chip precedent below.
@@ -19497,7 +19357,9 @@ class ChatScreen(BaseAppScreen):
             )
             return
         try:
-            result = method()
+            self._clear_console_composer_draft()  # it ran: drop "/model son"
+            takes_args = dict(CONSOLE_ACTION_COMMANDS).get(parse.name)  # /model [query]
+            result = method(parse.args) if takes_args else method()
             if inspect.isawaitable(result):
                 await result
         except Exception as exc:  # noqa: BLE001 - a command must not crash the screen
@@ -24720,8 +24582,9 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
             return
-        if button_id == "console-model-section-configure":
-            await self.on_console_settings_open(event)
+        if button_id == "console-model-section-configure":  # "Change  Alt+M"
+            event.stop()
+            await self.action_open_console_model_popover()
             return
         if button_id == "console-agent-drilldown-back":
             event.stop()
@@ -25168,8 +25031,9 @@ class ChatScreen(BaseAppScreen):
         if button_id == "console-settings-open":
             await self.on_console_settings_open(event)
             return
-        if button_id == "console-model-section-configure":
-            await self.on_console_settings_open(event)
+        if button_id == "console-model-section-configure":  # "Change  Alt+M"
+            event.stop()
+            await self.action_open_console_model_popover()
             return
         if button_id == "console-agent-drilldown-back":
             event.stop()

@@ -66,6 +66,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
+from tldw_chatbook.Utils.timestamps import as_utc
 from tldw_chatbook.Video_Generation.video_metadata import VideoGenerationMetadata
 
 __all__ = [
@@ -703,6 +704,12 @@ async def hydrate_console_session(
         activate=False,
     )
     session.persona_system_template = roleplay_context.persona_system_template
+    # Opening a saved chat is not a use of it. Keep the row's last change as
+    # the session's recency, as a session restored at startup keeps its saved
+    # updated_at (Switch model RECENT, the conversation switcher's ages).
+    stored_updated_at = as_utc(conversation.get("last_modified"))
+    if stored_updated_at is not None:
+        session.updated_at = stored_updated_at.isoformat()
     try:
         await store.hydrate_session_library_policy(session.id)
         await store.reconcile_pending_workspace_projection(session.id)

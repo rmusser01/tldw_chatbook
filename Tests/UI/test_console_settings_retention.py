@@ -3,7 +3,7 @@
 from dataclasses import replace
 
 import pytest
-from textual.widgets import Button, Input
+from textual.widgets import Button, Input, Select
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (
@@ -18,25 +18,50 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.config import load_settings
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+from tldw_chatbook.Widgets.Console.console_model_popover import CURRENT_MARK
 
 
 async def _open_settings(console, harness, pilot, surface):
     if surface == "quick":
         await console.action_open_console_model_popover()
+        await pilot.pause()
+        await harness.workers.wait_for_complete()
+        await _highlight_current(harness.screen, pilot)
     else:
         await console._open_console_settings(focus_model=True)
     await pilot.pause()
     return harness.screen
 
 
+async def _highlight_current(modal, pilot) -> None:
+    """Move Switch model's highlight to the CURRENT row (PREVIOUS opens it)."""
+    rows = modal._rows
+    index = next((i for i, row in enumerate(rows) if row.note == CURRENT_MARK), None)
+    assert index is not None, f"no {CURRENT_MARK} row: {[row.key for row in rows]}"
+    modal._set_highlight(index)
+    await pilot.pause()
+
+
+def _flip_streaming(modal, surface) -> None:
+    """Edit Streaming: Switch model's On/Off Select (TASK-33004.5), else the
+    full modal's toggle Button."""
+    if surface == "quick":
+        streaming = modal.query_one("#console-popover-streaming", Select)
+        streaming.value = not streaming.value
+    else:
+        modal.query_one("#console-settings-streaming", Button).press()
+
+
 async def _submit_settings(modal, console, harness, pilot, surface, action):
     if surface == "quick":
-        if action == "default":
-            modal.query_one("#console-popover-defaults", Button).press()
-            await pilot.pause()
-            button_id = "console-popover-make-new-chat-default"
-        else:
-            button_id = "console-popover-apply"
+        # TASK-33004.4: no Defaults… subview; both keys act on the highlighted
+        # pair, so select the chat's current pair first.
+        await _highlight_current(modal, pilot)
+        button_id = (
+            "console-popover-make-new-chat-default"
+            if action == "default"
+            else "console-popover-apply"
+        )
     else:
         button_id = (
             "console-settings-make-default"
@@ -80,7 +105,7 @@ async def test_reopen_keeps_previously_applied_temperature(
         assert float(modal.query_one(f"#{prefix}-temperature", Input).value) == (
             pytest.approx(0.23)
         )
-        modal.query_one(f"#{prefix}-streaming", Button).press()
+        _flip_streaming(modal, surface)
         await pilot.pause()
         await _submit_settings(modal, console, harness, pilot, surface, second_action)
 
@@ -135,7 +160,7 @@ async def test_quick_apply_retains_hidden_generation_values_and_live_endpoint(
         )
 
         modal = await _open_settings(console, harness, pilot, "quick")
-        modal.query_one("#console-popover-streaming", Button).press()
+        _flip_streaming(modal, "quick")
         await pilot.pause()
         await _submit_settings(modal, console, harness, pilot, "quick", "apply")
 

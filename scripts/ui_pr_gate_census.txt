@@ -31,6 +31,7 @@ Tests/UI/test_console_library_policy_controller.py
 Tests/UI/test_console_library_search_modal.py
 Tests/UI/test_console_model_popover_no_provider.py
 Tests/UI/test_console_model_popover_registry_options.py
+Tests/UI/test_console_model_switcher.py
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_console_progress_navigation_owners.py
 Tests/UI/test_console_rail_progress_timer.py

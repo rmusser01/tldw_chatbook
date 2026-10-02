@@ -8,6 +8,8 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
+from enum import Enum
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
 from urllib.parse import urlparse, urlunparse
 
@@ -838,6 +840,8 @@ class ConsoleSettingsSummaryState:
     #: em-dash placeholder at the rail).
     temperature: str = ""
     max_tokens: str = ""
+    #: "On"/"Off" for the rail's Streaming row (TASK-33004.7, task-338).
+    streaming: str = ""
     readiness_label: str = ""
     provider_row: str = ""
     endpoint_row: str = ""
@@ -1087,6 +1091,162 @@ def build_console_model_options(
     return [ConsoleSettingsOption(label=model, value=model) for model in model_values]
 
 
+class ConsoleValueLayer(str, Enum):
+    """One layer of the Console parameter stack (ADR-147), highest first."""
+
+    EDITED_DRAFT = "edited_draft"
+    THIS_CHAT = "this_chat"
+    MODEL_DEFAULT = "model_default"
+    CONSOLE_PROVIDER_DEFAULT = "console_provider_default"
+    CUSTOM_ENDPOINT_PARAMS = "custom_endpoint_params"
+    CHAT_DEFAULTS = "chat_defaults"
+    PROVIDER_SCALARS = "provider_scalars"
+    BUILT_IN = "built_in"
+
+
+#: Spec §6 Source words. Every layer maps to exactly one; the three
+#: provider-scoped config layers share "provider", because "Console Behavior"
+#: names only the global fallbacks (chat_defaults) that Settings page edits.
+CONSOLE_VALUE_SOURCE_WORDS: Mapping[ConsoleValueLayer, str] = MappingProxyType(
+    {
+        ConsoleValueLayer.EDITED_DRAFT: "edited *",
+        ConsoleValueLayer.THIS_CHAT: "this chat",
+        ConsoleValueLayer.MODEL_DEFAULT: "model default",
+        ConsoleValueLayer.CONSOLE_PROVIDER_DEFAULT: "provider",
+        ConsoleValueLayer.CUSTOM_ENDPOINT_PARAMS: "provider",
+        ConsoleValueLayer.CHAT_DEFAULTS: "Console Behavior",
+        ConsoleValueLayer.PROVIDER_SCALARS: "provider",
+        ConsoleValueLayer.BUILT_IN: "built-in",
+    }
+)
+
+
+def _console_default_layers(
+    app_config: Mapping[str, object],
+    provider: str | None,
+    model: str | None,
+    *,
+    excluded_model_profile_fields: frozenset[str] = frozenset(),
+    extra_sources: Sequence[Mapping[str, object]] = (),
+) -> tuple[
+    EffectiveChatConfiguration,
+    tuple[tuple[ConsoleValueLayer, Mapping[str, object]], ...],
+]:
+    """The default chain's sources in precedence order, each with its layer.
+
+    The one spelling of the order that both the default builder and the
+    Source-word resolver walk.
+    """
+    chat_defaults = _chat_defaults_with_streaming_compat(
+        _mapping_value(app_config, "chat_defaults")
+    )
+    effective = resolve_effective_chat_configuration(
+        app_config,
+        provider=provider,
+        model=model,
+    )
+    provider_settings = console_provider_settings(app_config, effective.provider)
+    model_profile = _model_default_profile(provider_settings, effective.model)
+    if excluded_model_profile_fields:
+        model_profile = {
+            name: value
+            for name, value in model_profile.items()
+            if name not in excluded_model_profile_fields
+        }
+    # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
+    # Console's Save-as-default wrote, so it outranks everything except a
+    # model profile. chat_defaults stays ahead of raw [api_settings.*]
+    # scalars (f14d22dc3, review feedback): factory provider templates carry
+    # sampling values for every provider and must not shadow user-tuned
+    # global defaults — which is precisely why saved defaults need their own
+    # section instead of writing into api_settings.
+    saved_defaults = _mapping_value(
+        _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
+        effective.provider,
+    )
+    return effective, (
+        (ConsoleValueLayer.MODEL_DEFAULT, model_profile),
+        (ConsoleValueLayer.CONSOLE_PROVIDER_DEFAULT, saved_defaults),
+        *((ConsoleValueLayer.CUSTOM_ENDPOINT_PARAMS, extra) for extra in extra_sources),
+        (ConsoleValueLayer.CHAT_DEFAULTS, chat_defaults),
+        (ConsoleValueLayer.PROVIDER_SCALARS, provider_settings),
+    )
+
+
+_CONSOLE_INT_FIELDS = frozenset({"top_k", "max_tokens", "seed", "thinking_budget_tokens"})
+_CONSOLE_STRING_FIELDS = frozenset(
+    {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
+)
+
+
+def _value_from_source(source: Mapping[str, object], name: str) -> object:
+    """One source's usable value for ``name`` under the builder's own coercion."""
+    if name == "streaming":
+        return _bool_setting_from_sources((source,), name, None)
+    if name in _CONSOLE_INT_FIELDS:
+        return _optional_int_setting_from_sources((source,), name)
+    if name in _CONSOLE_STRING_FIELDS:
+        return _optional_string_setting_from_sources((source,), name)
+    return _optional_float_setting_from_sources((source,), name)
+
+
+def resolve_console_value_layers(
+    app_config: Mapping[str, object],
+    provider: str | None,
+    model: str | None,
+    names: Sequence[str],
+    *,
+    edited: frozenset[str] = frozenset(),
+    chat_settings: ConsoleSessionSettings | None = None,
+    extra_sources: Sequence[Mapping[str, object]] = (),
+) -> dict[str, ConsoleValueLayer]:
+    """Name the parameter-stack layer each shown value comes from (spec §6).
+
+    Map a result through ``CONSOLE_VALUE_SOURCE_WORDS`` for the Source word.
+
+    Args:
+        app_config: The configuration snapshot the default chain reads.
+        provider: The shown pair's provider.
+        model: The shown pair's model.
+        names: Generation fields to resolve.
+        edited: Fields the user edited in the open draft.
+        chat_settings: This chat's committed settings when the shown pair is
+            its pair; a value that differs from the default chain is the chat's.
+        extra_sources: ADR-147 registry params, as the builder takes them.
+
+    Returns:
+        ``{name: layer}`` for every name.
+    """
+    _effective, layers = _console_default_layers(
+        app_config, provider, model, extra_sources=extra_sources
+    )
+    defaults = (
+        build_default_console_session_settings(
+            app_config, provider, model, extra_sources=extra_sources
+        )
+        if chat_settings is not None
+        else None
+    )
+    resolved: dict[str, ConsoleValueLayer] = {}
+    for name in names:
+        if name in edited:
+            resolved[name] = ConsoleValueLayer.EDITED_DRAFT
+        elif defaults is not None and getattr(chat_settings, name) != getattr(
+            defaults, name
+        ):
+            resolved[name] = ConsoleValueLayer.THIS_CHAT
+        else:
+            resolved[name] = next(
+                (
+                    layer
+                    for layer, source in layers
+                    if _value_from_source(source, name) is not None
+                ),
+                ConsoleValueLayer.BUILT_IN,
+            )
+    return resolved
+
+
 def build_default_console_session_settings(
     app_config: Mapping[str, object],
     provider: str | None = None,
@@ -1106,42 +1266,18 @@ def build_default_console_session_settings(
             precedence walk (ADR-147: registry entry params ride this seam).
             The default ``()`` keeps the source order unchanged.
     """
-    chat_defaults = _chat_defaults_with_streaming_compat(
-        _mapping_value(app_config, "chat_defaults")
-    )
-    effective = resolve_effective_chat_configuration(
+    effective, layers = _console_default_layers(
         app_config,
-        provider=provider,
-        model=model,
+        provider,
+        model,
+        excluded_model_profile_fields=excluded_model_profile_fields,
+        extra_sources=extra_sources,
     )
-    configured_provider = effective.provider
-    provider_settings = _provider_settings(app_config, configured_provider)
-    configured_model = effective.model
-    model_profile = _model_default_profile(provider_settings, configured_model)
-    if excluded_model_profile_fields:
-        model_profile = {
-            name: value
-            for name, value in model_profile.items()
-            if name not in excluded_model_profile_fields
-        }
-    # TASK-342: [console.provider_defaults.<provider>] holds ONLY values the
-    # Console's Save-as-default wrote, so it outranks everything except a
-    # model profile. chat_defaults stays ahead of raw [api_settings.*]
-    # scalars (f14d22dc3, review feedback): factory provider templates carry
-    # sampling values for every provider and must not shadow user-tuned
-    # global defaults — which is precisely why saved defaults need their own
-    # section instead of writing into api_settings.
-    saved_defaults = _mapping_value(
-        _mapping_value(_mapping_value(app_config, "console"), "provider_defaults"),
-        configured_provider,
-    )
-    default_sources = (
-        model_profile, saved_defaults, *extra_sources, chat_defaults, provider_settings
-    )
+    default_sources = tuple(source for _layer, source in layers)
 
     return ConsoleSessionSettings(
-        provider=configured_provider,
-        model=configured_model,
+        provider=effective.provider,
+        model=effective.model,
         base_url=effective.base_url,
         temperature=_float_setting_from_sources(default_sources, "temperature", 0.7),
         top_p=_float_setting_from_sources(default_sources, "top_p", 0.95),
@@ -1274,7 +1410,7 @@ def normalized_console_model_profile_overrides(
     does not resolve any fallback precedence.
     """
 
-    provider_settings = _provider_settings(
+    provider_settings = console_provider_settings(
         app_config,
         _canonical_chat_provider_id(provider),
     )
@@ -1360,13 +1496,11 @@ def resolve_effective_chat_configuration(
     owns_defaults_model = provider_identity_key(provider_id) == provider_identity_key(
         defaults_provider_id
     )
-    provider_settings = _provider_settings(app_config, provider_id)
+    provider_settings = console_provider_settings(app_config, provider_id)
     candidates = (
         ("session", model),
         ("chat_defaults", chat_defaults.get("model") if owns_defaults_model else None),
-        ("provider_fallback", provider_settings.get("model")),
-        ("provider_fallback", provider_settings.get("api_model")),
-        ("provider_fallback", provider_settings.get("default_model")),
+        ("provider_fallback", configured_provider_model(provider_settings)),
     )
     model_source = "none"
     resolved_model = None
@@ -1557,7 +1691,7 @@ def validate_console_session_settings(
     """Return user-facing validation errors for Console settings."""
     errors = _console_session_settings_structural_errors(settings)
     provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
+    provider_settings = console_provider_settings(app_config, provider_key)
 
     if provider_key not in NATIVE_CONSOLE_PROVIDER_KEYS and not _string_value(
         settings.model
@@ -1958,6 +2092,7 @@ def build_console_settings_summary_state(
         max_tokens=(
             str(settings.max_tokens) if settings.max_tokens is not None else ""
         ),
+        streaming="On" if settings.streaming else "Off",
         identity_row=identity_row,
         readiness_label="",
         provider_row=f"Provider: {provider_label}",
@@ -2121,13 +2256,26 @@ def _canonical_chat_provider_id(
     ).readiness_key
 
 
-def _provider_settings(
-    app_config: Mapping[str, object], provider_key: str
+def console_provider_settings(
+    app_config: Mapping[str, object], provider_key: str, *, strict: bool = False
 ) -> Mapping[str, object]:
-    # ADR-146 (registry seam): custom-ep providers read their settings from
-    # the registry entry, not the api_settings table. Lazy import:
-    # custom_endpoint_registry imports this module for URL normalization, so
-    # a module-level import would cycle.
+    """Return one provider's settings: the Console's one lookup (TASK-33004.2).
+
+    Args:
+        app_config: The full CLI config mapping.
+        provider_key: Provider id or config key.
+        strict: Re-raise a malformed or ambiguous table (the gateway's policy)
+            instead of treating it as empty.
+
+    Returns:
+        The registry entry's flattened view for a ``custom-ep:`` id (ADR-146),
+        else the matching ``api_settings`` table, else an empty mapping.
+
+    Raises:
+        ProviderSettingsError: Only when ``strict`` and the table is invalid.
+    """
+    # Lazy import: custom_endpoint_registry imports this module for URL
+    # normalization, so a module-level import would cycle.
     from tldw_chatbook.Chat.custom_endpoint_registry import (
         custom_endpoint_provider_settings,
     )
@@ -2141,7 +2289,22 @@ def _provider_settings(
     try:
         return provider_settings_for_key(api_settings, provider_key)
     except ProviderSettingsError:
+        if strict:
+            raise
         return {}
+
+
+def configured_provider_model(provider_settings: Mapping[str, object]) -> str | None:
+    """Return a provider table's own model: ``model``, ``api_model``, ``default_model``.
+
+    TASK-33004.2: the one spelling of this fallback chain. Blank values and
+    placeholder sentinels (``None``/``null``) are skipped.
+    """
+    for key in ("model", "api_model", "default_model"):
+        model = normalize_console_model_value(provider_settings.get(key))
+        if model is not None:
+            return model
+    return None
 
 
 def _custom_endpoint_declared_credential(
@@ -2379,8 +2542,8 @@ def _console_endpoint_restart_fallback(
 ) -> str | None:
     """Return the endpoint the next boot would derive for this provider.
 
-    Mirrors the selection fallback chain in
-    ``ChatScreen._build_console_provider_selection_uncached``: llama.cpp
+    Mirrors the base-URL chain in the Console selection core
+    (``console_chat_controller.resolve_console_selection_core``): llama.cpp
     resolves env override -> ``[console] llama_cpp_base_url_override`` -> the
     provider's configured endpoint -> the built-in default; other URL-based
     providers resolve only their configured endpoint.
@@ -2439,7 +2602,7 @@ def console_session_endpoint_survives_restart(
     if entry_for(app_config, settings.provider) is not None:
         return True
     provider_key = provider_config_key(settings.provider)
-    provider_settings = _provider_settings(app_config, provider_key)
+    provider_settings = console_provider_settings(app_config, provider_key)
     base_url = _string_value(settings.base_url)
     if not base_url or not _is_url_based_provider(provider_key, provider_settings):
         return True

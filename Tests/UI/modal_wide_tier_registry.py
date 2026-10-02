@@ -20,8 +20,8 @@ deliberately absent, as is the Console session switcher: its
 ``set_styles`` (inline styles outrank every CSS rule), so it joins the
 inventory's imperative-geometry exclusions. The Conversation settings
 modal keeps its own shipped ``196`` cap and Python toggle (PR #2670);
-the Alt+M model popover keeps its own shipped per-surface tier
-(PR #2672).
+the Alt+M Switch model popover is a fixed 140-column width token
+(TASK-33004.4 replaced its PR #2672 tier).
 
 Each entry: ``(anchor, cap, owner_module)``.
 
@@ -73,7 +73,7 @@ MODAL_WIDE_TIER_SKIPPED: dict[str, str] = {
     "ConsoleWorkspaceRenameModal": "inventory #85: tiny rename dialog",
     "TagFilterPicker": "inventory #86: tiny tag list",
     # -- inventory section B (special surfaces) + rollout exclusions --------
-    "ConsoleModelPopover": "ships its own per-surface wide tier (PR #2672)",
+    "ConsoleModelPopover": "Switch model: fixed 140-column width token (TASK-33004.4)",
     "ConsoleSessionSwitcherModal": "imperative inline width via set_styles outranks every CSS rule",
     "ConsoleImageViewerModal": "content-fit auto geometry, nothing to scale",
     "ProjectInstructionNoticeModal": "notice-style modal, inventory section-B exclusion",

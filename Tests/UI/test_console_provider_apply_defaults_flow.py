@@ -21,6 +21,7 @@ from textual.widgets import Button, Input, Select, Static
 
 import tldw_chatbook.Chat.console_settings_defaults as defaults_module
 from Tests.console_provider_doubles import provider_resolution
+from Tests.private_profile import private_profile_test
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -214,8 +215,12 @@ def _console_app():
     return app
 
 
-def _persisted_console_app():
-    """Build from the sandbox config file the default writer will mutate."""
+def _persisted_console_app(**vllm_settings: object):
+    """Build from the sandbox config file the default writer will mutate.
+
+    Args:
+        **vllm_settings: Extra keys written into ``[api_settings.vllm]``.
+    """
 
     adapter = SettingsConfigAdapter()
     assert adapter.save_sections(
@@ -232,6 +237,7 @@ def _persisted_console_app():
                 "api_url": "http://127.0.0.1:9098",
                 "model": "vendor/model:b",
                 "streaming": True,
+                **vllm_settings,
             },
         }
     )
@@ -255,7 +261,36 @@ async def _open_provider_popover(
     await pilot.pause()
     modal = harness.screen
     assert isinstance(modal, ConsoleModelPopover)
+    # Readiness, RECENT and catalogs fill in after open (TASK-33004.4).
+    await harness.workers.wait_for_complete()
+    await pilot.pause()
     return modal
+
+
+async def _highlight(modal: ConsoleModelPopover, pilot, query: str):
+    """Type in Find and return the row Enter would act on."""
+    modal.query_one("#console-popover-find", Input).value = query
+    await pilot.pause()
+    return modal.highlighted_row()
+
+
+async def _edit_highlighted(modal: ConsoleModelPopover, pilot, temperature: str) -> None:
+    """Editing a value edits the highlighted pair's values (TASK-33004.4)."""
+    field = modal.query_one("#console-popover-temperature", Input)
+    field.focus()
+    await pilot.pause()
+    field.value = temperature
+    await pilot.pause()
+
+
+async def _choose_streaming(modal: ConsoleModelPopover, pilot, value: bool) -> None:
+    """Pick Streaming On or Off with the keyboard (TASK-33004.5: an On/Off
+    Select replaced the toggle Button)."""
+    streaming = modal.query_one("#console-popover-streaming", Select)
+    streaming.focus()
+    await pilot.press("enter", "up" if value else "down", "enter")
+    await pilot.pause()
+    assert streaming.value is value
 
 
 async def _select_vllm_model(
@@ -265,17 +300,11 @@ async def _select_vllm_model(
     model: str = "model-b",
     temperature: str = "0.31",
 ) -> None:
-    modal.query_one("#console-popover-provider", Select).value = "vllm"
-    await pilot.pause()
-    picker = modal.query_one("#console-popover-model-search")
-    picker.set_model_value(model)
-    picker.post_message(picker.ModelSelected(model))
-    await pilot.pause()
-    modal.query_one("#console-popover-temperature", Input).value = temperature
-    modal.query_one("#console-popover-compaction-mode", Select).value = (
-        ContextCompactionMode.AUTOMATIC.value
-    )
-    await pilot.pause()
+    """Rewritten for TASK-33004.4: Find + the vllm row replace the provider
+    Select, the model picker and the (removed) compaction Select."""
+    row = await _highlight(modal, pilot, model)
+    assert row is not None and (row.provider, row.model) == ("vllm", model)
+    await _edit_highlighted(modal, pilot, temperature)
 
 
 async def _drain_settings_tasks(app) -> None:
@@ -379,10 +408,8 @@ async def test_apply_closes_and_changes_only_later_send_context(
             "model-b",
             pytest.approx(0.31),
         )
-        assert store.session_context_policy_overrides(session.id) == replace(
-            policy_before,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # Quick Apply submits the compaction override unchanged (ADR-095).
+        assert store.session_context_policy_overrides(session.id) == policy_before
         captured_after = console._session._build_console_turn_execution_context(
             session.id
         )
@@ -442,7 +469,8 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "model-b",
             pytest.approx(0.31),
         )
-        assert policy.overrides.compaction_mode is ContextCompactionMode.AUTOMATIC
+        # Quick Apply carries the chat's (absent) compaction override as is.
+        assert policy.overrides.compaction_mode is None
 
         conversation = app.chachanotes_db.get_conversation_by_id(conversation_id)
         assert conversation is not None
@@ -462,10 +490,7 @@ async def test_apply_lifecycle_stages_persists_resumes_and_promotes() -> None:
             "vllm",
             "model-b",
         )
-        assert (
-            resumed.context_policy_overrides.compaction_mode
-            is ContextCompactionMode.AUTOMATIC
-        )
+        assert resumed.context_policy_overrides.compaction_mode is None
 
         temporary = store.create_session(
             settings=ConsoleSessionSettings(
@@ -803,10 +828,9 @@ async def test_stale_compaction_retry_cannot_replace_newer_full_policy(
             failure.policy_failure_label
             is ConsoleSettingsPolicyFailureLabel.COMPACTION
         )
-        assert failure.context_policy_overrides == replace(
-            original_policy,
-            compaction_mode=ContextCompactionMode.AUTOMATIC,
-        )
+        # TASK-33004.4: the quick surface no longer edits compaction, so the
+        # failed quick write carries the unchanged policy (ADR-095).
+        assert failure.context_policy_overrides == original_policy
 
         monkeypatch.setattr(
             persistence,
@@ -869,15 +893,8 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
             model=literal_model,
             temperature="0.42",
         )
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: on"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: off"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
+        assert modal.query_one("#console-popover-streaming", Select).value is True
+        await _choose_streaming(modal, pilot, False)
         await pilot.click("#console-popover-save-model-default")
         await pilot.pause()
         assert harness.screen is console
@@ -900,17 +917,13 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
         assert restarted_target.streaming is False
 
         modal = await _open_provider_popover(console, harness, pilot)
-        modal.query_one("#console-popover-temperature", Input).value = "0.23"
-        streaming = modal.query_one("#console-popover-streaming", Button)
-        assert str(streaming.label) == "Streaming: off"
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        assert await pilot.click(streaming) is True
-        await pilot.pause()
-        assert str(streaming.label) == "Streaming: on"
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
-        await pilot.click("#console-popover-make-new-chat-default")
+        # PREVIOUS (llama.cpp) is highlighted on open; pick the current pair.
+        row = await _highlight(modal, pilot, literal_model)
+        assert (row.provider, row.model, row.note) == ("vllm", literal_model, "● CURRENT")
+        await _edit_highlighted(modal, pilot, "0.23")
+        assert modal.query_one("#console-popover-streaming", Select).value is False
+        await _choose_streaming(modal, pilot, True)
+        await pilot.press("ctrl+n")
         await pilot.pause()
         assert harness.screen is console
         await _drain_settings_tasks(app)
@@ -1014,6 +1027,179 @@ async def test_default_actions_persist_exact_scope_and_publish_blank_chat_defaul
     assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
 
 
+@pytest.mark.parametrize(
+    ("provider_max_tokens", "saved_max_tokens"),
+    ((8192, 8192), ("", None)),
+    ids=("capped", "blank"),
+)
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_default_actions_write_the_quick_mask_to_the_exact_profile(
+    request,
+    provider_max_tokens: object,
+    saved_max_tokens: int | None,
+) -> None:
+    """TASK-33004.1 (D3): quick defaults carry Max tokens; blank leaves none.
+
+    Drives the real popover buttons, the ChatScreen coordinator and the real
+    default writer against the sandbox config file. Apply to this chat writes
+    nothing; each default action writes Temperature, Max tokens and Streaming
+    into the exact profile and keeps sibling profiles and unexposed fields.
+    """
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens=provider_max_tokens,
+        model_defaults={
+            literal_model: {"top_p": 0.5, "unexposed": "kept"},
+            "sibling/model": {"temperature": 0.4},
+        },
+    )
+    notifications: list[str] = []
+    app.notify = lambda message, **_kwargs: notifications.append(str(message))
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    def saved_config() -> dict:
+        return tomllib.loads(config_path.read_text(encoding="utf-8"))
+
+    def expected_profile(*, temperature: float, streaming: bool) -> dict:
+        profile = {
+            "top_p": 0.5,
+            "unexposed": "kept",
+            "temperature": pytest.approx(temperature),
+            "streaming": streaming,
+        }
+        if saved_max_tokens is not None:
+            profile["max_tokens"] = saved_max_tokens
+        return profile
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        before_apply = config_path.read_bytes()
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+        assert config_path.read_bytes() == before_apply
+        applied = store.session_settings(store.active_session_id)
+        assert applied is not None
+        assert (applied.provider, applied.model, applied.max_tokens) == (
+            "vllm",
+            literal_model,
+            saved_max_tokens,
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await _choose_streaming(modal, pilot, False)
+        save_copy = modal.query_one("#console-popover-save-model-default-copy", Static)
+        assert str(save_copy.render()) == "saves Temperature, Max tokens, Streaming"
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.42, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "llama_cpp"
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await _edit_highlighted(modal, pilot, "0.23")
+        await pilot.click("#console-popover-make-new-chat-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = saved_config()
+        profiles = saved["api_settings"]["vllm"]["model_defaults"]
+        assert profiles[literal_model] == expected_profile(
+            temperature=0.23, streaming=False
+        )
+        assert profiles["sibling/model"] == {"temperature": 0.4}
+        assert saved["chat_defaults"]["provider"] == "vllm"
+        assert saved["chat_defaults"]["model"] == literal_model
+
+    assert app.console_default_durability_state.failure_phase is None
+    assert f"Model profile default saved: vllm/{literal_model}" in notifications
+    assert f"Eligible new-chat default saved: vllm/{literal_model}" in notifications
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_quick_save_of_a_stale_blank_max_tokens_keeps_chat_and_profile_in_step(
+    request,
+) -> None:
+    """TASK-33004.1 review: a chat with no cap, whose model profile gained one
+    later, saves "no cap" as the model default. The profile override is
+    deleted, and the live chat must take the same post-save value, not the
+    pre-save profile cap it just deleted (ADR-095: blank profile values let
+    lower-precedence defaults apply)."""
+    from tldw_chatbook.config import get_cli_config_path
+
+    literal_model = "vendor/model:b"
+    app = _persisted_console_app(
+        max_tokens="", model_defaults={literal_model: {"top_p": 0.5}}
+    )
+    harness = _ConsoleFlowHarness(app)
+    config_path = get_cli_config_path()
+
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen_stack[-1]
+        assert isinstance(console, ChatScreen)
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _select_vllm_model(modal, pilot, model=literal_model, temperature="0.42")
+        await pilot.click("#console-popover-apply")
+        await pilot.pause()
+        await _drain_settings_tasks(app)
+        assert store.session_settings(store.active_session_id).max_tokens is None
+
+        # Settings later gives this model a cap; the chat's blank is now stale.
+        assert SettingsConfigAdapter().save_sections(
+            {
+                "api_settings.vllm": {
+                    "model_defaults": {
+                        literal_model: {"top_p": 0.5, "max_tokens": 4096}
+                    }
+                }
+            }
+        )
+
+        modal = await _open_provider_popover(console, harness, pilot)
+        await _highlight(modal, pilot, literal_model)
+        await pilot.click("#console-popover-save-model-default")
+        await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+
+        saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
+        profile = saved["api_settings"]["vllm"]["model_defaults"][literal_model]
+        assert "max_tokens" not in profile
+        post_save = build_target_default_console_session_settings(
+            load_settings(force_reload=True), "vllm", literal_model
+        )
+        live = store.session_settings(store.active_session_id)
+        assert live.max_tokens == post_save.max_tokens
+        assert live.max_tokens is None
+
+    assert app.console_default_durability_state.failure_phase is None
+
+
 @pytest.mark.asyncio
 async def test_default_failures_render_exact_sanitized_recovery_actions() -> None:
     """App-owned failure phase selects the only valid recovery controls."""
@@ -1026,7 +1212,7 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         provider_config_key="vllm",
         literal_model_id="vendor/private:model",
         field_mask=QUICK_MODEL_DEFAULT_FIELDS,
-        values={"temperature": 0.22, "streaming": True},
+        values={"temperature": 0.22, "max_tokens": 2048, "streaming": True},
         endpoint_patch=ConsoleEndpointPatch(
             value="http://192.168.1.9:8000/v1?api_key=never-render",
             bound_provider_config_key="vllm",
@@ -1054,7 +1240,8 @@ async def test_default_failures_render_exact_sanitized_recovery_actions() -> Non
         )
         assert copy == (
             "Not written to disk · Make default for new chats · "
-            "vllm/vendor/private:model · fields: streaming, temperature · "
+            "vllm/vendor/private:model · "
+            "fields: max_tokens, streaming, temperature · "
             "192.168.1.9:8000 · LAN"
         )
         assert "api_key" not in copy and "never-render" not in copy
@@ -1114,23 +1301,23 @@ async def test_custom_and_unconfigured_selection_stays_literal_and_blocks_defaul
         )
 
         modal = await _open_provider_popover(console, harness, pilot)
-        provider = modal.query_one("#console-popover-provider", Select)
-        picker = modal.query_one("#console-popover-model-search")
-        assert provider.value == "anthropic"
-        assert picker.value == literal_model
+        # The unconfigured current pair stays literal and marked (TASK-33004.4);
+        # nothing substitutes a fallback model.
+        current = next(row for row in modal._rows if row.note == "● CURRENT")
+        assert (current.provider, current.model) == ("anthropic", literal_model)
+        assert all(
+            row.model in {None, literal_model}
+            for row in modal._rows
+            if row.provider == "anthropic"
+        )
+        row = await _highlight(modal, pilot, literal_model)
+        assert row.key == current.key
 
-        await pilot.click("#console-popover-defaults")
+        await pilot.press("ctrl+n")
         await pilot.pause()
-        make_default = modal.query_one(
-            "#console-popover-make-new-chat-default", Button
-        )
-        block_copy = str(
-            modal.query_one(
-                "#console-popover-new-chat-default-block", Static
-            ).renderable
-        )
-        assert make_default.disabled is True
-        assert "unavailable" in block_copy.lower()
+        assert harness.screen is modal
+        error = str(modal.query_one("#console-popover-error", Static).render())
+        assert error.lower().startswith("unavailable")
         assert store.session_settings(session_id).model == literal_model
 
 

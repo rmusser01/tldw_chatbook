@@ -14,7 +14,7 @@ import pytest
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
-from textual.widgets import Select, Static
+from textual.widgets import Static
 
 from Tests.UI.app_factory import _build_test_app
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -217,12 +217,14 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
     )
     async with harness.run_test(size=(100, 38)) as pilot:
         await harness.push_screen(modal, callback=results.append)
-        modal.query_one("#console-popover-provider", Select).value = "vllm"
         await pilot.pause()
-        picker = modal.query_one("#console-popover-model-search")
-        picker.set_model_value("served-model")
-        picker.post_message(picker.ModelSelected("served-model"))
+        await harness.workers.wait_for_complete()
         await pilot.pause()
+        # TASK-33004.4: Find + row replace the provider Select and picker.
+        await pilot.press(*"served-model")
+        await pilot.pause()
+        row = modal.highlighted_row()
+        assert (row.provider, row.model) == ("vllm", "served-model")
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 
@@ -232,72 +234,62 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
     assert results[0].live_commit.settings.provider == "vllm"
     assert results[0].live_commit.settings.model == "served-model"
     assert results[0].submission.default_field_mask == frozenset()
-    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset({"temperature", "streaming"})
+    assert QUICK_MODEL_DEFAULT_FIELDS == frozenset(
+        {"temperature", "max_tokens", "streaming"}
+    )
 
 
 @pytest.mark.asyncio
 async def test_model_apply_exact_origin_is_captured_before_catalog_await(
 ) -> None:
-    """A tab switch during catalog loading must not retarget the popover."""
+    """A tab switch during catalog loading must not retarget the popover.
+
+    Rewritten for TASK-33004.4: the opener now awaits nothing before it
+    builds Switch model, and catalogs load inside the open switcher; a
+    session switch during that load leaves the captured origin and draft
+    alone.
+    """
     store = ConsoleChatStore()
     origin_settings = ConsoleSessionSettings(provider="llama_cpp", model="origin")
     origin = store.create_session(settings=origin_settings)
     pushed: list[tuple[object, object]] = []
-    context_calls: list[tuple[str, ConsoleSessionSettings, str]] = []
 
-    async def delayed_catalog(*_args, **_kwargs):
-        store.create_session(
-            settings=ConsoleSessionSettings(provider="vllm", model="background")
-        )
-        return {"llama_cpp": ["origin"]}
-
-    async def effective_thinking_policy(session_id: str) -> str:
-        assert session_id == origin.id
-        return "keep"
-
-    def context_state_for_session(
-        session_id: str,
-        *,
-        settings: ConsoleSessionSettings,
-        thinking_history_effective_policy: str,
-    ) -> None:
-        context_calls.append(
-            (session_id, settings, thinking_history_effective_policy)
-        )
+    class _SwitchingScope:
+        async def merge_saved_and_discovered_models(self, *, mode, provider):
+            store.create_session(
+                settings=ConsoleSessionSettings(provider="vllm", model="background")
+            )
+            return ()
 
     fake = SimpleNamespace(
         _console_setup_modal_blocking=lambda: False,
         _ensure_console_chat_store=lambda: store,
         _ensure_console_chat_controller=lambda: SimpleNamespace(
             rebase_console_settings_draft=lambda state, **_kwargs: state,
-            effective_thinking_history_policy_for_session=(
-                effective_thinking_policy
-            ),
         ),
-        _session=SimpleNamespace(
-            _ensure_active_console_session_settings=lambda: store.session_settings(
-                origin.id
-            )
-        ),
-        _providers_models_for_console_settings=delayed_catalog,
+        _providers_models=lambda: {"llama_cpp": ["origin"]},
+        _remember_console_model_options=lambda _provider, _options: None,
         _provider_readiness_app_config=lambda: {},
-        _console_context_control_state_for_session=context_state_for_session,
         _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
         _console_default_readiness=lambda _provider, _model: (
             ConsoleSettingsReadiness("Ready", "Ready.", True)
         ),
         _commit_console_settings_submission_live=lambda _submission: None,
         _apply_console_model_popover_result=lambda _result: None,
+        app_instance=SimpleNamespace(
+            llm_provider_catalog_scope_service=_SwitchingScope(),
+            chachanotes_db=None,
+        ),
         app=SimpleNamespace(
             push_screen=lambda modal, callback: pushed.append((modal, callback))
         ),
     )
 
     await ChatScreen.action_open_console_model_popover(fake)
-
-    assert store.active_session_id != origin.id
     modal, _callback = pushed[0]
     assert isinstance(modal, ConsoleModelPopover)
+    assert await modal._catalog_loader("llama_cpp") == ["origin"]
+
+    assert store.active_session_id != origin.id
     assert modal._origin.session_id == origin.id
     assert modal._draft.settings == origin_settings
-    assert context_calls == [(origin.id, origin_settings, "keep")]

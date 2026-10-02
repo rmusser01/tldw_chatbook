@@ -2739,6 +2739,13 @@
     },
     {
       "call_count": 1,
+      "diagnostic_digest": "39ca2f981b16231ee2b1",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Console_Modules/model_switcher.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
       "diagnostic_digest": "30c80323286b5e442705",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Console_Modules/prompt_queue.py",

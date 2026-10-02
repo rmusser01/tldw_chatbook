@@ -139,6 +139,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     _custom_endpoint_missing_key_readiness,
+    configured_provider_model,
+    console_provider_settings,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     custom_endpoint_provider_settings,
@@ -168,10 +170,7 @@ from tldw_chatbook.LLM_Calls.hosted_chat import (
 )
 from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
-from tldw_chatbook.config import (
-    ProviderSettingsError,
-    provider_settings_for_key,
-)
+from tldw_chatbook.config import ProviderSettingsError
 from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -3947,7 +3946,9 @@ class ConsoleProviderGateway:
         family = family_execution_key(entry.family) if entry else settings.provider
         identity = resolve_console_provider_identity(family)
         family = identity.readiness_key or family
-        provider_settings = _provider_settings(config, identity.readiness_key)
+        provider_settings = console_provider_settings(
+            config, identity.readiness_key, strict=True
+        )
         endpoint = (
             entry.base_url
             if entry
@@ -4361,8 +4362,8 @@ class ConsoleProviderGateway:
             )
         else:
             try:
-                provider_settings = _provider_settings(
-                    app_config, identity.readiness_key
+                provider_settings = console_provider_settings(
+                    app_config, identity.readiness_key, strict=True
                 )
             except ProviderSettingsError:
                 return self._blocked_resolution(
@@ -4378,9 +4379,7 @@ class ConsoleProviderGateway:
         model = _first_string(
             selection.explicit_model,
             selection.configured_model,
-            provider_settings.get("model"),
-            provider_settings.get("api_model"),
-            provider_settings.get("default_model"),
+            configured_provider_model(provider_settings),
         )
         if model is None:
             return self._blocked_resolution(
@@ -7515,13 +7514,6 @@ def _content_from_provider_mapping(item: Mapping[str, Any]) -> str | object:
             return value
 
     return _UNSUPPORTED_RESPONSE
-
-
-def _provider_settings(
-    app_config: Mapping[str, object], provider_key: str
-) -> Mapping[str, object]:
-    api_settings = _mapping_value(app_config, "api_settings")
-    return provider_settings_for_key(api_settings, provider_key)
 
 
 def _hosted_transport_policy(

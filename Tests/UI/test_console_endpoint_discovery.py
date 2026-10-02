@@ -376,18 +376,96 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         await pilot.pause()
         quick = harness.screen
         assert isinstance(quick, ConsoleModelPopover)
-        provider_select = quick.query_one("#console-popover-provider", Select)
-        provider_select.value = provider_id
+        await harness.workers.wait_for_complete()
+        # TASK-33004.4: Find + the entry's pair row replace the provider
+        # Select and model picker; the entry's name picks the provider.
+        quick.query_one("#console-popover-find", Input).value = (
+            f"{display_name} {model_id}"
+        )
         await pilot.pause()
-        assert provider_select.value == provider_id
-        assert quick._draft.settings.provider == provider_id
-        picker = quick.query_one("#console-popover-model-search")
-        picker.set_model_value(model_id)
-        picker.post_message(picker.ModelSelected(model_id))
-        await pilot.pause()
+        row = quick.highlighted_row()
+        assert (row.provider, row.model) == (provider_id, model_id)
         apply = quick.query_one("#console-popover-apply", Button)
         assert not apply.disabled
         apply.press()
+        await pilot.pause()
+        assert harness.screen is console
+        settings = store.session_settings(session_id)
+        assert settings.provider == provider_id
+        assert settings.model == model_id
+        assert settings.base_url == base_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("display_name", "slug", "base_url", "model_id"),
+    [
+        (
+            "New live endpoint",
+            "new-live-endpoint",
+            "http://127.0.0.1:9999",
+            "live-served-model",
+        ),
+        pytest.param(
+            "Llama local 2",
+            "llama-local-2",
+            "http://127.0.0.1:9090",
+            r"E:\LLM-Models\Huihui-Qwen3.8-27B-abliterated-Q4_K.gguf",
+            id="reported-windows-crashes",
+        ),
+    ],
+)
+@private_profile_test
+async def test_switch_model_applies_a_saved_entry_through_the_live_rebase(
+    request, display_name, slug, base_url, model_id
+):
+    """The Switch model half of the test above, on its own (TASK-33004.4).
+
+    That test's modal half fails on dev at its ``provider_key`` assertion
+    before it reaches Switch model, so this case seeds the saved entry
+    directly and runs the real controller rebase and live commit.
+    """
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _open_provider_popover,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.config import load_settings
+    from tldw_chatbook.UI.Screens.settings_config_adapter import SettingsConfigAdapter
+
+    provider_id = f"custom-ep:{slug}"
+    app = _persisted_console_app()
+    assert SettingsConfigAdapter().save_sections(
+        {
+            f"custom_endpoints.{slug}": {
+                "display_name": display_name,
+                "family": "llama_cpp",
+                "base_url": base_url,
+                "models": [model_id],
+            }
+        }
+    )
+    app.app_config = load_settings(force_reload=True)
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        assert store.session_settings(session_id).provider == "llama_cpp"
+        quick = await _open_provider_popover(console, harness, pilot)
+        # The entry's display name picks the provider; the row is a pair.
+        quick.query_one("#console-popover-find", Input).value = (
+            f"{display_name} {model_id}"
+        )
+        await pilot.pause()
+        row = quick.highlighted_row()
+        assert (row.kind, row.provider, row.model) == ("pair", provider_id, model_id)
+        values = str(quick.query_one("#console-popover-values-label", Static).render())
+        # TASK-33004.5: the label names the pair, display name included.
+        assert values == f"Values for {model_id} · {display_name}"
+        quick.query_one("#console-popover-apply", Button).press()
         await pilot.pause()
         assert harness.screen is console
         settings = store.session_settings(session_id)

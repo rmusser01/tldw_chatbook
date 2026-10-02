@@ -26,7 +26,6 @@ from tldw_chatbook.Chat.console_context_policy import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
-    ConsoleSettingsContextEstimate,
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
 )
@@ -42,10 +41,6 @@ from tldw_chatbook.Chat.console_settings_apply import (
 )
 from tldw_chatbook.Widgets.Console.console_model_popover import (
     ConsoleModelPopover,
-)
-from tldw_chatbook.Widgets.Console.console_context_controls import (
-    ConsoleContextControlState,
-    build_console_context_control_state,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
     ConsoleSettingsSummary,
@@ -68,7 +63,6 @@ from tldw_chatbook.Widgets.Console.console_workspace_context import (
 from tldw_chatbook.Widgets.Console.console_workspace_details import (
     ConsoleWorkspaceDetailsTray,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
 from tldw_chatbook.Workspaces.conversation_browser_state import (
     CONSOLE_CONVERSATION_BROWSER_GROUP_ROW_LIMIT,
     ConsoleConversationBrowserInputRow,
@@ -919,8 +913,7 @@ def _test_popover(
     providers_models,
     *,
     overrides: ConsoleContextPolicyOverrides | None = None,
-    global_overrides: ConsoleContextPolicyOverrides | None = None,
-    context_state: ConsoleContextControlState | None = None,
+    catalog_loader=None,
 ) -> ConsoleModelPopover:
     origin = ConsoleSettingsOrigin("popover-session", None, 0)
     draft = ConsoleSettingsDraftState(
@@ -934,7 +927,7 @@ def _test_popover(
                 provenance=ConsoleSettingsFieldProvenance.INHERITED,
                 dirty=False,
             )
-            for name in ("temperature", "streaming")
+            for name in ("temperature", "max_tokens", "streaming")
         ),
         model_drafts=(),
         endpoint_draft=None,
@@ -973,22 +966,14 @@ def _test_popover(
         },
         initial_draft=draft,
         providers_models=providers_models,
-        context_state=context_state
-        or build_console_context_control_state(
-            settings=settings,
-            estimate=ConsoleSettingsContextEstimate(
-                used_tokens=None, token_limit=None, label="unavailable"
-            ),
-            overrides=draft.context_policy_overrides,
-            global_overrides=global_overrides,
-        ),
-        scope_copy="Applies to this conversation",
+        scope_copy="Applies to: this chat only",
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=rebase,
         live_committer=commit,
         default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
             "Ready", "Ready.", True
         ),
+        catalog_loader=catalog_loader,
     )
 
 
@@ -997,41 +982,57 @@ class _PopoverApp(ConsolidatedCSSApp):
         self,
         *,
         overrides: ConsoleContextPolicyOverrides | None = None,
-        global_overrides: ConsoleContextPolicyOverrides | None = None,
+        settings: ConsoleSessionSettings | None = None,
+        providers_models=None,
+        catalog_loader=None,
     ):
         super().__init__()
         self.result = "unset"
         self.overrides = overrides
-        self.global_overrides = global_overrides
+        self.settings = settings or ConsoleSessionSettings(
+            provider="llama_cpp", model="model-a"
+        )
+        self.providers_models = providers_models or _POPOVER_PROVIDERS
+        self.catalog_loader = catalog_loader
 
     async def on_mount(self) -> None:
-        settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
         def _capture(result):
             self.result = result
 
         await self.push_screen(
             _test_popover(
-                settings,
-                _POPOVER_PROVIDERS,
+                self.settings,
+                self.providers_models,
                 overrides=self.overrides,
-                global_overrides=self.global_overrides,
+                catalog_loader=self.catalog_loader,
             ),
             callback=_capture,
         )
+
+
+async def _ready(app, pilot) -> None:
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+# TASK-33004.4 rewrote the tests below on purpose: the provider Select, the
+# model Select, the embedded ModelSearchPicker and the compaction Select are
+# gone. Each keeps the behaviour it guarded, driven through Find and rows.
 
 
 @pytest.mark.asyncio
 async def test_popover_apply_returns_replaced_settings():
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        await pilot.click("#model-search-picker-input")
-        await pilot.press(*"model-b", "enter")
+        await _ready(app, pilot)
+        await pilot.press(*"model-b")
         await pilot.pause()
-        streaming = app.screen.query_one("#console-popover-streaming", Button)
-        streaming.scroll_visible(animate=False, force=True)
-        await pilot.pause()
-        assert await pilot.click("#console-popover-streaming") is True
+        # Editing a value edits the highlighted pair (model-b). TASK-33004.5:
+        # Streaming is an On/Off Select, the third value after Find.
+        await pilot.press("tab", "tab", "tab")
+        assert app.focused is app.screen.query_one("#console-popover-streaming")
+        await pilot.press("enter", "down", "enter")
         await pilot.pause()
         await pilot.click("#console-popover-apply")
         await pilot.pause()
@@ -1039,18 +1040,15 @@ async def test_popover_apply_returns_replaced_settings():
         committed = app.result.live_commit.settings
         assert committed.model == "model-b"
         assert committed.provider == "llama_cpp"
-        # ConsoleSessionSettings defaults streaming True; one toggle flips it.
+        # ConsoleSessionSettings defaults streaming True; choosing Off flips it.
         assert committed.streaming is False
 
 
 @pytest.mark.asyncio
 async def test_popover_untouched_automatic_compaction_stays_inherited():
-    app = _PopoverApp(
-        global_overrides=ConsoleContextPolicyOverrides(
-            compaction_mode=ContextCompactionMode.AUTOMATIC
-        )
-    )
+    app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 
@@ -1060,21 +1058,26 @@ async def test_popover_untouched_automatic_compaction_stays_inherited():
 
 @pytest.mark.asyncio
 async def test_popover_off_then_automatic_compaction_is_explicit():
+    """The quick surface no longer edits compaction; an explicit override
+    rides through Apply unchanged (ADR-095)."""
     app = _PopoverApp(
         overrides=ConsoleContextPolicyOverrides(
             compaction_mode=ContextCompactionMode.OFF
         )
     )
     async with app.run_test(size=(90, 30)) as pilot:
-        select = app.screen.query_one("#console-popover-compaction-mode", Select)
-        select.value = ContextCompactionMode.AUTOMATIC.value
+        await _ready(app, pilot)
+        # No compaction control: the one Select is Streaming's On/Off (TASK-33004.5).
+        assert [select.id for select in app.screen.query(Select)] == [
+            "console-popover-streaming"
+        ]
         await pilot.click("#console-popover-apply")
         await pilot.pause()
 
     assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
     assert (
         app.result.live_commit.context_policy_overrides.compaction_mode
-        is ContextCompactionMode.AUTOMATIC
+        is ContextCompactionMode.OFF
     )
 
 
@@ -1082,34 +1085,26 @@ async def test_popover_off_then_automatic_compaction_is_explicit():
 async def test_popover_full_settings_returns_sentinel_and_escape_cancels():
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
         await pilot.click("#console-popover-full-settings")
         await pilot.pause()
         assert isinstance(app.result, ConsoleSettingsTransfer)
         assert app.result.origin.session_id == "popover-session"
     app2 = _PopoverApp()
     async with app2.run_test(size=(90, 30)) as pilot:
+        await _ready(app2, pilot)
         await pilot.press("escape")
         await pilot.pause()
         assert app2.result is None
 
 
 @pytest.mark.asyncio
-async def test_popover_model_picker_escape_restores_then_dismisses_popover():
-    """The shared picker must not trap a second Escape in the quick popover."""
+async def test_popover_escape_with_a_query_typed_dismisses_without_applying():
+    """Esc from Find with a query typed dismisses and applies nothing."""
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        picker = app.screen.query_one(
-            "#console-popover-model-search", ModelSearchPicker
-        )
-        picker.focus_input()
-        await pilot.pause()
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert isinstance(app.screen, ConsoleModelPopover)
-        assert picker.value == "model-a"
-        assert app.result == "unset"
-
+        await _ready(app, pilot)
+        await pilot.press(*"model-b")
         await pilot.press("escape")
         await pilot.pause()
         assert not isinstance(app.screen, ConsoleModelPopover)
@@ -1122,6 +1117,7 @@ async def test_popover_apply_with_blank_temperature_clears_it():
 
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
         temperature_input = app.screen.query_one("#console-popover-temperature", Input)
         temperature_input.value = ""
         await pilot.click("#console-popover-apply")
@@ -1137,6 +1133,7 @@ async def test_popover_apply_rejects_nan_and_out_of_range_temperature(invalid_te
 
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
         temperature_input = app.screen.query_one("#console-popover-temperature", Input)
         temperature_input.value = invalid_text
         await pilot.click("#console-popover-apply")
@@ -1150,6 +1147,7 @@ async def test_popover_apply_accepts_in_range_temperature():
 
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
         temperature_input = app.screen.query_one("#console-popover-temperature", Input)
         temperature_input.value = "1.2"
         await pilot.click("#console-popover-apply")
@@ -1158,103 +1156,51 @@ async def test_popover_apply_accepts_in_range_temperature():
         assert app.result.live_commit.settings.temperature == 1.2
 
 
-class _PopoverSearchScope:
-    """Minimal llm_provider_catalog_scope_service stand-in for search tests."""
-
-    def __init__(self, entries):
-        self._entries = entries
-
-    async def merge_saved_and_discovered_models(self, *, mode, provider):
-        return self._entries
-
-
 _POPOVER_SEARCH_PROVIDERS = {"openrouter": ["saved-model"]}
 _POPOVER_SEARCH_MODEL_IDS = ["anthropic/claude-x", "openai/gpt-y"]
 
 
-def _popover_search_entries():
-    from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
-        MergedModelEntry,
+async def _search_catalog(provider: str) -> list[str]:
+    return list(_POPOVER_SEARCH_MODEL_IDS) if provider == "openrouter" else []
+
+
+def _search_app() -> _PopoverApp:
+    return _PopoverApp(
+        settings=ConsoleSessionSettings(provider="openrouter", model="saved-model"),
+        providers_models=_POPOVER_SEARCH_PROVIDERS,
+        catalog_loader=_search_catalog,
     )
-
-    return tuple(
-        MergedModelEntry(
-            provider="openrouter",
-            provider_list_key="openrouter",
-            model_id=m,
-            display_name=m,
-            source="runtime_discovered",
-            capability_status="unknown",
-            persisted=False,
-        )
-        for m in _POPOVER_SEARCH_MODEL_IDS
-    )
-
-
-class _PopoverSearchApp(ConsolidatedCSSApp):
-    """Popover host app exposing the catalog scope the search picker reads."""
-
-    def __init__(self):
-        super().__init__()
-        self.result = "unset"
-        self.providers_models = _POPOVER_SEARCH_PROVIDERS
-        self.llm_provider_catalog_scope_service = _PopoverSearchScope(
-            _popover_search_entries()
-        )
-
-    async def on_mount(self) -> None:
-        settings = ConsoleSessionSettings(provider="openrouter", model="saved-model")
-
-        def _capture(result):
-            self.result = result
-
-        await self.push_screen(
-            _test_popover(settings, self.providers_models),
-            callback=_capture,
-        )
 
 
 @pytest.mark.asyncio
 async def test_popover_model_search_inserts_transient_option():
-    """Picking a search result inserts it as a transient option and selects it."""
-    from textual.widgets import Input, OptionList, Select
-
-    app = _PopoverSearchApp()
+    """A catalog model the saved list lacks is found by typing and applied."""
+    app = _search_app()
     async with app.run_test(size=(90, 30)) as pilot:
-        search_input = app.screen.query_one("#model-search-picker-input", Input)
-        search_input.value = "claude"
+        await _ready(app, pilot)
+        await pilot.press(*"claude")
         await pilot.pause()
-        results = app.screen.query_one("#model-search-picker-results", OptionList)
-        assert results.display
-        option = results.get_option_at_index(0)
-        results.post_message(OptionList.OptionSelected(results, option, 0))
+        row = app.screen.highlighted_row()
+        assert (row.provider, row.model) == ("openrouter", "anthropic/claude-x")
+        await pilot.press("enter")
         await pilot.pause()
-        model_select = app.screen.query_one("#console-popover-model", Select)
-        picker = app.screen.query_one(
-            "#console-popover-model-search", ModelSearchPicker
-        )
-        option_values = [value for _, value in model_select._options]
-        assert picker.display is True
-        assert model_select.display is False
-        assert "anthropic/claude-x" in option_values
-        assert model_select.value == "anthropic/claude-x"
+    assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
+    assert app.result.live_commit.settings.model == "anthropic/claude-x"
 
 
 @pytest.mark.asyncio
 async def test_popover_search_control_fits_compact_terminal_geometry():
-    """The shared picker stays operable at the popover's minimum width."""
+    """Find, the list and the keys stay on screen at a small terminal."""
     from textual.widgets import Input, OptionList
 
-    app = _PopoverSearchApp()
+    app = _search_app()
     async with app.run_test(size=(60, 24)) as pilot:
-        search_input = app.screen.query_one("#model-search-picker-input", Input)
-        search_input.focus()
-        await pilot.pause()
-        results = app.screen.query_one("#model-search-picker-results", OptionList)
+        await _ready(app, pilot)
         popover = app.screen.query_one("#console-model-popover")
-
-        assert results.display is True
-        for widget in (popover, search_input, results):
+        search_input = app.screen.query_one("#console-popover-find", Input)
+        results = app.screen.query_one("#console-popover-pairs", OptionList)
+        apply = app.screen.query_one("#console-popover-apply", Button)
+        for widget in (popover, search_input, results, apply):
             assert widget.region.x >= 0
             assert widget.region.y >= 0
             assert widget.region.right <= app.size.width
@@ -1263,78 +1209,67 @@ async def test_popover_search_control_fits_compact_terminal_geometry():
 
 @pytest.mark.asyncio
 async def test_popover_preserves_prefilled_model_after_mount():
-    """TASK-364: the model Select must still show the session's current model
-    after mount — the provider Select's mount-time Select.Changed must not wipe
-    the prefill to blank (a user cannot confirm/Apply a model they can't see)."""
-    from textual.widgets import Select
-
+    """TASK-364: the chat's model stays visible after mount -- marked
+    CURRENT in the list and named in the value strip."""
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        await pilot.pause()
-        model_select = app.screen.query_one("#console-popover-model", Select)
-        assert model_select.value == "model-a"
+        await _ready(app, pilot)
+        rows = {row.key: row for row in app.screen._rows}
+        assert rows[("pair", "llama_cpp", "model-a")].note == "● CURRENT"
+        values = app.screen.query_one("#console-popover-values-label", Static)
+        assert "model-a" in str(values.render())
 
 
 @pytest.mark.asyncio
 async def test_popover_changing_provider_still_resets_the_model():
-    """TASK-364 guard must not over-fire: a REAL provider change (to one whose
-    models differ) must still clear the stale model selection."""
-    from textual.widgets import Select
-
+    """TASK-364 / C7(a): choosing another provider always takes one of its
+    own models; no row offers the old model under the new provider."""
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
+        assert ("pair", "openai", "model-a") not in {
+            row.key for row in app.screen._rows
+        }
+        await pilot.press(*"gpt-4o", "enter")
         await pilot.pause()
-        provider_select = app.screen.query_one("#console-popover-provider", Select)
-        provider_select.value = "openai"
-        await pilot.pause()
-        model_select = app.screen.query_one("#console-popover-model", Select)
-        # The stale llama.cpp model must not linger under the new provider.
-        assert model_select.value != "model-a"
-        picker = app.screen.query_one(
-            "#console-popover-model-search", ModelSearchPicker
-        )
-        assert picker.value is None
+    committed = app.result.live_commit.settings
+    assert (committed.provider, committed.model) == ("openai", "gpt-4o")
 
 
 @pytest.mark.asyncio
 async def test_popover_custom_model_uses_shared_picker_escape_hatch():
-    from textual.widgets import Input
-
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)) as pilot:
-        await pilot.click("#model-search-picker-custom")
-        custom_input = app.screen.query_one("#model-search-picker-input", Input)
-        custom_input.value = "private/model-id"
+        await _ready(app, pilot)
+        await pilot.press(*"private/model-id")
         await pilot.pause()
-        await pilot.click("#console-popover-apply")
+        assert app.screen.highlighted_row().kind == "typed"
+        await pilot.press("enter")
         await pilot.pause()
 
-    assert app.result is not None
     assert isinstance(app.result, ConsoleSettingsCommittedSubmission)
     assert app.result.live_commit.settings.model == "private/model-id"
 
 
 @pytest.mark.asyncio
 async def test_popover_provider_options_use_display_names():
-    """TASK-364: the provider Select must use the same catalog display names as
-    the full settings modal ('llama.cpp'), not the raw 'llama_cpp' key."""
-    from textual.widgets import Select
-
+    """TASK-364 / TASK-194: rows name 'llama.cpp', never the raw 'llama_cpp' key."""
     app = _PopoverApp()
-    async with app.run_test(size=(90, 30)):
-        provider_select = app.screen.query_one("#console-popover-provider", Select)
-        labels = {label: value for label, value in provider_select._options}
-        assert "llama.cpp" in labels
-        assert labels["llama.cpp"] == "llama_cpp"
-        assert "llama_cpp" not in labels
+    async with app.run_test(size=(90, 30)) as pilot:
+        await _ready(app, pilot)
+        pairs = app.screen.query_one("#console-popover-pairs")
+        text = "\n".join(
+            str(pairs.get_option_at_index(index).prompt)
+            for index in range(pairs.option_count)
+        )
+        assert "llama.cpp" in text
+        assert "llama_cpp" not in text
 
 
 @pytest.mark.asyncio
 async def test_popover_labels_temperature_input():
     """TASK-364: the temperature Input needs a visible label — its placeholder
     disappears once a value is present, leaving a bare cryptic number."""
-    from textual.widgets import Static
-
     app = _PopoverApp()
     async with app.run_test(size=(90, 30)):
         texts = [

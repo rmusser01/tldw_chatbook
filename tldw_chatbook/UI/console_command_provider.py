@@ -55,9 +55,9 @@ class ConsoleCommandProvider(Provider):
                 "Fuzzy-find and activate a conversation (Ctrl+K)",
             ),
             (
-                "Console: Change model…",
+                "Console: Switch model…",
                 screen.action_open_console_model_popover,
-                "Quick provider/model/temperature switch (Alt+M)",
+                "Pick this chat's provider·model pair and quick values (Alt+M)",
             ),
             (
                 "Console: New chat tab",
@@ -108,9 +108,9 @@ class ConsoleCommandProvider(Provider):
                 "Create a local workspace and switch Console to it",
             ),
             (
-                "Console: Session settings…",
+                "Console: Chat settings…",
                 screen.action_open_console_session_settings,
-                "Open the full session settings modal",
+                "Tune every setting for this chat (Ctrl+O)",
             ),
             (
                 "Console: Insert prompt…",

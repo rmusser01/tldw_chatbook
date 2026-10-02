@@ -5,7 +5,7 @@ import logging
 
 import pytest
 from textual.css.query import NoMatches
-from textual.widgets import Button, Input, OptionList, Select
+from textual.widgets import Button, Input, OptionList
 
 from Tests.app_module_patches import set_app_global
 import tldw_chatbook.app as app_module
@@ -225,46 +225,48 @@ async def test_real_console_change_model_command_opens_real_picker(
             )
 
             palette = ConsoleCommandProvider(screen, match_style=None)
-            hits = [hit async for hit in palette.search("change model")]
+            # TASK-33004.7: the entry is named for the surface it opens.
+            hits = [hit async for hit in palette.search("switch model")]
             change_model = [
-                hit for hit in hits if str(hit.text) == "Console: Change model…"
+                hit for hit in hits if str(hit.text) == "Console: Switch model…"
             ]
             assert len(change_model) == 1
             # The palette runs a selected command exactly like this.
             app.call_later(change_model[0].command)
             popover = await _wait_for_screen(app, pilot, ConsoleModelPopover)
+            # TASK-33004.4: Switch model's Find replaces the popover picker,
+            # and a pair row replaces the provider Select.
             search = await _wait_for_widget(
                 popover,
                 pilot,
-                "#model-search-picker-input",
+                "#console-popover-find",
                 Input,
             )
+            for _ in range(300):  # readiness resolves in a worker after open
+                if popover._first_readiness_done and not popover._readiness_pending:
+                    break
+                await pilot.pause(0.01)
+            else:
+                raise AssertionError("Switch model readiness did not settle in 3 s")
             search.value = "gpt-task"
             await pilot.pause()
-            results = popover.query_one(
-                "#model-search-picker-results",
-                OptionList,
-            )
-            assert results.display is True
-            assert results.option_count == 1
-            assert str(results.get_option_at_index(0).prompt) == "gpt-task-648"
+            pairs = [row for row in popover._rows if row.kind == "pair"]
+            assert [(row.provider, row.model) for row in pairs] == [
+                ("openai", "gpt-task-648")
+            ]
 
             before_apply = screen._session._build_console_turn_execution_context(
                 session_id
             )
-            popover.query_one(
-                "#console-popover-provider", Select
-            ).value = "anthropic"
+            search.value = "claude-task"
             await pilot.pause()
-            model_picker = popover.query_one("#console-popover-model-search")
-            model_picker.set_model_value("claude-task-648")
-            model_picker.post_message(
-                model_picker.ModelSelected("claude-task-648")
+            row = popover.highlighted_row()
+            assert (row.kind, row.provider, row.model) == (
+                "pair",
+                "anthropic",
+                "claude-task-648",
             )
-            await pilot.pause()
             apply_button = popover.query_one("#console-popover-apply", Button)
-            apply_button.scroll_visible(animate=False, force=True)
-            await pilot.pause()
             assert await pilot.click(apply_button) is True
             returned = await _wait_for_screen(app, pilot, ChatScreen)
 

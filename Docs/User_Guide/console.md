@@ -342,7 +342,7 @@ fails without playing a truncated file.
 | **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
-| **Model** section | Read-only Temperature / Max tokens / system-prompt lines plus a **Configure** button that opens Console Settings. The active provider and model are read from the status bar, which shows them at every width. |
+| **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) / system-prompt lines plus **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
 | **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
@@ -413,10 +413,11 @@ during a run); **Esc** expands it and returns the caret to your draft.
 
 ### Session settings & model selection
 
-The **Console Settings** modal is the one place provider, model, and
-generation settings live. Open it from the control bar's **Settings**
-button, the Model section's **Configure** button in the left rail, or the
-**Session Settings** action in the Inspector. Inside:
+The **Console Settings** modal (**Chat settings**) is the one place provider,
+model, and generation settings live. Open it with **Ctrl+O** from anywhere in
+Console, `/settings`, the palette's "Console: Chat settings…", the control
+bar's **Settings** button, or the **Session Settings** action in the
+Inspector. Inside:
 
 - A readiness line up top (e.g. "custom is ready. No API key is required.").
 - **Provider and model** — Provider and Model selects, **Custom model** for
@@ -489,24 +490,112 @@ conversations using it survive restart. Renaming, editing, and deletion
 (with a guard that detaches conversations first) live in **F9 ▸ Providers &
 Models ▸ Custom endpoints**.
 
-For a faster switch, **Alt+M** opens the quick **Model** popover —
-provider, model, and temperature without the full modal.
+For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
+provider·model pairs; every row is a pair, so you never pick a provider
+without a model. Model ids are never shortened: on a very long id, the
+row's notes and readiness words give way first. The Provider and Model chips, the rail's **Change  Alt+M**,
+the palette's "Console: Switch model…" and `/model` open it too. `/model
+<query>` (for example `/model son`) opens it with the query already in
+**Find** and the best match highlighted; nothing applies until you press
+**Enter**. Focus starts in **Find** and the rows are grouped:
 
-Switching the provider, here or in the full modal, picks that provider's
-own model: its `model`, `api_model` or `default_model` in
-`[api_settings.<provider>]`, or, for a custom endpoint, the first model
-listed in that endpoint's entry. Your default model (`[chat_defaults]
-model`) only comes along when you switch to your default provider. A
-provider with no configured model gets no model, and Console asks you to
-choose one. In the popover, the model field shows its "Choose or search
-models" placeholder, **Apply to this chat** answers "Choose a model.", and
-**Defaults…** says "Unavailable: choose a model first." It never borrows
-another provider's model.
+- **PREVIOUS**, highlighted when the list opens, so **Alt+M** then **Enter**
+  swaps back to the model you used before.
+- **RECENT**, your recently used pairs, with **● CURRENT** on this chat's
+  pair and when each was last used.
+- **READY PROVIDERS**, the first three models of each provider with no known
+  blocker, then an "… N more" row (Enter on it puts the provider's name in
+  Find).
+- **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
+  on one never applies it: it closes the list and opens **Settings ▸
+  Providers & Models** at that provider, with its key or endpoint field in
+  focus. Keys are only ever entered in Settings.
+
+Each row shows the model, the provider's name, its context size (`~` marks
+an estimate), readiness and last use. Readiness comes from your
+configuration only, so it reads "Ready · not tested" or "Not ready · no
+key" (or another reason); the list never claims a provider was verified or
+reachable. Typing filters every provider's saved and cached models in
+memory and highlights the best match; it never starts a model listing or a
+network call. A model id that no list has appears under **TYPED MODEL ID**
+for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
+to pair the id with that provider. A provider whose list is still loading,
+empty or unavailable says so in its own row. Legacy alias providers (such
+as "llama.cpp (legacy alias)") only appear when a chat uses them.
+
+Up and Down move the highlight while you type, and from the values too.
+Under the list, "Values for <model> · <provider>" names the highlighted pair,
+and the row below it shows that pair's **Temperature**, **Max tokens** and
+**Streaming** (On or Off), each one row tall. These three are exactly what
+the default actions save; Thinking and every other setting stay in Chat
+settings. Next to each value is a word saying where it comes from:
+
+| Word | The value comes from |
+|---|---|
+| `edited *` | an edit you made here, not yet applied |
+| `this chat` | this chat's own setting, different from its defaults |
+| `model default` | the model's saved defaults (`[api_settings.<provider>.model_defaults.<model>]`) |
+| `Console Behavior` | the global fallbacks in **Settings ▸ Console Behavior** (`[chat_defaults]`) |
+| `provider` | a setting for the whole provider: Console's saved provider defaults, a custom endpoint's own parameters, or the provider's `[api_settings]` table |
+| `built-in` | nothing is set; tldw_chatbook's own default applies (a blank Max tokens means no cap) |
+
+**Tab** from Find moves to Temperature with its value selected, so you can
+type over it; Tab again does the same for Max tokens. So switching to a
+Sonnet model with Temperature 0.9 and Max tokens 8192 is **Alt+M**, `son`,
+**Tab**, `0.9`, **Tab**, `8192`, **Enter**. Once you edit a value or Tab
+into the values, the highlight stays on that pair while the list finishes
+filling in, except on a **TYPED MODEL ID** row: a listed model that matches
+better and arrives later takes the highlight, and your edits move with it.
+Typing in Find again picks the best match for the new text. If
+you edit a pair, move to another and come back, your edits for the first
+pair are still there.
+
+The keys, printed under the values, work while you type in Find:
+
+- **Enter** applies the highlighted pair and its values to this chat only
+  ("Applies to: this chat only"), then closes and returns you to the
+  composer; nothing is written to `config.toml`.
+- **Ctrl+N** makes the highlighted pair the default for new chats, with its
+  Temperature, Max tokens and Streaming. **Save as model default** (no key;
+  Shift+Tab from Find reaches it) saves those three as the model's defaults.
+  Both also apply the pair to this chat. A blank Max tokens removes the
+  model's saved cap.
+- **Ctrl+O** opens Chat settings on the highlighted pair with your
+  unapplied edits, without applying or discarding them.
+- **Esc** closes without changing anything. If you edited a value, it asks
+  first: "Enter apply · d discard · Esc keep editing".
+
+Context and compaction settings live in Chat settings only; Apply here
+keeps the chat's compaction setting as it is.
+
+Switch model keeps no history of its own. Its **RECENT** group is built
+from chats you already have: every open Console chat, temporary chats
+included, and your 50 most recently changed saved chats in the global
+scope. A workspace chat's model appears there only while that chat is
+open, and a model you just applied to a chat counts as used now. A saved chat whose stored settings are damaged, or were written by a
+newer version of tldw_chatbook, is left out. The list opens straight away
+and RECENT fills in a moment later. **PREVIOUS** is the model you last
+switched away from in this chat with Switch model, remembered while the
+chat stays open; before that, it is the most recent other model in RECENT.
+
+Switching the provider in the full modal picks that provider's own model:
+its `model`, `api_model` or `default_model` in `[api_settings.<provider>]`,
+or, for a custom endpoint, the first model listed in that endpoint's entry.
+Your default model (`[chat_defaults] model`) only comes along when you switch
+to your default provider. A provider with no configured model gets no model,
+and Console asks you to choose one. It never borrows another provider's
+model. In Switch model a chat with no model has no **● CURRENT** row, and
+**Enter** with nothing to apply answers "Choose a model: type to search,
+then Enter."
 
 Focusing the **Provider** or **Model** field, by Tab or by a click, keeps
 its current value on screen, selected, and opens the full list below it;
 the first key you type replaces the value and filters the list, and
 **Escape** puts the value back.
+In the model list, the model the field holds says **● CURRENT** after its
+name and stays listed even when more models match than the list shows;
+**Down** from the field highlights it first. When your filter hides it,
+**Down** highlights the first match.
 The line under the model field counts the list — "1 model available. Type
 to filter." or "12 models available. Type to filter." — and when more models
 match than the 20 rows the list shows, it says so: "Showing 20 of 57
@@ -694,8 +783,8 @@ and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-b
    provider**, pick a provider in "Provider and model" (for a local server,
    enter its Endpoint, then **Discover models**), pick a model, and press
    **Save**. The card's steps tick off and the composer unlocks.
-2. **Switch model for just this session.** Press **Alt+M**, choose the
-   provider/model, and confirm — or open **Settings** and press **Save**
+2. **Switch model for just this session.** Press **Alt+M**, type part of
+   the model's name, and press **Enter** — or open **Settings** and press **Save**
    (not "Save as default"). Other tabs and future launches are unaffected.
 3. **Make today's provider the default.** Open **Settings**, configure
    provider and model, and press **Save as default** — the next launch
@@ -722,7 +811,8 @@ Screen-level keys only — global keys live in the [guide index](index.md).
 | Ctrl+T | New Console tab |
 | Ctrl+G | Stop this tab's run (only while one is running; shown in the footer then) |
 | Alt+1 … Alt+9 | Jump to Console tab 1–9 |
-| Alt+M | Quick "Model" popover |
+| Alt+M | Switch model (provider·model pairs; Enter applies to this chat, Tab edits Temperature and Max tokens, Ctrl+N default for new chats, Ctrl+O Chat settings); `/model <query>` opens it with Find filled in |
+| Ctrl+O | Chat settings: every setting for this chat |
 | Alt+C | Open or close the Context (left) rail |
 | Alt+I | Open or close the Inspector (right) rail |
 | Alt+W | "Change Workspace" switcher |
@@ -806,8 +896,8 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   opens Console directly.
 - **Alt+M does nothing.** Some terminal/multiplexer setups deliver Alt
   chords as a separate Esc + letter, which Console reads as Escape then a
-  typed character. The same popover is always reachable via **Ctrl+P** →
-  "Console: Change model…".
+  typed character. Switch model is always reachable via `/model` or
+  **Ctrl+P** → "Console: Switch model…".
 
 —
 *Verified against working tree — 2026-09-04 (TASK-31429, Context-rail colour

@@ -214,6 +214,8 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
         QUICK_MODEL_DEFAULT_FIELDS,
         ConsoleSettingsAction,
         ConsoleSettingsDraftState,
+        ConsoleSettingsFieldDraft,
+        ConsoleSettingsFieldProvenance,
         ConsoleSettingsSubmission,
         ConsoleSettingsSurface,
     )
@@ -223,6 +225,7 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
     background = _pristine(store, blank_console_session_settings(config))
     origin = _pristine(store, blank_console_session_settings(config))
     assert store.active_session_id == origin.id
+    made_default = replace(origin.settings, model="made-default")
     committed = store.commit_console_settings_live(
         ConsoleSettingsSubmission(
             submission_id="make-default-1",
@@ -230,9 +233,20 @@ def test_make_default_write_before_its_publication_cannot_move_the_chat_it_came_
             surface=ConsoleSettingsSurface.QUICK_POPOVER,
             origin=store.capture_console_settings_origin(origin.id),
             draft=ConsoleSettingsDraftState(
-                settings=replace(origin.settings, model="made-default"),
+                settings=made_default,
                 context_policy_overrides=ConsoleContextPolicyOverrides(),
-                field_drafts=(),
+                # A quick submission carries one draft per quick-mask field
+                # (TASK-33004.1 added max_tokens to that mask).
+                field_drafts=tuple(
+                    ConsoleSettingsFieldDraft(
+                        name=name,
+                        effective_value=getattr(made_default, name),
+                        profile_override=getattr(made_default, name),
+                        provenance=ConsoleSettingsFieldProvenance.INHERITED,
+                        dirty=False,
+                    )
+                    for name in sorted(QUICK_MODEL_DEFAULT_FIELDS)
+                ),
                 model_drafts=(),
                 endpoint_draft=None,
             ),

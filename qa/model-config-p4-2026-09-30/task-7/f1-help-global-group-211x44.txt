@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────╭──────────────────────────────────────────────────────────────────────────╮────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.  │                                                                          │                      Speak replies   ▌   Hands-free   ▌     Ready
+   New tab     Settings     ⚓      Context rail     Search Library│      f: fork from the selected message                                   │
+───────────────────────────────────────────────────────────────────│      r: regenerate the selected message                                  │────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1        │      More…: Save as, feedback, delete, and diagnostics                   │                                                         │
+                         Context ◂  │         Chat 1         ✕     │      Escape: clear the selection                                         │                                                         │
+   Terminal                         │                              │    Composer:                                                             │                                                         │
+ ─────────────────────────────────  │ Each tab runs its own agent —│      Enter: send now or queue after an accepted turn                     │                                                      ✕  │
+ Workspaces                    ▸    │                              │      Queue shelf: manage, pause, resume, and recover queued prompts      │                                                         │
+ ─────────────────────────────────▄ │                              │      Ctrl+J: insert a newline (works in any terminal)                    │                                                         │
+ Conversations                 ▾    │                              │      Shift+Enter: insert a newline (where the terminal delivers it)      │                                                         │
+        Archive this chat           │                              │      Ctrl+Z: undo the last draft edit                                    │                                                         │
+          Archived chats            │                              │      Ctrl+Shift+Z / Ctrl+Y: redo (Ctrl+Y also works where the terminal   │                                                         │
+        Search all chats…           │                              │  can't send Ctrl+Shift+Z)                                                │                                                         │
+   Chat 1                           │                              │      Alt+V: paste an image from the clipboard                            │                                                         │
+                                    │                              │      Attach file: attach files — up to 5 per message                     │                                                         │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                              │      Paste / drop path: paste or drop a file path to attach it           │                                                         │
+  ▊  Filter visible     ▎           │                              │      Ctrl+K: switch session                                              │                                                         │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                              │      Ctrl+T: new tab                                                     │                                                         │
+                                    │                              │    Global & modals:                                                   ▃  │                                                         │◂ Inspect
+   New conversation                 │                              │      F1: help                                                            │                                                         │
+  Chats                        ▾    │                              │      Ctrl+P: command palette                                             │                                                         │
+   Chat 2                     💬    │                              │      Alt+M: Switch model: this chat's provider·model pair                │                                                         │
+   Chat 1                     💬    │                              │      /model [query]: Switch model with Find filled in                    │                                                         │
+                                    │                              │      Ctrl+O: Chat settings: every setting for this chat                  │                                                         │
+ ─────────────────────────────────  │                              │      F2: rename a session (in the Ctrl+K switcher)                       │                                                         │
+ Character · No chats          ▸    │                              │    Agents & fleet:                                                       │                                                         │
+ ─────────────────────────────────  │                              │      Alt+W: switch workspace                                             │                                                         │
+ Model                         ▾    │                              │      Alt+1..9: jump to tab 1-9                                           │                                                         │
+  Temperature 0.60                  │                              │      Ctrl+T: new tab (new agent)                                         │                                                         │
+  Max tokens  4096                  │                              │      Ctrl+K: switch session                                              │                                                         │
+  Streaming   Off                   │                              │    macOS terminals:                                                      │                                                         │
+  System: none ▸                    │                              │      Alt chords: type composed characters when Option is not Meta        │                                                         │
+   Change  Alt+M                  ▇ │                              │      Ctrl+P: palette lists every Alt action — the reliable path          │                                                         │
+ ▼ Agent · Details                  │                              │      Ctrl+K: session switching (covers the Alt+1..9 tab jumps)           │                                                         │
+                                    │                              │                                                                          │                                                         │
+───────────────────────────────────────────────────────────────────│       Close                                                              │────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthro│                                                                          │     Sources: 0     Approvals: 0 pending     Context 0% · Current $
+                                                                   ╰──────────────────────────────────────────────────────────────────────────╯
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Ctrl+P · Ctrl+Q

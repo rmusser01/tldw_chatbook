@@ -63,6 +63,7 @@ async def test_model_sync_updates_rows_with_the_actual_values() -> None:
             identity_row="",
             temperature="0.42",
             max_tokens="4096",
+            streaming="Off",
         )
         console._apply_console_settings_summary_state(state)
         await pilot.pause(0.2)
@@ -75,6 +76,11 @@ async def test_model_sync_updates_rows_with_the_actual_values() -> None:
         )
         assert str(temperature.renderable).strip() == "0.42"
         assert str(max_tokens.renderable).strip() == "4096"
+        # TASK-33004.7 (task-338): Streaming is the third rendered value.
+        streaming = console.query_one(
+            "#console-model-section-streaming .console-model-section-value", Static
+        )
+        assert str(streaming.renderable).strip() == "Off"
 
 
 def test_the_updater_reads_structured_values_and_no_deleted_ids() -> None:
@@ -111,4 +117,59 @@ def test_the_updater_reads_structured_values_and_no_deleted_ids() -> None:
     assert "console-model-section-model " not in body
     assert "summary_state.temperature" in body
     assert "summary_state.max_tokens" in body
+    assert "summary_state.streaming" in body
     assert 'search(r"T ' not in body and "search(r'T " not in body
+
+
+@pytest.mark.asyncio
+async def test_model_section_stays_within_its_15_row_cap() -> None:
+    """TASK-33004.7 AC#3/AC#4: Streaming joins Temperature and Max tokens, the
+    action reads "Change  Alt+M" under its old id, and the section's natural
+    height stays within ADR-083's 15 rows even with every recovery row shown
+    (each one's own copy and buttons): 15 exactly, so nothing scrolls."""
+    from textual.widgets import Button
+
+    from Tests.UI.console_rail_section_helpers import open_rail_section
+    from tldw_chatbook.Widgets.Console.console_bounded_section import (
+        ConsoleBoundedSection,
+    )
+
+    app = _build_test_app()
+    host = ConsoleHarness(app)
+
+    async with host.run_test(size=(211, 44)) as pilot:
+        await pilot.pause(0.2)
+        console = host.screen_stack[-1]
+        await open_rail_section(console, pilot, "model")
+        section = console.query_one(
+            "#console-bounded-section-model", ConsoleBoundedSection
+        )
+        rows = [
+            str(row.query_one(".console-model-section-label", Static).render())
+            for row in console.query(".console-model-section-line")
+        ]
+        assert rows == ["Temperature", "Max tokens", "Streaming"]
+        change = console.query_one("#console-model-section-configure", Button)
+        assert str(change.label) == "Change  Alt+M"
+
+        await pilot.pause(0.3)
+        normal = section.desired_content_lines
+        assert 0 < normal <= 15, normal
+
+        for selector in (
+            "#console-model-section-recovery",
+            "#console-generation-recovery-row",
+            "#console-context-recovery-row",
+            "#console-default-recovery-row",
+        ):
+            console.query_one(selector).styles.display = "block"
+        console.query_one("#console-model-section-recovery", Static).update(
+            "Not ready — API key missing"
+        )
+        console.query_one("#console-default-recovery-copy", Static).update(
+            "Not saved: default"
+        )
+        section.request_reconcile()
+        await pilot.pause(0.3)
+        assert section.desired_content_lines <= 15, section.desired_content_lines
+        assert not section._has_overflow

@@ -22,6 +22,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.console_settings_apply import (
     FULL_MODEL_DEFAULT_FIELDS,
+    QUICK_BLANKABLE_DEFAULT_FIELDS,
     QUICK_MODEL_DEFAULT_FIELDS,
     ConsoleEndpointDraft,
     ConsoleSettingsAction,
@@ -186,9 +187,12 @@ def build_console_default_intent(
         exposed_names.add(draft.name)
         if draft.name not in field_mask:
             continue
+        # Quick values are materialized, except a blankable field's inherit
+        # (``profile_override=None``), which deletes the override (ADR-095 D3).
         values[draft.name] = (
             draft.effective_value
             if field_mask == QUICK_MODEL_DEFAULT_FIELDS
+            and draft.name not in QUICK_BLANKABLE_DEFAULT_FIELDS
             else draft.profile_override
         )
 
@@ -1073,8 +1077,14 @@ def _validate_intent(intent: ConsoleDefaultMutationIntent) -> tuple[str, str]:
     for name in intent.values:
         if type(name) is not str or not name:
             raise TypeError("Default field names must be non-empty strings")
+    # Every quick field is a required key; only a blankable one may be None,
+    # which deletes the exact override (ADR-095 D3).
     if intent.field_mask == QUICK_MODEL_DEFAULT_FIELDS and any(
-        name not in intent.values or intent.values[name] is None
+        name not in intent.values
+        or (
+            intent.values[name] is None
+            and name not in QUICK_BLANKABLE_DEFAULT_FIELDS
+        )
         for name in QUICK_MODEL_DEFAULT_FIELDS
     ):
         raise ValueError("Quick default fields must be materialized")

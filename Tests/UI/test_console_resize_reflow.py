@@ -272,73 +272,48 @@ def _context_allocation_idle(rail: ConsoleLeftRail) -> bool:
 async def test_popover_actions_remain_reachable_and_ordered_at_narrow_width(
     width: int,
 ) -> None:
+    """Rewritten for TASK-33004.4: the 2x2 grids and Defaults… subview are
+    gone. Below 211 columns (outside spec §6's sizes) the one-row key strips
+    may clip on the right, so the pin is keyboard reach: every action is a
+    focusable Tab stop in order, and Apply stays painted and clickable."""
     app = ConsolidatedCSSApp()
     modal = _resize_popover()
 
     async with app.run_test(size=(width, 24)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.pause()
 
         panel = modal.query_one("#console-model-popover")
-        main = list(modal.query("#console-popover-main-actions Button"))
-        assert [str(button.label) for button in main] == [
-            "Cancel",
-            "Full settings…",
-            "Defaults…",
-            "Apply to this chat",
-        ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(panel.region.contains_region(button.region) for button in main)
-        assert all(button.can_focus and not button.disabled for button in main)
-        _assert_non_overlapping_regions(main)
-        main[0].focus()
-        await pilot.pause()
-        main_focus_order: list[str] = []
-        for _ in main:
-            focused = app.focused
-            main_focus_order.append(getattr(focused, "id", "") or "")
-            assert focused is not None
-            assert panel.region.contains_region(focused.region)
-            await pilot.press("tab")
-            await pilot.pause()
-        assert main_focus_order == [
-            "console-popover-cancel",
-            "console-popover-full-settings",
-            "console-popover-defaults",
-            "console-popover-apply",
-        ]
+        apply = modal.query_one("#console-popover-apply", Button)
+        assert panel.region.contains_region(apply.region)
+        _assert_real_mouse_target(modal, apply)
 
-        await pilot.click("#console-popover-defaults")
-        await pilot.pause()
-        await pilot.pause()
-        defaults = list(modal.query("#console-popover-default-actions Button"))
-        assert [str(button.label) for button in defaults] == [
-            "Save as model default",
-            "Make default for new chats",
-            "Back",
-        ]
-        assert all(panel.region.contains_region(button.region) for button in defaults)
-        assert all(button.can_focus and not button.disabled for button in defaults)
-        _assert_non_overlapping_regions(defaults)
-        defaults_focus_order: list[str] = []
-        for _ in defaults:
+        # TASK-33004.5: Max tokens and the Streaming Select are values; the
+        # key row ends with Ctrl+O chat settings, Save comes last, and one
+        # more Tab wraps back to Find.
+        focus_order: list[str] = []
+        for _ in range(9):
             focused = app.focused
-            defaults_focus_order.append(getattr(focused, "id", "") or "")
-            assert focused is not None
-            assert panel.region.contains_region(focused.region)
+            assert focused is not None and focused.can_focus and not focused.disabled
+            focus_order.append(getattr(focused, "id", "") or "")
             await pilot.press("tab")
             await pilot.pause()
-        assert defaults_focus_order == [
-            "console-popover-save-model-default",
+        assert focus_order == [
+            "console-popover-find",
+            "console-popover-temperature",
+            "console-popover-max-tokens",
+            "console-popover-streaming",
+            "console-popover-apply",
             "console-popover-make-new-chat-default",
-            "console-popover-defaults-back",
+            "console-popover-full-settings",
+            "console-popover-save-model-default",
+            "console-popover-find",
         ]
-        defaults[0].focus()
-        await pilot.pause()
-        assert app.focused is defaults[0]
 
 
 @pytest.mark.parametrize("width", (60, 72))
@@ -956,7 +931,9 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
     blocked: bool,
     commit_button_id: str,
 ) -> None:
-    """Defaults intent and any block reason are visible above pinned actions."""
+    """Rewritten for TASK-33004.4 (no Defaults… subview): the saved fields
+    are printed beside [Save as model default], a blocked new-chat default
+    names its reason instead of committing, and an allowed one commits."""
 
     app = _ProductionResizeModalHarness()
     modal = _resize_popover()
@@ -971,36 +948,21 @@ async def test_quick_defaults_reveals_intent_before_narrow_commit(
     async with app.run_test(size=(120, 24)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
+        await app.workers.wait_for_complete()
         await pilot.resize_terminal(width, 24)
         await pilot.pause()
-        assert await pilot.click("#console-popover-defaults") is True
-        await pilot.pause()
-        await pilot.pause()
 
-        body = modal.query_one("#console-model-popover-body")
-        panel = modal.query_one("#console-popover-defaults-panel")
-        assert body.content_region.contains_region(panel.region)
-        assert "Defaults target: llama_cpp/model-a" in str(
-            modal.query_one("#console-popover-defaults-target", Static).renderable
+        assert "saves Temperature, Max tokens, Streaming" in str(
+            modal.query_one("#console-popover-save-model-default-copy", Static).render()
         )
-        assert "Compaction stays with this chat" in str(
-            modal.query_one(
-                "#console-popover-defaults-compaction-scope", Static
-            ).renderable
-        )
-        block = modal.query_one("#console-popover-new-chat-default-block", Static)
-        assert block.display is blocked
         if blocked:
-            assert "not configured" in str(block.renderable)
-
-        actions = [
-            button
-            for button in modal.query("#console-popover-default-actions Button")
-            if button.display
-        ]
-        for button in actions:
-            _assert_real_mouse_target(modal, button)
-        assert await pilot.click(f"#{commit_button_id}") is True
+            await pilot.press("ctrl+n")
+            await pilot.pause()
+            assert modal in app.screen_stack
+            error = modal.query_one("#console-popover-error", Static)
+            assert error.display and "not configured" in str(error.render())
+        modal.query_one(f"#{commit_button_id}", Button).focus()
+        await pilot.press("enter")
         await pilot.pause()
         assert modal not in app.screen_stack
 

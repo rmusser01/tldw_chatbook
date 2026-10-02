@@ -1,7 +1,7 @@
 ---
 id: TASK-338
 title: Restore Streaming on-off visibility in the Console rail Model section
-status: To Do
+status: Done
 assignee: []
 created_date: '2026-07-20 14:21'
 labels: [console, ux, regression]
@@ -23,6 +23,12 @@ The rail Model section lists Provider/Model/Temperature/Max tokens/System but no
 
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
-- [ ] #1 Every model setting the user can override per-session (including Streaming) is visible at a glance on the default Console surface — in the rail Model summary or via a non-default-state indicator
-- [ ] #2 A regression test pins the restored behavior
+- [x] #1 Every model setting the user can override per-session (including Streaming) is visible at a glance on the default Console surface — in the rail Model summary or via a non-default-state indicator
+- [x] #2 A regression test pins the restored behavior
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Closed by Phase 4 (TASK-33004.7 AC#2). The rail Model section shows Temperature, Max tokens and a Streaming On/Off row. The row follows Apply, a new chat and switching chats, and is pinned by `test_rail_streaming_row_follows_apply_new_chat_and_switching_back` plus the rendered-row test in `Tests/UI/test_console_model_section.py`. Other per-session sampler overrides stay visible in Chat settings, with provenance (Phase 2/3).
+<!-- SECTION:NOTES:END -->

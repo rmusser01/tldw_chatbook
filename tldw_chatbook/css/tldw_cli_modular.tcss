@@ -117,6 +117,8 @@ $ds-control-height-compact: 1;
 
 $ds-textarea-min-height: 5;
 
+$ds-model-switcher-width: 140;
+
 $ds-width-full: 100%;
 
 $ds-width-fill: 1fr;
@@ -1824,6 +1826,7 @@ LibraryFileNotesWorkspace Tree:focus > .tree--cursor {
 
 ConsoleSettingsModal OptionList > .option-list--option-highlighted,
 ConsoleSettingsModal OptionList:focus > .option-list--option-highlighted,
+ConsoleModelPopover OptionList > .option-list--option-highlighted,
 #settings-providers-models-card OptionList > .option-list--option-highlighted {
     background: $ds-active-fg;
     color: $ds-surface-panel;
@@ -10831,6 +10834,11 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 .console-tool-approval:focus { background: $ds-focus-bg; color: $ds-focus-fg; text-style: bold underline; }
 .console-tool-approval:disabled { background: $ds-disabled-bg; color: $ds-text-disabled-readable; }
 
+#console-model-popover { width: $ds-model-switcher-width; max-height: $ds-percent-80; }
+
+.console-popover-value { width: $ds-size-8; height: $ds-control-height-compact; }
+.console-popover-source { width: $ds-size-18; }
+
 /* ===== MODULE: features/_library.tcss ===== */
 
 
@@ -11413,11 +11421,6 @@ ConsoleConversationActionMenu { width: $ds-conversation-menu-width; }
 }
 
 
-#chat-prompt-list-view {
-    height: $ds-size-8;
-    border: round $ds-surface-raised;
-    margin-bottom: $ds-space-stack;
-}
 .loaded-prompt-area {
     margin-top: $ds-space-stack;
     padding: $ds-space-0 $ds-space-inline;

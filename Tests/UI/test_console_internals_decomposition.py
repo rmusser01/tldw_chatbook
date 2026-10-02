@@ -4591,7 +4591,9 @@ def test_console_keyboard_hints_visible_in_native_footer():
         "f6": "Next pane",
         "shift+f6": "Previous pane",
         "ctrl+k": "Switch session",
-        "alt+m": "Model",
+        # TASK-33004.7: both model surfaces, named as the footer names them.
+        "alt+m": "Switch model",
+        "ctrl+o": "Chat settings",
         "ctrl+t": "New tab",
     }
     for key, description in visible.items():
@@ -4688,10 +4690,11 @@ async def test_console_command_provider_session_settings_targets_guarded_action(
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-native-composer")
         provider = ConsoleCommandProvider(screen=console, match_style=None)
-        hits = [hit async for hit in provider.search("session settings")]
-        assert hits, "expected the session settings command to be listed"
-        matching = [hit for hit in hits if "Session settings" in str(hit.text)]
-        assert matching, "expected a 'Console: Session settings…' hit"
+        # TASK-33004.7: the entry is "Chat settings…" (Ctrl+O), the modal's name.
+        hits = [hit async for hit in provider.search("chat settings")]
+        assert hits, "expected the chat settings command to be listed"
+        matching = [hit for hit in hits if "Chat settings" in str(hit.text)]
+        assert matching, "expected a 'Console: Chat settings…' hit"
         assert matching[0].command == console.action_open_console_session_settings
 
 

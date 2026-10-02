@@ -23,6 +23,7 @@ from tldw_chatbook.UI.Screens.provider_model_resolution import (
     ResolvedProviderModelOption,
 )
 from tldw_chatbook.Widgets.model_search_picker import (
+    CURRENT_MARK,
     MODEL_ID_MAX_LENGTH,
     ModelSearchPicker,
 )
@@ -283,7 +284,11 @@ async def test_over_cap_catalog_fully_searchable():
 
 
 class PickerCustomSelectApp(App[None]):
-    """Host app exposing a non-default provider select id (popover-style)."""
+    """Host app exposing a non-default provider select id.
+
+    The Alt+M popover used to be this host; Switch model (TASK-33004.4) no
+    longer embeds the picker, so the id is a neutral one.
+    """
 
     def __init__(self, providers_models, entries):
         super().__init__()
@@ -294,13 +299,13 @@ class PickerCustomSelectApp(App[None]):
     def compose(self):
         yield Select(
             [("OpenRouter", "OpenRouter")],
-            id="console-popover-provider",
+            id="custom-provider-select",
             value="OpenRouter",
             allow_blank=False,
         )
         yield ModelSearchPicker(
             id="model-search-picker",
-            provider_select_id="#console-popover-provider",
+            provider_select_id="#custom-provider-select",
         )
 
     @on(ModelSearchPicker.ModelSelected)
@@ -965,3 +970,166 @@ async def test_focusing_click_selects_committed_model_so_typing_replaces_it():
         await pilot.click("#model-search-picker-input", offset=(click_x, 1))
         await pilot.pause()
         assert search_input.selection == Selection.cursor(clicked_index)
+
+
+def _painted_text(app) -> str:
+    return "\n".join(strip.text for strip in app.screen._compositor.render_strips())
+
+
+@pytest.mark.asyncio
+async def test_the_committed_model_is_marked_current_in_words():
+    """TASK-33004.6 AC#3: the committed model's result says ● CURRENT in its
+    text, so the mark reads without colour; no other result carries it, and
+    the mark moves with the next commit."""
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["anthropic/claude-x", "openai/gpt-y", "vendor/z"]),
+        current_model="openai/gpt-y",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+
+        marked = f"openai/gpt-y  {CURRENT_MARK}"
+        prompts = _result_prompts(_results(app))
+        assert [prompt for prompt in prompts if CURRENT_MARK in prompt] == [marked]
+        assert "anthropic/claude-x" in prompts and "vendor/z" in prompts
+        assert marked in _painted_text(app)
+
+        await _select_option(pilot, prompts.index("vendor/z"))
+        app.query_one("#apply", Button).focus()
+        await pilot.pause()
+        picker.focus_input()
+        await pilot.pause()
+        assert [
+            prompt
+            for prompt in _result_prompts(_results(app))
+            if CURRENT_MARK in prompt
+        ] == [f"vendor/z  {CURRENT_MARK}"]
+
+
+@pytest.mark.asyncio
+async def test_down_highlights_the_committed_model_first():
+    """TASK-33004.6 AC#3: Down lands on the committed model, not the first row;
+    when a filter hides it, Down falls back to the first result."""
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", ["a/one", "b/two", "c/three"]),
+        current_model="c/three",
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        results = _results(app)
+        assert app.focused is results
+        prompts = _result_prompts(results)
+        assert prompts[results.highlighted] == f"c/three  {CURRENT_MARK}"
+        assert results.highlighted != 0
+
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("t", "w", "o", "down")
+        await pilot.pause()
+        assert _result_prompts(results) == ["b/two"]
+        assert results.highlighted == 0
+
+
+@pytest.mark.asyncio
+async def test_grouped_results_mark_and_highlight_the_committed_model():
+    """TASK-33004.6 AC#3 for the provenance-grouped list Chat settings shows:
+    the committed model is marked in its group and Down skips headings to it."""
+    app = PickerTestApp({"OpenRouter": []}, (), current_model="saved/model")
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        picker.set_provenance_options(
+            "OpenRouter",
+            (
+                _provenance_option(
+                    "served/model", ConsoleModelProvenance.SERVED_NOW, verified=True
+                ),
+                _provenance_option(
+                    "catalog/model", ConsoleModelProvenance.CURRENT_CATALOG
+                ),
+                _provenance_option(
+                    "saved/model", ConsoleModelProvenance.SAVED_FALLBACK
+                ),
+            ),
+        )
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        results = _results(app)
+        assert _result_prompts(results) == [
+            "Served now",
+            "served/model",
+            "Current catalog",
+            "catalog/model",
+            "Saved fallback",
+            f"saved/model  {CURRENT_MARK}",
+        ]
+        assert results.highlighted == 5
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_models == ["saved/model"]
+
+
+@pytest.mark.asyncio
+async def test_a_committed_model_past_the_result_cap_stays_marked_and_first():
+    """TASK-33004.6 AC#3 on a large catalog (review fix round 1): a committed
+    model past MAX_RESULTS takes the last visible slot, in the flat and the
+    grouped list, so it keeps its mark and Down still lands on it."""
+    cap = ModelSearchPicker.MAX_RESULTS
+    model_ids = _OVER_CAP_IDS
+    committed = model_ids[-1]
+    app = PickerTestApp(
+        {"OpenRouter": []},
+        _entries("OpenRouter", model_ids),
+        current_model=committed,
+    )
+    async with app.run_test() as pilot:
+        await _wait_for_catalog(pilot)
+        picker = app.query_one(ModelSearchPicker)
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+
+        results = _results(app)
+        prompts = _result_prompts(results)
+        assert len(prompts) == cap
+        assert prompts[: cap - 1] == model_ids[: cap - 1]
+        assert prompts[-1] == f"{committed}  {CURRENT_MARK}"
+        assert results.highlighted == cap - 1
+        await pilot.press("enter")
+        await pilot.pause()
+        assert app.selected_models == [committed]
+
+        # Grouped (Chat settings): the unlisted current model is appended last.
+        app.query_one("#apply", Button).focus()
+        await pilot.pause()
+        picker.set_provenance_options(
+            "OpenRouter",
+            tuple(
+                _provenance_option(model_id, ConsoleModelProvenance.CURRENT_CATALOG)
+                for model_id in model_ids[:-1]
+            )
+            + (_provenance_option(committed, ConsoleModelProvenance.SAVED_FALLBACK),),
+        )
+        picker.focus_input()
+        await pilot.pause()
+        await pilot.press("down")
+        await pilot.pause()
+        prompts = _result_prompts(results)
+        assert prompts[-2:] == ["Saved fallback", f"{committed}  {CURRENT_MARK}"]
+        assert len(picker._matches) == cap
+        assert results.highlighted == len(prompts) - 1

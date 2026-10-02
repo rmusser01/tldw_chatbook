@@ -17,8 +17,12 @@ from ...Character_Chat.Character_Chat_Lib import (
     compose_character_card_text,
     replace_placeholders,
 )
+from ...Chat.console_chat_controller import (
+    build_console_provider_selection_from_settings,
+)
 from ...Chat.console_chat_models import (
     ConsoleProviderSelection,
+    ConsoleWorkspaceContext,
     fold_greeting_into_system_prompt,
 )
 from ...Chat.console_provider_gateway import ConsoleProviderGateway
@@ -596,7 +600,8 @@ class PersonasPreviewController:
             defaults_key: Defaults section to resolve through Console settings.
 
         Returns:
-            Provider selection carrying effective endpoint and generation fields.
+            The Console builder's selection for the section (TASK-33004.2),
+            without its system prompt; an empty provider for an unset section.
         """
         raw_defaults = config.get(defaults_key, {})
         defaults = raw_defaults if isinstance(raw_defaults, Mapping) else {}
@@ -617,26 +622,19 @@ class PersonasPreviewController:
             provider=provider,
             model=explicit_model,
         )
-        return ConsoleProviderSelection(
-            provider=settings.provider,
-            base_url=settings.base_url,
-            explicit_model=explicit_model,
-            configured_model=None if explicit_model else settings.model,
-            temperature=settings.temperature,
-            top_p=settings.top_p,
-            min_p=settings.min_p,
-            top_k=settings.top_k,
-            max_tokens=settings.max_tokens,
-            seed=settings.seed,
-            presence_penalty=settings.presence_penalty,
-            frequency_penalty=settings.frequency_penalty,
-            reasoning_effort=settings.reasoning_effort,
-            reasoning_summary=settings.reasoning_summary,
-            verbosity=settings.verbosity,
-            thinking_effort=settings.thinking_effort,
-            thinking_budget_tokens=settings.thinking_budget_tokens,
-            streaming=settings.streaming,
+        if not settings.provider:
+            # Unset section: no provider to build from. The builder would
+            # default it to llama.cpp; the preview falls back to
+            # chat_defaults instead (task-425).
+            return ConsoleProviderSelection(provider="", explicit_model=explicit_model)
+        selection = build_console_provider_selection_from_settings(
+            settings,
+            app_config=settings_config,
+            workspace_context=ConsoleWorkspaceContext(),
+            legacy_model=explicit_model,
         )
+        # The preview sends its own prompt (build_preview_system_prompt).
+        return dataclasses.replace(selection, system_prompt=None)
 
     async def _resolve_selection_with_fallback(
         self,

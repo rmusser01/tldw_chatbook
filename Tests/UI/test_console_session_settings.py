@@ -135,7 +135,7 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
 
 
 def _assert_private_values_absent(
@@ -8161,6 +8161,58 @@ def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> Non
     assert selection.provider == "custom-ep:gpu-box"
 
 
+def test_screen_send_selection_keeps_endpoint_workspace_and_identity() -> None:
+    """TASK-33004.2 AC#1: collapsing the screen chain into the one builder
+    keeps the screen's extra fields -- the owning session's endpoint policy,
+    its workspace, and a fresh identity expansion with the screen's own
+    display name."""
+    from tldw_chatbook.Chat.console_endpoint_provenance import (
+        ConsoleEndpointProvenance,
+    )
+    from tldw_chatbook.Chat.console_session_endpoint_policy import (
+        ConsoleEphemeralEndpointPolicy,
+    )
+
+    persona = SimpleNamespace(
+        id="s1",
+        assistant_kind="persona",
+        assistant_name="Ada",
+        persona_system_template="You are {{char}}; the user is {{user}}.",
+        character_name=None,
+        character_system_template=None,
+        user_display_name_override=None,
+    )
+    store = SimpleNamespace(
+        session_workspace_id=lambda session_id: "ws-2",
+        session_ephemeral_endpoint_policy=lambda session_id: (
+            ConsoleEphemeralEndpointPolicy("openai", "gpt-x", "http://lan:1")
+        ),
+        sessions=lambda: [persona],
+    )
+    screen = SimpleNamespace(
+        _provider_readiness_app_config=lambda: {},
+        _ensure_console_chat_store=lambda: store,
+        _workspace=SimpleNamespace(
+            _current_console_workspace_context=lambda: ConsoleWorkspaceContext(
+                active_workspace_id="ws-1"
+            )
+        ),
+        _global_chat_display_name=lambda: "Rob",
+    )
+
+    selection = ChatScreen._build_console_provider_selection_from_settings(
+        screen,
+        "s1",
+        ConsoleSessionSettings(provider="openai", model="gpt-x", system_prompt="old"),
+        legacy_model=None,
+    )
+
+    assert selection.workspace_context.active_workspace_id == "ws-2"
+    assert selection.configured_endpoint_fallback_allowed is False
+    assert selection.endpoint_provenance is ConsoleEndpointProvenance.EPHEMERAL_SESSION
+    assert selection.system_prompt == "You are Ada; the user is Rob."
+
+
 @pytest.mark.asyncio
 async def test_console_settings_modal_provider_options_end_with_new_endpoint_sentinel() -> (
     None
@@ -14641,9 +14693,10 @@ async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
         await pilot.press("o", "n", "l", "y")
         await pilot.pause()
         results = modal.query_one("#model-search-picker-results", OptionList)
+        # TASK-33004.6: the selected model is the committed one, so it says so.
         assert [str(option.prompt) for option in results.options] == [
             "Custom / unverified",
-            "only-real-model",
+            f"only-real-model  {CURRENT_MARK}",
         ]
 
 
@@ -15694,7 +15747,7 @@ async def test_console_settings_modal_shows_current_catalog_model_provenance() -
             for option in modal.query_one(
                 "#model-search-picker-results", OptionList
             ).options
-        ] == ["Current catalog", "gpt-5.6-terra"]
+        ] == ["Current catalog", f"gpt-5.6-terra  {CURRENT_MARK}"]  # TASK-33004.6
 
 
 @pytest.mark.asyncio

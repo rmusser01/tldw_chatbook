@@ -334,6 +334,26 @@ async def test_console_recovery_controls_resize_bar_one_two_one() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_sync_during_teardown_skips_pruned_buttons() -> None:
+    """Qodo #2947 follow-on: teardown prunes the buttons before their row, and a
+    hook refresh still in flight then synced into them, failing its worker
+    (3 of 3 xdist runs once a model switch refreshed the session list)."""
+    app = _build_test_app()
+    host = ConsoleLayoutHarness(app)
+
+    async with host.run_test(size=(90, 30)) as pilot:
+        console = host.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-auto-speak-retry")
+        bar = console.query_one("#console-control-bar")
+        await console.query_one("#console-auto-speak-retry", Button).remove()
+        await console.query_one("#console-auto-speak-resume", Button).remove()
+
+        bar.sync_auto_speak(enabled=True, paused=True, retry_available=True)
+
+        assert bar.auto_speak_paused is True
+
+
+@pytest.mark.asyncio
 async def test_console_retry_speech_button_routes_without_resuming() -> None:
     app = _build_test_app()
     _configure_native_ready_console(app)
