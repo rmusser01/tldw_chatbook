@@ -563,11 +563,13 @@ async def test_tokenless_client_audio_probes_send_no_credentials_and_raise_auth_
     monkeypatch.setattr(client_module.httpx, "AsyncClient", _with_mock_transport)
     client = TLDWAPIClient("http://api.test")
 
-    with pytest.raises(AuthenticationError, match="Not authenticated"):
-        await client.get_stt_health()
-    with pytest.raises(AuthenticationError, match="Not authenticated"):
-        await client.get_audio_streaming_status()
-    await client.close()
+    try:
+        with pytest.raises(AuthenticationError, match="Not authenticated"):
+            await client.get_stt_health()
+        with pytest.raises(AuthenticationError, match="Not authenticated"):
+            await client.get_audio_streaming_status()
+    finally:
+        await client.close()
 
     assert [path for path, _ in seen] == [
         "/api/v1/audio/transcriptions/health",

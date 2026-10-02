@@ -3,10 +3,11 @@ id: TASK-33660
 title: >-
   Server audio: STT health and streaming status probes report auth_required on
   401
-status: Done
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-10-01 23:30'
-updated_date: '2026-10-02 01:10'
+updated_date: '2026-10-02 02:27'
 labels:
   - audio
   - server-parity
@@ -46,6 +47,8 @@ Reason: routine bug fix that reuses the existing typed-refusal pattern (`PolicyD
 1. Write failing tests: client wire test (tokenless, 401) in `Tests/tldw_api/test_audio_client.py`; service mapping tests in `Tests/Audio_Services/test_server_audio_services_service.py`; scope end-to-end test with a real client on `httpx.MockTransport` in `Tests/Audio_Services/test_audio_services_scope_service.py`.
 2. In `ServerAudioServicesService`, add an `_auth_required` refusal beside `_admin_required` and map `AuthenticationError` to it in `get_stt_health` (including the warm-up capability lookup) and `get_audio_streaming_status`.
 3. Run the targeted audio test files and nearby suites.
+
+2026-10-01 current-dev qualification: reuse existing PR #2954 and its server TASK-13416 cross-link, starting from dev 922440b93e83. Verify both probes through transport, service, scope and the existing destination recovery presenter. Reproduce typed-refusal tests failing with current-dev production source, then passing with the PR patch. Address Qodo findings with guaranteed client cleanup and streaming-status API documentation. Run targeted tests, Ruff, Bandit and diff checks; require fresh matching-head hosted review and gates for the updated PR. Existing ADR-178 (backlog/decisions/178-server-audio-diagnostic-admin-boundary.md) supplies the adjacent server-owned diagnostic refusal boundary; no new ADR or UI contract is needed.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -67,4 +70,12 @@ Existing `admin_required` (403) and pass-through (503) tests still pass, which c
 **Verification (2026-10-01, branch `fix/tokenless-audio-probes-401` off `origin/dev` 31d4f9b764):** `pytest Tests/tldw_api/test_audio_client.py Tests/Audio_Services/ Tests/tldw_api/test_client_error_classification.py Tests/RuntimePolicy/test_unsupported_capabilities.py`: 76 passed. `ruff check` and `ruff format --diff` are clean on the touched files, and `./scripts/preflight.sh` passes. `Tests/UI/test_screen_navigation.py::test_app_wires_local_and_server_skills_services` fails locally with `RecoveryRequired: raw_source_selection_changed`. It fails the same way with the production change reverted, so it is local backup-recovery state, not this change.
 
 **Modified files:** `tldw_chatbook/Audio_Services_Interop/server_audio_services_service.py` and the three test files above.
+
+**2026-10-01 current-dev qualification (Codex):** Reused PR #2954 instead of creating a duplicate task/implementation. Replayed its existing patch onto verified current dev 922440b93e83 in a new managed worktree. Current dev already maps HTTP 401 to AuthenticationError and can classify that as server_auth_required, but neither probe has a screen/widget consumer; the app only wires the scope service. The existing PR supplies the missing typed-refusal boundary using PolicyDeniedError(auth_required), compatible with the existing destination recovery presenter. No new transport error layer or UI was added.
+
+Resolved both original-head Qodo findings: document the streaming-status return/refusal contract and close both test HTTP clients in finally blocks. Parameterized the service/scope cases so each probe is independently exercised; scope coverage includes missing and rejected credentials and checks the existing Server sign-in required / Settings recovery copy. This presenter test is automated contract evidence, not a claim that a native screen currently calls either probe.
+
+Negative control against unchanged current-dev production source: 7 expected AuthenticationError failures and 1 passing API-mapping control. Restoring the PR source: 85 passed in 4.37s across Tests/tldw_api/test_audio_client.py, Tests/Audio_Services/, Tests/tldw_api/test_client_error_classification.py, Tests/RuntimePolicy/test_unsupported_capabilities.py and Tests/tldw_api/test_client_redirect_credential_leak.py. Ruff lint and format, production-source Bandit (zero findings), diff checks and both Backlog guards pass. Independent read-only review found no actionable issues. Existing ADR-178 remains applicable; no new ADR is needed. Hosted review/gates for the forthcoming updated head remain pending, so this task is In Progress until qualification finishes.
+
+Scope limits: no full local suite, paid provider request, real server request, microphone capture, extension setup or native permission workaround. The broader Buddy human-speech/audibility, native-interaction and historical reload-trigger work remains open. Prior UAT receipts retain their original attribution; their server checkout and the main checkouts were not edited.
 <!-- SECTION:NOTES:END -->

@@ -203,6 +203,16 @@ class ServerAudioServicesService:
         )
 
     async def get_audio_streaming_status(self) -> dict[str, Any]:
+        """Read streaming status from the active server.
+
+        Returns:
+            The server's streaming status data.
+
+        Raises:
+            PolicyDeniedError: Runtime policy denies the probe or the server
+                requires authentication (``auth_required``).
+            APIResponseError: Other server response failures.
+        """
         action_id = "audio.streaming.status.server"
         self._enforce(action_id)
         try:

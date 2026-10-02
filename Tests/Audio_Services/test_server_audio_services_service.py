@@ -327,7 +327,15 @@ async def test_server_audio_diagnostics_preserve_non_auth_capability_errors() ->
 
 
 @pytest.mark.asyncio
-async def test_server_audio_probes_report_auth_required_on_401() -> None:
+@pytest.mark.parametrize(
+    ("probe", "kwargs"),
+    [
+        ("get_stt_health", {}),
+        ("get_stt_health", {"warm": True}),
+        ("get_audio_streaming_status", {}),
+    ],
+)
+async def test_server_audio_probes_report_auth_required_on_401(probe, kwargs) -> None:
     """tldw_server#3058: a tokenless (or rejected) credential gets 401 from both
     probes; that is an explicit ``auth_required`` state, not a raw error."""
 
@@ -343,15 +351,10 @@ async def test_server_audio_probes_report_auth_required_on_401() -> None:
 
     service = ServerAudioServicesService(client=TokenlessClient())
 
-    for probe in (
-        lambda: service.get_stt_health(),
-        lambda: service.get_stt_health(warm=True),
-        lambda: service.get_audio_streaming_status(),
-    ):
-        with pytest.raises(PolicyDeniedError, match="Authentication") as denial:
-            await probe()
-        assert denial.value.reason_code == "auth_required"
-        assert isinstance(denial.value.__cause__, AuthenticationError)
+    with pytest.raises(PolicyDeniedError, match="Authentication") as denial:
+        await getattr(service, probe)(**kwargs)
+    assert denial.value.reason_code == "auth_required"
+    assert isinstance(denial.value.__cause__, AuthenticationError)
 
 
 @pytest.mark.asyncio
