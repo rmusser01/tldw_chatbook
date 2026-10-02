@@ -160,3 +160,15 @@ ADR path: backlog/decisions/126-complete-local-backup-and-recovery.md and backlo
 Reason: preserving the accepted upstream probe interval without changing native custody, pause authority, SQL admission, migration, recovery or orchestration contracts. Do not close upstream TASK-33560: its remaining guarded-read/cache/performance criteria remain unchecked.
 
 Qualification complete on `d4b3311586568d9ae1d66839731e40938f504528`: independent review reopened existing TASK-33432 AC3 for a proven early maintenance refusal. The exact-authority guard and one progress/completion regression repair it using existing cleanup; two controlled RED cases, 11 repair/neighbor cases, seven maintenance caller/drain cases and an independent real refund/resume probe establish the result. The original source census is restored and passes; its earlier unexplained typing-helper failure remains disclosed. Static/new-file/owned-format/worker/diagnostic checks pass, original module pins remain. No new ADR; existing ADR-126/199. Fresh published-head gates and protected merge remain.
+
+
+## Required expanded-hooks integration
+
+Actual dev e92b01515f9547aab2cfb14cd4d93a7a07419775 (PR #2946) makes published43b2059 CONFLICTING/DIRTY; no Actions run exists on that head. This necessary update is not a rebase while checks are running. Reopen TASK-33431 AC4 and TASK-33432 AC3/4 before implementation.
+
+1. Preserve upstream compaction73→74 and hook receipt74→75 bytes; move unmerged progress to75→76 and update exact fresh/upgrade/recovery/current stamp gates. Keep frozen AgentRuns18/21/22 and current23 unchanged.
+2. Resolve actual overlaps while retaining the exact early unaccepted-wake refusal guard, existing manual/automatic priority, hook requirements, peer constraints, native close and physical worker/resource custody. Reuse existing owners; do not broaden into plugin programs or keybinding repairs.
+3. Qualify real SQLite73/74/75 migration and rollback, restricted/current-only recovery, durable Save/reopen, exact refund/resume/accepted nonreplay, incoming Stop continuation/required barriers and scoped child/tool consumers. Use targeted checks and independent read-only schema/runtime review. Preserve failed evidence and all prior qualification limits.
+4. Verify owned static/artifact/startup guards, record exact evidence, close affected criteria through CLI, and publish once with exact43b2059c6761eedaaf1722f7d505b0c017f66139 lease. Fresh Qodo and all four current-head jobs precede normal protected head-pinned merge.
+
+ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md (version clarification amended before code); existing ADR-052/126/162/163/197 govern. Reason: compose already accepted storage, scheduler, permission and lifecycle boundaries without changing owners. No dependency installs, gates/ceilings/warmup/work changes, full suite, admin bypass or foreign checkout cleanup.
