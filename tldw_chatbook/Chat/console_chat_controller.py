@@ -147,6 +147,10 @@ from tldw_chatbook.Chat.console_history_budget import (
 )
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (console_auxiliary_routing imports at its one call site.)
 from tldw_chatbook.Agents.agent_service import append_personal_context
+from tldw_chatbook.Chat.console_compaction_failure import (
+    compaction_failure_copy,
+    transaction_failure_copy,
+)
 from tldw_chatbook.Chat.console_context_compaction import (
     NO_LEGACY_MEMORY,
     CompactionAdmission,
@@ -162,6 +166,8 @@ from tldw_chatbook.Chat.console_context_compaction import (
     LegacyMemorySnapshot,
     ManualMemoryPlan,
     compactable_units_after,
+    compaction_retry_fence,
+    effective_memory_identity,
     complete_durable_units,
     decide_compaction,
     plan_compaction,
@@ -5288,6 +5294,7 @@ class ConsoleChatController:
         #: session -- captured at the send preflight (the same accounting
         #: that built the request), read by the context breakdown surface.
         self._context_accounting_by_session: dict[str, object] = {}
+        self._preflight_block_copies: dict[str, str] = {}  # TASK-33621.3
         #: TASK-25910: completed-turn counters per session for the
         #: micro-compaction cadence; a per-session in-flight guard keeps
         #: a slow fold from stacking.
@@ -6648,8 +6655,11 @@ class ConsoleChatController:
             assistant_message_id,
             generation_token=generation_token,
         )
+        kept = self._preflight_block_copies.pop(assistant_message_id, None)
         self._set_run_state(
-            ConsoleRunState(
+            ConsoleRunState.blocked(kept)  # TASK-33621.3: the block's own cause.
+            if kept is not None
+            else ConsoleRunState(
                 ConsoleRunStatus.BLOCKED,
                 "Response recovery failed. Try again or discard.",
             ),
@@ -24443,7 +24453,10 @@ class ConsoleChatController:
                     version=version,
                     role=message.role.value,
                     content=content,
-                    parent_message_id=message.parent_message_id,
+                    # TASK-33621.3: a live durable-send owner never gets its
+                    # parent mirror; fence with the parent its row was written with.
+                    parent_message_id=message.parent_message_id
+                    or self.store.durable_parent_for_message(native_id),
                     status=message.status,
                     deleted=False,
                     provider_visible=provider_visible,
@@ -25392,28 +25405,9 @@ class ConsoleChatController:
         if blocked_result is not None:
             return False, blocked_result.visible_copy
         _overrides, _global, after_memory = self.context_control_inputs(session_id)
-        before_identity = (
-            before_memory.kind,
-            before_memory.memory.memory_id
-            if before_memory.memory is not None
-            else None,
-            (
-                before_memory.legacy.boundary_message_id
-                if before_memory.legacy is not None
-                else None
-            ),
-        )
-        after_identity = (
-            after_memory.kind,
-            after_memory.memory.memory_id if after_memory.memory is not None else None,
-            (
-                after_memory.legacy.boundary_message_id
-                if after_memory.legacy is not None
-                else None
-            ),
-        )
         if after_memory.kind is EffectiveMemoryKind.RAW or (
-            before_identity == after_identity
+            effective_memory_identity(before_memory)
+            == effective_memory_identity(after_memory)
         ):
             if (
                 requested_representation
@@ -25474,14 +25468,17 @@ class ConsoleChatController:
         assistant_message_id: str,
         visible_copy: str,
     ) -> ConsoleSubmitResult:
-        try:
-            self.store.mark_message_failed(assistant_message_id)
-        except (KeyError, ValueError):
-            pass
+        # TASK-33621.3: copy first; a durable accepted turn fails closed below.
         self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState.blocked(visible_copy), session_id=session_id
         )
+        self._preflight_block_copies[assistant_message_id] = visible_copy
+        try:
+            self.store.mark_message_failed(assistant_message_id)
+        except (KeyError, ValueError):
+            pass
+        self._preflight_block_copies.pop(assistant_message_id, None)
         return ConsoleSubmitResult(True, True, visible_copy)
 
     async def _apply_conversation_memory_preflight(
@@ -25825,18 +25822,16 @@ class ConsoleChatController:
             # notice from a background pass.
             return _flatten_preflight_messages(semantic), None
         if planned.plan is None:
-            if (
+            if not manual_action and (
                 resolved.policy.failure_behavior
                 is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
             ):
                 return _flatten_preflight_messages(semantic), None
-            result = blocked(
-                (
-                    "Conversation compaction could not reach the configured "
-                    "target in one bounded summary call."
+            return provider_messages, blocked(
+                compaction_failure_copy(
+                    planned.reason or "plan_unreachable", manual=manual_action
                 )
             )
-            return provider_messages, result
 
         admission = self._compaction_admission(
             session_id=session_id,
@@ -25877,6 +25872,11 @@ class ConsoleChatController:
             ),
             prepare_main=prepare_main,
             prefix_messages=snapshots[: boundary_index + 1],
+            retry_fence=compaction_retry_fence(
+                conversation_id, resolution, prompt, resolved, effective, snapshots,
+                active_request=not manual_action,
+            ),
+            honor_failure_latch=micro_compaction or not manual_action,
         )
         if transaction.terminal is CompactionTerminal.SUCCEEDED:
             memory_rows_after: tuple[Mapping[str, Any], ...] = (
@@ -25990,18 +25990,16 @@ class ConsoleChatController:
                 ),
             )
             return _flatten_preflight_messages(after), None
-        if (
+        omit = not manual_action and (
             resolved.policy.failure_behavior
             is CompactionFailureBehavior.OMIT_OLDER_CONTEXT
-        ):
-            return _flatten_preflight_messages(semantic), None
-        result = blocked(
-            (
-                "Conversation compaction did not complete; the provider request "
-                "was not sent."
-            )
         )
-        return provider_messages, result
+        note = transaction_failure_copy(transaction, manual=manual_action, omitted=omit)
+        if not omit:
+            return provider_messages, blocked(note)
+        if transaction.attempted:  # TASK-33621.3: disclose the billed call once.
+            self._append_failure_system_row(session_id, note)
+        return _flatten_preflight_messages(semantic), None
 
     @_lease_captured_tool_profile
     async def _stream_assistant_response(
