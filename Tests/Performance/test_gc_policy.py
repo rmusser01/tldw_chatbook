@@ -20,7 +20,11 @@ from Tests.private_profile import private_profile_test
 def test_freeze_long_lived_heap_collects_young_generations_then_freezes(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A young collection first (cheap), never a full one, then the freeze."""
+    """A young collection first (cheap), never a full one, then the freeze.
+
+    Args:
+        monkeypatch: Records ``gc.collect`` and ``gc.freeze`` instead of running them.
+    """
     from tldw_chatbook.Utils import ui_responsiveness
 
     calls: list[tuple] = []
