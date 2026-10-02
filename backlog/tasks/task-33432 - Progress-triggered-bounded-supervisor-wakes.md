@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-10-02 00:42'
+updated_date: '2026-10-02 01:52'
 labels:
   - agents
   - console
@@ -24,6 +24,7 @@ Let committed child progress request a supervisor turn through the existing auto
 - [x] #2 Progress and completion wakes share existing coalescing, fairness, manual priority, slots, chain generations, wall and spending limits; busy supervisors are not interrupted.
 - [x] #3 Preacceptance abort releases claims; accepted or uncertain attempts never replay automatically after restart; a wake asks for a fresh message read.
 - [x] #4 Targeted mixed-source, duplicate, exhaustion, collection-race, restart and unchanged-completion checks pass; backup schema covers new persistent state.
+- [x] #5 Incoming Console wake and run-control regressions observe actual asynchronous admission and publication; production deadlines, controls and authority gates remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -32,6 +33,10 @@ Let committed child progress request a supervisor turn through the existing auto
 1. Extend existing AgentRuns wake attempt and claim schema to identify completion and progress sources, with migration and installed recovery catalog parity. 2. Pin live-progress claim scope, shared generation budgets, duplicate protection, preacceptance rollback and restart nonreplay. 3. Add metadata-only committed enqueue intake and pending-ID revalidation to the existing scheduler, retaining its coalescing, manual priority and slots. 4. Wake with bounded report IDs and request a fresh read; keep progress claims and completion receipts distinct. 5. Run targeted ledger/scheduler/integration checks, static analysis and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: new automatic wake source sharing existing finite authority.
 
 CI addendum 2026-10-01: extend the existing real automatic-work query-plan test with populated progress claims, pin exact attempt cleanup and register its existing index; run wake/schema and rebase authority checks. ADR required: no; direct qualification of ADR-199.
+
+Final rebase qualification addendum 2026-10-01: repair the unchanged-completion mounted regression to await actual coalesced tab publication rather than assuming an awaited sync or a fixed sleep has painted; verify real completion, the negative disabled-wake-poll control, provider acceptance and existing budget/refusal guards. ADR required: no; test-only evidence correction under existing ADR-199 AC4, with production timing and authority unchanged.
+Observation addendum: unchanged held-control fixture dispatch begins at 9.578s while its 5s first-chunk wait exits at 7.510s during VALIDATING. Qualify pending preparation and use a bounded 15s first-chunk precondition only; retain all 5s action/control waits. Rerun the five failed controls, negative nonstreaming control and unchanged wake admission/UI checks. No provider refusal, new production wait or limit change is intended.
+Apply the same measured 15s preparation precondition to the two wake gateway-entry waits; leave their actual paint, terminal-ledger and idle-poll settle deadlines at 8s. The initial disabled-hook control expired before admission and is not accepted as negative repaint evidence; rerun it only after its streaming precondition is established.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -54,4 +59,10 @@ Final review qualification: 72 focused ledger/schema/progress/existing completio
 Final root disposition, September 29: independent re-review approved all remaining source intake, shared membership, native alias admission and Canvas authority repairs; eight focused cases passed in 41.94s. The final combined wake/ledger/schema/completion selection passed 72 cases in 142.45s. Changed-code static/format and whitespace checks passed. All four acceptance criteria are satisfied under ADR-199; the separate native lifecycle contention qualification belongs to TASK-33431. Targeted evidence only; no full suite or live-provider claim.
 
 October 1 CI/integration closeout: populated the existing real mixed claim-plan regression and registered idx_automatic_progress_claims_attempt. Independent rebase review reproduced upstream hook admission returning before proven-preacceptance cleanup, leaving a prepared attempt and reserved generation. The seven-line controller repair marks only an exact authorized live AGENT_WAKE token with acceptance not started; existing cleanup aborts/refunds it. The actual plain/agent gateway regression proves manual/copied-token refusal, no provider call before refusal, one retry after clearing the hook and no duplicate replay. Six authority/retry checks pass 43.72s and three existing readiness/acceptance/completion guards pass 11.51s; independent reviewer passes both new paths plus three guards and approves. Affected 145-case schema/messaging and 147-case lifecycle selections pass; overlapping selections are not summed. Final 75-file changed-code and diagnostic guards pass. Existing ADR-199 AC3 covers this repair; no new ADR. Criteria satisfied; Done. PR #2918 is rebased on dev 31d4f9b764 and awaits its published-head remote checks.
+
+Final dev 84247cb843 qualification: the stopped combined selection recorded 138 passed/7 failed in1147.92s; it is not claimed green. Independent observation located the held fixture's five-second expiry during valid preparation: gateway dispatch at 9.578s, first yield 4.6ms later, normal durable commit/cleanup and an unchanged controller/store/gateway path. Only first-chunk/wake-entry fixture preparation gets 15s; control actions keep 5s and wake paint/ledger/timer settles keep 8s. Coalesced UI sync does not acknowledge paint, so the unchanged-completion regression now observes actual Running and terminal glyph publication without interaction or idle polling.
+
+Fresh final affected selection passes 13 cases in 177.22s (four mounted wake cases, both exact hook-refund gateways, CSS budget/bundle and UI census 1031/1033); independent review passes all five originally failing controls in 209.78s and approves both test corrections. A private frozen-terminal-publication control reaches streaming/ledger completion then fails at the exact settled-glyph assertion; a private never-first-chunk control fails at its bounded 15s precondition. The disabled-delivery-hook-only probe passed due to a coalesced tail and is not accepted as necessary-hook evidence. These selections overlap with earlier runs and are not summed.
+
+Final 78-file changed-code fatal/added-line checks, ten new-file Ruff/format checks, owned test-range formatting and whitespace pass. Last predicate formatting preserves the tested AST. Modified only the two mounted test harnesses, task/review/plan/ledger records and the measured testing lesson; production gates, deadlines, budgets, APIs and authority remain unchanged. ADR required: no; direct test-evidence qualification under ADR-199 AC4 and new AC5. All criteria satisfied; Done. Fresh PR-head CI remains required after publishing the rebase; no full suite, live provider, merge or inherited-size/static/resource blanket claim.
 <!-- SECTION:NOTES:END -->

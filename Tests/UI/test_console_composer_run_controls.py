@@ -125,6 +125,9 @@ async def _start_held_run(console, composer, pilot):
             for message in store.messages_for_session(store.active_session_id)
         ),
         "the held run never streamed its first chunk",
+        # Preparation includes real provider validation and persistence;
+        # this gates control assertions, rather than measuring send latency.
+        timeout=15.0,
     )
     stop = composer.query_one("#console-stop-generation", Button)
     await _wait_for(pilot, lambda: stop.display, "Stop never displayed mid-run")

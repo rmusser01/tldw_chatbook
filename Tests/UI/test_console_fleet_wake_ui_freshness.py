@@ -171,7 +171,7 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
             controller.fleet_wake,
             _drain(target.persisted_conversation_id, _survivor(run_id, session_id=target.id)),
         )
-        assert await _settle(pilot, lambda: gateway.payloads), (
+        assert await _settle(pilot, lambda: gateway.payloads, seconds=15.0), (
             "the wake turn never started streaming; "
             f"pending={controller.fleet_wake.has_pending(target.id)!r}, "
             f"delivering={controller.fleet_wake.delivering_conversation_ids()!r}, "
@@ -182,7 +182,9 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         # woken session's tab shows RUNNING while the wake streams.
         await console._sync_native_console_chat_ui()
         await pilot.pause()
-        assert "●" in _tab_label(console, target.id), (
+        # An awaited sync may coalesce behind an existing worker. Observe
+        # its actual publication while the provider is still held.
+        assert await _settle(pilot, lambda: "●" in _tab_label(console, target.id)), (
             "precondition: the streaming wake turn paints RUNNING on its tab"
         )
 
@@ -196,7 +198,16 @@ async def test_wake_turn_in_a_nonviewed_session_flips_the_tab_glyph_off_running(
         assert stamped, "the wake turn never completed/stamped its ledger row"
 
         # NO interaction from here on: the terminal edge itself must repaint.
-        await pilot.pause(1.2)
+        assert await _settle(
+            pilot,
+            lambda: (
+                "●" not in _tab_label(console, target.id)
+                and "✓" in _tab_label(console, target.id)
+            ),
+        ), (
+            "the settled wake tab never repainted without user interaction: "
+            f"{_tab_label(console, target.id)!r}"
+        )
         label = _tab_label(console, target.id)
         assert "●" not in label, (
             "task-15862: the wake turn ended but its tab glyph froze at "
@@ -296,7 +307,7 @@ async def test_composer_blocked_copy_names_the_wake_not_provider_setup(
             controller.fleet_wake,
             _drain(session.persisted_conversation_id, _survivor(run_id, session_id=session.id)),
         )
-        assert await _settle(pilot, lambda: gateway.payloads), (
+        assert await _settle(pilot, lambda: gateway.payloads, seconds=15.0), (
             "the wake turn never started streaming; "
             f"pending={controller.fleet_wake.has_pending(session.id)!r}, "
             f"delivering={controller.fleet_wake.delivering_conversation_ids()!r}, "
