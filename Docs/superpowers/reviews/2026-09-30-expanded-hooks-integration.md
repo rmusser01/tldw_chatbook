@@ -1378,3 +1378,64 @@ live-dev checks remain necessary, in addition to the concrete review-Send gate.
 Earlier unrelated semantic-inventory, pet/recovery and interrupted stress
 limitations remain explicitly retained. The approved heartbeat continues quietly
 while the upstream repair and fresh checks are pending.
+
+
+### Merged review-Send repair dev 30ca4552b3
+
+PR #2945 is independently confirmed merged; live dev is
+`30ca4552b3b881bee6c077db08c44233e5e97e6a`, with parents `6958e8dfa9` and the
+reviewed repair head `5309927e7c`. Rebase **33 patches**: 32 replay identically;
+the remaining range-diff change is append context in the testing-lessons conflict.
+Both owners' incidents remain intact (`hooks-pr2946-30c-range-diff.txt`). Eight
+upstream controller/wiring/status/checker/census/test owners are byte-identical.
+All ten new or changed screen/modal method ASTs remain exact, including the
+modal-owned answer, dismiss/unmount settlement, eager/task-identity handoff,
+truthful acceptance and diagnostic outcomes. V2 review rows and consent remain
+present. Evidence: `hooks-pr2946-30c-owner-evidence.json`. ADR required: **no**;
+existing ADR-163/197/210 apply. No production repair is duplicated or altered.
+
+The complete formerly frozen Send file now passes **21 ordinary cases**, with
+no xfails or `FreezeObserved` exception. Startup and navigated Console routes,
+lazy/eager factories, cancel/allow-once, diagnostics and spoken acknowledgement
+are covered. The complete mounted review file passes **12 cases**, including v2;
+canonical Settings passes **ten**, and affected boot/CSS guards pass **five**.
+These **48 passes** are in `hooks-pr2946-30c-send-ui.xml`; the larger initial
+invocation is **50 passed / 28 failed in 174.82s**, not a clean aggregate.
+The three-runtime-freeze merge gate is therefore cleared. Harness Ctrl+Q proves
+that the app pump runs; it does not claim the separate existing real-app modal
+quit-binding gap is fixed.
+
+All 28 initial draft-snapshot failures are `raw_source_selection_changed` before
+mounting. They independently reproduce on immutable exact dev (**two passed /
+28 failed in 15.53s**, `hooks-pr2946-30c-upstream-draft.xml`) and an isolated
+branch Enter node. Apply only the existing `bootstrap_profile` marker/comment
+to keep these real-config mounts on their admitted collection-time private
+profile. No test body, double, assertion, deadline or production guard changes.
+The full file then gives **27 passed / three failed in 120.23s**
+(`hooks-pr2946-30c-draft-fixed.xml`). An admission-marker pytest plugin on the
+unchanged immutable dev export gives **27 passed / the same three failed in
+101.44s** (`hooks-pr2946-30c-upstream-draft-admitted.xml`), without editing its
+source. Exact failure signatures match:
+
+- `test_console_pre_durable_failure_keeps_newer_typing_and_recovery` and
+  `test_console_blocked_send_retains_exact_recovery_after_runtime_custody`:
+  missing Console rail during mounting.
+- `test_console_armed_unknown_mouse_send_snapshots_before_skill_await`:
+  the armed unknown-command Send returns false after the draft changes.
+
+These are explicit existing upstream draft-test exclusions; none is suppressed,
+xfail-marked or represented as passing. Do not change unrelated dormant-pet or
+legacy draft behavior to close them in this integration.
+
+Exact consent, handoff/admission and the full W003 checker pass **168 cases in
+60.00s**, with only the **two pre-existing split-function recall xfails**
+(`hooks-pr2946-30c-admission-checker.xml`). All **eleven exact artifact commands**
+pass (`hooks-pr2946-30c-local-artifacts.json`); diagnostic inventory is **635
+owners / 1427 TASK-492 / 56 TASK-31551 / 7598 TASK-494 / 16 sinks**. The W003
+census drops to **69 pushes / 27 roots**, with no new entry. All **199
+branch-changed Python files** parse and whitespace passes. The four added
+fixture lines match formatter output; whole-file legacy format hunks and three
+Ruff diagnostics match immutable dev, with no addition. No budgets or snapshots
+change. Earlier semantic-inventory, pet/recovery and stress limitations remain
+recorded. Final-head hosted checks, fresh Qodo and independently read live dev
+still gate the authorized normal merge; the approved heartbeat remains active.
