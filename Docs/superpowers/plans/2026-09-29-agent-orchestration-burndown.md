@@ -3,7 +3,7 @@
 **Goal:** Close the remaining routing/progress defects, reconcile completed tickets, and deliver the requested optional orchestration capabilities under explicit reviewed contracts.
 
 **Implementation base:** dev 64579cce2c8dc64053fb50c00eb4f59b56716b01.
-**Integration base:** latest fetched dev 6423c4fbd1460952dd8cb5df04e51c4e0e7e0d0b.
+**Integration base:** latest fetched dev 31d4f9b76492120706ba8e3ad7d355f1aa4e0273.
 **Authority:** User requested all listed items on 2026-09-29. Existing task acceptance criteria govern each repair. Existing ADR-134/135/136/146/147/155 govern budgets, delivery, communication, routing and recovery.
 
 ## Global constraints
@@ -50,3 +50,16 @@ All four are in the authorized burn-down; run targeted checks and independent re
 ## September 29 review checkpoint
 
 All 13 tasks are Done with checked acceptance criteria and implementation notes. Durable progress passes 247 affected checks, 82 final native/modal/hydration checks and 74 final report/tool/queue checks; these overlapping selections are not summed. Independent final review approves all four worker cache corrections with 13 checks and actual participant drain. Routing/UI and schema/ledger selections pass 116 and 137 checks. Changed-code static verification passes; existing size-ratchet and source debt remain disclosed. The clean latest-dev rebase passes 217 targeted provider/search/routing/sampling/startup checks in 87.14s; changed-code checks remain clean. Delivery is through a draft PR against dev. No merge is claimed.
+
+## October 1 CI and integration checkpoint
+
+Rebased PR #2918 onto dev `31d4f9b76492120706ba8e3ad7d355f1aa4e0273`. Reopened TASK-33430/33431/33432 for their existing acceptance criteria and CI qualification. ADR required: no; direct repairs and verification under ADR-173/199.
+
+- [x] Preserve exact runtime-tool inventory, including both scoped peer tools.
+- [x] Use the existing canonical UTC millisecond timestamp writer for durable progress.
+- [x] Pin real populated FIFO and progress-claim cleanup query plans, register both indexes and allowlist the new Chat table.
+- [x] Audit changed production diagnostics before refreshing their inventory.
+- [x] Repair the upstream hook-refusal early return through the existing exact wake authorization and preacceptance refund path; qualify real plain/agent retry and nonreplay.
+- [x] Independently review overlapping runtime/routing/recovery boundaries and run final targeted checks.
+
+Affected messaging/schema checks pass 145 cases; fallback/sampling/saved-close/hydration/mounted progress/token/guide checks pass 147 cases. The exact CI correction selection passes three cases. Hook repair passes six authority/real-gateway cases and three existing ledger guards; independent review passes both real provider paths and three ledger guards. The upstream MCP click correction passes all four focused cases. These selections overlap and are not summed. Final static qualification covers 75 changed Python files and ten new files with zero added-line/new-file findings. Delivery remains PR #2918 against dev; no merge is claimed.

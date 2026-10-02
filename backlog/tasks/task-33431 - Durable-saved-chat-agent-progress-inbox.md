@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-09-29 21:35'
+updated_date: '2026-10-02 00:42'
 labels:
   - agents
   - console
@@ -30,6 +30,8 @@ Preserve pending child reports across saved-chat closure and application restart
 
 <!-- SECTION:PLAN:BEGIN -->
 1. Trace saved binding and explicit Save through native identity and the existing Console transaction contribution. 2. Add a bounded chat-owned SQLite progress table and leaf repository, retaining process-local sending capability and memory-only temporary reports. 3. Prepare durable loading outside native identity locks and bind only after exact-owner revalidation; commit enqueue and whole-report collection before receipts. 4. Reuse caller-owned Save contribution for atomic pending-report promotion, preserve old queues on rollback/cancel, and add focused reopen, FIFO, limits, owner replacement and privacy checks. 5. Update installed recovery schema and documentation, run targeted/static checks and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: durable report data with atomic chat Save and separate live authority.
+
+CI addendum 2026-10-01: use existing ADR-173 timestamp writer for persisted progress; pin the real bounded FIFO query plan without sqlite_stat1 and register its index in the existing census; run targeted durable/schema checks after latest-dev rebase. ADR required: no; direct corrections under ADR-173/199.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -68,4 +70,6 @@ The completed sink audit confirmed a fourth concrete cache defect: a real AgentS
 Only the callback import block was normalized after that behavioral run. Final static qualification passes eight focused files in full lint/format, zero added-line findings across fourteen baseline-debt files including agent_service, and git diff --check (/tmp/task33431_final-static.log). ADR199 and the concrete live-verification lesson document all four reproduced worker resource defects. Together with the previous 247-test affected selection and post-wrapper 82-test hydration/mounted/cancellation selection, the author cut is frozen for root integration. No additional broad rerun, whole-source formatting, Git mutation or task closure; TASK33431 remains In Progress with AC unchecked for root's final reviewed closure.
 
 Final root closure — 2026-09-29: supersedes the historical In Progress holds above. All four acceptance criteria are qualified and independently approved. Final combined affected selection passed 247 checks; after repairing all four confirmed new worker cache leaks, the native/modal/hydration selection passed 82 checks and the durable/threaded-report/tool/queue selection passed 74 checks. Final independent cache/caller review passed 13 checks, including actual physical participant drain, with no remaining actionable findings. Root changed-code verification passes fatal checks for 72 Python files, full lint/format for all 10 new Python files, zero added-line/new-file lint findings and clean whitespace. ADR-199 governs the delivered storage and lifecycle contracts. Existing source lint/format and size-ratchet debt, the unclassified earlier aggregate FD sentinel, stale pytest cleanup warnings, and targeted-only qualification remain disclosed in the root review. No full-suite, live-provider or Windows result is claimed.
+
+October 1 CI/integration closeout: ProgressMessage now reuses utc_now_iso under ADR-173, preserving FIFO sequence and legacy timestamps. The real reopen/FIFO test checks canonical millisecond-Z timestamps, traces actual populated repository SQL without statistics and proves indexed search plus a scan negative control. Registered idx_fleet_progress_conversation_sequence and added fleet_progress_messages to the existing Chat SQL allowlist. The exact three-case CI selection passes 5.73s; the affected 145-case selection passes 58.50s and saved-close/hydration/mounted progress in the 147-case selection passes 271.09s. Independent worker/recovery overlap review approves. Audited the changed exception-type-only diagnostics before refreshing the inventory; its final guard passes. Final changed-code static and whitespace checks pass. Docs plan/review/ledger and lessons-testing-evidence record the incident and limits. Existing ADR-173/199; no new decision. Criteria satisfied; Done, with targeted evidence only.
 <!-- SECTION:NOTES:END -->

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-09-29 19:28'
+updated_date: '2026-10-02 00:42'
 labels:
   - agents
   - console
@@ -36,6 +36,8 @@ Allow live sibling agents to exchange bounded untrusted messages within their ex
 ADR required: yes
 ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
 Reason: Accepted ADR-199 amends ADR-136 for scoped direct sibling authority and steering transport.
+
+CI addendum 2026-10-01: retain exact runtime tool-name equality while adding the two implemented peer tools to its expected inventory; run the affected install-skill and peer checks. ADR required: no; direct qualification of ADR-199.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -54,4 +56,6 @@ Task remains In Progress with AC unchecked for root review as requested; no comm
 Root integration revalidation: repaired only the three config-aware steering service nodes to retain their bound bootstrap source. The full affected steering mailbox module now passes all 22 tests (/private/tmp/agent-burndown-steering-profile.log). The earlier profile failures are resolved without changing production admission gates.
 
 Final disposition 2026-09-29: independent read-only implementation review approved the scoped repair with no actionable findings. The targeted acceptance checks and changed-line static checks recorded above pass; inherited whole-file lint/format debt remains outside this correctness task. All acceptance criteria are checked and this task is Done. No full-suite or live-provider qualification is claimed. This disposition supersedes earlier pending-review notes.
+
+October 1 CI/integration closeout: preserved the exact runtime inventory assertion and added the existing list_peer_agents/send_to_peer names. The affected messaging/peer/installer/schema selection passes 145 cases in 58.50s, including existing real writer contention and revocation coverage. Independent latest-dev runtime/routing/recovery review approves the integration. Final static scan covers 75 changed Python files with zero added-line/new-file findings; ten new files pass full Ruff/format and whitespace is clean. Rebased onto dev 31d4f9b76492120706ba8e3ad7d355f1aa4e0273. Existing ADR-199 governs; no new architectural decision. Criteria remain satisfied and status is Done. PR #2918 remote checks will rerun on publication.
 <!-- SECTION:NOTES:END -->

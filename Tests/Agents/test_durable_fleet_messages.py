@@ -1,6 +1,7 @@
 """Real chat SQLite authority and atomic temporary progress promotion."""
 
 import json
+import re
 
 import pytest
 
@@ -45,6 +46,10 @@ def test_saved_reopen_preserves_fifo_and_revokes_old_capabilities(tmp_path, requ
     ids = []
     for n, chain in enumerate([None, "foreign", "chain", "foreign", "chain"]):
         ids.append(inbox.sender(source(n, chain)).send(f"body-{n}"))
+    assert all(
+        re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z", item.created_at)
+        for item in inbox.snapshot()
+    )
     sender = inbox.sender(source(10))
     reader = inbox.reader("primary", chain_id="chain", automatic=True)
     store.close()
@@ -55,7 +60,38 @@ def test_saved_reopen_preserves_fifo_and_revokes_old_capabilities(tmp_path, requ
         reader.collect()
     db = CharactersRAGDB(path, "progress-test")
     try:
-        reopened, restored = durable(db, conversation_id, "new-owner")
+        connection = db.get_connection()
+        assert (
+            connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='sqlite_stat1'"
+            ).fetchone()
+            is None
+        )
+        statements = []
+        connection.set_trace_callback(statements.append)
+        try:
+            reopened, restored = durable(db, conversation_id, "new-owner")
+        finally:
+            connection.set_trace_callback(None)
+        query = next(
+            sql
+            for sql in statements
+            if "FROM fleet_progress_messages WHERE conversation_id =" in sql
+        )
+        plan = [row[3] for row in connection.execute("EXPLAIN QUERY PLAN " + query)]
+        assert any(
+            "SEARCH" in detail and "idx_fleet_progress_conversation_sequence" in detail
+            for detail in plan
+        ), plan
+        assert not any("TEMP B-TREE" in detail for detail in plan), plan
+        control = query.replace(
+            "FROM fleet_progress_messages WHERE",
+            "FROM fleet_progress_messages NOT INDEXED WHERE",
+        )
+        assert any(
+            "SCAN fleet_progress_messages" in row[3]
+            for row in connection.execute("EXPLAIN QUERY PLAN " + control)
+        )
         assert restored.pending_metadata() == tuple(
             zip(
                 ids,

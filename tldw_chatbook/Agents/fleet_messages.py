@@ -13,9 +13,10 @@ import threading
 import uuid
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
-from datetime import UTC, datetime
 from types import MappingProxyType
 from typing import TYPE_CHECKING
+
+from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 if TYPE_CHECKING:
     from tldw_chatbook.DB.fleet_progress_repository import (
@@ -65,7 +66,7 @@ class ProgressMessage:
     message_id: str
     identity: MessageIdentity
     body: str
-    created_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    created_at: str = field(default_factory=utc_now_iso)
 
 
 @dataclass(frozen=True)
