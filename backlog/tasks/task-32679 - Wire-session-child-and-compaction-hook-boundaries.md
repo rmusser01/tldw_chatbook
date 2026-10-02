@@ -1,11 +1,11 @@
 ---
 id: TASK-32679
 title: Wire session child and compaction hook boundaries
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 15:38'
+updated_date: '2026-10-02 16:02'
 labels:
   - plugins
   - implementation
@@ -40,6 +40,8 @@ Design: Docs/superpowers/specs/2026-09-15-managed-plugins-design.md; Docs/superp
 ADR required: yes (amend existing accepted contracts; no new permission or storage owner). ADR paths: backlog/decisions/163-expanded-console-hook-runtime.md and backlog/decisions/197-console-hook-configuration-review.md. 1. Qualify the reviewed H4 lifecycle, child, context, and compaction checkpoint against current Console boundaries with private-profile regressions. 2. Reuse the existing HookPermissions owner and review modal for v2 exact definitions; preserve legacy identities and guided Settings fields, expose v2 definitions through the existing advanced editor, and guard actual launches with current grant epochs. 3. Port the reviewed H4 producers without replacing newer admission, workspace, recovery, or worker guards. 4. Run scoped lifecycle, compaction, child, consent, Settings, and neighboring runtime tests; compare unchanged baselines for fixture failures. 5. Self-review, document current evidence and limitations, check acceptance criteria, mark Done via CLI, and commit the exact task files.
 
 PR #2946 latest-dev merge integration: ADR required: no. ADR path: N/A; existing ADR-126/163/197/198/210 apply. Reason: retain current queue/admission/GC owners and repair test doubles/profile selection without changing runtime behavior. Keep dev live_chain_owns_claim settlement and exact current-entry ownership; preserve context-review notices, trace parking and GC freeze. Qualify admission reuse and mounted hooks/boot. The two dispatch-recovery failures reproduce on immutable ee1c1e upstream; align the shared submit double with QueuedPrompt and keep the actual-send test on its collection-time admitted profile, then re-run the complete recovery file. Retain the interrupted aggregate and qualify durable-reclaim controls separately from sandboxed UI cases. Publish with the verified previous-head lease, inspect fresh Qodo and CI, and use the authorized normal head-pinned merge.
+
+Latest-dev integration onto 6958e8dfa9: ADR required: no. ADR path: N/A; existing ADR-069/097/126/163/197/210 govern. Reason: preserve upstream first-send project-control transaction, Inspector worker ownership, dead-pump recovery and W003 contracts without adding an owner. Rebase the verified PR head, compare upstream owner bytes/affected ASTs, reproduce derived artifacts and run scoped first-send, mounted hook-review, keep-alive and boot controls. Record the upstream hook-review freeze reproductions honestly; the independently owned repair is PR #2945, so normal merge remains pending its integration and final exact-head CI/Qodo qualification.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
