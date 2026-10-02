@@ -119,3 +119,14 @@ Keep the existing two-admission maintenance budget by sharing the installed core
 ## Final Delete/Undo merge base
 
 Latest qualified dev: `eba4305d8389a2112c99ac19fa804e9abea394ba` (PR #2941). Preserve incoming exact tombstone restore and native context fencing; compare the 81-file source manifest, run targeted persistence/Save/close/storage/startup checks and independent mounted/nonreplay review, then publish TASK-33647 with the exact observed lease. These checks and review pass. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: integrate accepted Delete/Undo behavior and reuse existing repository admission without changing orchestration, migration or authority contracts. Fresh-head Qodo/CI and protected merge remain; do not repeatedly rebase while checks run merely because dev moves.
+
+
+## Required keep-alive and project-folder integration
+
+All four jobs pass on published `e8474ca134ab73d66ab36d168bf0a11a78367c6b`; its exact-head Qodo report resolves all four findings with zero open threads. GitHub reports BEHIND after dev advances to `6958e8dfa99a66680b1aec09fed65df0f1a91955` (PR #2944 / TASK-33621.13). Live branch protection requires strict up-to-date checks and enforces administrators.
+
+1. Preserve upstream first-send project controls, Inspector worker/modal handling, dead-pump retirement and worker-contract census during the required rebase; compare all 81 qualified patch Python bytes.
+2. Qualify the actual first-send/Save/close/wake overlaps and startup/diagnostic/worker-contract guards with targeted runs and independent read-only review. Change production only for verified integration defects.
+3. Record evidence, publish once with the exact `e8474ca134ab73d66ab36d168bf0a11a78367c6b` lease, then require fresh-head Qodo and all four jobs before head-pinned protected merge. Do not chase further dev movement while those jobs run.
+
+ADR required: no new ADR. ADR path: backlog/decisions/069-console-project-instruction-local-state-and-preflight.md and backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md. Reason: preserving integration of an accepted upstream repair without a new persistence, authority, lifecycle or orchestration decision. Existing ADR-126 worker/storage and schema/recovery constraints remain intact; no full sweep is authorized.
