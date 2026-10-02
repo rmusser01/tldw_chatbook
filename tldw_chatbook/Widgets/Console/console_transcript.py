@@ -86,7 +86,6 @@ from tldw_chatbook.Chat.console_turn_grouping import (
     ordered_assistant_activities,
     project_thinking_activities,
 )
-from tldw_chatbook.Chat.console_turn_resend import resend_target_id
 from tldw_chatbook.Chat.thinking_blocks import (
     DisplayableThinkingBlock,
     ProprietaryThinkingBlock,
@@ -8261,6 +8260,8 @@ class ConsoleTranscript(VerticalScroll):
         return kwargs
 
     def _action_groups(self, message: ConsoleChatMessage):
+        from tldw_chatbook.Chat.console_turn_resend import resend_target_id
+
         return self._canvas_action_service().action_groups(
             message,
             speaking_message_id=self._console_tts_speaking_message_id(),

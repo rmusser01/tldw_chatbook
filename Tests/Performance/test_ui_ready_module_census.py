@@ -175,6 +175,9 @@ ABSENT_AT_READY_PREFIXES = (
     "tldw_chatbook.Tool_Packs",
 )
 ABSENT_AT_READY_MODULES = (
+    # Resend eligibility and dispatch load with transcript rows or an action,
+    # never while mounting an empty Console (TASK-33803, ADR-097).
+    "tldw_chatbook.Chat.console_turn_resend",
     # TASK-33628.2: message Delete/Undo and its receipt load at first use (a
     # Delete action, an armed or shown confirmation, or the Inspector's
     # pending-delete copy), never before first paint.

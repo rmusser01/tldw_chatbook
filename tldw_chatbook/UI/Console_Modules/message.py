@@ -158,7 +158,6 @@ from ...Chat.console_save_targets import (
     resolve_console_artifact_owner_request,
 )
 from ...Chat.console_session_settings import blank_console_session_settings
-from ...Chat.console_turn_resend import is_refused_echo, resend_turn
 from ...Chat.message_metadata import MessageMetadata
 from ...Chat.provider_usage import ProviderUsage
 from ...Video_Generation.video_metadata import VideoGenerationMetadata
@@ -2924,6 +2923,8 @@ class ConsoleMessageController:
         stop the timer while the session still read blocked, so the resent
         turn ran unpolled and the transcript froze (live check, 2026-10-01).
         """
+        from ...Chat.console_turn_resend import is_refused_echo, resend_turn
+
         try:
             refused_echo = is_refused_echo(controller.store.get_message(message_id))
         except KeyError:

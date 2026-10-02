@@ -151,7 +151,7 @@ async def test_resend_worker_leaves_a_refused_echo_sync_timer_to_the_send_path(
 
     from Tests.UI.console_controller_stubs import stub_message_controller
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
-    from tldw_chatbook.UI.Console_Modules import message as message_module
+    from tldw_chatbook.Chat import console_turn_resend as resend_module
 
     starts: list[None] = []
 
@@ -169,7 +169,7 @@ async def test_resend_worker_leaves_a_refused_echo_sync_timer_to_the_send_path(
         persisted_message_id=persisted_id,
     )
     controller = SimpleNamespace(store=SimpleNamespace(get_message=lambda _id: message))
-    monkeypatch.setattr(message_module, "resend_turn", resent)
+    monkeypatch.setattr(resend_module, "resend_turn", resent)
     owner = stub_message_controller(
         SimpleNamespace(),
         app_instance=SimpleNamespace(notify=lambda *_a, **_k: None),
