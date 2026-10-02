@@ -437,3 +437,35 @@ runner removes an unsupported absence assertion: a pending decision counts as
 an occupied lifecycle slot even without a parent stream task. These fixtures
 and task notes are the only later changes; PR2953 requires fresh published-head
 CI and clean resolved Qodo before normal merge.
+
+
+Confirmed-create/Close race follow-up (2026-10-02, dev `f80d3e0090`):
+Qodo finding `ece44de5-bd8f-4ef5-97a1-77cebdc2e262` reproduced a remembered
+grant resurrecting after actual Close and both new-chat/fork-chat executors
+creating durable rows while a committed Close retained its source. Final
+verdict/grant and resolver writes now share the existing standalone lock; the
+shared executor refuses the exact committed generation before DB/UI work.
+Failed-provisional markers remain outside this guard.
+
+Sixty-four unique affected cases pass:47 consent/execution cases,16 Close/UI
+neighbors and the ordinary exact storage census. Three real race regressions
+fail on the published source and pass on final bytes. Native approval23 passes
+nine actual Ask-gated reads/denials; Close26 passes six actual worker closes,
+sibling isolation and six-kind80x24→80x18 geometry. Their original byte pins
+are preserved; only a later whitespace-only return-dict format differs, with
+whole-controller AST equality proven separately. The47 consent cases reran
+after stabilizing the protected-worker revision snapshot; the16 neighbors do
+not import that test module. Apps/processes/socket cleanup exit0, no egress,
+and real profiles unchanged. Root viewed fresh80x24 approval/Inspect/chat-create
+and80x18 scrolled Close captures. Native does not force the executor/grant
+interleaving or exercise broader hooks/plugins/providers/MCP.
+
+Final-byte preflight passes(census123);25 changed Python files add zero Ruff
+diagnostics; changed ranges format cleanly; independent source review is clear.
+The earlier90-case combined hooks/plugins/quit verification is historical
+preceding-candidate evidence. Current receipts and explicit equivalence limits:
+`/tmp/console-tool-ux-chat-create-race-final-manifest.json`,
+`/tmp/console-tool-ux-approval-run23-sanitized/isolation-qualified.json`, and
+`/tmp/console-tool-ux-close-native/run26/qualification.json`.
+Fresh final-head Qodo/all four GitHub gates and a verified normal merge remain
+required. No full local sweep or CI/protection bypass.

@@ -400,3 +400,68 @@ def test_primary_requester_still_rides_session_grant(make_controller, closing):
         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
     assert decision == {"allow": not closing, "remember": not closing}
     assert not controller.pending_chat_create_ids()
+
+
+def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
+    """A decided confirmation cannot recreate a grant after real Close.
+
+    Args:
+        make_controller: Existing standalone confirmation controller fixture.
+    """
+    controller = make_controller()
+    session = controller.store.create_session(title="Source")
+    entered = threading.Event()
+    release = threading.Event()
+    results = {}
+
+    class PausedGrants(dict):
+        def setdefault(self, key, default=None):
+            """Pause only an unprotected write so Close can settle first.
+
+            Args:
+                key: Owning session's grant key.
+                default: Grant set created by the confirmation.
+            """
+            protected = controller._pending_chat_create_lock.locked()
+            results["protected_write"] = protected
+            entered.set()
+            # A protected write must finish before Close's cancellation sweep;
+            # waiting for Close while holding its lock would deadlock the test.
+            if not protected:
+                assert release.wait(5)
+            return super().setdefault(key, default)
+
+    controller._chat_create_session_grants = PausedGrants()
+    worker = threading.Thread(
+        target=lambda: results.update(
+            decision=controller.request_chat_create_confirm(
+                _payload(), session_id=session.id
+            )
+        )
+    )
+    worker.start()
+    try:
+        _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+        controller.resolve_pending_chat_create(
+            True, True, request_id=controller.pending_chat_create_ids()[0]
+        )
+        assert entered.wait(5)
+        if results["protected_write"]:
+            worker.join(timeout=5)
+            assert not worker.is_alive()
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+        controller.finalize_session_close(ticket)
+        assert not any(s.id == session.id for s in controller.store.sessions())
+    finally:
+        release.set()
+        worker.join(timeout=5)
+    assert not worker.is_alive()
+    assert results["decision"] == {"allow": True, "remember": True}
+    assert session.id not in controller._chat_create_session_grants
+    assert controller.pending_chat_create_ids() == []
+    assert controller._parked_chat_create_payloads == {}

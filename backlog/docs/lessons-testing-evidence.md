@@ -17827,3 +17827,15 @@ its real cleanup before counting; a Textual worker drain cannot own this plain
 `asyncio.to_thread` task. The ordinary guard passes with unchanged seams,
 canaries and ceilings. This removes a proven setup timing window; it does not
 attribute the original aggregate failure or remove the production cold cost.
+
+
+## A retained Close source still needs an execution fence
+
+**TASK-32367 / PR #2953, 2026-10-02.** Qodo found that a standalone
+chat-create confirmation could remember an Allow after Close had removed its
+grants, and the executor treated a source retained during bounded Close drain
+as open. Real Close regressions reproduced grant resurrection and durable
+new-chat/fork-chat creation before final deletion. Check the committed Close
+generation at shared executor entry; decide and remember under the same lock
+as revocation. Verify rows and UI completion while the actual ticket retains
+the source, rather than testing only after the source disappears.

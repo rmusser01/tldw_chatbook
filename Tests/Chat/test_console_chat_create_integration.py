@@ -707,3 +707,41 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
     assert [m["content"] for m in copied] == ["root"]
     handoff = completed[0]
     assert handoff["conversation_id"] == outcome["conversation_id"]
+
+
+@pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
+def test_confirmed_create_refuses_a_source_retained_during_close(
+    real_db_controller, tool
+):
+    """A committed Close prevents rows and UI completion before deletion.
+
+    Args:
+        real_db_controller: Controller over real SQLite with a UI bridge.
+        tool: Confirmed new-chat or fork-chat executor path.
+    """
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    conversation_id = controller.store.persistence.create_conversation(
+        conversation_title="Source"
+    )
+    source.persisted_conversation_id = conversation_id
+    message_id = db.add_message(
+        {"conversation_id": conversation_id, "sender": "user", "content": "hi"}
+    )
+    db.set_conversation_active_leaf(conversation_id, str(message_id))
+    completed = []
+    controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
+    before = _live_conversation_count(db)
+    ticket = controller.begin_session_close(
+        source.id,
+        expected_revision=controller.lifecycle_impact(session_id=source.id).revision,
+    )
+    assert any(session.id == source.id for session in controller.store.sessions())
+    outcome = controller.execute_agent_chat_create(
+        {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
+    assert not outcome["ok"] and outcome["kind"] == "session_gone"
+    assert _live_conversation_count(db) == before
+    assert completed == []
+    controller.finalize_session_close(ticket)
+    assert not any(s.id == source.id for s in controller.store.sessions())

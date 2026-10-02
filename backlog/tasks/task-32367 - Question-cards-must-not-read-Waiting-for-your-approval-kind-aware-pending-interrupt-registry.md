@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 18:57'
+updated_date: '2026-10-02 19:38'
 labels:
   - console
   - approvals
@@ -51,6 +51,14 @@ Reason: Classify an existing standalone confirmation through the existing regist
 6. Reproduce the real mounted chat-create round incorrectly counting as a tool approval; cover confirmation copy, keyboard/attention-tab focus, visible tool-approval priority and sibling isolation.
 7. Extend the existing real background Close matrix and crowded confirmation geometry for chat-create; use the existing confirmation copy and registry, add only its kind, card selector and truthful Close consequence.
 8. Run targeted projection/Close and chat-create consent/revocation neighbors, token/artifact/lint guards, and native approval/Close replay; require fresh final-head Qodo and all four GitHub gates before normal merge.
+
+Qodo Close/confirmed-create race follow-up (PR2953 finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262):
+ADR required: no
+ADR path: backlog/decisions/150-agent-chat-fork-and-spawn.md; existing ADR-067/094 above.
+Reason: Enforce the existing committed Close fence at confirmation finalization and the shared executor; no new admission owner or permission policy.
+9. Reproduce remembered-grant resurrection after real Close and both confirmed new_chat/fork_chat executions while a committed Close retains its source session.
+10. Keep final confirmation decision/grant updates and resolver writes under the existing round lock; refuse shared executor entry on the exact committed Close generation, excluding failed-provisional markers.
+11. Run affected consent/execution and mounted Close/projection tests, ordinary census/preflight/lint, independent review and native replay on frozen sources; require fresh final-head Qodo and all four GitHub gates before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -71,4 +79,8 @@ Fresh Qodo fixture-documentation finding corrected for all three new pending-pro
 PR2953 final-head Qodo finding bbb8ec52-4caf-42d4-987b-565ebe92410f exposed the standalone chat-create bridge using the generic approval kind. Reopened for this existing pending-kind projection gap; new AC records the confirmation/count/focus/Close outcomes before implementation.
 
 Standalone chat creation now registers its own confirmation kind, contributes zero tool approvals, and uses the shared keyboard/attention-tab Review route. Close declines exact-session standalone rounds and rejects both remembered grants and requests returning from enrichment after its committed fence. Real mounted regressions reproduce the old count and both Close gaps. Latest-dev fccf70d3b0 combined verification: 90 focused checks plus the exact ordinary storage census pass with zero failures/errors/skips; native approval22 passes nine journeys and Close25 six real worker closes plus six-kind short-terminal geometry. Real profiles unchanged, processes exit0, no egress, and current production/source pins verified. Existing ADR-067/094/150/195 apply; no new owner or permission policy. Fresh final-head CI/Qodo and normal merge remain required in PR2953.
+
+Reopened for fresh final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262: Close can race the remembered-grant finalization and an already-approved executor while its source remains during drain. Existing AC5 covers the no-created-chat outcome.
+
+Final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262 is fixed at the existing shared boundary: final verdict/grant and resolver updates use the standalone round lock, and both new_chat/fork_chat executors refuse the exact committed Close generation before DB/UI work. Failed-provisional markers remain excluded. Three regressions reproduced grant resurrection and both durable late creates on the published source, then passed. Latest-dev f80d3e0090 qualification passes64 unique affected consent/execution/Close/projection and ordinary storage-census cases with no failures/errors/skips; final-byte artifact preflight passes(census123),25 changed Python files add zero Ruff diagnostics, and changed ranges format cleanly. Native approval23 passes9 journeys; Close26 passes6 real worker closes and short-terminal geometry, with process/socket exit0, no egress and real profiles unchanged. Native/affected replay byte pins are preserved; a subsequent whitespace-only return-dict format is separately proven whole-module AST-identical, and all3 race regressions pass on final bytes. User guide and incident lesson updated. Existing ADR-067/094/150 apply; no new owner/admission policy. Fresh exact-published-head Qodo/all4 GitHub gates and verified normal merge remain required in PR2953.
 <!-- SECTION:NOTES:END -->

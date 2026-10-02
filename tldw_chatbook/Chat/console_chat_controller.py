@@ -19098,19 +19098,20 @@ class ConsoleChatController:
             # was cancelled must not authorize the create. Mirrors the
             # sibling bridges' identical post-wait guard.
             with self._pending_chat_create_lock:
-                was_revoked = bool(chat_create_round_state.get("revoked"))
-            if was_revoked:
-                return {"allow": False, "remember": False}
-            allow = bool(decision.get("allow", False))
-            remember = bool(decision.get("remember", False))
-            # Record a standing grant only on an allow that ALSO asked to
-            # be remembered -- a remembered deny must not poison later
-            # rounds into auto-allowing.
-            if allow and remember:
-                self._chat_create_session_grants.setdefault(
-                    owning_session_id, set()
-                ).add(tool)
-            return {"allow": allow, "remember": remember}
+                if (
+                    chat_create_round_state.get("revoked")
+                    or owning_session_id in self._session_close_generations
+                ):
+                    return {"allow": False, "remember": False}
+                allow = bool(decision.get("allow", False))
+                remember = bool(decision.get("remember", False))
+                # Decide and remember atomically with the Close/revocation sweep.
+                # A remembered deny must never become a standing grant.
+                if allow and remember:
+                    self._chat_create_session_grants.setdefault(
+                        owning_session_id, set()
+                    ).add(tool)
+                return {"allow": allow, "remember": remember}
         finally:
             with self._pending_chat_create_lock:
                 self._pending_chat_create_rounds.pop(request_id, None)
@@ -19213,11 +19214,11 @@ class ConsoleChatController:
             return
         with self._pending_chat_create_lock:
             round_state = self._pending_chat_create_rounds.get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["allow"] = bool(allow)
-        round_state["decision"]["remember"] = bool(remember)
-        round_state["event"].set()
+            if round_state is None:
+                return
+            round_state["decision"]["allow"] = bool(allow)
+            round_state["decision"]["remember"] = bool(remember)
+            round_state["event"].set()
 
     def pending_chat_create_ids(self) -> list[str]:
         """Return the request ids of every currently-armed chat-create round.
@@ -19272,6 +19273,14 @@ class ConsoleChatController:
 
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
+        # A committed Close retains its source during drain; an earlier Allow
+        # cannot authorize a new durable chat once that Close has committed.
+        if session_id in self._session_close_generations:
+            return {
+                "ok": False,
+                "kind": "session_gone",
+                "error": "source session is closing",
+            }
         session = next(
             (s for s in self.store.sessions() if s.id == session_id), None
         )
