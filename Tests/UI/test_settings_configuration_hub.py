@@ -4786,7 +4786,8 @@ async def test_settings_provider_test_toast_reports_unreachable_endpoint(
             "check the URL; generation not tested."
         )
         assert kwargs.get("severity") == "warning"
-        assert _provider_test_rows_of(screen._provider_test_result)[0] == (
+        # [0] is the Readiness word (TASK-33005.3); the failure leads the rest.
+        assert _provider_test_rows_of(screen._provider_test_result)[1] == (
             "Endpoint",
             (
                 "http://127.0.0.1:11434 · model listing failed (connection refused) "
@@ -4892,7 +4893,9 @@ async def test_settings_provider_test_rerun_reports_each_endpoint_fact_once(
         # TASK-33002.2: labelled rows, each label once, no pipe dump.
         rows = _provider_test_rows_of(result)
         labels = [label for label, _text in rows]
-        assert sorted(labels) == sorted(
+        # TASK-33005.3: the Readiness word leads the five fact rows.
+        assert labels[0] == "Readiness", result
+        assert sorted(labels[1:]) == sorted(
             ("Config", "Key", "Endpoint", "Model", "Generation")
         ), result
         assert " | " not in result
@@ -11102,8 +11105,8 @@ async def test_settings_provider_test_blocks_unknown_provider(request):
         text = _visible_text(screen)
 
         assert "Unknown provider" in text
-        label, verdict = _provider_test_rows_of(screen._provider_test_result)[0]
-        assert label == "Config"
+        label, verdict = _provider_test_rows_of(screen._provider_test_result)[1]
+        assert label == "Config"  # [0] is the Readiness word (TASK-33005.3)
         assert "is not ready: Unknown provider" in verdict
 
 
@@ -11420,7 +11423,7 @@ async def test_settings_provider_test_does_not_depend_on_console_sampling_defaul
         text = _visible_text(screen)
 
         rows = _provider_test_rows_of(screen._provider_test_result)
-        assert rows[0] == ("Config", "Ollama is configured")
+        assert rows[1] == ("Config", "Ollama is configured")  # [0]: Readiness
         assert "configuration=" not in text
         assert "is ready" not in text
 

@@ -392,6 +392,21 @@ verify those bindings by reading `BINDINGS` in the code instead.
 
 ---
 
+## A widget fed only by a sync method is blank on the first frame
+
+**TASK-33005.3, 2026-10-01.** The new Console readiness chip was filled only by
+`sync_readiness_chip`, which the settings-summary sync calls. Every integration test
+passed, because each one drives a sync before asserting. Live at 211x44 the chip was
+missing when the Console opened. It appeared only after an unrelated rail toggle
+happened to run the sync, because nothing runs that sync after the first mount
+when readiness has not changed. The fix was the existing F1 precedent in
+`ConsoleStatusChips` (`ephemeral`, `cost_state`, `run_copy`): pass the
+compose-time value into the constructor (`readiness_word`). Whenever a new widget is
+refreshed by a sync method, open the screen fresh and capture it before touching
+anything. A test that syncs first cannot see the first frame.
+
+---
+
 ## A route-activated geometry test does not prove the untouched startup state
 
 **TASK-22857, 2026-08-26.** The production-styled Library width matrix passed at

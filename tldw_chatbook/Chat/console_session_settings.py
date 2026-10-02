@@ -11,7 +11,15 @@ from dataclasses import dataclass, fields, replace
 from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Literal,
+    Mapping,
+    Sequence,
+    get_args,
+    overload,
+)
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -26,7 +34,7 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     INVALID_LLAMACPP_BASE_URL_COPY,
-    URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
     effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
@@ -41,6 +49,7 @@ from tldw_chatbook.Chat.provider_catalog import (
 )
 from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
 from tldw_chatbook.Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
     ProviderReadiness,
     configured_provider_credential_source,
     get_provider_readiness,
@@ -60,8 +69,10 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     ModelFacet,
     ProviderConnectionEvidence,
     ProviderDraftIdentity,
+    ProviderReadinessSnapshot,
     ProviderTestEvidence,
     connection_credential_revision,
+    provider_readiness_verdict,
 )
 from tldw_chatbook.Chat.sampling_params import (
     _is_blank_value,
@@ -311,9 +322,9 @@ _CONFIGURATION_VALUES = frozenset({"incomplete", "configured"})
 _CONFIGURATION_ISSUE_VALUES = frozenset(
     {"provider_missing", "credential_missing", "endpoint_missing", "invalid_settings"}
 )
-_CREDENTIAL_VALUES = frozenset(
-    {"not_required", "missing", "present_unverified", "authenticated"}
-)
+_CREDENTIAL_VALUES = frozenset(get_args(CredentialFacet))
+#: Credential states that were checked by the provider (TASK-33005.3).
+_ACCEPTED_CREDENTIALS = frozenset({"listing_accepted", "authenticated"})
 _CREDENTIAL_SOURCE_VALUES = frozenset({"none", "stored", "environment", "draft"})
 _ENDPOINT_VALUES = frozenset(
     {
@@ -623,7 +634,7 @@ class ConsoleSettingsReadiness:
             raise ValueError("Console readiness evidence is invalid.")
         if self.subscription_status is not None and (
             (self.subscription_status == "ready")
-            != (self.credential in {"present_unverified", "authenticated"})
+            != (self.credential in {"present_unverified", *_ACCEPTED_CREDENTIALS})
         ):
             raise ValueError(
                 "Console subscription state conflicts with its credential."
@@ -656,7 +667,7 @@ class ConsoleSettingsReadiness:
                 raise ValueError("Console credential source conflicts with its facet.")
         elif self.credential_source == "none":
             raise ValueError("Present Console credential requires a source.")
-        if self.configuration == "incomplete" and self.credential == "authenticated":
+        if self.configuration == "incomplete" and self.credential in _ACCEPTED_CREDENTIALS:
             raise ValueError("Incomplete Console settings cannot be authenticated.")
 
         if self.endpoint == "unreachable":
@@ -1830,9 +1841,9 @@ def build_console_settings_readiness(
         if (
             exact_identity_evidence
             and evidence is not None
-            and evidence.credential == "authenticated"
+            and evidence.credential in _ACCEPTED_CREDENTIALS
         ):
-            credential = "authenticated"
+            credential = evidence.credential
         else:
             credential = "present_unverified"
         if declared_credential is not None:
@@ -2133,7 +2144,7 @@ def build_console_settings_summary_state(
         ),
         streaming="On" if settings.streaming else "Off",
         identity_row=identity_row,
-        readiness_label="",
+        readiness_label=readiness_words(readiness),
         provider_row=f"Provider: {provider_label}",
         endpoint_row=_format_endpoint_summary_row(settings, readiness),
         credential_row=_format_credential_summary_row(readiness),
@@ -2558,6 +2569,180 @@ def _endpoint_failure_blocker(
     return "endpoint_unreachable", "review_provider_settings"
 
 
+# TASK-33005.3 (spec §5): the one readiness vocabulary. Every model surface --
+# status chip, rail, setup card, switcher rows, Chat settings, Settings' test
+# result -- reads its word from these maps; nothing else spells one.
+READY_NOT_TESTED = "Ready · not tested"
+#: "Not ready · <reason>" per blocker. Tests/Chat/test_readiness_words.py
+#: fails for a blocker without one; the longest fits the switcher's column.
+_NOT_READY_REASONS: Mapping[str, str] = MappingProxyType(
+    {
+        "provider_missing": "no provider",
+        "provider_unsupported": "unsupported",
+        "provider_configuration_invalid": "check settings",
+        "endpoint_invalid": "invalid URL",
+        "endpoint_not_saved": "endpoint unsaved",
+        "credential_missing": "no key",
+        "credential_rejected": "key rejected",
+        "model_missing": "no model",
+        "endpoint_unreachable": "unreachable",
+        "active_run": "run active",
+        "readiness_unknown": "check settings",
+    }
+)
+#: A known connection failure says what happened ("refused" gains the port).
+_FAILURE_REASONS: Mapping[str, str] = MappingProxyType(
+    {
+        "timeout": "timed out",
+        "connection_refused": "refused",
+        "unauthorized": "key rejected",
+        "forbidden": "key rejected",
+        "http_status": "server error",
+        "invalid_payload": "bad response",
+        "connection_error": "unreachable",
+    }
+)
+#: A Claude subscription has a login, not a key.
+_SUBSCRIPTION_REASONS: Mapping[str, str] = MappingProxyType(
+    {"pending": "checking login", "expired": "login expired", "missing": "no login"}
+)
+#: Each setup verdict reads as a blocker's "Not ready · <reason>", as Ready
+#: qualified by its "evidence", or (None) as Ready with no current evidence.
+_VERDICT_READINESS: Mapping[str, str | None] = MappingProxyType(
+    {
+        "incomplete": "provider_configuration_invalid",  # its issue refines it
+        "model_missing": "model_missing",
+        "connection_failed": "endpoint_unreachable",  # its category refines it
+        "testing": "evidence",
+        "not_tested": "evidence",
+        "model_listing_unavailable": "evidence",
+        "model_unconfirmed": "evidence",
+        "verified": "evidence",
+        "changed_since_test": None,
+    }
+)
+
+
+def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the spec §5 readiness word for one Console readiness.
+
+    Args:
+        readiness: A built Console readiness (it carries the connection and
+            observation time of current evidence, TASK-33005.2).
+
+    Returns:
+        'Ready · not tested', 'Ready · reachable HH:MM', 'Ready · verified
+        HH:MM' or 'Not ready · <reason>'.
+    """
+    if readiness.operability == "ready_to_send":
+        return _ready_words(
+            readiness.connection,
+            readiness.endpoint,
+            readiness.credential,
+            readiness.generation,
+            readiness.observed_at,
+        )
+    return _not_ready_words(
+        readiness.blocker or "readiness_unknown",
+        category=readiness.endpoint_category,
+        issue=readiness.configuration_issue,
+        subscription=readiness.subscription_status,
+        connection=readiness.connection,
+    )
+
+
+def verdict_readiness_words(
+    snapshot: ProviderReadinessSnapshot,
+    evidence: object = None,
+    *,
+    subscription_status: str | None = None,
+) -> str:
+    """Return the same word for a setup verdict (Settings' test result).
+
+    Args:
+        snapshot: The draft's readiness facets.
+        evidence: The ``ProviderTestEvidence`` behind ``snapshot`` (or a
+            just-settled ``ProviderProbeResult``): its time, connection and
+            key/generation facts.
+        subscription_status: The Claude subscription state, if any.
+
+    Returns:
+        One of the four words.
+    """
+    reads = _VERDICT_READINESS[provider_readiness_verdict(snapshot).code]
+    connection = getattr(evidence, "identity", None)
+    if reads is None:
+        return READY_NOT_TESTED
+    if reads == "evidence":
+        return _ready_words(
+            connection,
+            snapshot.endpoint,
+            getattr(evidence, "credential", "not_required"),
+            getattr(evidence, "generation", "not_tested"),
+            getattr(evidence, "observed_at", None),
+        )
+    if reads == "provider_configuration_invalid":
+        reads = _CONFIGURATION_ISSUE_BLOCKER.get(snapshot.configuration_issue, reads)
+    return _not_ready_words(
+        reads,
+        category=snapshot.category,
+        issue=snapshot.configuration_issue,
+        subscription=subscription_status,
+        connection=connection,
+    )
+
+
+def _ready_words(
+    connection: ProviderDraftIdentity | None,
+    endpoint: str,
+    credential: str,
+    generation: str,
+    observed_at: datetime | None,
+) -> str:
+    """Qualify Ready by what was observed, and when (local HH:MM).
+
+    'verified': a successful paid test, or a cloud key its authenticated
+    listing accepted. 'reachable': a local, URL or custom endpoint answered
+    its listing -- even with a key, since a self-hosted server may ignore it.
+    A public cloud listing (OpenRouter) proves nothing: 'not tested'.
+    """
+    if observed_at is None or connection is None:
+        return READY_NOT_TESTED
+    local = connection.custom_endpoint_id is not None or connection.provider_key in (
+        URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+    )
+    when = observed_at.astimezone().strftime("%H:%M")
+    if generation == "succeeded" or (credential == "listing_accepted" and not local):
+        return f"Ready · verified {when}"
+    if endpoint == "reachable" and local:
+        return f"Ready · reachable {when}"
+    return READY_NOT_TESTED
+
+
+def _not_ready_words(
+    blocker: str,
+    *,
+    category: str | None,
+    issue: str | None,
+    subscription: str | None,
+    connection: ProviderDraftIdentity | None,
+) -> str:
+    reason = _NOT_READY_REASONS.get(blocker, "check settings")
+    if blocker in {"endpoint_unreachable", "credential_rejected"} and category:
+        reason = _FAILURE_REASONS.get(category, reason)
+        if category == "connection_refused" and connection is not None:
+            try:  # Only the port: never the host, path or query.
+                port = urlparse(connection.connection_identity[1]).port
+            except ValueError:
+                port = None
+            reason += f" :{port}" if port else ""
+    elif blocker == "credential_missing" and subscription in _SUBSCRIPTION_REASONS:
+        reason = _SUBSCRIPTION_REASONS[subscription]
+    elif blocker == "endpoint_invalid" and issue == "endpoint_missing":
+        reason = "no URL"
+    return f"Not ready · {reason}"
+
+
 def _model_default_profile(
     provider_settings: Mapping[str, object],
     model: str | None,
@@ -2962,6 +3147,8 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
         return "Credential: not required"
     if readiness.credential == "authenticated":
         return "Credential: authenticated"
+    if readiness.credential == "listing_accepted":
+        return "Credential: accepted by model listing"
     source = {
         "stored": "local config",
         "environment": "environment variable",

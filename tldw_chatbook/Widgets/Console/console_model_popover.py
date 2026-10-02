@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    readiness_words,
     resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
@@ -121,19 +122,6 @@ _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
 
-_NOT_READY_REASONS = {
-    "provider_missing": "no provider",
-    "provider_unsupported": "unsupported",
-    "provider_configuration_invalid": "check settings",
-    "endpoint_invalid": "invalid URL",
-    "endpoint_not_saved": "endpoint unsaved",
-    "credential_missing": "no key",
-    "credential_rejected": "key rejected",
-    "model_missing": "no model",
-    "endpoint_unreachable": "unreachable",
-    "active_run": "run active",
-    "readiness_unknown": "check settings",
-}
 _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
     "configure_endpoint": "Enter: endpoint in Settings",
@@ -208,13 +196,8 @@ class SwitcherRow:
 
 
 def switcher_readiness_words(readiness: ConsoleSettingsReadiness | None) -> str:
-    """Spec §5 words for a row. Config-only evidence never says verified."""
-    if readiness is None:
-        return "checking…"
-    if readiness.operability == "ready_to_send":
-        return "Ready · not tested"
-    reason = _NOT_READY_REASONS.get(str(readiness.blocker or ""), "check settings")
-    return f"Not ready · {reason}"
+    """A row's spec §5 word (TASK-33005.3: the one shared mapping)."""
+    return "checking…" if readiness is None else readiness_words(readiness)
 
 
 def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:

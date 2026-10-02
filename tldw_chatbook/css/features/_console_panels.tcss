@@ -887,9 +887,10 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     text-wrap: nowrap;
 }
 
-#console-model-section-recovery {
+#console-model-section-recovery.-blocked {
     /* TASK-31429: this line is READ, not glanced -- readable error variant
-       (design-language rule: readable beats decorative). */
+       (design-language rule: readable beats decorative). TASK-33005.3: the
+       line always shows the readiness word; only Not ready is red. */
     color: $ds-status-error-readable;
 }
 

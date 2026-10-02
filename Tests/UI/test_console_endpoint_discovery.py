@@ -19,6 +19,9 @@ from tldw_chatbook.Chat.provider_test_evidence import (
 from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
+from tldw_chatbook.Widgets.Console.console_model_popover import (
+    switcher_readiness_words,
+)
 from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
 
 
@@ -718,6 +721,11 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         modal = harness.screen
         modal.query_one("#console-settings-model-discover", Button).press()
         assert (await _settled(modal, pilot)).category == "connection_refused"
+        await pilot.pause()
+        refused = "Not ready · refused :9099"  # TASK-33005.3: one word everywhere
+        assert _rail_text(modal, "#console-settings-readiness").startswith(
+            f"{refused}\n"
+        )  # Chat settings readiness
         modal.query_one("#console-settings-cancel", Button).press()
         await pilot.pause()
         assert harness.screen is console
@@ -730,12 +738,17 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         )
         # Model section (left rail), setup card, Inspector and the
         # Conversation settings summary all read the same readiness.
-        assert _rail_text(console, "#console-model-section-recovery") == (
-            "Not ready — endpoint unreachable"
-        )
-        assert _rail_text(console, "#console-settings-readiness-row") == (
-            "Not ready — endpoint unreachable"
-        )
+        # TASK-33005.3 (AC#8): ... in the same word, with the status chip and
+        # the switcher rows; only Not ready paints the rail line red.
+        recovery = console.query_one("#console-model-section-recovery")
+        assert _rail_text(console, "#console-model-section-recovery") == refused
+        assert recovery.has_class("-blocked")
+        assert _rail_text(console, "#console-settings-readiness-row") == refused
+        assert _rail_text(console, "#console-readiness-chip") == refused
+        assert refused in _rail_text(console, "#console-setup-step-1")
+        assert switcher_readiness_words(
+            console._console_default_readiness("llama_cpp", "model-a")
+        ) == refused
         assert "connection refused" in _rail_text(
             console, "#console-settings-endpoint-row"
         )
@@ -776,8 +789,19 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         assert harness.screen is console  # Retry opened nothing.
         assert len(probed) == reads + 2
         assert console._console_setup_blocked_reason() == ""
-        assert console._active_console_settings_readiness()[1].endpoint == "reachable"
-        assert not console.query_one("#console-model-section-recovery").display
+        ready = console._active_console_settings_readiness()[1]
+        assert ready.endpoint == "reachable"
+        reachable = f"Ready · reachable {ready.observed_at.astimezone():%H:%M}"
+        for selector in (
+            "#console-model-section-recovery",
+            "#console-settings-readiness-row",
+            "#console-readiness-chip",
+        ):
+            assert _rail_text(console, selector) == reachable, selector
+        assert not recovery.has_class("-blocked")
+        assert switcher_readiness_words(
+            console._console_default_readiness("llama_cpp", "model-a")
+        ) == reachable
         assert _rail_text(console, "#workbench-header-status").strip() == "Ready"
 
 
@@ -832,7 +856,7 @@ async def test_shared_evidence_change_refreshes_the_console_once(request):
 
         await pilot.pause()
         assert _rail_text(console, "#console-settings-readiness-row") == (
-            "Not ready — endpoint unreachable"
+            "Not ready · timed out"
         )
 
 

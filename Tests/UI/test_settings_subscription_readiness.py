@@ -216,7 +216,9 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         )
         # TASK-33002.2 round-1 I2: the Key row owns a credential blocker, so
         # it leads with the next step; Config keeps only the verdict.
+        # TASK-33005.3: the Readiness word leads, then the blocking Key row.
         assert result.startswith(
+            "Readiness   Not ready · login expired\n"
             "Key         Claude subscription, expired — log in with Claude Code"
         )
         assert "Config      Anthropic is not ready\n" in result
@@ -288,7 +290,9 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
             screen.query_one("#settings-provider-test-result", Static).renderable
         )
         assert "being checked" not in result
+        # TASK-33005.3: the Readiness word leads, then the blocking Key row.
         assert result.startswith(
+            "Readiness   Not ready · no login\n"
             "Key         Claude subscription, missing — log in with Claude Code"
         )
         assert "private-token" not in result

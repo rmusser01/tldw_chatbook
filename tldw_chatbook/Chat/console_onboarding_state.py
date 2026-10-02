@@ -7,7 +7,10 @@ from typing import Any
 from urllib.parse import urlparse
 
 from tldw_chatbook.Chat.console_provider_endpoints import safe_endpoint_display
-from tldw_chatbook.Chat.console_session_settings import ConsoleSettingsReadiness
+from tldw_chatbook.Chat.console_session_settings import (
+    ConsoleSettingsReadiness,
+    readiness_words,
+)
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 
 CONSOLE_SETUP_CARD_TITLE = "Get started"
@@ -222,6 +225,8 @@ def build_console_setup_card_state(
         )
 
     provider_name = str(provider_label or "Provider").strip() or "Provider"
+    # TASK-33005.3: the active step carries the one readiness word.
+    word = readiness_words(readiness)
     step_one = ConsoleSetupStep(
         state="done" if provider_done else "active",
         label=(
@@ -229,7 +234,7 @@ def build_console_setup_card_state(
             if provider_done
             else _STEP_ONE_LABELS.get(readiness.blocker, "Finish provider setup")
         ),
-        detail=f"{provider_name} ready" if provider_done else "",
+        detail=provider_name if provider_done else word,
     )
     # Step two only counts as done once the provider is actually ready AND a
     # model is set: template defaults (e.g. gpt-4o) must not pre-check the
@@ -241,6 +246,7 @@ def build_console_setup_card_state(
             else ("active" if provider_done else "pending")
         ),
         label="Pick a model",
+        detail=word if provider_done and not has_model else "",
     )
     step_three = ConsoleSetupStep(
         state="pending",

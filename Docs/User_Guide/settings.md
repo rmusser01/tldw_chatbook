@@ -244,12 +244,15 @@ Changing these controls does not record startup consent.
 **Test Provider** checks your current draft before saving. URL-based local
 providers also get a short endpoint or model-listing probe, sent with the
 draft's API key when it has one (a server started with a key is tested with
-it, never without). The result is five
-labelled rows, one fact each: **Config** (configured, or not ready),
-**Key** (saved in config, from env var *NAME*, or missing; never the key
-itself), **Endpoint** (the address without any user name, query or fragment,
-plus the model-listing outcome), **Model** and **Generation**. The row with
-the problem comes first and says what to do next: a missing key leads with
+it, never without). The result leads with a **Readiness** row in the same
+words the Console uses for that connection ("Ready · not tested",
+"Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
+\<reason\>", see [Console](console.md)), then five labelled rows, one fact
+each: **Config** (configured, or not ready), **Key** (saved in config, from
+env var *NAME*, or missing; never the key itself), **Endpoint** (the address
+without any user name, query or fragment, plus the model-listing outcome),
+**Model** and **Generation**. Below the Readiness row, the row with the
+problem comes first and says what to do next: a missing key leads with
 "Key missing — enter one in the API key field or set *NAME*", a Databricks
 profile without a workspace URL leads with the Endpoint row, and an
 unreachable server leads with, for example, "model listing failed

@@ -123,6 +123,7 @@ from ...Chat.provider_setup_persistence import (
 from ...Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderReadinessSnapshot,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
     connection_credential_revision,
@@ -140,6 +141,7 @@ from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
     normalize_console_model_value,
     settings_provider_catalog,
+    verdict_readiness_words,
 )
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -15877,8 +15879,10 @@ class SettingsScreen(BaseAppScreen):
 
         TASK-33002.2 (spec §5): Config, Key, Endpoint, Model and Generation --
         never a " | " dump, a config-key spelling or a secret. The row that
-        holds the failure that matters leads; otherwise the rows keep that
-        order. Reads no widgets, config or environment.
+        holds the failure that matters leads them; otherwise the rows keep
+        that order. TASK-33005.3: above them all, the Readiness row gives the
+        one readiness word every other model surface shows for this
+        connection. Reads no widgets, config or environment.
 
         Args:
             readiness: ``ProviderReadiness`` of the draft-overlaid config.
@@ -15943,11 +15947,10 @@ class SettingsScreen(BaseAppScreen):
         else:
             key = "missing — enter one in the API key field"
         if source:
-            key += (
-                " · accepted by a generation test"
-                if getattr(evidence, "credential", "") == "authenticated"
-                else " · present, not verified"
-            )
+            key += {
+                "authenticated": " · accepted by a generation test",
+                "listing_accepted": " · accepted by the model listing",
+            }.get(getattr(evidence, "credential", ""), " · present, not verified")
 
         shown = safe_endpoint_display(endpoint)
         if issue == "endpoint_missing":
@@ -16012,7 +16015,29 @@ class SettingsScreen(BaseAppScreen):
             ("Model", model_text),
             ("Generation", generation_text),
         )
-        return tuple(sorted(rows, key=lambda row: row[0] != lead))
+        model_ids = getattr(evidence, "model_ids", ())
+        word = verdict_readiness_words(
+            ProviderReadinessSnapshot(
+                configuration=readiness.configuration_facet,
+                endpoint=listing,
+                model=(
+                    "missing"
+                    if not model
+                    else "confirmed"
+                    if listing == "reachable" and model in model_ids
+                    else "unconfirmed"
+                ),
+                category=(
+                    getattr(evidence, "category", None)
+                    if listing in {"unreachable", "model_listing_unavailable"}
+                    else None
+                ),
+                configuration_issue=readiness.configuration_issue,
+            ),
+            evidence,
+            subscription_status=readiness.subscription_status,
+        )
+        return (("Readiness", word), *sorted(rows, key=lambda row: row[0] != lead))
 
     @staticmethod
     def _provider_test_headline(result: str) -> str:

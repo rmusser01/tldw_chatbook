@@ -235,7 +235,8 @@ def test_settings_test_findings_render_a_markup_like_entry_name(api_key_env):
 def test_settings_test_rows_state_a_dangling_registry_endpoint():
     rows, _summary = _test_rows("custom-ep:gone", _config())
     assert rows["Endpoint"].startswith("not found"), rows
-    assert list(rows)[0] == "Endpoint", rows
+    # TASK-33005.3: the Readiness word leads, then the blocking fact.
+    assert list(rows)[:2] == ["Readiness", "Endpoint"], rows
 
 
 @pytest.mark.parametrize("spelling", ["custom-ep:gpu-box", "custom_ep:gpu_box"])

@@ -12,7 +12,7 @@ from datetime import datetime
 from enum import StrEnum
 from itertools import count
 from threading import Lock, RLock
-from typing import TYPE_CHECKING, Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol, get_args
 from unicodedata import category as unicode_category
 
 from .provider_endpoint_contract import canonical_connection_identity
@@ -30,8 +30,10 @@ EndpointFacet = Literal[
     "changed_since_test",
 ]
 ModelFacet = Literal["missing", "confirmed", "unconfirmed"]
+#: TASK-33005.3: "listing_accepted" -- the provider's authenticated model
+#: listing accepted the key; "authenticated" -- a paid generation succeeded.
 CredentialFacet = Literal[
-    "not_required", "missing", "present_unverified", "authenticated"
+    "not_required", "missing", "present_unverified", "listing_accepted", "authenticated"
 ]
 GenerationFacet = Literal[
     "not_tested", "testing", "succeeded", "failed", "changed_since_test"
@@ -88,9 +90,7 @@ _PROBE_ENDPOINT_FACETS = frozenset(
     {"reachable", "unreachable", "model_listing_unavailable"}
 )
 _MODEL_FACETS = frozenset({"missing", "confirmed", "unconfirmed"})
-_CREDENTIAL_FACETS = frozenset(
-    {"not_required", "missing", "present_unverified", "authenticated"}
-)
+_CREDENTIAL_FACETS = frozenset(get_args(CredentialFacet))
 _GENERATION_FACETS = frozenset(
     {"not_tested", "testing", "succeeded", "failed", "changed_since_test"}
 )
@@ -273,7 +273,10 @@ class ProviderReadinessSnapshot:
             raise ValueError("Configuration issue is invalid.")
         if self.configuration == "configured" and self.configuration_issue is not None:
             raise ValueError("Configured readiness cannot include an issue.")
-        if self.configuration == "incomplete" and self.credential == "authenticated":
+        if self.configuration == "incomplete" and self.credential in {
+            "listing_accepted",
+            "authenticated",
+        }:
             raise ValueError("Incomplete readiness cannot authenticate credentials.")
         if self.endpoint == "unreachable":
             return
@@ -431,9 +434,15 @@ class ProviderProbeResult:
     endpoint: EndpointFacet
     model_ids: tuple[str, ...]
     category: EndpointFailureCategory | None = None
+    #: TASK-33005.3: the listing authenticated the key it was sent.
+    key_accepted: bool = False
 
     def __post_init__(self) -> None:
         _validate_probe_result(self.endpoint, self.model_ids, self.category)
+        if type(self.key_accepted) is not bool or (
+            self.key_accepted and self.endpoint != "reachable"
+        ):
+            raise ValueError("Only a listing that answered can accept a key.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -538,6 +547,8 @@ class ProviderTestEvidence:
             credential_required=self.identity.credential_source != "none",
         )
         object.__setattr__(self, "credential", normalized_credential)
+        if normalized_credential == "listing_accepted" and self.endpoint != "reachable":
+            raise ValueError("Only a listing that answered can accept a key.")
 
 
 class _MutationResult(Protocol):
@@ -704,6 +715,7 @@ class ProviderTestEvidenceStore:
                     endpoint=evidence.endpoint,
                     model_ids=evidence.model_ids,
                     category=evidence.category,
+                    credential=evidence.credential,
                 ),
                 # A rebound earlier observation keeps its own time.
                 observed_at=evidence.observed_at or _local_now(),
@@ -1304,6 +1316,7 @@ class ProviderConnectionEvidence:
                 endpoint=evidence.endpoint,
                 model_ids=evidence.model_ids,
                 category=evidence.category,
+                credential=evidence.credential,
             )
         if generation_order > held_generation:
             held_generation = generation_order
@@ -1476,6 +1489,7 @@ def _evidence_from_exact_outcome(
         outcome.endpoint,
         outcome.model_ids,
         outcome.category,
+        credential="listing_accepted" if outcome.key_accepted else "not_required",
     )
 
 
@@ -1506,10 +1520,22 @@ def _replace_endpoint_evidence(
     endpoint: EndpointFacet,
     model_ids: tuple[str, ...],
     category: EndpointFailureCategory | None,
+    credential: CredentialFacet = "not_required",
 ) -> ProviderTestEvidence:
+    # The listing's key verdict moves with the endpoint fact it came from; any
+    # other credential state is re-derived (a paid success stays authenticated).
+    credential = "listing_accepted" if credential == "listing_accepted" else "not_required"
     if evidence is None or evidence.identity != identity:
-        return ProviderTestEvidence(identity, endpoint, model_ids, category)
-    return replace(evidence, endpoint=endpoint, model_ids=model_ids, category=category)
+        return ProviderTestEvidence(
+            identity, endpoint, model_ids, category, credential=credential
+        )
+    return replace(
+        evidence,
+        endpoint=endpoint,
+        model_ids=model_ids,
+        category=category,
+        credential=credential,
+    )
 
 
 def _replace_generation_evidence(

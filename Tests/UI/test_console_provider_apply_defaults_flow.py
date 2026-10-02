@@ -1439,7 +1439,8 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
-        assert summary.readiness_label == ""
+        # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+        assert summary.readiness_label == "Not ready · endpoint unsaved"
         assert summary.readiness.blocker == "endpoint_not_saved"
         assert summary.readiness.recovery_action == "save_endpoint"
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)

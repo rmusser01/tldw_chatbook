@@ -303,10 +303,13 @@ def test_exact_probe_result_can_settle_without_retaining_server_content():
     assert evidence == ProviderTestEvidence(
         identity, "reachable", ("model-a", "model-b")
     )
+    # TASK-33005.3: key_accepted is the listing's own bool verdict on the key
+    # it was sent -- no server content.
     assert [item.name for item in fields(ProviderProbeResult)] == [
         "endpoint",
         "model_ids",
         "category",
+        "key_accepted",
     ]
     assert not hasattr(probe, "__dict__")
 

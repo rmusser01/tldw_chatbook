@@ -5333,7 +5333,9 @@ async def test_summary_builder_mounted_rail_uses_typed_copy_and_provider_name() 
 
     assert state.provider_row == "Provider: OpenAI"
     assert state.model_row == "Model: gpt-4.1"
-    assert state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the label is the typed spec §5
+    # word, never the legacy ``label`` (was "").
+    assert state.readiness_label == "Not ready · no key"
 
     app = SummaryHarness(state)
     async with app.run_test(size=(80, 20)) as pilot:
@@ -5343,7 +5345,7 @@ async def test_summary_builder_mounted_rail_uses_typed_copy_and_provider_name() 
         )
 
         assert "Provider: OpenAI" in painted
-        assert "Not ready — API key missing for OpenAI" in painted
+        assert "Not ready · no key" in painted
         assert "READY legacy poison" not in painted
         assert "Provider: openai" not in painted
 
@@ -5361,7 +5363,8 @@ def test_summary_state_omits_legacy_readiness_from_visible_rows() -> None:
 
     assert state.provider_row == "Provider: Provider"
     assert state.model_row == "Model: model-a"
-    assert state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the typed word, not "WIP" (was "").
+    assert state.readiness_label == "Not ready · check settings"
 
 
 def test_default_console_session_settings_prefers_provider_model_profile() -> None:
@@ -5643,7 +5646,8 @@ def test_summary_state_keeps_missing_model_row_compact() -> None:
 
     assert state.provider_row == "Provider: llama.cpp"
     assert state.model_row == "Model: Missing"
-    assert state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the typed word (was "").
+    assert state.readiness_label == "Not ready · no model"
     assert state.action_label == "Choose Model"
     assert state.action_tooltip == "Choose a model for this Console session"
 
@@ -6175,7 +6179,9 @@ async def test_console_settings_modal_renders_typed_operability_and_verification
             app.screen.query_one("#console-settings-readiness", Static).renderable
         )
 
-    assert "Ready to send — credential not verified" in rendered
+    # TASK-33005.3 (AC#11): was "Ready to send — credential not verified";
+    # the word says what backs Ready, the row says the key is unverified.
+    assert rendered.startswith("Ready · not tested\n")
     assert "Credential · Present — not verified (local config)" in rendered
     assert "Endpoint · Not tested" in rendered
     assert "Model · Selected — not verified at this endpoint" in rendered
@@ -8704,7 +8710,7 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         provider_model_section = app.screen.query_one("#console-settings-connection")
-        assert "Ready to send" in str(readiness.renderable)
+        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
         assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
@@ -8739,7 +8745,7 @@ async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_a
         readiness_copy = str(readiness.renderable)
         assert "Choose a model to enable sending." not in readiness_copy
         assert "not wired yet" not in readiness_copy
-        assert "Ready to send" in str(readiness.renderable)
+        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
         assert model_select.disabled is False
         assert model_select.value == "freeform-model"
         assert (
@@ -8775,7 +8781,7 @@ async def test_console_settings_modal_setup_copy_uses_typed_blocker_precedence()
 
         readiness = app.screen.query_one("#console-settings-readiness", Static)
         readiness_copy = str(readiness.renderable)
-        assert "Not ready — invalid base URL" in readiness_copy
+        assert "Not ready · invalid URL" in readiness_copy  # TASK-33005.3
         assert "Model · Missing" in readiness_copy
 
 
@@ -9770,7 +9776,7 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
 
         assert model_input.value == ""
         assert picker.value is None
-        assert "Not ready — choose a model" in str(readiness.renderable)
+        assert "Not ready · no model" in str(readiness.renderable)  # TASK-33005.3
         assert (
             provider_model_section.has_class("console-settings-primary-section") is True
         )
@@ -9781,7 +9787,7 @@ async def test_console_settings_modal_refreshes_readiness_after_returning_to_mod
         model_select = app.screen.query_one("#console-settings-model-select", Select)
         assert model_select.display is True
         assert model_select.value == "model-a"
-        assert "Ready to send" in str(readiness.renderable)
+        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
         assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
@@ -11921,8 +11927,9 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         readiness_copy = str(
             modal_screen.query_one("#console-settings-readiness", Static).renderable
         )
-        assert "Not ready — current run is active" in readiness_copy
-        assert "Ready to send" not in readiness_copy
+        # TASK-33005.3 (AC#11): the spec §5 words.
+        assert "Not ready · run active" in readiness_copy
+        assert "Ready ·" not in readiness_copy
         # TASK-33620.4: the modal's mutation gate is a run-state fact, not a
         # provider problem -- it must never render "Provider setup needed".
         assert "Provider setup needed" not in readiness_copy
@@ -11935,7 +11942,7 @@ async def test_console_settings_modal_save_disabled_during_active_run() -> None:
         # modal update seam. Keep status and Save consistently blocked until
         # the user closes and reopens after the run transition.
         assert modal_screen.query_one("#console-settings-save", Button).disabled is True
-        assert "Not ready — current run is active" in str(
+        assert "Not ready · run active" in str(
             modal_screen.query_one("#console-settings-readiness", Static).renderable
         )
 
@@ -12077,7 +12084,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
         assert modal_screen.query_one(ModelSearchPicker).value == "model-a"
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
         provider_model_section = modal_screen.query_one("#console-settings-connection")
-        assert "Ready to send" in str(readiness.renderable)
+        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
         assert "Credential · Not required" in str(readiness.renderable)
         assert (
             provider_model_section.has_class("console-settings-primary-section")
@@ -12293,7 +12300,8 @@ def test_console_saved_openai_with_key_shows_ready_readiness() -> None:
     provider_row = next(row for row in inspector_state.rows if row.label == "Provider")
     blocker_copy = screen._console_provider_blocker_copy()
 
-    assert summary_state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+    assert summary_state.readiness_label == "Ready · not tested"
     assert provider_row.value == "ready"
     assert provider_row.recovery == ""
     assert blocker_copy == ""
@@ -12570,7 +12578,8 @@ def test_console_saved_llamacpp_missing_model_summary_is_not_ready_without_fallb
 
     summary_state = screen._build_console_settings_summary_state()
 
-    assert summary_state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+    assert summary_state.readiness_label == "Not ready · no model"
     assert summary_state.provider_row == "Provider: llama.cpp"
     assert summary_state.model_row == "Model: Missing"
     assert (
@@ -12601,7 +12610,8 @@ def test_console_saved_llamacpp_missing_model_summary_ready_with_configured_fall
 
     summary_state = screen._build_console_settings_summary_state()
 
-    assert summary_state.readiness_label == ""
+    # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+    assert summary_state.readiness_label == "Ready · not tested"
     assert "Select a model before sending" not in summary_state.model_row
 
 
@@ -13228,7 +13238,7 @@ async def test_console_settings_accessible_inputs_have_names_and_bounded_descrip
         readiness = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
-        assert "Ready to send" in readiness
+        assert "Ready · not tested" in readiness  # TASK-33005.3 AC#11
         assert "Endpoint · Not tested" in readiness
         assert "Generation · Not tested" in readiness
 

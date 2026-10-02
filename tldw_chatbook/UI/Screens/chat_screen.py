@@ -9345,20 +9345,17 @@ class ChatScreen(BaseAppScreen):
             rows = self.query(f"#{section_id} .console-model-section-value")
             if rows:
                 rows.first(Static).update(value or "—")
-        readiness = summary_state.readiness
-
-        try:
-            recovery = self.query_one("#console-model-section-recovery", Static)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            if readiness is not None and readiness.operability == "not_ready":
-                recovery.update(
-                    build_console_readiness_presentation(readiness).primary_label
-                )
-                recovery.styles.display = "block"
-            else:
-                recovery.styles.display = "none"
+        # TASK-33005.3: the rail line and status chip show the one word; the
+        # line turns red only when blocked (the word itself carries the state).
+        word = summary_state.readiness_label
+        blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
+        for recovery in self.query("#console-model-section-recovery").results(Static):
+            if recovery.content != word:  # Unchanged copy costs no layout pass.
+                recovery.update(word)
+            recovery.styles.display = "block" if word else "none"
+            recovery.set_class(blocked, "-blocked")
+        for chips in self.query(ConsoleStatusChips):
+            chips.sync_readiness_chip(word)
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
@@ -16502,6 +16499,7 @@ class ChatScreen(BaseAppScreen):
                 # run chip -- returning to Console while a background run
                 # is still active must show it before the next sync tick.
                 run_copy=self._console_active_run_copy(),
+                readiness_word=settings_summary_state.readiness_label,
                 id="console-status-chips",
                 classes="ds-panel",
             )

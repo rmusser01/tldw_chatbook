@@ -9299,7 +9299,7 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     text-wrap: nowrap;
 }
 
-#console-model-section-recovery {
+#console-model-section-recovery.-blocked {
 
     color: $ds-status-error-readable;
 }

@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -725,10 +726,21 @@ def _result_rows(detail: str) -> list[tuple[str, str]]:
     return rows
 
 
+_READINESS_WORD = re.compile(
+    r"Ready · not tested|Ready · (reachable|verified) \d\d:\d\d|Not ready · .+"
+)
+
+
 def _assert_labelled_rows(detail: str) -> dict[str, str]:
-    """One fact per labelled row; no pipe dump, no key=value config spellings."""
+    """One fact per labelled row; no pipe dump, no key=value config spellings.
+
+    TASK-33005.3 (rewritten on purpose): the spec §5 readiness word leads, in
+    its own Readiness row, above the five fact rows.
+    """
     rows = _result_rows(detail)
-    assert sorted(label for label, _text in rows) == sorted(
+    assert rows[0][0] == "Readiness", detail
+    assert _READINESS_WORD.fullmatch(rows[0][1]), detail
+    assert sorted(label for label, _text in rows[1:]) == sorted(
         ("Config", "Key", "Endpoint", "Model", "Generation")
     ), detail
     assert " | " not in detail
@@ -817,7 +829,7 @@ def test_local_configuration_check_never_claims_live_verification():
 
     assert passed is True
     rows = _assert_labelled_rows(detail)
-    assert _result_rows(detail)[0] == ("Config", "OpenAI is configured")
+    assert _result_rows(detail)[1] == ("Config", "OpenAI is configured")
     # TASK-33002.2 AC#5: a cloud Test stays a local readiness check.
     assert rows["Key"] == "saved in config · present, not verified"
     assert rows["Generation"] == "not tested"
@@ -857,6 +869,45 @@ def test_exact_evidence_copy_keeps_listing_and_generation_independent():
     assert rows["Endpoint"] == "https://example.test/v1 · model listing reached"
     assert rows["Model"] == "gpt-4o · listed by the server"
     assert rows["Generation"] == "not tested"
+    # TASK-33005.3 (AC#4): a cloud listing that did not accept the key
+    # proves nothing about it.
+    assert rows["Readiness"] == "Ready · not tested"
+
+
+def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
+    """TASK-33005.3 (AC#2/#5/#6): Settings words a listing-accepted cloud key
+    'Ready · verified HH:MM' and keeps Generation 'not tested'."""
+    from datetime import datetime
+
+    identity = _semantic_identity(
+        "https://example.test/v1/models",
+        provider_key="openai",
+        credential_source="stored",
+        credential_revision=7,
+    )
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("gpt-4o",),
+        credential="listing_accepted",
+        observed_at=datetime(2026, 10, 1, 14, 4).astimezone(),
+    )
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="https://example.test/v1",
+            evidence=evidence,
+        )
+    )
+
+    assert rows["Readiness"] == "Ready · verified 14:04"
+    assert rows["Key"] == "saved in config · accepted by the model listing"
+    assert rows["Generation"] == "not tested"
 
 
 @pytest.mark.parametrize(
@@ -889,8 +940,10 @@ def test_exact_evidence_copy_distinguishes_endpoint_failure_categories(
         evidence=evidence,
     )
 
-    # TASK-33002.2 AC#2: the failed listing leads, instead of "configured".
-    label, text = rows[0]
+    # TASK-33002.2 AC#2: the failed listing leads the facts, instead of
+    # "configured"; TASK-33005.3 put the readiness word above them.
+    assert rows[0][0] == "Readiness"
+    label, text = rows[1]
     assert label == "Endpoint"
     assert f"model listing failed ({expected})" in text
     assert dict(rows)["Config"] == "Custom is configured"
@@ -972,7 +1025,7 @@ def test_findings_key_row_names_its_source_never_its_value(missing_env):
         # Round-1 I2: the Key row owns the blocker, so it leads with a
         # Settings-local next step; Config states only the verdict (spec §5:
         # each fact once) and no row spells a config table.
-        assert _result_rows(detail)[0] == (
+        assert _result_rows(detail)[1] == (  # [0] is Readiness (TASK-33005.3)
             "Key",
             "missing — enter one in the API key field or set OPENAI_API_KEY",
         )
@@ -1030,7 +1083,7 @@ def test_key_row_never_claims_missing_when_another_setting_blocks(
     rows = _assert_labelled_rows(detail)
     assert rows["Key"] == "not checked until the provider is ready"
     display = screen._provider_display_name(provider)
-    assert _result_rows(detail)[0] == (lead[0], lead[1].format(name=display))
+    assert _result_rows(detail)[1] == (lead[0], lead[1].format(name=display))
     if lead[0] != "Config":
         assert rows["Config"] == f"{display} is not ready"
     assert "api_settings" not in detail + summary
@@ -1079,7 +1132,7 @@ def test_failed_probe_leads_with_the_failure_and_a_next_step():
 
     assert passed is True  # the configuration itself is complete
     _assert_labelled_rows(detail)
-    label, text = _result_rows(detail)[0]
+    label, text = _result_rows(detail)[1]  # [0] is Readiness (TASK-33005.3)
     assert label == "Endpoint"
     assert text == (
         "http://127.0.0.1:9099 · model listing failed (connection refused) "
@@ -1168,7 +1221,11 @@ def test_findings_avoid_ready_claim_when_blocked_on_missing_model():
     assert passed is False
     _assert_labelled_rows(detail)
     # TASK-33002.2 AC#2: the blocking fact leads.
-    assert _result_rows(detail)[0] == ("Model", "not set — choose a default model")
+    # [0] is the Readiness word (TASK-33005.3); the blocking fact leads the rest.
+    assert _result_rows(detail)[:2] == [
+        ("Readiness", "Not ready · no model"),
+        ("Model", "not set — choose a default model"),
+    ]
     assert "is ready" not in detail  # no contradictory ready claim
 
 
@@ -1185,7 +1242,7 @@ def test_findings_keep_configuration_only_verdict_when_passing():
 
     assert passed is True
     _assert_labelled_rows(detail)
-    assert _result_rows(detail)[0] == (
+    assert _result_rows(detail)[1] == (
         "Config",
         f"{screen._provider_display_name('OpenAI')} is configured",
     )
@@ -1827,7 +1884,7 @@ async def test_test_provider_result_shows_draft_endpoint(request):
         detail = _provider_test_result_text(screen)
         rows = _assert_labelled_rows(detail)
         assert rows["Endpoint"] == "http://localhost:9099 (draft)"
-        assert _result_rows(detail)[0] == ("Model", "not set — choose a default model")
+        assert _result_rows(detail)[1] == ("Model", "not set — choose a default model")
 
 
 @pytest.mark.asyncio
@@ -2027,10 +2084,11 @@ async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request)
             strips[y].crop(region.x, region.right).text
             for y in range(region.y, region.bottom)
         ]
-        labels = ("Endpoint", "Config", "Key", "Model", "Generation")
+        labels = ("Readiness", "Endpoint", "Config", "Key", "Model", "Generation")
         label_cells = len("Generation  ")
 
-        assert painted[0].startswith("Endpoint"), painted
+        assert painted[0].startswith("Readiness"), painted  # TASK-33005.3
+        assert painted[1].startswith("Endpoint"), painted
         continuations = [
             line for line in painted if line.strip() and not line.startswith(labels)
         ]
@@ -2038,7 +2096,7 @@ async def test_wrapped_endpoint_row_stays_in_the_value_column_at_211x44(request)
         assert all(
             len(line) - len(line.lstrip()) == label_cells for line in continuations
         ), "\n".join(painted)
-        assert _result_rows(_provider_test_result_text(screen))[0][0] == "Endpoint"
+        assert _result_rows(_provider_test_result_text(screen))[1][0] == "Endpoint"
 
 
 async def _test_reachable_llama_cpp(screen, pilot, probe=_reachable_endpoint_probe) -> str:
@@ -2280,12 +2338,17 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
     their own draft stores but share settled evidence.
 
     TASK-33005.2 review: the Console keys it identically (finding 4), and the
-    probe carries the saved key a send uses (I-1)."""
+    probe carries the saved key a send uses (I-1).
+
+    TASK-33005.3 (AC#8): Settings' Readiness row, the Console (status row,
+    rail and switcher all render ``readiness_words``) and Chat settings show
+    the same word for the connection at the same moment."""
     from Tests.UI.test_console_session_settings import _readiness_text
     from tldw_chatbook.Chat.console_session_settings import (
         ConsoleSessionSettings,
         ConsoleSettingsContextEstimate,
         build_console_settings_readiness,
+        readiness_words,
     )
     from tldw_chatbook.Chat.provider_test_evidence import (
         provider_connection_evidence,
@@ -2317,6 +2380,12 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
             connection_evidence=provider_connection_evidence(host),
         )
         assert console.endpoint == "reachable"
+        word = f"Ready · reachable {console.observed_at.astimezone():%H:%M}"
+        assert readiness_words(console) == word
+        assert _result_rows(_provider_test_result_text(screen))[0] == (
+            "Readiness",
+            word,
+        )
         # Same endpoint and key; a revision-0 source is one keyless
         # connection whichever surface spelled it (Task 1 review F5).
         assert (
@@ -2344,6 +2413,7 @@ async def test_settings_test_result_reaches_chat_settings_for_the_same_connectio
         assert evidence.endpoint == "reachable"
         assert evidence.model_ids == ("llama-3",)
         assert "Endpoint · Reachable" in _readiness_text(modal)
+        assert _readiness_text(modal).startswith(f"{word}\n")
         assert identity.credential_revision == tested.credential_revision
         assert (identity.credential_revision != 0) is ("api_key" in llama_settings)
 

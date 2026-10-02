@@ -14,6 +14,7 @@ from textual.widgets import Button, Static
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSettingsReadiness,
     ConsoleSettingsSummaryState,
+    readiness_words,
 )
 from tldw_chatbook.Widgets.Console.console_bounded_section import (
     ConsoleBoundedSection,
@@ -151,10 +152,9 @@ def build_console_readiness_presentation(
         "expired": "Claude subscription credential expired — log in with Claude Code",
         "missing": "Claude subscription credential missing — log in with Claude Code",
     }.get(readiness.subscription_status)
+    # TASK-33005.3 (spec §5): the one readiness word, as on every surface.
+    primary = readiness_words(readiness)
     if readiness.operability == "ready_to_send":
-        primary = "Ready to send"
-        if readiness.credential == "present_unverified":
-            primary += " — credential not verified"
         detail = "A send attempt is permitted with these settings."
         action = ("Configure", "hidden", "Configure Console settings")
     else:
@@ -163,7 +163,6 @@ def build_console_readiness_presentation(
             blocker_copy = subscription_copy or f"API key missing for {provider}"
         elif readiness.blocker == "credential_rejected":
             blocker_copy = f"{provider} {blocker_copy}"
-        primary = f"Not ready — {blocker_copy}"
         # TASK-33620.4: an active run (the settings modal's mutation gate) is
         # a run-state fact, never "Provider setup needed".
         detail = (
@@ -205,6 +204,8 @@ def build_console_readiness_presentation(
         "missing": "Missing",
         "not_required": "Not required",
         "authenticated": "Authenticated",
+        # The listing accepted the key; generation is its own row.
+        "listing_accepted": "Accepted by model listing",
         "present_unverified": "Present — not verified",
     }[readiness.credential]
     if readiness.subscription_status == "pending":
