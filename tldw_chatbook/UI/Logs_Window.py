@@ -8,6 +8,7 @@
 #
 # Imports
 import asyncio
+import contextlib
 import re
 from collections import Counter, deque
 from typing import TYPE_CHECKING, Iterable, NamedTuple, Optional
@@ -179,6 +180,8 @@ class LogsWindow(Container):
         self._pending_while_paused = 0
         self._rendered_count = 0
         self._loaded_from_app = False
+        #: Sequence of the last buffered record seeded by load_from_app.
+        self._seeded_through = 0
         # task-15476: how many records the active filter actually matched
         # (>= _rendered_count once MAX_RENDERED_LINES trims the render),
         # the records actually written to the RichLog on the last render
@@ -286,9 +289,15 @@ class LogsWindow(Container):
             self._persisted_filter_state = self._filter_state_snapshot()
         except Exception:  # noqa: BLE001 - config read must never block logs
             pass
-        app_records: Iterable[tuple] = getattr(
-            self.app_instance, "_log_records", ()
-        ) or ()
+        # Seed under the handler's lock and remember how far the buffer went,
+        # so a worker record's deferred live display is not added twice
+        # (LogsBufferHandler, Qodo #2904).
+        lock = getattr(self.app_instance, "_log_records_lock", None)
+        with lock if lock is not None else contextlib.nullcontext():
+            app_records: Iterable[tuple] = tuple(
+                getattr(self.app_instance, "_log_records", ()) or ()
+            )
+            self._seeded_through = getattr(self.app_instance, "_log_records_seq", 0)
         for entry in app_records:
             level, name, message = entry
             self._records.append(LogRecord(level, name, message))
