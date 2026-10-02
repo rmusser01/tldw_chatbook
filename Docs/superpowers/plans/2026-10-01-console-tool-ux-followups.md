@@ -82,6 +82,18 @@ Job110655142114 reports that timeout; the repeated full-app cases consumed
 - [x] Verify consolidated tests and source/scenario preservation with independent review; refresh native production receipts after the refusal change.
 - [ ] Require the exact-head UI gate to finish within its existing budget; do not change CI settings, remove scenarios or weaken isolation.
 
+## Fresh Qodo short-height follow-up
+
+ADR required: no
+ADR path: backlog/decisions/150-design-token-system-and-design-language.md; backlog/decisions/161-component-pattern-library.md
+Reason: Repair overflow using the canonical confirmation primitive and existing native scrolling/docked-action pattern; preserve specialized body composition and decision ownership.
+
+- [x] Reproduce the actual 22-row dialog clipped by an80x18 viewport before the fix.
+- [x] Reuse VerticalScroll, native action docking and the viewport token; preserve original60-cell frame, IDs, literal text, safe focus and specialized layouts.
+- [x] Verify original80x24 cases, short keyboard scrolling and resize identity; qualify17 affected literal/dismissal/callback contracts and9 actual byte-cap/token checks. Add Google-style fixture docs with executable AST unchanged.
+- [x] Refresh native approval12 and Close13; independently qualify current pins, actual process exits and unchanged real profiles.
+- [ ] Require fresh final-head CI and Qodo resolution before normal merge.
+
 ## Integration
 
 - [x] Review component diffs against all acceptance criteria and perform independent correctness review.

@@ -26,8 +26,8 @@ explicit fixture cleanup.
 
 All four terminal captures and rasterized confirmation previews were inspected.
 At 80×24 the full title, consequences and both action buttons fit. Every pending
-consequence fits on one line in the final copy. PNG previews use local Cairo fallback fonts, which differ in glyphs and spacing
-from the native terminal. The terminal text records actual painted positions;
+consequence fits on one line in the final copy. PNG previews use local Cairo
+fallback fonts, which differ in glyphs and spacing from the native terminal. The terminal text records actual painted positions;
 original SVGs are retained.
 
 The final native run also inspected an [all-consequences capture](native/dark-80x24-all-consequences-long-title.txt)
@@ -42,6 +42,26 @@ RED at 27/29 rows before that copy correction and GREEN for both short and
 60-character titles afterwards; receipts are in
 `/tmp/console-tool-ux-close/max-risk-{red-qualified,green}.log`.
 
+The short-height review then reproduced a 22-row dialog at 80×18. The shared
+base confirmation now uses a native scrolling body capped to the viewport,
+with a docked action row and explicit safe-default focus. Its body selector
+preserves the original 60-cell width, automatic height, border and padding;
+specialized confirmations that compose their own body retain their layout.
+Final run13 resized that same long-title, all-kinds dialog from 80×24 to
+**80×18**. The full title and both actions were painted at the top, Stay kept
+default focus, and both action centers hit-tested to their actual buttons.
+[Initial terminal](native/dark-80x18-all-consequences-long-title-top.txt),
+[SVG](native/dark-80x18-all-consequences-long-title-top.svg) and
+[PNG](native/dark-80x18-all-consequences-long-title-top.png) retain that frame.
+Native Shift+Tab focused the scroll body; End changed its scroll position
+from 0 to 6 and painted the final worktree consequence, while both actions
+remained fully painted and hit-testable. The [scrolled terminal](native/dark-80x18-all-consequences-long-title-scrolled.txt),
+[SVG](native/dark-80x18-all-consequences-long-title-scrolled.svg) and
+[PNG](native/dark-80x18-all-consequences-long-title-scrolled.png) retain that
+frame. Native Home and Tab restored the top and Stay focus; the runner
+restored 80×24 before teardown. This remains a synthetic impact snapshot,
+separate from the four actual decision-worker close journeys.
+
 ## Reproduction and scope
 
 [Runner](native_check.py) reuses `../native_runner_args.py` and the
@@ -55,7 +75,8 @@ profile below `/tmp` with private `home`, `config`, `data` directories and a
 runner with `ROOT TMUX_SOCKET SESSION` in an existing 235×52 tmux pane with the
 status line disabled, from the profile directory. HOME, USERPROFILE, XDG config
 and data paths, and TLDW_CONFIG_PATH must select that profile before imports;
-keep stderr attached to the terminal. The runner resizes to 80×24 itself.
+keep stderr attached to the terminal. The runner resizes to 80×24, then 80×18 for the crowded geometry case,
+and restores 80×24 before teardown.
 
 This is an actual app/driver/controller/runtime journey with real blocking
 human-decision rounds and a deterministic owning asyncio task. It does **not**
@@ -67,9 +88,9 @@ geometry only.
 
 [Isolation](isolation.json) confirms that the real config hash and mtimes of
 515 files under the real default-user data directory were unchanged. The runner's
-production hashes and the additional session/controller/models hashes in that
-isolation receipt matched before and after final run11. Production, test and
-runner sources stayed unchanged during the native run. This refresh changed
+production, model-copy, shared-dialog/style, config/participant and helper
+hashes matched before and after final run13 and the exported source bytes.
+All 12 source pins stayed unchanged during the native run. This refresh changed
 only the QA README and evidence exports; temporary profiles remain under
 `/tmp/console-tool-ux-close-native`.
 
@@ -88,8 +109,12 @@ matrix after the healthy-run/readiness rebase onto dev84247cb843. Run10
 repeated the matrix on the corrected close-recovery tree after rebasing onto
 dev27e718f01d and is retained before the CSS budget correction. Final
 run11 repeated the matrix after that correction on the same dev27e718f01d base.
-The exported captures and source hashes are from run11; current production,
-model-copy and runner bytes matched the recorded hashes. The qualified fixture
+Run12 refreshed that unchanged matrix after the config warm-path rebase onto
+devab4df999595; its receipts remain under `/tmp`. Final run13 qualified the
+shared short-height scrolling correction, retaining all four real closes and
+adding the 80×18 native geometry/keyboard journey. The exported captures and
+source hashes are from run13; current production, model-copy, config and
+runner bytes matched the recorded hashes. The qualified fixture
 creates/switches tabs before arming the viewed question, uses distinct round
 owners, and waits for notices to clear before checking paint and sending
 terminal mouse input. All started app

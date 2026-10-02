@@ -23,6 +23,7 @@ import time
 
 import pytest
 from loguru import logger
+from textual.containers import VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button
 
@@ -712,7 +713,11 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
 async def test_background_pending_close_names_consequences_and_cancels_only_its_owner(
     request,
 ):
-    """TASK-33621.16: real background rounds, run cancellation and physical Close."""
+    """TASK-33621.16: real background rounds, run cancellation and physical Close.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     for kind, consequence, result in [
         ("approval", "Tool approvals: denied; runs cancelled.", {"close-call": "deny"}),
         (
@@ -851,7 +856,11 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
 @pytest.mark.asyncio
 @private_profile_test
 async def test_background_question_close_releases_round_without_an_active_turn(request):
-    """A closed session's question must not survive when no turn cancel signal exists."""
+    """A closed session's question must not survive when no turn cancel signal exists.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     app = _ready_app()
     host = ConsoleHarness(app)
     async with host.run_test(size=_SIZE) as pilot:
@@ -895,7 +904,11 @@ async def test_background_question_close_releases_round_without_an_active_turn(r
 @pytest.mark.asyncio
 @private_profile_test
 async def test_failed_confirmed_close_reoffers_confirmation_without_retrying(request):
-    """A refused at-risk close keeps work and offers a fresh, explicit retry."""
+    """A refused at-risk close keeps work and offers a fresh, explicit retry.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     app = _ready_app()
     notes = _record_notifications(app)
     host = ConsoleHarness(app)
@@ -939,7 +952,11 @@ async def test_failed_confirmed_close_reoffers_confirmation_without_retrying(req
 async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80x24(
     request,
 ):
-    """All loss categories must fit the real dialog at the minimum terminal size."""
+    """Keep named Close controls reachable while long consequences scroll.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     for title in ("Pending [notes]", "A" * 60):
         app = _ready_app()
         host = ConsoleHarness(app)
@@ -979,7 +996,12 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                 lambda dialog=dialog: dialog.query_one("#cancel-button").has_focus,
             )
             try:
-                container = dialog.query_one("#confirmation-dialog")
+                container = dialog.query_one("#confirmation-dialog", VerticalScroll)
+                assert container.region.width == 60
+                controls = {
+                    selector: dialog.query_one(selector)
+                    for selector in ("#cancel-button", "#confirm-button")
+                }
                 viewport = dialog.region
                 assert viewport.intersection(container.region) == container.region, (
                     container.region,
@@ -1006,6 +1028,38 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                     "Worktree decisions: cancelled; no merge or discard."
                     in dialog.message
                 )
+                await pilot.resize_terminal(80, 18)
+                await pilot.pause()
+                assert dialog.region.intersection(container.region) == container.region
+                for selector in ("#cancel-button", "#confirm-button"):
+                    control = dialog.query_one(selector)
+                    region, clip = dialog._compositor.visible_widgets[control]
+                    assert region.area and region.intersection(clip) == region
+                    assert region.intersection(dialog.region) == region
+                    under, _ = host.get_widget_at(*region.center)
+                    assert under is control
+                assert controls["#cancel-button"].has_focus
+                await pilot.press("shift+tab")
+                assert container.has_focus
+                await pilot.press("end")
+                assert await _settle(
+                    pilot, lambda container=container: container.scroll_y > 0
+                )
+                painted = "\n".join(
+                    strip.text for strip in dialog._compositor.render_strips()
+                )
+                assert "no merge or discard." in painted
+                assert "Stay" in painted and "Close" in painted
+                await pilot.press("home", "tab")
+                assert controls["#cancel-button"].has_focus
+                await pilot.resize_terminal(160, 44)
+                await pilot.pause()
+                assert container.region.width == 60
+                for selector, control in controls.items():
+                    assert dialog.query_one(selector) is control
+                    region, clip = dialog._compositor.visible_widgets[control]
+                    assert region.area and region.intersection(clip) == region
+                    assert region.intersection(dialog.region) == region
             finally:
                 dialog.dismiss(False)
                 assert await worker.wait() is False
@@ -1018,7 +1072,13 @@ async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
     tmp_path,
     monkeypatch,
 ):
-    """A failed provisional callback must not strand or replace an exact fence."""
+    """A failed provisional callback must not strand or replace an exact fence.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the private database fixture.
+        monkeypatch: Pytest patch fixture injecting the provisional cleanup failure.
+    """
     from Tests.Chat.test_fleet_usage_reattach import _resolution, _turn_signals
     from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
     from tldw_chatbook.Chat.console_agent_bridge import FleetDrained, SettledChild

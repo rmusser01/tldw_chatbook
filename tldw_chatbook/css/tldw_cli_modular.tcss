@@ -2301,6 +2301,15 @@ FileSave.-compact InputBar Input {
 }
 
 
+ConfirmationDialog .confirmation-scroll {
+    max-height: $ds-height-full;
+}
+
+ConfirmationDialog .confirmation-scroll > .button-container {
+    dock: bottom;
+}
+
+
 MCPRecoveryReviewDialog #confirmation-dialog {
     width: $ds-size-80;
     max-width: $ds-percent-96;

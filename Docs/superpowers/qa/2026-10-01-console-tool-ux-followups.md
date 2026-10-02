@@ -170,7 +170,7 @@ remain valid. ADR-210 keeps the approval card as the decision surface and
 requires these TASK-33625 safety repairs before its separate region migration.
 The exact-head GitHub gates and fresh Qodo resolution remain merge prerequisites.
 
-## Latest-dev warm-config integration
+## Preceding warm-config integration
 
 Clean rebase onto devab4df9995954 includes PR #2903's guarded warm settings
 and runtime-snapshot paths. All six patches remain unchanged by range-diff.
@@ -209,6 +209,38 @@ and derived artifacts. UI Fast Lane completed921 tests in17m52s within its uncha
 20-minute budget. Those receipts are historical: all four gates and fresh Qodo
 review must pass on the new published head before normal merge.
 
+## Final short-height review qualification
+
+Fresh Qodo review of heada663415450 identified missing fixture docs and a real
+short-height Close overflow. The mounted RED case measured22 rows at80x18.
+The canonical confirmation body now uses native VerticalScroll capped by the
+existing viewport token, with the action row docked separately. Explicit cancel
+autofocus preserves Stay. The selector matches both the new scroll body and
+existing specialized Container bodies, retaining the original60-cell frame.
+Independent review caught the selector mismatch before final qualification;
+the incident is recorded in lessons-testing-evidence.md.
+
+**27 targeted checks pass**: one mounted case covering both titles and
+80x24→80x18→160x44 resize,17 literal/safe-dismissal/nested-callback contracts
+and9 actual byte-cap/token checks. Keyboard Shift+Tab/End reaches the final
+worktree consequence with both buttons painted and hit-testable; Home/Tab
+restores Stay. Same button identities survive resize. Added fixture docs cover
+all new public tests; executable AST comparisons show documentation-only changes.
+Ruff introduces zero diagnostics in17 modified Python files against devab4df9995954.
+Fresh preflight passes; census122 and the608,090-byte cap remain unchanged,
+with607,219 boot-parsed CSS bytes. No full sweep or CI-setting change.
+
+Native approval12 repeats all9 actual Ask-gated fs_read journeys with16 current
+source/config/CSS/helper pins. Native Close13 repeats all4 actual owning-worker
+closes and the synthetic maximum-risk geometry at80x24 and80x18; native scroll
+moves0→6, paints the last consequence, and returns focus to Stay. Both actual
+app/process exits are0; owned sockets released; no network or real-profile change
+(approval533 files, Close515). [Updated Close receipts](2026-10-01-console-close-followup/README.md)
+and the [integration receipt](2026-10-01-console-tool-ux-config-integration.json)
+record source pins and limitations. Approval12 full exports remain temporary;
+the earlier committed approval images below are historical. Fresh published-head
+GitHub gates and resolved Qodo review remain mandatory before normal merge.
+
 ## Native evidence
 
 [Approval result](2026-10-01-console-approval-layout/native/result.json):
@@ -229,16 +261,17 @@ Session projection is synchronized and its pending count asserted before capture
 Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–10 remain under
 /tmp/console-tool-ux-approval-native-*; run10 requalified all nine journeys
 after the recovery refusal, dev27e718f01d81 rebase and declaration-neutral
-CSS budget/formatting fix. All eight UI source hashes still match the current tree; the
+CSS budget/formatting fix. The card/controller sources remain unchanged; the shared bundle was later
+refreshed for the short-height Close fix. For run10, the
 real config and all 533 tracked data-file mtimes remain unchanged.
 
 [Close report](2026-10-01-console-close-followup/README.md): four real decision
 worker closes, owning task cancellation, sibling isolation and explicitly
 synthetic maximum-risk geometry. No provider/server execution is claimed
-for Close. Run11 requalified the four real closes and all-five-kind geometry
-after the recovery refusal, dev27e718f01d81 rebase and CSS formatting/budget
-correction, including target fleet/wake fence release. Current controller,
-session and model-copy hashes match; its
+for Close. Final run13 requalifies the four real closes, all-five-kind geometry
+and native80x18 keyboard scrolling after the shared confirmation repair.
+Original60-cell frame and same actions survive resize; source pins match current
+runtime/CSS/config/helper files. Exact target fleet/wake fences release; its
 isolation receipt verifies the real profile was unchanged.
 
 ## Inherited optional-governance failures

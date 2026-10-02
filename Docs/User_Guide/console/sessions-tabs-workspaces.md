@@ -610,7 +610,9 @@ separate from individually archiving a conversation.
 Closing a tab removes the open session. Saved history stays in Library; the
 close dialog names the tab and lists only the consequences that apply: unsaved
 messages, drafts, attachments, live or queued work, and pending human decisions.
-The concise consequence list keeps the tab title and both actions visible at 80×24.
+The dialog keeps both actions visible when the terminal is short. Press Shift+Tab
+from **Stay** to focus the scrollable consequences, then use arrows, Home or End
+to read them. Tab returns to **Stay**. Resizing keeps the same controls and decision.
 Closing denies pending tool approvals, cancels unanswered questions and declines
 skill and worktree-merge confirmations, cancelling the owning work without
 affecting other tabs. Declining a merge or discard confirmation performs neither action.

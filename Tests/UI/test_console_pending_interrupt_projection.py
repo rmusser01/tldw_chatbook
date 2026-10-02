@@ -148,6 +148,12 @@ async def _stop_workers(controller, workers, pilot):
 async def test_question_and_approval_copy_survives_sibling_view_and_remount(
     request, tmp_path
 ):
+    """Keep question and approval copy bound to its session across remounts.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the navigation app fixture.
+    """
     app = _build_app(tmp_path)
     workers = []
     async with app.run_test(size=(160, 48)) as pilot:
@@ -266,6 +272,12 @@ async def test_question_and_approval_copy_survives_sibling_view_and_remount(
 async def test_inspector_counts_queued_approval_rounds_for_its_own_session(
     request, tmp_path
 ):
+    """Count queued approvals only for the session shown in Inspector.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the navigation app fixture.
+    """
     app = _build_app(tmp_path)
     workers = []
     async with app.run_test(size=(160, 48)) as pilot:
@@ -308,6 +320,12 @@ async def test_inspector_counts_queued_approval_rounds_for_its_own_session(
 async def test_review_routes_reach_visible_skill_confirm_before_queued_approval(
     request, tmp_path
 ):
+    """Route each review action to the displayed decision before queued approval.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the navigation app fixture.
+    """
     app = _build_app(tmp_path)
     workers = []
     async with app.run_test(size=(160, 48), notifications=True) as pilot:

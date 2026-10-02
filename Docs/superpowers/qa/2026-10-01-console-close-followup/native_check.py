@@ -82,6 +82,10 @@ def main() -> None:
         "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py",
         "tldw_chatbook/css/tldw_cli_modular.tcss",
         "Docs/superpowers/qa/native_runner_args.py",
+        "tldw_chatbook/css/components/_dialogs.tcss",
+        "tldw_chatbook/Chat/console_chat_models.py",
+        "tldw_chatbook/config.py",
+        "tldw_chatbook/Backup_Recovery/config_participants.py",
     )
     result = {
         "pid": os.getpid(),
@@ -441,7 +445,71 @@ def main() -> None:
                     "default_stay": True,
                     "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",
                 }
+                await tmux("resize-window", "-t", session, "-x", "80", "-y", "18")
+                await wait_for(lambda: app.size == (80, 18), "short-height resize")
+                await wait_for(
+                    lambda: dialog.query_one("#cancel-button").has_focus,
+                    "short-height Stay focus",
+                )
+                assert container.region.intersection(dialog.region) == container.region
+                assert container.region.width == 60
+                assert painted(dialog.query_one(".dialog-title")).count("A") == 60
+                for selector in ("#cancel-button", "#confirm-button"):
+                    control = dialog.query_one(selector)
+                    assert control.region.intersection(dialog.region) == control.region
+                    assert control.label.plain in painted(control)
+                    hit, _ = dialog.get_widget_at(*control.region.center)
+                    assert hit is control, (selector, hit)
+                top = await capture("dark-80x18-all-consequences-long-title-top")
+                consequence = "Worktree decisions: cancelled; no merge or discard."
+                assert consequence not in top
+                before_scroll = container.scroll_y
+                assert container.max_scroll_y > 0
+                # Focus the scroll body, then send End through the native driver.
+                # Assert the actual scroll changes, not merely that a key was sent.
+                await tmux("send-keys", "-t", session, "BTab")
+                await wait_for(lambda: container.has_focus, "native scroll-body focus")
+                await tmux("send-keys", "-t", session, "End")
+                await wait_for(
+                    lambda: container.scroll_y > before_scroll,
+                    "native keyboard consequence scroll",
+                )
+                bottom = await capture(
+                    "dark-80x18-all-consequences-long-title-scrolled"
+                )
+                assert consequence in bottom
+                after_scroll = container.scroll_y
+                for selector in ("#cancel-button", "#confirm-button"):
+                    control = dialog.query_one(selector)
+                    assert control.label.plain in painted(control)
+                    hit, _ = dialog.get_widget_at(*control.region.center)
+                    assert hit is control, (selector, hit)
+                await tmux("send-keys", "-t", session, "Home")
+                await wait_for(lambda: container.scroll_y == 0, "native scroll home")
+                await tmux("send-keys", "-t", session, "Tab")
+                await wait_for(
+                    lambda: dialog.query_one("#cancel-button").has_focus,
+                    "native return to Stay",
+                )
+                result["max_risk_dialog"]["short_height"] = {
+                    "size": [80, 18],
+                    "title_characters": 60,
+                    "all_six_nonzero_counts": True,
+                    "all_five_pending_kinds": True,
+                    "original_dialog_width": container.region.width,
+                    "title_fully_painted_at_top": True,
+                    "actions_fully_painted_and_hit_testable_before_and_after_scroll": True,
+                    "default_stay": True,
+                    "native_keyboard_scroll": True,
+                    "scroll_y_before": before_scroll,
+                    "scroll_y_after": after_scroll,
+                    "last_consequence_readable_after_scroll": True,
+                    "native_home_and_tab_restored_stay": True,
+                }
+                record()
             finally:
+                await tmux("resize-window", "-t", session, "-x", "80", "-y", "24")
+                await wait_for(lambda: app.size == (80, 24), "restore terminal size")
                 dialog.dismiss(False)
                 assert await dialog_worker.wait() is False
             assert not attempts, attempts

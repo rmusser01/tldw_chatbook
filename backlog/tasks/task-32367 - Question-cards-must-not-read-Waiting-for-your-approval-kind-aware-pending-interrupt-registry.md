@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 04:55'
+updated_date: '2026-10-02 05:29'
 labels:
   - console
   - approvals
@@ -56,4 +56,6 @@ Final combined tree rebased onto dev31d4f9b764: 44 targeted Console/close/attrib
 Clean latest-dev27e718f01d81 rebase preserves pending/focus behavior. All three mounted projection cases and two upstream compaction-copy plus two v74 creation/upgrade checks pass on the combined tree, with exercised Python/test hashes unchanged. Earlier130 status/composer/rail cases all have passing evidence; one inherited startup timeout passed unchanged in a fresh private profile. Final preflight and current native approval/Close receipts pass. Exact-head GitHub gates and fresh Qodo resolution remain tracked in PR2953 before normal merge.
 
 Clean rebase onto devab4df9995954 (PR2903 warm-config settings/snapshot paths) preserves all six patches. Combined verification: 16 passed with zero skips (three mounted pending projections and thirteen config warm-read safety cases). Fresh native approval11 passes nine Ask-gated fs_read journeys; Close12 passes four real worker closes and five-kind maximum-risk geometry. Current UI/config hashes, app/process exit0, no network and unchanged real profiles verified. Sanitized receipt: Docs/superpowers/qa/2026-10-01-console-tool-ux-config-integration.json. Final published-head GitHub gates and Qodo resolution remain required for normal merge in PR2953.
+
+Fresh Qodo fixture-documentation finding corrected for all three new pending-projection tests with summary/Args; executable AST unchanged and Ruff/format pass. The previously qualified combined warm-config/projection behavior is unchanged. PR2953 fresh final-head gates/review remain required.
 <!-- SECTION:NOTES:END -->

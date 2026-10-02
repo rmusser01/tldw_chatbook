@@ -61,7 +61,11 @@ def _assert_painted(host, card, button):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_every_approval_action_is_painted_and_focusable(request):
-    """Check every geometry on the real screen without repeat app startup."""
+    """Check every geometry on the real screen without repeat app startup.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
@@ -156,7 +160,11 @@ async def test_reflow_preserves_decision_and_reused_round_controls(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_height_only_resize_reflows_existing_controls(request):
-    """Short terminals must retain painted actions even with Inspect closed."""
+    """Short terminals must retain painted actions even with Inspect closed.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)

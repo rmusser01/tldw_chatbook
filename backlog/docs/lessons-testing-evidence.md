@@ -17771,3 +17771,13 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## Containment does not prove a dialog kept its frame (TASK-33621.16, 2026-10-02)
+
+The short-height Close fix replaced `Container` with `VerticalScroll`. Its first
+containment check passed while the old `ConfirmationDialog > Container` selector
+stopped matching: Textual's scroll container inherits `Widget`, so the dialog
+expanded to the viewport and lost its intended frame. Independent review caught
+the mismatch before native qualification. The corrected selector retains both
+body types; the mounted and native regressions now assert the original 60-cell
+width alongside painted actions, keyboard scrolling and focus across resize.
