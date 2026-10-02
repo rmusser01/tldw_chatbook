@@ -289,6 +289,17 @@ if hasattr(sys.stderr, "fileno"):
         sys.stderr = io.StringIO()
 
 
+@pytest.hookimpl(hookwrapper=True, tryfirst=True)
+def pytest_runtest_teardown(item, nextitem):
+    """Finish owned config-source imports after normal fixture/resource cleanup."""
+    yield
+    from Tests.Backup_Recovery.config_test_support import (
+        restore_config_source_consumers,
+    )
+
+    restore_config_source_consumers()
+
+
 # ========== Path and File System Fixtures ==========
 
 
