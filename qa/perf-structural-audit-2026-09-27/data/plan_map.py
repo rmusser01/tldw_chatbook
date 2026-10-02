@@ -39,7 +39,15 @@ PRS = {
  'PERF-30': ('Wave 6', 'Cold-feature and hygiene sweep (P2/P3)'),
 }
 def pr_of(x: dict[str, Any]) -> str:
-    """Return the PERF-NN key for issue ``x`` from its classifier group and title."""
+    """Return the PERF-NN key for an issue from its classifier group and title.
+
+    Args:
+        x: One clustered issue, with ``pr`` (classifier group), ``title`` and
+            ``loc`` keys.
+
+    Returns:
+        The ``PERF-NN`` key of the remediation PR that owns the issue.
+    """
     g, t = x['pr'], x['title']
     if g == 'W1-gc-leaks': return 'PERF-11' if re.search(r'\bgc\b|gen.?2|GC|garbage', t) else 'PERF-05'
     if g == 'S7-other-screens' and 'home_screen' in x['loc']: return 'PERF-05'
