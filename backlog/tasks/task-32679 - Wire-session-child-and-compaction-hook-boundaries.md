@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 16:15'
+updated_date: '2026-10-02 16:43'
 labels:
   - plugins
   - implementation
@@ -44,6 +44,8 @@ PR #2946 latest-dev merge integration: ADR required: no. ADR path: N/A; existing
 Latest-dev integration onto 6958e8dfa9: ADR required: no. ADR path: N/A; existing ADR-069/097/126/163/197/210 govern. Reason: preserve upstream first-send project-control transaction, Inspector worker ownership, dead-pump recovery and W003 contracts without adding an owner. Rebase the verified PR head, compare upstream owner bytes/affected ASTs, reproduce derived artifacts and run scoped first-send, mounted hook-review, keep-alive and boot controls. Record the upstream hook-review freeze reproductions honestly; the independently owned repair is PR #2945, so normal merge remains pending its integration and final exact-head CI/Qodo qualification.
 
 The complete first-send file reproduces eleven matching admission-profile failures on immutable current dev, including an isolated branch reproduction. Keep actual controller tests on their collection-time admitted private profile with the existing bootstrap_profile module marker; retain independent private-profile child tests and every transaction, rollback, cancellation and provider-entry assertion. Re-run the complete repaired file and compare against the retained red baseline. No production admission or hook guard is changed.
+
+Review-Send repair integration onto live dev 30ca4552b3 (merged PR #2945): ADR required: no. ADR path: N/A; existing ADR-163/197/210 apply. Reason: integrate the independently reviewed upstream modal-result and worker-handoff owners without introducing new behavior or custody. Preserve modal-owned answer/dismiss/unmount settlement, task-identity/eager-factory handoff, awaiting_review diagnostics and truthful acceptance. Rebase current verified head, retain v2 hook rows and exact consent, compare upstream owners/affected ASTs, and run the complete ordinary Send-freeze, admission/handoff, mounted review, draft-snapshot, scoped consent and boot controls. Reproduce required artifacts, document limitations and complete the owned task after qualification. Publish only with the verified c2d41d4aa9 lease; normal merge waits for fresh exact-head Qodo/CI and independently read dev.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
