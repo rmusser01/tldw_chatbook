@@ -1,11 +1,11 @@
 ---
 id: TASK-33432
 title: Progress-triggered bounded supervisor wakes
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-10-02 17:55'
+updated_date: '2026-10-02 18:11'
 labels:
   - agents
   - console
@@ -22,15 +22,15 @@ Let committed child progress request a supervisor turn through the existing auto
 <!-- AC:BEGIN -->
 - [x] #1 Progress intake uses metadata-only IDs and a distinct claim source; claiming never consumes a report and duplicate notices cannot repeatedly wake the supervisor.
 - [x] #2 Progress and completion wakes share existing coalescing, fairness, manual priority, slots, chain generations, wall and spending limits; busy supervisors are not interrupted.
-- [x] #3 Preacceptance abort releases claims; accepted or uncertain attempts never replay automatically after restart; a wake asks for a fresh message read.
-- [x] #4 Targeted mixed-source, duplicate, exhaustion, collection-race, restart and unchanged-completion checks pass; backup schema covers new persistent state.
+- [ ] #3 Preacceptance abort releases claims; accepted or uncertain attempts never replay automatically after restart; a wake asks for a fresh message read.
+- [ ] #4 Targeted mixed-source, duplicate, exhaustion, collection-race, restart and unchanged-completion checks pass; backup schema covers new persistent state.
 - [x] #5 Incoming Console wake and run-control regressions observe actual asynchronous admission and publication; production deadlines, controls and authority gates remain unchanged.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Pin the real progress/completion claim → maintenance-close → controller refusal interleaving through actual ConsoleRuntime custody and the existing SQLite ledger. Verify the current prepared claim, reserved generation and interrupted-work fence reproduce before any provider acceptance. 2. Mark only the exact live AGENT_WAKE authority proven unaccepted at the existing early maintenance boundary; reuse existing abort/refund and retry paths without changing accepted or uncertain cleanup. 3. Verify progress and completion retry once after resume, manual/copied/session-mismatched/accepted tokens cannot gain refund authority, physical/native cancellation custody remains intact, and targeted readiness/hook/nonreplay/storage/startup checks and independent review pass. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and backlog/decisions/126-complete-local-backup-and-recovery.md. Reason: direct repair of AC3 using the existing exact-token, acceptance and storage contracts; no schema, permission, lifecycle or scheduler redesign.
+Required expanded-hooks integration on actual dev e92b01515f9547aab2cfb14cd4d93a7a07419775. 1. Preserve exact live unaccepted AGENT_WAKE maintenance refusal and existing refund/resume/nonreplay paths while composing incoming HOOK_CONTINUATION scheduler and required-hook checkpoints. 2. Rebase preserving incoming lifecycle, plugin/tool constraints, manual priority, child peer scope and physical SQL/process custody; resolve actual conflicts without new owners. 3. Qualify real progress/completion refund, duplicate/accepted nonreplay, saved alias close, bounded Stop continuation/manual priority and scoped tool dispatch with targeted checks and independent read-only review. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing ADR-163/162/126 apply. Reason: integration of existing scheduler, permission and custody contracts; no new authority or scheduler. Schema composition is covered by existing durable progress task.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes

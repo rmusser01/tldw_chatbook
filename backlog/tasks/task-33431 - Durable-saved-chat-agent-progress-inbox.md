@@ -1,11 +1,11 @@
 ---
 id: TASK-33431
 title: Durable saved-chat agent progress inbox
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 02:23'
+updated_date: '2026-10-02 18:11'
 labels:
   - agents
   - console
@@ -23,13 +23,13 @@ Preserve pending child reports across saved-chat closure and application restart
 - [x] #1 Saved-chat reports persist transactionally with chat-owned SQLite data, FIFO collection and existing no-eviction limits; reopening recovers data without restoring child capabilities
 - [x] #2 Temporary chats remain memory-only; explicit Save commits the chat and pending reports atomically and failed or cancelled promotion preserves the original queue
 - [x] #3 Collection commits before returning and ambiguous checkpoints never requeue or replay the old call; explicit discard and count-only navigation remain available
-- [x] #4 Chat-data schema migration and installed backup schema agree; targeted reopen, rollback, limits, ownership, atomic Save promotion and privacy tests pass
+- [ ] #4 Chat-data schema migration and installed backup schema agree; targeted reopen, rollback, limits, ownership, atomic Save promotion and privacy tests pass
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Trace saved binding and explicit Save through native identity and the existing Console transaction contribution. 2. Preserve dev's shipped 73→74 auxiliary failure-reason migration and compose durable progress as 74→75. 3. Keep exact Chat/shared-Subscriptions recovery catalogs and both stamp gates at version 75, retaining current-only Chat recovery and frozen AgentRuns history. 4. Qualify genuine 73/74 upgrades, retained auxiliary reasons, mid-DDL rollback, durable reopen and atomic Save. 5. Run targeted/static checks and independent review, then update documentation. ADR required: no new ADR; amend backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md and respect backlog/decisions/052-console-conversation-memory-and-compaction-policy.md. Reason: integration of existing storage and recovery boundaries.
+Required expanded-hooks integration on actual dev e92b01515f9547aab2cfb14cd4d93a7a07419775. 1. Preserve shipped compaction 73→74 and hook-continuation receipt 74→75 exactly; relocate this unmerged durable progress migration to 75→76. 2. Compose fresh and upgrade catalogs and exact current Chat/shared-Subscriptions stamp gates at 76 without changing current-only recovery or frozen AgentRuns18/21/22 histories. 3. Qualify genuine73/74/75 upgrades, retained hook receipts and auxiliary reasons, guarded rollback, durable reopen and atomic Save through actual SQLite and restricted recovery. 4. Review actual runtime/peer/hook/continuation overlaps, targeted source consumers and original static/startup guards; get independent schema/runtime review before publication. ADR required: no new ADR. ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing ADR-052/126/163/162 apply. Reason: compose already accepted storage/runtime boundaries in the next linear version, retaining shipped migrations and authority owners; amend ADR199's version clarification before source work.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
