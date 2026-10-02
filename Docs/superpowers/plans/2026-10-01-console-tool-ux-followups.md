@@ -135,3 +135,12 @@ targeted checks and two explicitly scoped supplemental modal probes pass,
 preflight/Ruff21 are clear, and native approval15/Close16 source pins match.
 Original modal setup errors remain documented. Final published-head CI/Qodo/
 normal merge remains the separate checkpoint.
+
+
+### Final CI settled-idle census correction
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-125/126 admission seams.
+Reason: test-only setup correction implementing TASK-33260, without runtime or limit changes.
+
+The captured trace scheduler leaves the fresh migration pending. A real diagnostic reproduces3 admissions for its first completion and2 for each later idle pass (17/8, over ceiling2). Complete and assert that one-time migration in uncounted setup, retain eight real idle batches and all counters/canaries, run the plain guard plus trace completion/parking contracts, and require fresh published-head CI/Qodo before normal merge.

@@ -1277,5 +1277,69 @@
     },
     "static_analysis": "21 modified Python files; zero new Ruff diagnostics against 113e435ab0bf; modified test format and diff check pass",
     "remaining_external_checkpoint": "Latest dev rebase, fresh exact-head CI and clean/resolved Qodo, verified normal merge in PR2953; subsequent qualification belongs to that published commit."
+  },
+  "settled_idle_census_followup": {
+    "head_before_commit": "1635b6e610878a51cfa2e4cfea34367f634574d6",
+    "base": "eba4305d8389a2112c99ac19fa804e9abea394ba",
+    "scope": "Test-only pending migration setup; eight measured real idle batches, counters, canaries and limits unchanged. No production source change.",
+    "diagnostic_cold_then_warm_admissions": [
+      3,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2,
+      2
+    ],
+    "green_census": {
+      "typing (whole burst)": {
+        "config_admissions": 0,
+        "storage_admissions": 0,
+        "helper_spawns": 0,
+        "os_opens": 651
+      },
+      "typing pause": {
+        "config_admissions": 1,
+        "storage_admissions": 7,
+        "helper_spawns": 1,
+        "os_opens": 859
+      },
+      "credential poll (per tick)": {
+        "config_admissions": 0.0,
+        "storage_admissions": 0.0,
+        "helper_spawns": 0.0,
+        "os_opens": 77.5
+      },
+      "trace maintenance (per tick)": {
+        "config_admissions": 0.0,
+        "storage_admissions": 1.75,
+        "helper_spawns": 0.75,
+        "os_opens": 100.375
+      },
+      "visit": {
+        "config_admissions": 8,
+        "storage_admissions": 63,
+        "helper_spawns": 9,
+        "os_opens": 3250
+      }
+    },
+    "plain_guard": {
+      "passed": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "trace_completion_parking_wake_contracts": {
+      "passed": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "source_sha256": {
+      "Tests/Performance/test_console_keystroke_work_census.py": "9cf754f3ef9ec077a6539fb1f6813f52dbf1f82daf05c9b87addd65e00e07bfd",
+      "tldw_chatbook/Chat/console_trace_maintenance.py": "c16de179f7ac74041fb91fbe3a6c6d0ca887135462b3a819b4af36cd71a2e4dc"
+    },
+    "production_qualification": "30 prior plain targeted cases and native approval17/Close19 remain source-current on dev eba4305d83; final published-head CI and Qodo remain required."
   }
 }

@@ -17805,3 +17805,15 @@ close worker's claim to end reproduced the defect. The shared existing refusal
 allowlist now governs both safe wording and terminal exit; transient cleanup
 failures retain their separate fresh-consent retry check. Assert the user can
 reach the work a refusal asks them to resolve, as well as the refusal's wording.
+
+
+## A captured maintenance scheduler leaves cold work for the idle census
+
+**TASK-33260 / PR #2953, 2026-10-02.** After dev added the read-only trace
+completion pre-check, the settled-idle guard failed at17 storage admissions
+over eight ticks (ceiling2 per tick). A real call-through diagnostic found
+3 admissions for the first pending migration completion and2 for each later
+check. The test had captured the scheduler, so its startup migration never
+ran. Assert that real one-time completion in uncounted setup before measuring
+settled idle; retain every measured tick, admission seam, canary and ceiling.
+The cold cost still exists. A passing idle guard does not claim it was removed.

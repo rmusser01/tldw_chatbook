@@ -403,3 +403,20 @@ approval16 is unchanged. The storage-admission base adds47 passed checks and
 one intentional unbound-profile skip. Exact receipts, pins and limits are in
 `actionable_refusal_review_followup` in the combined JSON. Subsequent dev
 rebases require fresh published-commit CI/review before PR2953 merges.
+
+
+### Final CI settled-idle census correction
+
+On dev eba4305d83, the captured trace scheduler left its fresh migration pending.
+The exact plain guard failed; a call-through diagnostic counted3 admissions for
+its first completion and2 for each of seven later checks (17/8, over ceiling2).
+The test now asserts one real completion in uncounted setup before all eight
+measured idle batches. Production, real seams, canaries and limits are unchanged.
+The plain guard and four cold-completion/read-only/parking/wake contracts pass,
+with no failures, setup errors or skips. The guard measured1.75 admissions and
+0.75 helpers per tick; owned connection reuse can lower those counts. Existing
+22-file Ruff baseline has zero new diagnostics; the census file retains its
+pre-existing import/format diagnostics. Independent setup review is clear.
+Current production remains qualified by30 plain cases and native approval17/
+Close19 on this base. All four published-head CI gates and fresh resolved Qodo
+remain required before normal merge. See settled_idle_census_followup in JSON.

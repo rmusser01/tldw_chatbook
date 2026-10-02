@@ -1,20 +1,23 @@
 ---
 id: TASK-33260
-title: 'PERF-01: Perf guards that count admissions, helper spawns and pre-import payload'
+title: >-
+  PERF-01: Perf guards that count admissions, helper spawns and pre-import
+  payload
 status: Done
-created_date: 2026-09-28 18:01
-labels:
-- performance
-- ci
-- testing
-- perf-audit-2026-09
-priority: high
-references:
-- qa/perf-structural-audit-2026-09-27/report.md
-- qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
 assignee:
-- '@claude'
-updated_date: 2026-09-28 19:37
+  - '@codex'
+created_date: '2026-09-28 18:01'
+updated_date: '2026-10-02 16:02'
+labels:
+  - performance
+  - ci
+  - testing
+  - perf-audit-2026-09
+dependencies: []
+references:
+  - qa/perf-structural-audit-2026-09-27/report.md
+  - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
+priority: high
 ---
 
 ## Description
@@ -43,11 +46,13 @@ AC adjustment (controller directive, 2026-09-28): a guard that fails on today's 
 4. AC#4: make the ~14 startup/footer/TTS guards that hit RecoveryRequired('raw_source_selection_changed') under the per-test env redirect run for real (bootstrap_profile marker / private_profile_test, the conftest's established opt-ins). Stop and report if it needs a production change.
 5. AC#5: fix test_snapshots_are_real_not_hollow (6 -> 5 CSS sources).
 6. Verify: full Tests/Performance vs a pristine 9cd9aad65f worktree baseline; preflight.sh.
+
+PR2953 CI follow-up (2026-10-02): ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-125/126 real admission seams. Reason: test-only correction of the existing settled-idle census, with no runtime, authority or ceiling change. Reproduce the cold pending migration counting17 admissions over8 ticks; run and assert its real one-time completion outside the measured phase; retain8 warm ticks, every real counter and anti-vacuity canary; run the exact plain guard and relevant trace completion/parking checks, lint and artifact preflight, then require all final-head PR gates and resolved Qodo before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
-<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
+<!-- SECTION:NOTES:BEGIN -->
 Test/CI-only change; no production code touched.
 
 AC#1 (ratchet, per the controller's AC adjustment): Tests/Performance/test_console_keystroke_work_census.py gains _count_storage_units (wraps config_participants.operation [outermost per thread], storage_admission._acquire_storage [the one global every acquire_storage binding reaches], HelperLease.start, and os.open via a sys.addaudithook 'open' event with mode=None -- NOT by replacing os.open: raw_participants requires os.open in os.supports_dir_fd, and a wrapper turns every config read into RecoveryRequired('raw_source_selection_changed')). New test test_console_storage_units_stay_within_their_ratchets censuses five phases: typing burst (24 keys), typing pause (the 0.2 s trailing draft-spend refresh, fired once), credential-poll tick and legacy trace-maintenance tick (each driven directly, per tick), and a warm Console visit (Library -> Console on the reusable route) plus a get_user_data_dir canary (anti-vacuity). Wall-clock loops are held still only in this mode (credential poll stopped, trace maintenance captured not scheduled, draft-spend refresh delayed, scheduler poll stretched to 1 h via the scratch config); the four existing census tests run exactly as before. Pinned ceilings (maxima over 19 runs on macOS): typing 27 config / 54 storage / 0 helpers / 19,224 opens; pause 22/53/3/18,359; poll per tick 1/2/0/790.6; trace per tick 0/2/1/715.4; visit 37/107/9/35,351. Config admissions reproduce exactly; storage/helpers jitter downward (executor-thread connection reuse), os_opens upward in ~37-open steps (source not isolated) so os_opens gets OS_OPENS_JITTER_SLACK=1.05. Paydown owners named in the pin: TASK-33265 (PERF-06), TASK-33267 (PERF-08), TASK-33268 (PERF-09), TASK-33269 (PERF-10).
@@ -63,7 +68,10 @@ AC#5: test_snapshots_are_real_not_hollow expects the 5 current boot CSS sources.
 Also: lessons-testing-evidence.md entry (os.open wrapper trap; hold wall-clock loops before trusting a count).
 
 Files: .github/workflows/perf-guard.yml, Tests/Performance/{test_console_keystroke_work_census,run_console_mount_profile,test_console_mount_profile,test_screen_preimport_payload_budget,test_app_startup_performance,test_footer_token_timer_retired,test_console_three_turn_profile,test_boot_budget_ratchet_messages}.py, Tests/Performance/boot_budget_snapshots/preimport_payload.json, backlog/decisions/097-boot-budget-ratchets.md, backlog/docs/lessons-testing-evidence.md.
-<!-- SECTION:IMPLEMENTATION_NOTES:END -->
+
+PR2953 CI follow-up (2026-10-02): settled-idle setup now completes and asserts the real fresh trace migration before its eight measured batches. Diagnostic RED counted3+7*2 admissions (17/8); plain GREEN and four actual cold-completion/read-only/parking/wake contracts pass without errors/skips. Runtime, real seams, anti-vacuity canaries and ceilings unchanged. Ruff adds zero diagnostics against dev in22 modified Python files; census retains inherited import/format diagnostics. Read-only independent review clear; incident added to lessons-testing-evidence.md. Existing ADR-097/125/126 apply; no new ADR. QA: settled_idle_census_followup in Docs/superpowers/qa/2026-10-01-console-tool-ux-config-integration.json. PR2953 still requires fresh final-head CI/Qodo before normal merge.
+<!-- SECTION:NOTES:END -->
+
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
