@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Editing Captain Isolde Varga                                                                                                                                 │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││ Character Editor                                                           ││  Inspector                       >  │ │
+│ │                 New                 ││  Personality  Generate                                                     ││ Selected: Captain Isolde Varga      │ │
+│ │           New Actor Pack            ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎   ││ Type: character                     │ │
+│ │               Import                ││  ▊ Dry, precise, loyal, quietly haunted.                               ▎   ││ Validation: editing...              │ │
+│ │          Import Actor Pack          ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││ Conversations (2)                   │ │
+│ │              Duplicate              ││  System prompt  Generate                                                   ││   Search this character's chats     │ │
+│ │             Sort: Name              ││  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▄ ││  Shore leave on Kepler-9            │ │
+│ │              Tag: All               ││  ▊ You are Captain Isolde Varga. Stay in character; be terse and       ▎   ││  Debris field salvage               │ │
+│ │  Ada (Debugging Partner)            ││  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎   ││  All conversations shown.           │ │
+│ │  A patient senior engineer who h…   ││                                                                            ││                                     │ │
+│ │  ARIA-7                             ││  Voice & Speech                                                            ││ Readiness                           │ │
+│ │  A ship AI that has quietly beco…   ││  Use global default                                                   ▼    ││ Ready to chat in Console.           │ │
+│ │  Brother Anselm                     ││  Using the global speech default.                                          ││              Chat now               │ │
+│ │  A monastery brewer with strong … ▁ ││    Create                                                                  ││        Send to Console draft        │ │
+│ │  Captain Isolde Varga               ││   Advanced ▸                                                               ││             Export JSON             │ │
+│ │  Captain Isolde Varga commands t…   ││  Avatar: none    Upload    ✨ Generate    Remove                         ▅ ││             Export PNG              │ │
+│ │  Chef Auguste                       ││                                                                            ││          Export Actor Pack          │ │
+│ │  A temperamental Parisian chef w…   ││                                                                            ││               Delete                │ │
+│ │  Coach Pemberton                    ││                                                                            ││            Manage Buddy             │ │
+│ │  A relentlessly upbeat running c…   ││                                                                            ││             Show Buddy              │ │
+│ │  Default Assistant                  ││                                                                            ││             Close Buddy             │ │
+│ │  The built-in Default Assistant …   ││                                                                            ││            Disable Buddy            │ │
+│ │  Detective Rosa Calderón            ││                                                                            ││                                     │ │
+│ │  A sharp, sardonic homicide dete…   ││                                                                            ││                                     │ │
+│ │  Dungeon Master Vex                 ││    Save     Cancel                                                         ││                                     │ │
+│ │  A theatrical game master who ru…   ││                             ▸ Dictionaries (0)                             ││                                     │ │
+│ │                                     ││                             ▸ World Books (1)                              ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+s save | esc back | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | F1 · Ctrl+P · Ctrl+Q

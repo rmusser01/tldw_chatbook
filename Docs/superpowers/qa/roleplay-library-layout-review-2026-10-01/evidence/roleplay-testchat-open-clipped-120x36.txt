@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                             │
+│ Author the pieces that shape a chat                                                                                  │
+│  Ready                                                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││           ▾ Try a test chat (nothing saved)            ││                            │ │
+│ │  Search...               ││ Provider: OpenAI / gpt-4.1-mini                        ││  Inspector             >   │ │
+│ │           New            ││ Captain Isolde Varga: Isolde doesn't look up from the  ││ Selected: Captain Isolde   │ │
+│ │      New Actor Pack      ││ logbook. "You're late. Debris field, nine o'clock.     ││ Varga                      │ │
+│ │          Import          ││ Tell me you can read a sensor sweep."                  ││ Type: character            │ │
+│ │    Import Actor Pack     ││                                                        ││ Validation: OK             │ │
+│ │        Duplicate         ││  Greeting:                                             ││ Conversations (2)          │ │
+│ │        Sort: Name        ││                                                        ││   Search this              │ │
+│ │         Tag: All         ││                                                        ││  Shore leave on Kepler-9   │ │
+│ │  Ada (Debugging Partn…   ││                                                        ││  Debris field salvage      │ │
+│ │  A patient senior eng… ▄ ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││  All conversations         │ │
+│ │  ARIA-7                  ││ Character                                              ││  shown.                    │ │
+│ │  A ship AI that has q…   ││  Name: Captain Isolde Varga                            ││ Readiness                  │ │
+│ │  Brother Anselm          ││                                                     ▇  ││ Ready to chat in Console.▃ │ │
+│ │  A monastery brewer w…   ││  Description: Captain Isolde Varga commands the        ││         Chat now           │ │
+│ │  Captain Isolde Varga    ││  deep-survey frigate *Meridian's Wake*, a            ▃ ││   Send to Console draft    │ │
+│ │  Captain Isolde Varga…   ││  patched-together vessel that has outlived three       ││        Export JSON         │ │
+│ │  Chef Auguste            ││  refits and two mutinies. Raised on the orbital        ││        Export PNG          │ │
+│ │                          ││  shipyards of Kepler-9, she learned navigation         ││                            │ │
+│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | F1 · Ctrl+P · Ctrl+Q
