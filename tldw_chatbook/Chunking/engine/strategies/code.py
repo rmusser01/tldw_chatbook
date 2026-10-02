@@ -32,20 +32,42 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
     # Regex patterns for various languages
     PY_HEADER_RE = re.compile(r"^\s*(def|class)\s+([A-Za-z_][\w]*)[\(:]", re.UNICODE)
     # JS/TS
-    JSTYPE_FUNC_RE = re.compile(r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(")
+    JSTYPE_FUNC_RE = re.compile(
+        r"^\s*(?:export\s+)?(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\("
+    )
     JSTYPE_CLASS_RE = re.compile(r"^\s*(?:export\s+)?class\s+([A-Za-z_][\w]*)\b")
-    JSTYPE_EXPORT_DEFAULT_CLASS_RE = re.compile(r"^\s*export\s+default\s+class\s+([A-Za-z_][\w]*)\b")
-    JSTYPE_CONST_ARROW_RE = re.compile(r"^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*\([^;{}]*\)\s*=>\s*\{\s*$")
-    JSTYPE_CONST_FUNC_RE = re.compile(r"^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*function\s*\(")
-    JSTYPE_EXPORT_DEFAULT_FUNC_NAMED_RE = re.compile(r"^\s*export\s+default\s+(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\(")
-    JSTYPE_EXPORT_DEFAULT_FUNC_ANON_RE = re.compile(r"^\s*export\s+default\s+(?:async\s+)?function\s*\(")
-    JSTYPE_EXPORT_DEFAULT_ARROW_RE = re.compile(r"^\s*export\s+default\s*\([^;{}]*\)\s*=>\s*\{\s*$")
-    TSTYPE_INTERFACE_RE = re.compile(r"^\s*(?:export\s+)?interface\s+([A-Za-z_][\w]*)\b")
+    JSTYPE_EXPORT_DEFAULT_CLASS_RE = re.compile(
+        r"^\s*export\s+default\s+class\s+([A-Za-z_][\w]*)\b"
+    )
+    JSTYPE_CONST_ARROW_RE = re.compile(
+        r"^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*\([^;{}]*\)\s*=>\s*\{\s*$"
+    )
+    JSTYPE_CONST_FUNC_RE = re.compile(
+        r"^\s*(?:export\s+)?const\s+([A-Za-z_]\w*)\s*=\s*function\s*\("
+    )
+    JSTYPE_EXPORT_DEFAULT_FUNC_NAMED_RE = re.compile(
+        r"^\s*export\s+default\s+(?:async\s+)?function\s+([A-Za-z_]\w*)\s*\("
+    )
+    JSTYPE_EXPORT_DEFAULT_FUNC_ANON_RE = re.compile(
+        r"^\s*export\s+default\s+(?:async\s+)?function\s*\("
+    )
+    JSTYPE_EXPORT_DEFAULT_ARROW_RE = re.compile(
+        r"^\s*export\s+default\s*\([^;{}]*\)\s*=>\s*\{\s*$"
+    )
+    TSTYPE_INTERFACE_RE = re.compile(
+        r"^\s*(?:export\s+)?interface\s+([A-Za-z_][\w]*)\b"
+    )
     TSTYPE_TYPE_RE = re.compile(r"^\s*(?:export\s+)?type\s+([A-Za-z_][\w]*)\s*=")
-    JSTYPE_METHOD_RE = re.compile(r"^\s*(?:public|private|protected|static|async)?\s*([A-Za-z_][\w]*)\s*\([^;{}]*\)\s*\{\s*$")
+    JSTYPE_METHOD_RE = re.compile(
+        r"^\s*(?:public|private|protected|static|async)?\s*([A-Za-z_][\w]*)\s*\([^;{}]*\)\s*\{\s*$"
+    )
     # C/C++/Java/C# (very heuristic)
-    C_LIKE_FUNC_RE = re.compile(r"^\s*(?:template\s*<[^>]+>\s*)?(?:[\w:\*\&\[\]<>]+\s+)+([A-Za-z_][\w]*)\s*\([^;{]*\)\s*(?:const\s*)?\{\s*$")
-    C_LIKE_CLASS_RE = re.compile(r"^\s*(?:public|private|protected|abstract|final|sealed|partial|static)?\s*class\s+([A-Za-z_][\w]*)\b")
+    C_LIKE_FUNC_RE = re.compile(
+        r"^\s*(?:template\s*<[^>]+>\s*)?(?:[\w:\*\&\[\]<>]+\s+)+([A-Za-z_][\w]*)\s*\([^;{]*\)\s*(?:const\s*)?\{\s*$"
+    )
+    C_LIKE_CLASS_RE = re.compile(
+        r"^\s*(?:public|private|protected|abstract|final|sealed|partial|static)?\s*class\s+([A-Za-z_][\w]*)\b"
+    )
     GO_FUNC_RE = re.compile(r"^\s*func\s+(?:\([^)]*\)\s+)?([A-Za-z_]\w*)\s*\(")
     RUST_FUNC_RE = re.compile(r"^\s*fn\s+([A-Za-z_]\w*)\s*\(")
     RUST_TYPE_RE = re.compile(r"^\s*(struct|enum|trait|impl)\s+([A-Za-z_][\w]*)\b")
@@ -58,7 +80,18 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
 
     def _is_brace_lang(self, language: str) -> bool:
         return language.lower() in {
-            'c', 'cpp', 'csharp', 'java', 'go', 'rust', 'swift', 'kotlin', 'javascript', 'typescript', 'tsx', 'jsx',
+            "c",
+            "cpp",
+            "csharp",
+            "java",
+            "go",
+            "rust",
+            "swift",
+            "kotlin",
+            "javascript",
+            "typescript",
+            "tsx",
+            "jsx",
         }
 
     def _find_headers(self, lines: list[str], language: str) -> list[_Header]:
@@ -66,77 +99,77 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
         lang = language.lower()
         for idx, line in enumerate(lines):
             m = None
-            if lang == 'python':
+            if lang == "python":
                 m = self.PY_HEADER_RE.match(line)
                 if m:
                     headers.append(_Header(m.group(1), m.group(2), idx))
                     continue
-            if lang in ('javascript', 'typescript', 'tsx', 'jsx'):
+            if lang in ("javascript", "typescript", "tsx", "jsx"):
                 m = self.JSTYPE_EXPORT_DEFAULT_CLASS_RE.match(line)
                 if m:
-                    headers.append(_Header('class', m.group(1), idx))
+                    headers.append(_Header("class", m.group(1), idx))
                     continue
                 m = self.JSTYPE_CLASS_RE.match(line)
                 if m:
-                    headers.append(_Header('class', m.group(1), idx))
+                    headers.append(_Header("class", m.group(1), idx))
                     continue
                 m = self.JSTYPE_FUNC_RE.match(line)
                 if m:
-                    headers.append(_Header('function', m.group(1), idx))
+                    headers.append(_Header("function", m.group(1), idx))
                     continue
                 m = self.JSTYPE_EXPORT_DEFAULT_FUNC_NAMED_RE.match(line)
                 if m:
-                    headers.append(_Header('function', m.group(1), idx))
+                    headers.append(_Header("function", m.group(1), idx))
                     continue
                 m = self.JSTYPE_EXPORT_DEFAULT_FUNC_ANON_RE.match(line)
                 if m:
-                    headers.append(_Header('function', 'default', idx))
+                    headers.append(_Header("function", "default", idx))
                     continue
                 m = self.JSTYPE_EXPORT_DEFAULT_ARROW_RE.match(line)
                 if m:
-                    headers.append(_Header('function', 'default', idx))
+                    headers.append(_Header("function", "default", idx))
                     continue
                 m = self.JSTYPE_CONST_ARROW_RE.match(line)
                 if m:
-                    headers.append(_Header('function', m.group(1), idx))
+                    headers.append(_Header("function", m.group(1), idx))
                     continue
                 m = self.JSTYPE_CONST_FUNC_RE.match(line)
                 if m:
-                    headers.append(_Header('function', m.group(1), idx))
+                    headers.append(_Header("function", m.group(1), idx))
                     continue
                 m = self.TSTYPE_INTERFACE_RE.match(line)
                 if m:
-                    headers.append(_Header('interface', m.group(1), idx))
+                    headers.append(_Header("interface", m.group(1), idx))
                     continue
                 m = self.TSTYPE_TYPE_RE.match(line)
                 if m:
-                    headers.append(_Header('type', m.group(1), idx))
+                    headers.append(_Header("type", m.group(1), idx))
                     continue
                 # methods will be handled inside class blocks via braces
-            if lang in ('c', 'cpp', 'csharp', 'java'):
+            if lang in ("c", "cpp", "csharp", "java"):
                 m = self.C_LIKE_CLASS_RE.match(line)
                 if m:
-                    headers.append(_Header('class', m.group(1), idx))
+                    headers.append(_Header("class", m.group(1), idx))
                     continue
                 m = self.C_LIKE_FUNC_RE.match(line)
                 if m:
-                    headers.append(_Header('function', m.group(1), idx))
+                    headers.append(_Header("function", m.group(1), idx))
                     continue
-            if lang == 'go':
+            if lang == "go":
                 m = self.GO_FUNC_RE.match(line)
                 if m:
-                    headers.append(_Header('func', m.group(1), idx))
+                    headers.append(_Header("func", m.group(1), idx))
                     continue
-            if lang == 'rust':
+            if lang == "rust":
                 m = self.RUST_TYPE_RE.match(line)
                 if m:
                     headers.append(_Header(m.group(1), m.group(2), idx))
                     continue
                 m = self.RUST_FUNC_RE.match(line)
                 if m:
-                    headers.append(_Header('fn', m.group(1), idx))
+                    headers.append(_Header("fn", m.group(1), idx))
                     continue
-            if lang == 'ruby':
+            if lang == "ruby":
                 m = self.RUBY_HEADER_RE.match(line)
                 if m:
                     headers.append(_Header(m.group(1), m.group(2), idx))
@@ -144,13 +177,13 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
             # Shell-like
             m = self.SHELL_FUNC_RE.match(line)
             if m:
-                headers.append(_Header('function', m.group(1), idx))
+                headers.append(_Header("function", m.group(1), idx))
                 continue
         headers.sort(key=lambda h: h.line_index)
         return headers
 
     def _indent(self, s: str) -> int:
-        return len(s) - len(s.lstrip(' '))
+        return len(s) - len(s.lstrip(" "))
 
     def _block_end_indent(self, lines: list[str], start_idx: int) -> int:
         return self._indent(lines[start_idx])
@@ -164,7 +197,9 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
             if not line.strip():
                 i += 1
                 continue
-            if self._indent(line) <= base_indent and (self.PY_HEADER_RE.match(line) or self.RUBY_HEADER_RE.match(line)):
+            if self._indent(line) <= base_indent and (
+                self.PY_HEADER_RE.match(line) or self.RUBY_HEADER_RE.match(line)
+            ):
                 return i
             i += 1
         return len(lines)
@@ -177,8 +212,8 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
         found = False
         while i < len(lines):
             line = lines[i]
-            if '{' in line:
-                brace_count = line.count('{') - line.count('}')
+            if "{" in line:
+                brace_count = line.count("{") - line.count("}")
                 found = True
                 if brace_count <= 0:
                     return i + 1
@@ -194,7 +229,7 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
             return j
         # Now find when brace_count returns to zero from this point
         while i < len(lines):
-            brace_count += lines[i].count('{') - lines[i].count('}')
+            brace_count += lines[i].count("{") - lines[i].count("}")
             if brace_count <= 0:
                 return i + 1
             i += 1
@@ -208,7 +243,7 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
         seen_non_import = False
         while i < len(lines):
             s = lines[i]
-            if not s.strip() or s.strip().startswith(('#', '//', '/*')):
+            if not s.strip() or s.strip().startswith(("#", "//", "/*")):
                 # Keep leading comments as part of header block until imports end
                 if not seen_non_import:
                     end = i + 1
@@ -223,12 +258,18 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
             break
         return (start, end)
 
-    def _pack_blocks(self, blocks: list[tuple[int, int]], lines: list[str], max_chars: int, overlap_chars: int) -> list[str]:
+    def _pack_blocks(
+        self,
+        blocks: list[tuple[int, int]],
+        lines: list[str],
+        max_chars: int,
+        overlap_chars: int,
+    ) -> list[str]:
         # Greedy pack blocks into chunks respecting max_chars; use simple character overlap
         chunks: list[str] = []
-        buf = ''
-        for (s, e) in blocks:
-            text = '\n'.join(lines[s:e]).rstrip()
+        buf = ""
+        for s, e in blocks:
+            text = "\n".join(lines[s:e]).rstrip()
             if not text:
                 continue
             if not buf:
@@ -245,8 +286,8 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                     while t:
                         part = t[:max_chars]
                         chunks.append(part)
-                        t = '' if len(t) <= max_chars else t[max_chars:]
-                    buf = ''
+                        t = "" if len(t) <= max_chars else t[max_chars:]
+                    buf = ""
                 else:
                     buf = text
         if buf:
@@ -254,13 +295,13 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
         # Add overlap between consecutive chunks if requested
         if overlap_chars > 0 and len(chunks) > 1:
             overlapped: list[str] = []
-            prev = ''
+            prev = ""
             for i, ch in enumerate(chunks):
                 if i == 0:
                     overlapped.append(ch)
                     prev = ch
                     continue
-                tail = prev[-overlap_chars:] if prev else ''
+                tail = prev[-overlap_chars:] if prev else ""
                 if tail:
                     overlapped.append(f"{tail}{ch}")
                 else:
@@ -272,7 +313,7 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
     def chunk(self, text: str, max_size: int, overlap: int = 0, **options) -> list[str]:
         if not self.validate_parameters(text, max_size, overlap):
             return []
-        language = str(options.get('language') or self.language or 'text')
+        language = str(options.get("language") or self.language or "text")
         lines = text.splitlines()
         if not lines:
             return []
@@ -303,17 +344,23 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                 # Fallback: treat the whole file as one block
                 blocks.append((0, len(lines)))
 
-            chunks = self._pack_blocks(blocks, lines, max_chars=max_size, overlap_chars=overlap)
-            logger.info(f"CodeChunkingStrategy produced {len(chunks)} chunks (language={language})")
+            chunks = self._pack_blocks(
+                blocks, lines, max_chars=max_size, overlap_chars=overlap
+            )
+            logger.info(
+                f"CodeChunkingStrategy produced {len(chunks)} chunks (language={language})"
+            )
             return chunks
         except Exception as e:
             logger.warning(f"Code chunking failed, falling back to whole text: {e}")
             return [text]
 
-    def chunk_with_metadata(self, text: str, max_size: int, overlap: int = 0, **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         if not self.validate_parameters(text, max_size, overlap):
             return []
-        language = str(options.get('language') or self.language or 'text')
+        language = str(options.get("language") or self.language or "text")
         # Preserve line endings for accurate char offsets
         lines_ke = text.splitlines(keepends=True)
         if not lines_ke:
@@ -330,20 +377,24 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
         def span_chars(s_line: int, e_line: int) -> tuple:
             # Clamp indices safely
             s_char = 0 if not 0 <= s_line < len(line_starts) else line_starts[s_line]
-            e_char = line_starts[e_line] if 0 <= e_line < len(line_starts) else total_chars
+            e_char = (
+                line_starts[e_line] if 0 <= e_line < len(line_starts) else total_chars
+            )
             if e_char < s_char:
                 e_char = s_char
             return s_char, e_char
 
         # Derive structured blocks (imports and headers)
         # Use non-keepends lines for regex detection
-        lines = [ln.rstrip('\n').rstrip('\r') for ln in lines_ke]
-        blocks: list[tuple[int, int, str, str | None]] = []  # (s_line, e_line_excl, block_type, name)
+        lines = [ln.rstrip("\n").rstrip("\r") for ln in lines_ke]
+        blocks: list[
+            tuple[int, int, str, str | None]
+        ] = []  # (s_line, e_line_excl, block_type, name)
         headers = self._find_headers(lines, language)
         if headers:
             imp_s, imp_e = self._extract_import_block(lines)
             if imp_e > imp_s:
-                blocks.append((imp_s, imp_e, 'imports', None))
+                blocks.append((imp_s, imp_e, "imports", None))
             for h in headers:
                 s = h.line_index
                 if self._is_brace_lang(language):
@@ -356,13 +407,21 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                     continue
                 # Normalize header kinds
                 kind_map = {
-                    'def': 'function', 'func': 'function', 'function': 'function', 'fn': 'function',
-                    'class': 'class', 'struct': 'struct', 'enum': 'enum', 'trait': 'trait', 'impl': 'impl', 'module': 'module',
+                    "def": "function",
+                    "func": "function",
+                    "function": "function",
+                    "fn": "function",
+                    "class": "class",
+                    "struct": "struct",
+                    "enum": "enum",
+                    "trait": "trait",
+                    "impl": "impl",
+                    "module": "module",
                 }
                 btype = kind_map.get(h.kind, h.kind)
                 blocks.append((s, e, btype, h.name))
         if not blocks:
-            blocks.append((0, len(lines), 'module', None))
+            blocks.append((0, len(lines), "module", None))
 
         # Greedy pack blocks into chunks
         results: list[ChunkResult] = []
@@ -401,28 +460,28 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                 end_char=end_char,
                 word_count=len(ch_text.split()),
                 language=language,
-                method='code',
+                method="code",
                 options={
-                    'start_line': start_line_idx + 1,
-                    'end_line': end_line_idx + 1,
-                    'lines_in_chunk': (end_line_idx - start_line_idx + 1),
-                    'blocks': [
+                    "start_line": start_line_idx + 1,
+                    "end_line": end_line_idx + 1,
+                    "lines_in_chunk": (end_line_idx - start_line_idx + 1),
+                    "blocks": [
                         {
-                            'type': btype,
-                            'name': name,
-                            'start_line': s + 1,
-                            'end_line': e,
+                            "type": btype,
+                            "name": name,
+                            "start_line": s + 1,
+                            "end_line": e,
                         }
                         for (s, e, btype, name) in buf_blocks
                     ],
-                }
+                },
             )
             results.append(ChunkResult(text=ch_text, metadata=md))
             buf_start_char = None
             buf_end_char = None
             buf_blocks = []
 
-        for (s_line, e_line, btype, name) in blocks:
+        for s_line, e_line, btype, name in blocks:
             s_char, e_char = span_chars(s_line, e_line)
             blen = e_char - s_char
             if buf_start_char is None:
@@ -437,28 +496,51 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                         end = min(e_char, start + max_size)
                         # Calculate line indices
                         try:
-                            end_expanded = self._expand_end_to_grapheme_boundary(text, end)
+                            end_expanded = self._expand_end_to_grapheme_boundary(
+                                text, end
+                            )
                         except Exception:
                             end_expanded = end
                         ch_text = text[start:end_expanded]
-                        start_line_idx = max(0, max([i for i, ls in enumerate(line_starts) if ls <= start], default=0))
-                        end_line_idx = max(start_line_idx, max([i for i, ls in enumerate(line_starts) if ls < end_expanded], default=start_line_idx))
+                        start_line_idx = max(
+                            0,
+                            max(
+                                [i for i, ls in enumerate(line_starts) if ls <= start],
+                                default=0,
+                            ),
+                        )
+                        end_line_idx = max(
+                            start_line_idx,
+                            max(
+                                [
+                                    i
+                                    for i, ls in enumerate(line_starts)
+                                    if ls < end_expanded
+                                ],
+                                default=start_line_idx,
+                            ),
+                        )
                         md = ChunkMetadata(
                             index=len(results),
                             start_char=start,
                             end_char=end_expanded,
                             word_count=len(ch_text.split()),
                             language=language,
-                            method='code',
+                            method="code",
                             options={
-                                'start_line': start_line_idx + 1,
-                                'end_line': end_line_idx + 1,
-                                'lines_in_chunk': (end_line_idx - start_line_idx + 1),
-                                'blocks': [
-                                    {'type': btype, 'name': name, 'start_line': s_line + 1, 'end_line': e_line}
+                                "start_line": start_line_idx + 1,
+                                "end_line": end_line_idx + 1,
+                                "lines_in_chunk": (end_line_idx - start_line_idx + 1),
+                                "blocks": [
+                                    {
+                                        "type": btype,
+                                        "name": name,
+                                        "start_line": s_line + 1,
+                                        "end_line": e_line,
+                                    }
                                 ],
-                                'partial_block': True,
-                            }
+                                "partial_block": True,
+                            },
                         )
                         results.append(ChunkResult(text=ch_text, metadata=md))
                         if end_expanded >= e_char:
@@ -471,7 +553,7 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                     buf_blocks = []
             else:
                 # Try to add current block into buffer
-                new_len = (e_char - buf_start_char)
+                new_len = e_char - buf_start_char
                 if new_len <= max_size:
                     buf_end_char = e_char
                     buf_blocks.append((s_line, e_line, btype, name))
@@ -488,28 +570,57 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                         while start < e_char:
                             end = min(e_char, start + max_size)
                             try:
-                                end_expanded = self._expand_end_to_grapheme_boundary(text, end)
+                                end_expanded = self._expand_end_to_grapheme_boundary(
+                                    text, end
+                                )
                             except Exception:
                                 end_expanded = end
                             ch_text = text[start:end_expanded]
-                            start_line_idx = max(0, max([i for i, ls in enumerate(line_starts) if ls <= start], default=0))
-                            end_line_idx = max(start_line_idx, max([i for i, ls in enumerate(line_starts) if ls < end_expanded], default=start_line_idx))
+                            start_line_idx = max(
+                                0,
+                                max(
+                                    [
+                                        i
+                                        for i, ls in enumerate(line_starts)
+                                        if ls <= start
+                                    ],
+                                    default=0,
+                                ),
+                            )
+                            end_line_idx = max(
+                                start_line_idx,
+                                max(
+                                    [
+                                        i
+                                        for i, ls in enumerate(line_starts)
+                                        if ls < end_expanded
+                                    ],
+                                    default=start_line_idx,
+                                ),
+                            )
                             md = ChunkMetadata(
                                 index=len(results),
                                 start_char=start,
                                 end_char=end_expanded,
                                 word_count=len(ch_text.split()),
                                 language=language,
-                                method='code',
+                                method="code",
                                 options={
-                                    'start_line': start_line_idx + 1,
-                                    'end_line': end_line_idx + 1,
-                                    'lines_in_chunk': (end_line_idx - start_line_idx + 1),
-                                    'blocks': [
-                                        {'type': btype, 'name': name, 'start_line': s_line + 1, 'end_line': e_line}
+                                    "start_line": start_line_idx + 1,
+                                    "end_line": end_line_idx + 1,
+                                    "lines_in_chunk": (
+                                        end_line_idx - start_line_idx + 1
+                                    ),
+                                    "blocks": [
+                                        {
+                                            "type": btype,
+                                            "name": name,
+                                            "start_line": s_line + 1,
+                                            "end_line": e_line,
+                                        }
                                     ],
-                                    'partial_block': True,
-                                }
+                                    "partial_block": True,
+                                },
                             )
                             results.append(ChunkResult(text=ch_text, metadata=md))
                             if end_expanded >= e_char:
@@ -525,6 +636,7 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
 
         # Apply prefix-tail overlap so chunks can grow beyond max_size while preserving metadata offsets.
         if overlap > 0 and results:
+
             def _line_index_for_char(pos: int) -> int:
                 if pos <= 0:
                     return 0
@@ -557,11 +669,17 @@ class CodeChunkingStrategy(BaseChunkingStrategy):
                     cur.metadata.word_count = len(cur.text.split()) if cur.text else 0
                     if isinstance(cur.metadata.options, dict):
                         start_line_idx = _line_index_for_char(new_start)
-                        end_line_idx = _line_index_for_char(cur_end - 1 if cur_end > 0 else 0)
-                        cur.metadata.options['start_line'] = start_line_idx + 1
-                        cur.metadata.options['end_line'] = end_line_idx + 1
-                        cur.metadata.options['lines_in_chunk'] = (end_line_idx - start_line_idx + 1)
+                        end_line_idx = _line_index_for_char(
+                            cur_end - 1 if cur_end > 0 else 0
+                        )
+                        cur.metadata.options["start_line"] = start_line_idx + 1
+                        cur.metadata.options["end_line"] = end_line_idx + 1
+                        cur.metadata.options["lines_in_chunk"] = (
+                            end_line_idx - start_line_idx + 1
+                        )
                 prev = cur
 
-        logger.info(f"CodeChunkingStrategy produced {len(results)} chunks with metadata (language={language})")
+        logger.info(
+            f"CodeChunkingStrategy produced {len(results)} chunks with metadata (language={language})"
+        )
         return results

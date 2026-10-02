@@ -44,10 +44,15 @@ def test_words_overlap_property(total_words, max_size, overlap):
     text = words_to_text(words)
 
     cfg = ChunkerConfig(
-        default_method=ChunkingMethod.WORDS, default_max_size=max_size, default_overlap=overlap, language="en"
+        default_method=ChunkingMethod.WORDS,
+        default_max_size=max_size,
+        default_overlap=overlap,
+        language="en",
     )
     ck = Chunker(config=cfg)
-    chunks = ck.chunk_text(text, method=ChunkingMethod.WORDS.value, max_size=max_size, overlap=overlap)
+    chunks = ck.chunk_text(
+        text, method=ChunkingMethod.WORDS.value, max_size=max_size, overlap=overlap
+    )
 
     if len(chunks) <= 1 or overlap == 0:
         # Nothing to assert about overlap
@@ -81,7 +86,10 @@ def _make_chunks(
     )
     ck = Chunker(config=cfg)
     chunks = ck.chunk_text(
-        " ".join(words), method=ChunkingMethod.WORDS.value, max_size=max_size, overlap=overlap
+        " ".join(words),
+        method=ChunkingMethod.WORDS.value,
+        max_size=max_size,
+        overlap=overlap,
     )
     return words, chunks, overlap
 
@@ -92,7 +100,9 @@ def _make_chunks(
     max_size=st.integers(min_value=1, max_value=40),
     overlap=st.integers(min_value=0, max_value=10),
 )
-def test_words_reconstruction_property(total_words: int, max_size: int, overlap: int) -> None:
+def test_words_reconstruction_property(
+    total_words: int, max_size: int, overlap: int
+) -> None:
     """Streaming the chunk words in order and keeping each word's first
     occurrence must reconstruct the original sequence — no word is dropped or
     reordered. (A boundary chunk may legitimately repeat a word at very small

@@ -42,10 +42,27 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
 
     # Common clause markers and subordinators
     _SUBORDINATE_MARKERS = [
-        "because", "since", "although", "though", "unless", "until",
-        "while", "whereas", "where", "when", "if", "that", "which",
-        "who", "whom", "whose", "after", "before", "as", "so that",
-        "in order to"
+        "because",
+        "since",
+        "although",
+        "though",
+        "unless",
+        "until",
+        "while",
+        "whereas",
+        "where",
+        "when",
+        "if",
+        "that",
+        "which",
+        "who",
+        "whom",
+        "whose",
+        "after",
+        "before",
+        "as",
+        "so that",
+        "in order to",
     ]
 
     # Coordinating conjunctions used for splitting at higher aggressiveness
@@ -53,12 +70,37 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
 
     # Very lightweight verb-like detection: auxiliaries + common morphological hints
     _AUXILIARIES = {
-        "be", "am", "is", "are", "was", "were", "been", "being",
-        "have", "has", "had", "do", "does", "did",
-        "can", "could", "should", "would", "will", "shall", "may", "might", "must"
+        "be",
+        "am",
+        "is",
+        "are",
+        "was",
+        "were",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "shall",
+        "may",
+        "might",
+        "must",
     }
 
-    def __init__(self, language: str = 'en', llm_call_func: Optional[Any] = None, llm_config: Optional[dict[str, Any]] = None):
+    def __init__(
+        self,
+        language: str = "en",
+        llm_call_func: Optional[Any] = None,
+        llm_config: Optional[dict[str, Any]] = None,
+    ):
         super().__init__(language)
         self.llm_call_func = llm_call_func
         self.llm_config = (llm_config or {}).copy()
@@ -68,26 +110,46 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
             return []
 
         # Engine selection: 'heuristic' | 'spacy' | 'llm' | 'auto'
-        engine = str(options.get("engine", options.get("proposition_engine", "heuristic"))).lower()
-        aggressiveness = int(options.get("aggressiveness", options.get("proposition_aggressiveness", 1)))
+        engine = str(
+            options.get("engine", options.get("proposition_engine", "heuristic"))
+        ).lower()
+        aggressiveness = int(
+            options.get("aggressiveness", options.get("proposition_aggressiveness", 1))
+        )
         min_prop_len = int(options.get("min_proposition_length", 15))
 
         # Select engine behavior
-        prompt_profile = str(options.get("proposition_prompt_profile", options.get("prompt_profile", "generic"))).lower()
+        prompt_profile = str(
+            options.get(
+                "proposition_prompt_profile", options.get("prompt_profile", "generic")
+            )
+        ).lower()
 
         if engine in ("auto", "spacy"):
-            propositions = self._propositions_via_spacy(text, aggressiveness, min_prop_len)
+            propositions = self._propositions_via_spacy(
+                text, aggressiveness, min_prop_len
+            )
             if not propositions and engine == "auto":
                 # Fallback to heuristic
-                propositions = self._propositions_via_heuristics(text, aggressiveness, min_prop_len)
+                propositions = self._propositions_via_heuristics(
+                    text, aggressiveness, min_prop_len
+                )
         elif engine == "llm":
-            propositions = self._propositions_via_llm(text, min_prop_len, prompt_profile)
+            propositions = self._propositions_via_llm(
+                text, min_prop_len, prompt_profile
+            )
             if not propositions:
-                logger.warning("LLM extraction unavailable/failed; falling back to heuristics")
-                propositions = self._propositions_via_heuristics(text, aggressiveness, min_prop_len)
+                logger.warning(
+                    "LLM extraction unavailable/failed; falling back to heuristics"
+                )
+                propositions = self._propositions_via_heuristics(
+                    text, aggressiveness, min_prop_len
+                )
         else:
             # heuristic default
-            propositions = self._propositions_via_heuristics(text, aggressiveness, min_prop_len)
+            propositions = self._propositions_via_heuristics(
+                text, aggressiveness, min_prop_len
+            )
 
         if not propositions:
             # Fallback: return original text as a single chunk
@@ -97,16 +159,20 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         step = max(1, max_size - overlap)
         chunks: list[str] = []
         for i in range(0, len(propositions), step):
-            window = propositions[i:i + max_size]
+            window = propositions[i : i + max_size]
             if not window:
                 continue
             chunk_text = self._join_props(window)
             chunks.append(chunk_text)
 
-        logger.debug(f"Created {len(chunks)} chunks from {len(propositions)} propositions")
+        logger.debug(
+            f"Created {len(chunks)} chunks from {len(propositions)} propositions"
+        )
         return chunks
 
-    def chunk_with_metadata(self, text: str, max_size: int, overlap: int = 0, **options) -> list[ChunkResult]:
+    def chunk_with_metadata(
+        self, text: str, max_size: int, overlap: int = 0, **options
+    ) -> list[ChunkResult]:
         """Chunk text and return metadata with reliable source offsets.
 
         For proposition chunking, offsets are derived from source spans using a
@@ -117,12 +183,18 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
             return []
 
         if overlap >= max_size:
-            logger.warning(f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1")
+            logger.warning(
+                f"Overlap ({overlap}) >= max_size ({max_size}), setting to max_size - 1"
+            )
             overlap = max_size - 1
 
         # Extract options (mirror chunk())
-        engine = str(options.get("engine", options.get("proposition_engine", "heuristic"))).lower()
-        aggressiveness = int(options.get("aggressiveness", options.get("proposition_aggressiveness", 1)))
+        engine = str(
+            options.get("engine", options.get("proposition_engine", "heuristic"))
+        ).lower()
+        aggressiveness = int(
+            options.get("aggressiveness", options.get("proposition_aggressiveness", 1))
+        )
         min_prop_len = int(options.get("min_proposition_length", 15))
 
         # Build proposition spans from source text (heuristic path for reliable offsets)
@@ -144,11 +216,11 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 language=self.language,
                 overlap_with_previous=0,
                 overlap_with_next=0,
-                method='propositions',
+                method="propositions",
                 options={
-                    'engine': engine,
-                    'aggressiveness': aggressiveness,
-                    'min_proposition_length': min_prop_len,
+                    "engine": engine,
+                    "aggressiveness": aggressiveness,
+                    "min_proposition_length": min_prop_len,
                 },
             )
             return [ChunkResult(text=text, metadata=md)]
@@ -158,7 +230,7 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         total_props = len(spans)
 
         for i in range(0, total_props, step):
-            window = spans[i:i + max_size]
+            window = spans[i : i + max_size]
             if not window:
                 continue
             start_char = min(s for s, _e in window)
@@ -166,7 +238,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
             if end_char < start_char:
                 end_char = start_char
             with contextlib.suppress(Exception):
-                end_char = self._expand_end_to_grapheme_boundary(text, end_char, options=options)
+                end_char = self._expand_end_to_grapheme_boundary(
+                    text, end_char, options=options
+                )
             chunk_text = text[start_char:end_char]
             md = ChunkMetadata(
                 index=len(results),
@@ -176,11 +250,11 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 language=self.language,
                 overlap_with_previous=overlap if i > 0 else 0,
                 overlap_with_next=overlap if (i + step) < total_props else 0,
-                method='propositions',
+                method="propositions",
                 options={
-                    'engine': engine,
-                    'aggressiveness': aggressiveness,
-                    'min_proposition_length': min_prop_len,
+                    "engine": engine,
+                    "aggressiveness": aggressiveness,
+                    "min_proposition_length": min_prop_len,
                 },
             )
             results.append(ChunkResult(text=chunk_text, metadata=md))
@@ -188,7 +262,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         return results
 
     # --- helpers ---
-    def _propositions_via_heuristics(self, text: str, aggressiveness: int, min_prop_len: int) -> list[str]:
+    def _propositions_via_heuristics(
+        self, text: str, aggressiveness: int, min_prop_len: int
+    ) -> list[str]:
         # Step 1: sentence segmentation (reuse sentence strategy heuristics)
         sentences = self._split_sentences_fast(text)
         if not sentences:
@@ -205,7 +281,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                     propositions.append(p_clean)
         return propositions
 
-    def _propositions_via_spacy(self, text: str, aggressiveness: int, min_prop_len: int) -> list[str]:
+    def _propositions_via_spacy(
+        self, text: str, aggressiveness: int, min_prop_len: int
+    ) -> list[str]:
         try:
             import spacy  # type: ignore
         except Exception:
@@ -222,7 +300,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 if not nlp.has_pipe("sentencizer"):
                     nlp.add_pipe("sentencizer")
         except Exception as e:
-            logger.warning("Failed to initialize spaCy pipeline; error_type={}", type(e).__name__)
+            logger.warning(
+                "Failed to initialize spaCy pipeline; error_type={}", type(e).__name__
+            )
             return []
 
         doc = nlp(text)
@@ -231,7 +311,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         for sent in getattr(doc, "sents", [doc]):
             # If no parser is available, fall back to heuristic splitting within the sentence
             if not nlp.has_pipe("parser") and not any(t.dep_ for t in sent):
-                props = self._split_sentence_into_propositions(sent.text, aggressiveness)
+                props = self._split_sentence_into_propositions(
+                    sent.text, aggressiveness
+                )
                 props = self._merge_short_propositions(props, min_prop_len)
                 propositions.extend(props)
                 continue
@@ -249,32 +331,42 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 elif dep == "cc" and text_low in self._COORD_CONJ:
                     # check right sibling conj for clause-likeness
                     if i + 1 < len(tokens):
-                        right = sent[i+1:]
-                        left = sent[boundaries[-1]:i]
-                        if self._looks_clause_like(left.text) and self._looks_clause_like(right.text):
-                            boundaries.append(i+1)
+                        right = sent[i + 1 :]
+                        left = sent[boundaries[-1] : i]
+                        if self._looks_clause_like(
+                            left.text
+                        ) and self._looks_clause_like(right.text):
+                            boundaries.append(i + 1)
 
             if boundaries[-1] != len(tokens):
                 boundaries.append(len(tokens))
 
             # Slice by boundaries
             for bi in range(len(boundaries) - 1):
-                start, end = boundaries[bi], boundaries[bi+1]
+                start, end = boundaries[bi], boundaries[bi + 1]
                 seg = sent[start:end].text.strip()
                 if seg:
                     propositions.append(seg)
 
         propositions = self._merge_short_propositions(propositions, min_prop_len)
-        propositions = [self._normalize_space(p) for p in propositions if p and self._normalize_space(p)]
+        propositions = [
+            self._normalize_space(p)
+            for p in propositions
+            if p and self._normalize_space(p)
+        ]
         return propositions
 
-    def _propositions_via_llm(self, text: str, min_prop_len: int, prompt_profile: str = "generic") -> list[str]:
+    def _propositions_via_llm(
+        self, text: str, min_prop_len: int, prompt_profile: str = "generic"
+    ) -> list[str]:
         if not self.llm_call_func:
             logger.info("No LLM function provided; cannot use 'llm' engine")
             return []
 
         # Break text into manageable windows (approx. by characters)
-        windows = self._windows_by_chars(text, target=self.llm_config.get('window_chars', 1200))
+        windows = self._windows_by_chars(
+            text, target=self.llm_config.get("window_chars", 1200)
+        )
         results: list[str] = []
         for win in windows:
             prompt = self._build_llm_prompt(win, profile=prompt_profile)
@@ -293,7 +385,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         if not results:
             return []
         # Normalize and merge shorts
-        normed = [self._normalize_space(p) for p in results if p and self._normalize_space(p)]
+        normed = [
+            self._normalize_space(p) for p in results if p and self._normalize_space(p)
+        ]
         return self._merge_short_propositions(normed, min_prop_len)
 
     def _windows_by_chars(self, text: str, target: int = 1200) -> list[str]:
@@ -333,7 +427,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         elif profile == "gemma_aps":
             override = load_prompt("chunking", "proposition_gemma_aps")
             if override:
-                return f"{override}\n\nText:\n{text}\n\nAtomic propositions (JSON array):"
+                return (
+                    f"{override}\n\nText:\n{text}\n\nAtomic propositions (JSON array):"
+                )
             return (
                 "Perform Atomic Proposition Simplification (APS). "
                 "Decompose the text into minimal propositions that preserve entailment and meaning. "
@@ -358,23 +454,25 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         try:
             config = self.llm_config.copy()
             snapshot_kwargs = {}
-            if 'app_config' in config:
-                snapshot_kwargs['app_config'] = config['app_config']
-            if 'credentials_resolved' in config:
-                snapshot_kwargs['credentials_resolved'] = config['credentials_resolved']
-            if 'provider_credentials' in config:
-                snapshot_kwargs['provider_credentials'] = config['provider_credentials']
+            if "app_config" in config:
+                snapshot_kwargs["app_config"] = config["app_config"]
+            if "credentials_resolved" in config:
+                snapshot_kwargs["credentials_resolved"] = config["credentials_resolved"]
+            if "provider_credentials" in config:
+                snapshot_kwargs["provider_credentials"] = config["provider_credentials"]
             result = self.llm_call_func(
-                config.get('api_name', 'openai'),
+                config.get("api_name", "openai"),
                 prompt,
                 None,
-                config.get('api_key'),
-                config.get('system_message', 'You extract atomic factual propositions.'),
-                config.get('temp', 0.2),
+                config.get("api_key"),
+                config.get(
+                    "system_message", "You extract atomic factual propositions."
+                ),
+                config.get("temp", 0.2),
                 False,
                 False,
                 False,
-                model_override=config.get('model_override'),
+                model_override=config.get("model_override"),
                 **snapshot_kwargs,
             )
             if result and isinstance(result, tuple) and len(result) > 0:
@@ -382,7 +480,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
             elif isinstance(result, str):
                 return result
         except Exception as e:
-            logger.error("Error calling LLM for propositions; error_type={}", type(e).__name__)
+            logger.error(
+                "Error calling LLM for propositions; error_type={}", type(e).__name__
+            )
         return None
 
     def _parse_llm_props(self, output: Optional[str]) -> list[str]:
@@ -392,9 +492,14 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         # Attempt JSON parse first
         try:
             import json
+
             data = json.loads(output)
             if isinstance(data, list):
-                return [str(x).strip() for x in data if isinstance(x, (str, int, float)) and str(x).strip()]
+                return [
+                    str(x).strip()
+                    for x in data
+                    if isinstance(x, (str, int, float)) and str(x).strip()
+                ]
         except Exception as e:
             logger.debug(
                 "Proposition chunking JSON parse failed; falling back to line parsing; error_type={}",
@@ -403,6 +508,7 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         # Fallback: parse lines starting with hyphen/number
         lines = [l.strip("- ") for l in output.splitlines() if l.strip()]
         return [l for l in lines if len(l) > 0]
+
     def _split_sentences_fast(self, text: str) -> list[str]:
         """Lightweight sentence splitter. Avoid heavy dependencies.
         Falls back to regex-based splitting similar to SentenceChunkingStrategy.
@@ -418,7 +524,9 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
         sentences = [p.strip() for p in parts if p and p.strip()]
         return sentences
 
-    def _split_sentence_into_propositions(self, sentence: str, aggressiveness: int) -> list[str]:
+    def _split_sentence_into_propositions(
+        self, sentence: str, aggressiveness: int
+    ) -> list[str]:
         s = sentence.strip()
         if not s:
             return []
@@ -434,7 +542,11 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 continue
 
             # 1) Subordinate clause markers (aggressiveness >= 1)
-            seg_parts = self._split_on_subordinate_markers(seg) if aggressiveness >= 1 else [seg]
+            seg_parts = (
+                self._split_on_subordinate_markers(seg)
+                if aggressiveness >= 1
+                else [seg]
+            )
 
             for part in seg_parts:
                 part = part.strip()
@@ -477,7 +589,7 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                         final.append(tail)
                     start = len(p)
                     break
-                inside = p[i + 1:j].strip()
+                inside = p[i + 1 : j].strip()
                 if len(inside) > 10:  # treat longer parentheses as a proposition
                     final.append(inside)
                 else:
@@ -514,7 +626,7 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
                 # Split but keep the marker in the next segment
                 last = 0
                 for m in re.finditer(pattern, seg, flags=re.IGNORECASE):
-                    cut = seg[last:m.start()].strip()
+                    cut = seg[last : m.start()].strip()
                     if cut:
                         new_parts.append(cut)
                     # start next with the marker
@@ -535,7 +647,7 @@ class PropositionChunkingStrategy(BaseChunkingStrategy):
             low = tok.lower().strip(",;:.-")
             if low in self._COORD_CONJ:
                 left = " ".join(tokens[:i]).strip()
-                right = " ".join(tokens[i+1:]).strip()
+                right = " ".join(tokens[i + 1 :]).strip()
                 if self._looks_clause_like(left) and self._looks_clause_like(right):
                     indices.append(i)
 
