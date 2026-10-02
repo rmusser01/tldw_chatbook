@@ -106,6 +106,11 @@ async def test_every_approval_action_is_painted_and_focusable(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_reflow_preserves_decision_and_reused_round_controls(request):
+    """Preserve choices, focus and control identity across resize and round reuse.
+
+    Args:
+        request: Pytest request used by the private-profile test wrapper.
+    """
     app = _build_test_app()
     attach_chachanotes_db(app)
     _configure_native_ready_console(app)
