@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-12 01:06'
-updated_date: '2026-09-29 19:35'
+updated_date: '2026-10-02 01:08'
 labels:
   - agents
   - console
@@ -36,6 +36,8 @@ Reason: freezes explicit fallback routing and continuation state across storage/
 2. Reuse FallbackRuntime for typed retryable failures before any proposed tool activity; rebuild each target call and persist switch before dispatch.
 3. Edit explicit fallback pairs through the existing Settings preset form.
 4. Verify targeted authoring, migration/recovery, adapter dispatch, tool boundary, continuation, cancellation and budget checks.
+
+CI addendum 2026-10-01: preserve both multiline editors with a scoped shared token-backed class, regenerate the bundle, verify mounted paint at 120/70 columns and qualify the existing boot byte/token/bundle guards without changing any pin. ADR required: no; existing ADR-097/150/200 governs this mechanical consolidation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -52,4 +54,8 @@ Independent review corrections: deleted raw registry targets now refuse before f
 ADR path: backlog/decisions/200-preset-pre-tool-fallback-targets.md. Added the observed same-wire/different-family incident to lessons-testing-evidence. Left In Progress for independent integration review.
 
 Final disposition 2026-09-29: All three independent findings are fixed with RED→GREEN tests: deleted registry ownership, effective built-in endpoint freezing, and active resumed display. Author affected selection passed 85 cases; independent fallback/painted-target qualification passed 50 cases in 19.90s. Root primary-URL handoff selection passed nine cases. The formerly plugin-marked legacy gateway/bridge nodes now pass with committed per-node bootstrap_profile markers; the unchanged messaging/legacy selection passed 22 cases. No temporary plugin is needed. All acceptance criteria are checked; scoped tests, changed-code static checks, documentation and independent review are complete. Task is Done. Inherited source formatting debt is preserved; no full-suite/live-provider result is claimed. This disposition supersedes earlier pending-review notes.
+
+October 1 second CI run exposed boot CSS 608118 B against 608090 B. Current dev bundle is 30 B smaller, leaving only 2 B of original headroom. Reopened for the existing Settings authoring acceptance criteria: replace duplicate textarea ID selectors with one scoped shared class, preserve exact token-backed geometry, rebuild from sources and verify actual mounted fields plus the unchanged byte ratchet. Existing ADR-097/150/200 applies; no new architectural decision.
+
+October 1 final CI/Qodo follow-up: replaced the duplicate instruction/fallback textarea ID selectors with one scoped agents-area class applied only to those two fields; parameters remain unchanged. Regenerated CSS from sources, removing exactly 30 parsed bytes: 608088/608090 B, original pin unchanged. The existing production-CSS test paints actual fallback content at 120/70 columns. Exact budget, both mounted widths, fallback authoring, bundle and design-token selection passes 17 cases in 57.55s; independent exact budget/mounted rerun passes 3 cases. Completed ChatModelUnavailableError constructor annotations and model_unavailable_error optional return/Google docs; classification behavior unchanged. Peer/inventory/fallback selection passes 88 cases in 49.27s; independent real HTTP machine-code classification passes 6. Existing ADR-097/150/200; no new decision. Final 76-file changed-code static and diagnostic guards pass. Done; fresh remote CI remains a publication check.
 <!-- SECTION:NOTES:END -->

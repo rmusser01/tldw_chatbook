@@ -17824,3 +17824,15 @@ timestamp helper and exercised actual populated repository SQL without statistic
 before registering its plan pins. Run the existing inventory, timestamp, schema
 allowlist and query-plan guards whenever a feature adds persistent state or tools;
 behavioral coverage alone did not detect these repository contracts.
+
+
+## Token and bundle checks do not price aggregate boot CSS
+
+**PR #2918 / TASK-32508, 2026-10-01.** Token governance and bundle reproduction
+passed, but the aggregate boot CSS guard failed at 608118/608090 B. The latest
+dev had only two bytes spare; the fallback editor's second ID selector added 30 B.
+A shared scoped class for the two identical editor rules removed those30 B while
+actual mounted paint checks at 120/70 columns retained their original assertions
+and added fallback content. Run the existing aggregate byte guard alongside
+bundle/token checks when touching boot stylesheet sources; do not raise its pin
+to conceal a small but real contribution.

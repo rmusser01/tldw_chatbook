@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 00:42'
+updated_date: '2026-10-02 01:08'
 labels:
   - agents
   - console
@@ -38,6 +38,8 @@ ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
 Reason: Accepted ADR-199 amends ADR-136 for scoped direct sibling authority and steering transport.
 
 CI addendum 2026-10-01: retain exact runtime tool-name equality while adding the two implemented peer tools to its expected inventory; run the affected install-skill and peer checks. ADR required: no; direct qualification of ADR-199.
+
+Qodo addendum 2026-10-01: document peer admission inputs/receipts/refusals and validate tool arguments through a strict installed Pydantic model reusing _validate_text. Preserve exact shapes, original fixed refusal codes, Unicode/control/length checks, quotas and privacy. Strengthen the existing invalid-argument regression to prove refusal before capability invocation; run peer and startup guards. ADR required: no; direct boundary qualification under ADR-199.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -58,4 +60,8 @@ Root integration revalidation: repaired only the three config-aware steering ser
 Final disposition 2026-09-29: independent read-only implementation review approved the scoped repair with no actionable findings. The targeted acceptance checks and changed-line static checks recorded above pass; inherited whole-file lint/format debt remains outside this correctness task. All acceptance criteria are checked and this task is Done. No full-suite or live-provider qualification is claimed. This disposition supersedes earlier pending-review notes.
 
 October 1 CI/integration closeout: preserved the exact runtime inventory assertion and added the existing list_peer_agents/send_to_peer names. The affected messaging/peer/installer/schema selection passes 145 cases in 58.50s, including existing real writer contention and revocation coverage. Independent latest-dev runtime/routing/recovery review approves the integration. Final static scan covers 75 changed Python files with zero added-line/new-file findings; ten new files pass full Ruff/format and whitespace is clean. Rebased onto dev 31d4f9b76492120706ba8e3ad7d355f1aa4e0273. Existing ADR-199 governs; no new architectural decision. Criteria remain satisfied and status is Done. PR #2918 remote checks will rerun on publication.
+
+October 1 Qodo review: inspect the public send contract and strict tool argument boundary, complete Google-style peer API docs and use the installed Pydantic boundary pattern without weakening exact shape, no-coercion, content-free refusal or existing allowance validation. Existing ADR-199; no new contract or dependency.
+
+October 1 Qodo follow-up complete: PeerMessenger list/send now document receipts, exact inputs and refusal conditions. The private strict Pydantic peer-argument model reuses the existing exact-type/nonblank/control/Unicode/length validator and preserves fixed error codes; exact shape and all capability/allowance custody checks remain intact. The strengthened existing invalid-argument test proves malformed payloads never reach the capability (RED: 6 failed / 2 passed, GREEN: 8 passed). The affected peer/inventory/fallback selection passes 88 cases in 49.27s. Boot imports 679/686 and UI-ready census 1031/1033 pass, proving no startup-budget increase. Independent peer privacy, actual delivery, shared final-slot allowance and lazy-import selection passes 12; final reviewer approves all reviewed changes with 22 focused checks. Final 76 changed Python/10new full-file lint+format qualification and diagnostic guard pass. Existing ADR-199; no new dependency or architecture. Done.
 <!-- SECTION:NOTES:END -->

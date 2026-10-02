@@ -483,12 +483,22 @@ def test_peer_tool_fence_body_is_omitted_from_real_run_log_and_trace(
         {"handle_id": 3, "message": "x"},
         {"handle_id": "x", "message": "\x1b"},
         {"handle_id": "x", "message": "x" * 2001},
+        {"handle_id": "x", "message": True},
+        {"handle_id": "x", "message": "   "},
+        {"handle_id": "x", "message": "\ud800"},
     ],
 )
-def test_peer_tool_rejects_unbounded_or_forged_arguments_without_mutation(args):
+def test_peer_tool_rejects_unbounded_or_forged_arguments_without_mutation(
+    args, monkeypatch
+):
     from tldw_chatbook.Agents.fleet_message_tools import list_peers, send_peer
 
     _, _, fleet, handles, _, cap = siblings()
+    monkeypatch.setattr(
+        type(cap),
+        "send",
+        lambda *_args: pytest.fail("Invalid payload reached capability"),
+    )
     result = send_peer(cap, args)
     assert not result.ok
     assert result.error in {"invalid_message", "message_too_large"}
