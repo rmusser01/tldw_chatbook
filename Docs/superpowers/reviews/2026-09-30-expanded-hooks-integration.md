@@ -1100,3 +1100,48 @@ frozen upstream proof explain both failures explicitly. Earlier evidence and
 platform limits remain as recorded above. No full test suite was requested or
 run. The previous published `77d0766328` head received no CI run while conflicting;
 new remote checks and Qodo review must assess the newly pushed head.
+
+
+## Merge closeout rebase onto dev ab4df99959 (2026-10-01)
+
+The owner explicitly requested latest-dev rebase, Qodo dispositions and merge.
+Fetched the live target independently of PR base metadata: dev is
+`ab4df99959545e37d8d2048c1c1ce15fd914721d`, including PR #2928's accepted
+ADR-210 amendments and PR #2903's warm-config fast paths. All 25 hook-branch
+commits replay identically (`hooks-pr2946-ab4-range-diff.log`). The exact ASTs of
+both public/guarded settings readers, both snapshot readers, path-posture checks,
+cache-hit/owned-file checks and the config-participant guard match fetched dev.
+The visible Hooks action and existing consent contract remain under ADR-197 as
+amended by ADR-210. Existing ADR-126/163/197 apply; no new ADR or owner is required.
+
+Fresh affected qualification, with no skips:
+
+- Warm-config controls plus full actual hook-compaction/v75 migration files:
+  **38 passed in 26.476s** (`hooks-pr2946-ab4-config-compaction.xml`).
+- Full persistent hook-permission controls: **56 passed in 24.760s**
+  (`hooks-pr2946-ab4-consent.xml`).
+- Full mounted Console hook-review file: **eight passed in 47.974s**
+  (`hooks-pr2946-ab4-console-review.xml`). These use the actual icon, next-Send
+  review/cancellation and draft custody, partial approval, Settings navigation,
+  current revoke/disable actions and dismissal during refresh. Pytest shutdown
+  emitted its shared garbage-directory cleanup warnings; no manual cleanup of
+  those unrelated directories was attempted.
+- The exact GGUF lazy-selector handoff case that failed on the previous Windows
+  runner passes locally: **one passed in 9.201s**
+  (`hooks-pr2946-ab4-gguf-handoff.xml`). This is Darwin evidence, not a claim that
+  Windows is fixed. The previous Windows failure remains recorded in
+  `hooks-pr2946-gguf-windows-failed.log`; its main suite reports missing late
+  inventory after a ten-second settle bound, and its separate startup diagnostic
+  also outlived its own limit. No unrelated UI behavior, test deadline or workflow
+  was changed. Fresh Windows CI must qualify this rebased head.
+- All **196 branch Python files** parse; whitespace checks pass. The unchanged
+  diagnostic inventory reproduces exactly. The previous head's fast lanes,
+  derived artifacts and UI latency checks passed; fresh remote checks must assess
+  the new head before merge. Earlier frozen upstream exclusions remain explicit.
+
+Qodo's current persistent report lists zero active bugs/rule violations, with
+nine findings marked resolved and the independently disproved one-use gate
+finding marked outdated. All nine inline threads are resolved. Its last separate
+GitHub review object remains the original review of `17c4734241`; these report
+updates are not represented as a new full review. Recheck new comments, exact
+current head, live dev tip and fresh CI before the requested head-pinned merge.

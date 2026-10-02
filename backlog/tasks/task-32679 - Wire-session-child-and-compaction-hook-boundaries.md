@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 02:49'
+updated_date: '2026-10-02 06:03'
 labels:
   - plugins
   - implementation
@@ -52,4 +52,6 @@ PR #2946 Qodo review: initial context authority collection runs on a worker with
 PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture controls retain the collection-time private profile, real coordinator binding, full immutable snapshots plus owned turn attribution and bounded worker entry. All 203 selected Console cases pass across retained/isolated corrected runs; final teardown passes 13 cases in 431.771s with no skips, preserving exact cancellation, revocation, resource settlement and no replay under the existing best-effort observer deadline. Mounted collapse/resize and all four pending-Stop size variants pass; boot 22 passes at census 1031/1033 with unchanged limits. ADR-162/163/197 apply; no new ADR. Exact failed-run dispositions, artifacts and scope limits are in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 
 PR #2946 rebase onto dev 27e718f01d preserves the compaction retry latch, structural no-cost fences and durable parent-lineage fallback; the existing hook owner is forwarded into compact-once. Required PreCompact refusal uses the existing terminal helper with a fixed reason and attempted=False, with no summary/main-provider call or memory commit. Covering compaction/migration/recovery run: 497 passes and two failures; the manual-refusal fixture is corrected and the full hook-compaction/receipt files pass 25 cases in 31.102s. The remaining dormant-pet call-site failure reproduces on frozen dev and is explicitly excluded. Boot: 22 passes at census 1032/1033 with unchanged limits. ADR-163/052 apply; no new ADR. Exact evidence and limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 authorized merge closeout rebased onto live dev ab4df99959 (ADR-210 and warm-config PR #2903). All 25 branch commits replay identically; eight upstream settings/snapshot/path-posture/guard ASTs are retained exactly. Fresh warm-config/compaction/v75 migration controls pass 38 cases, persistent consent 56 and the full mounted hook-review file eight, all with no skips. The previous Windows GGUF failure passes its exact node locally but still requires fresh Windows CI; no unrelated UI or deadline change was made. Qodo marks nine findings resolved and one independently disproved finding outdated; all nine inline threads are resolved. ADR-126/163/197 (amended by ADR-210) apply. Detailed evidence/limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->
