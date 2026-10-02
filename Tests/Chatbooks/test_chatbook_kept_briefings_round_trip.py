@@ -561,15 +561,16 @@ def test_partial_scripts_failure_still_counts_the_briefing_as_imported(
     assert restored is not None  # durably inserted despite the script failure
 
     assert any(
-        "kept scripts could not be imported" in warning
-        for warning in status.warnings
+        "kept scripts could not be imported" in warning for warning in status.warnings
     ), status.warnings
 
 
 # --- Backward compatibility ---------------------------------------------
 
 
-def test_import_bundle_without_kept_section_is_unaffected(tmp_path, chachanotes_template_db):
+def test_import_bundle_without_kept_section_is_unaffected(
+    tmp_path, chachanotes_template_db
+):
     """A chatbook predating this content type has no `kept_briefings`
     manifest entries and no `content/kept_briefings/` folder at all --
     importing it (with the default "import everything" selection) must not

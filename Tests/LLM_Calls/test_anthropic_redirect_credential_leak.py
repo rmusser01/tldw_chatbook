@@ -152,9 +152,7 @@ def _install_redirecting_adapter(
 
     def _fake_send(self, request, **kwargs):
         host = urlsplit(request.url).netloc
-        seen_headers_by_host[host] = {
-            k.lower(): v for k, v in request.headers.items()
-        }
+        seen_headers_by_host[host] = {k.lower(): v for k, v in request.headers.items()}
         if host == good_host:
             return _fake_response(
                 302,
@@ -276,9 +274,7 @@ def test_summarize_with_anthropic_refuses_cross_origin_redirect(
 
     # Sanity: the first hop really did carry the credential.
     assert "api.anthropic.com" in seen_headers_by_host
-    assert (
-        seen_headers_by_host["api.anthropic.com"].get("x-api-key") == _SENTINEL_KEY
-    )
+    assert seen_headers_by_host["api.anthropic.com"].get("x-api-key") == _SENTINEL_KEY
 
     # Load-bearing, checked independently of the returned message: the
     # credential must never reach the cross-origin host.

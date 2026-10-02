@@ -53,11 +53,14 @@ def captured_post(monkeypatch):
     # in Summarization_General_Lib, so the session seam moves there too
     # (kept on BOTH modules while the remaining local handlers migrate).
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _FakeSession())
     return captured
 
 
-def _settings(*, modern_url=None, legacy_ip="http://127.0.0.1:8080/v1/chat/completions"):
+def _settings(
+    *, modern_url=None, legacy_ip="http://127.0.0.1:8080/v1/chat/completions"
+):
     """A settings snapshot shaped like the real loader's: `llama_cpp_api`
     exists, `llama_api` does NOT."""
     settings = {
@@ -102,7 +105,9 @@ def test_summarize_with_llama_prefers_the_modern_api_url(monkeypatch, captured_p
     the chat handler reads). The summarizer must follow the same routing
     instead of the legacy default, or it posts where nothing is listening."""
     monkeypatch.setattr(
-        lib, "load_settings", lambda: _settings(modern_url="http://127.0.0.1:9191/v1/chat/completions")
+        lib,
+        "load_settings",
+        lambda: _settings(modern_url="http://127.0.0.1:9191/v1/chat/completions"),
     )
 
     result = lib.summarize_with_llama(
@@ -118,10 +123,14 @@ def test_summarize_with_llama_prefers_the_modern_api_url(monkeypatch, captured_p
 def test_summarize_with_llama_falls_back_to_the_legacy_ip(monkeypatch, captured_post):
     """With no modern entry, the historical key still routes the request."""
     monkeypatch.setattr(
-        lib, "load_settings", lambda: _settings(legacy_ip="http://127.0.0.1:8080/v1/chat/completions")
+        lib,
+        "load_settings",
+        lambda: _settings(legacy_ip="http://127.0.0.1:8080/v1/chat/completions"),
     )
 
-    lib.summarize_with_llama(input_data="text", custom_prompt="Summarize.", api_key=None)
+    lib.summarize_with_llama(
+        input_data="text", custom_prompt="Summarize.", api_key=None
+    )
 
     assert captured_post["url"] == "http://127.0.0.1:8080/v1/chat/completions"
 
@@ -151,7 +160,9 @@ def test_summarize_with_llama_normalizes_the_endpoint(
     normalization the chat handler applies via normalize_llamacpp_base_url."""
     monkeypatch.setattr(lib, "load_settings", lambda: _settings(modern_url=configured))
 
-    lib.summarize_with_llama(input_data="text", custom_prompt="Summarize.", api_key=None)
+    lib.summarize_with_llama(
+        input_data="text", custom_prompt="Summarize.", api_key=None
+    )
 
     assert captured_post["url"] == expected
 
@@ -169,8 +180,10 @@ def test_summarize_with_llama_parses_the_openai_response_shape(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "SUMMARY"
@@ -190,6 +203,7 @@ def test_summarize_with_llama_still_parses_the_native_completion_shape(monkeypat
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     assert lib.summarize_with_llama("text", "Summarize.", api_key=None) == "NATIVE"
@@ -209,6 +223,7 @@ def test_summarize_with_llama_reports_an_unusable_payload(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
@@ -267,8 +282,11 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
                     "choices": [
                         {
                             "finish_reason": "length",
-                            "message": {"role": "assistant", "content": "",
-                                        "reasoning_content": "thinking..." * 50},
+                            "message": {
+                                "role": "assistant",
+                                "content": "",
+                                "reasoning_content": "thinking..." * 50,
+                            },
                         }
                     ],
                     "usage": {"completion_tokens": 4096},
@@ -277,6 +295,7 @@ def test_empty_content_failure_names_the_actual_cause(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = lib.summarize_with_llama("text", "Summarize.", api_key=None)
@@ -326,6 +345,7 @@ def test_budget_and_diagnostic_reach_the_public_analyze_boundary(monkeypatch):
 
     monkeypatch.setattr(lib, "create_default_session", lambda: _Session())
     from tldw_chatbook.LLM_Calls import Summarization_General_Lib as _general
+
     monkeypatch.setattr(_general, "create_default_session", lambda: _Session())
 
     result = analyze(

@@ -13,9 +13,7 @@ from tldw_chatbook.Prompt_Management.prompt_artifact_models import (
 )
 
 
-FIXTURES = (
-    Path(__file__).parents[2] / "Docs" / "fixtures" / "console-block-prompts"
-)
+FIXTURES = Path(__file__).parents[2] / "Docs" / "fixtures" / "console-block-prompts"
 
 
 def _definition(kind: str = "block_prompt") -> dict[str, object]:
@@ -81,9 +79,13 @@ def test_fixture_dispatch_cases_have_explicit_states(case: dict[str, object]) ->
 
 
 def test_foreign_single_text_recipe_fixture_preserves_raw_definition() -> None:
-    fixture_cases = json.loads((FIXTURES / "error-cases.json").read_text())["decode_cases"]
+    fixture_cases = json.loads((FIXTURES / "error-cases.json").read_text())[
+        "decode_cases"
+    ]
     case = next(
-        case for case in fixture_cases if case["name"] == "foreign_single_text_recipe_v2"
+        case
+        for case in fixture_cases
+        if case["name"] == "foreign_single_text_recipe_v2"
     )
 
     decoded = decode_prompt_artifact(case["record"])
