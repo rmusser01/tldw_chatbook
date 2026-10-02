@@ -1145,3 +1145,34 @@ finding marked outdated. All nine inline threads are resolved. Its last separate
 GitHub review object remains the original review of `17c4734241`; these report
 updates are not represented as a new full review. Recheck new comments, exact
 current head, live dev tip and fresh CI before the requested head-pinned merge.
+
+
+### Windows GGUF fixture race during merge closeout
+
+On `145c823ca0`, native Windows again fails the delayed-selector inventory case,
+this time `[False]` while `[True]` passes; the preceding published head failed
+`[True]`. The other six full-app source nodes and all 31 native source/lifecycle
+controls pass. Retain `hooks-pr2946-merge-windows-complete.log`. Do not classify
+this as a runner outage or suppress the failed case.
+
+The test injects nonempty inventory while the actual app-owned initial worker
+can still deliver its legitimate empty result in the same generation. A held
+real worker reproduces that replacement deterministically:
+**one passed in 3.984s** (`hooks-pr2946-inventory-order-confirmed.xml`). The
+first probe used the wrong `window` owner filter and failed before its behavioral
+assertion; this was a harness mistake, not runtime RED. Correcting it to the
+existing app owner proves the fixture race. The probe source is retained in
+`/private/tmp/hooks-pr2946-inventory-order-probe-source.py`; the temporary module
+is removed from the repository.
+
+Settle only the existing app-owned `managed_gguf_inventory` worker before this
+test injects its late discovery. Keep the actual nested-label hold, inactive
+pane, exact selected references/rendered labels, handoff settlement and unchanged
+claim authority assertions. No production code, timeout, permission guard or
+workflow changes. Both changed private-profile nodes and the neighboring cached
+hydration/fresh-read handoff pass: **three individual cases in 8.943, 8.708, 8.448s**
+(`hooks-pr2946-inventory-fixed-0.xml` through `-2.xml`), no skips. AST, added-range
+formatting, no-added-Ruff comparison and whitespace checks pass. Existing
+ADR-025 governs; no new ADR is required. TASK-2062.2 AC #7 is reopened pending
+fresh native Windows qualification; the earlier historical implementation remains
+unchanged. Fresh CI must assess the newly published repair before merge.

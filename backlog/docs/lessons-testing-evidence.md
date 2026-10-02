@@ -17509,3 +17509,15 @@ combined-store catalogs from their real constructors and update exact version
 checks together; preserve the standalone subscription variant. The repaired
 covering recovery cases and 25 hook-compaction/migration controls pass. Changing
 only the version label would still reject the actual schema during recovery.
+
+
+## Injected inventory must follow the actual initial producer
+
+**PR #2946, 2026-10-01.** The Windows delayed-selector test failed once with a
+handoff and once without it while local runs passed. A controlled app-owned
+startup worker proved its legitimate empty discovery could arrive after the
+test's manual nonempty injection and overwrite that fixture. Await the actual
+initial worker before injecting the discovery being tested; retain the real
+label-mount hold and exact reference/authority assertions. Do not lengthen the
+observer clock or change correct production inventory handling to hide ordering
+between two fixture producers. The worker belongs to the app, not the window.
