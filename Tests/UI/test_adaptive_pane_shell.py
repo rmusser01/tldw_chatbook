@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import ast
 import os
+from dataclasses import astuple
 import re
 import subprocess
 import sys
@@ -24,7 +25,12 @@ from textual.widget import Widget
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (lessons-testing-evidence: Tests/UI RecoveryRequired at setup)
-from Tests.UI.consolidated_css import APP_STYLESHEETS, ConsolidatedCSSApp
+from Tests.UI.consolidated_css import (
+    APP_STYLESHEETS,
+    BUNDLED_STYLESHEET,
+    ConsolidatedCSSApp,
+)
+from tldw_chatbook.css import build_css
 from tldw_chatbook.Utils import adaptive_reader_state as ars
 from tldw_chatbook.Widgets import adaptive_pane_shell as shared
 from tldw_chatbook.Widgets.Library import library_adaptive_reader_shell as library_shell
@@ -477,3 +483,77 @@ async def test_slash_in_a_focused_box_follows_swallow_slash_on_focus(factory, ex
         await pilot.press("/")
         await pilot.pause()
         assert box.value == expected
+
+
+# ---------------------------------------------------------------------------
+# CSS (B0): the Library block keyed to the Library destination classes.
+# ---------------------------------------------------------------------------
+
+
+def _library_split_prefixes() -> tuple[str, ...]:
+    """The prefixes of the ONE owner whose sheet is the Library's lazy sheet.
+
+    Not every prefix of the split that writes it: a class carrying another
+    owner's prefix would send its rule to that owner's sheet (or pin it to
+    boot), and must fail here.
+    """
+    for split in build_css.SCREEN_OWNED_SPLITS:
+        for owner, sheet in split.sheets.items():
+            if sheet == "screen_agentic_library.tcss":
+                return tuple(split.prefixes[owner])
+    raise AssertionError("no screen-owned split writes screen_agentic_library.tcss")
+
+
+def test_library_destination_classes_carry_the_library_split_prefix() -> None:
+    """A token without the owner prefix would pin its rule to the boot bundle."""
+    prefixes = _library_split_prefixes()
+    for css_class in astuple(library_shell.LIBRARY_ADAPTIVE_READER_CLASSES):
+        assert any(
+            css_class == prefix or css_class.startswith(f"{prefix}-")
+            for prefix in prefixes
+        ), css_class
+
+
+def test_the_boot_bundle_carries_only_the_grip_state_pair_of_the_shell_rules() -> None:
+    """Only the ``:hover, .-active`` grip rule is boot-resident (``-active`` has
+    no split owner); every other shell rule is lazy. A re-key that pulls more
+    into boot fails here before the byte census does."""
+    bundle = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
+    lines = [
+        line.strip() for line in bundle.splitlines() if ".library-adaptive-reader-" in line
+    ]
+    assert lines == [
+        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover,",
+        ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip.-active {",
+    ]
+
+
+class _LibraryStyledHost(ConsolidatedCSSApp):
+    """The app's real CSS: the boot bundle plus every lazy split sheet."""
+
+    CSS_PATH = [str(path) for path in APP_STYLESHEETS]
+
+    def compose(self) -> ComposeResult:
+        yield library_shell.LibraryAdaptiveReaderShell(
+            Static("Library"),
+            Static("Items"),
+            Static("Work"),
+            _layout(),
+            id_prefix="styled",
+            library_label="Library",
+            items_label="Items",
+            id="styled-shell",
+        )
+
+
+async def test_a_focused_library_grip_resolves_the_lazy_sheet_focus_rule() -> None:
+    """The grip's ``:focus`` rule (``bold reverse``, task-32053) lives in the lazy
+    Library sheet; Button's default focus look is ``bold underline``."""
+    app = _LibraryStyledHost()
+    async with app.run_test(size=(160, 45)) as pilot:
+        await pilot.pause()
+        grip = app.query_one("#styled-library-grip")
+        grip.focus()
+        await pilot.pause()
+        assert "reverse" in str(grip.styles.text_style)
+        assert "reverse" not in str(app.query_one("#styled-items-grip").styles.text_style)
