@@ -211,3 +211,17 @@ Reason: integrate accepted Resend and custody-poll behavior without changing sch
 - [ ] Qualify Resend maintenance refusal, required-hook refusal, in-place retry/Continue, cancelled refused-echo recovery, original wake refund/accepted nonreplay and saved-close consumers using real runtime/store tests. Run the original startup/storage/CSS guards and focused mounted custody/Resend checks; do not change pins, ceilings or measured work.
 - [ ] Obtain independent read-only reviews of the runtime/authority and mounted dispatch/polling overlaps on an immutable candidate. Keep incoming TASK-33662 real-relaunch recovery and earlier TASK-33648 SessionEnd suppression as separate disclosed limitations. Do not change other programs' task status.
 - [ ] Verify static/artifact guards and preserved reviewed bytes, record exact green/non-green evidence, then publish once with the exact observed `003a7bc940458661654547d59e9adab514da6461` lease. Require fresh exact-head Qodo and all four jobs before normal protected head-pinned merge.
+
+## Verified Resend integration repairs (TASK-33663 / TASK-33664)
+
+Independent real controller/SQLite review of immutable `7e41d2de8b5a671da90eea0eab79a8ca45842c69` proves persisted failed/stopped Resend dispatches while normal Send refuses hook review (two RED), and skips an already-granted required v2 SessionStart command (two RED). A readiness-only guard is insufficient. Reuse normal Send admission, initialization/input/currentness and scope retirement before row clearing, with real refused, permitted and cancellation controls. Preserve the exact maintenance refund guard and physical cleanup. Task criteria and plans were recorded through CLI before source edits.
+
+The original UI-ready guard is RED1034/1033; exact incoming bb865 baseline fails identically. Move only the three eager Resend imports to their actual action/projection consumers and update the legitimate test mock seam. Keep all original ceilings, pins, warmup, counts and measured work.
+
+ADR required: no
+ADR path: backlog/decisions/163-expanded-console-hook-runtime.md; backlog/decisions/197-console-hook-configuration-review.md; existing ADR-097/126/199 apply.
+Reason: restore accepted authority/lifecycle admission and defer existing module loading without a new owner, dependency, schema or gate.
+
+- [ ] Implement and qualify the two existing task plans with retained RED/GREEN and focused independent immutable review.
+- [ ] Preserve incoming TASK-33662 and earlier TASK-33648 as separate limits; preserve upstream documented TASK-33621.28 Done without claiming new real-app Ctrl+Q verification.
+- [ ] Record all static/startup/artifact evidence and exact reviewed bytes; close both tasks via CLI, publish with exact observed 003a7bc lease and require fresh Qodo and all four jobs.
