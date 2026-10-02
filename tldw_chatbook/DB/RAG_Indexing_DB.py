@@ -129,6 +129,11 @@ class RAGIndexingDB:
         # re-applied on every NEW connection (task-15465) -- which is why
         # this pairing lives in the one place connections are created.
         conn.execute("PRAGMA synchronous = NORMAL")
+        # task-19566 F11: no FKs are declared in this indexing-state cache
+        # today, but SQLite enforces foreign keys per connection and defaults
+        # to OFF -- enable it here (the one place connections are configured)
+        # so a future schema change that declares one is enforced, not inert.
+        conn.execute("PRAGMA foreign_keys = ON")
         # task-3012: a held (long-lived) connection needs true autocommit.
         # Python's default isolation mode auto-BEGINs on any DML; that
         # implicit transaction then makes the explicit BEGIN in

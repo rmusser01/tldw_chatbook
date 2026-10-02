@@ -3,8 +3,9 @@ id: TASK-19566
 title: >-
   Data-layer integrity residue — inert Evals locking, chatbook import raw
   UPDATEs, and three latent schema hazards
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - rmusser01
 created_date: '2026-08-21 20:16'
 labels:
   - db
@@ -78,3 +79,23 @@ here is the guard, not a schema change.
       a comment records why they deliberately do not
 - [ ] A test fails if a hard `DELETE` of a character card becomes reachable
       from production code, so the cascade cannot be armed unnoticed
+
+## Implementation Plan
+
+1. F11 (done, see notes): enable the per-connection `foreign_keys` pragma on `Library_Ingest_Jobs_DB` and `RAG_Indexing_DB`, with pin tests.
+2. F12 (done, see notes): an architecture census test that fails if a hard `DELETE FROM character_cards` appears in production code.
+3. F8 (remaining): Evals optimistic locking — make it real (`expected_version` + `AND version = ?` + conflict test) or remove the inert columns; decision recorded.
+4. F9 (remaining): chatbook importer goes through the versioned write path; `deleted` never set on existing rows from archive data; versioning-bypass guard (trigger or test) matching Media's protection.
+5. F6 (remaining): the two unreachable Media UPDATEs resolved as wire-or-retire with the decision recorded.
+
+## Implementation Notes (interim — F11 and F12 landed 2026-10-01)
+
+**F11 — foreign_keys pragma enabled on both latent DBs.** `Library_Ingest_Jobs_DB` (connection-creation block) and `RAG_Indexing_DB` (`_configure_connection`, the single place connections are configured) now execute `PRAGMA foreign_keys = ON` per connection, matching the established repo idiom (AgentRuns_DB, Client_Media_DB_v2). Inert today by construction — neither schema declares any FK — so enabling changes no behavior; the value is that the NEXT schema change declaring one is enforced instead of silently inert. Pin tests: `Tests/DB/test_library_ingest_jobs_db.py::test_connections_enable_foreign_key_enforcement` and `Tests/DB/test_rag_indexing_db.py::TestForeignKeyEnforcement` assert pragma state 1 on live connections.
+
+**F12 — cascade landmine guarded by census.** New `Tests/Architecture/test_character_card_hard_delete_census.py`: a whitespace-tolerant `DELETE FROM character_cards` census over all production sources (`tldw_chatbook/**/*.py`) with an explicit, currently-empty allowlist. Zero production sites today (verified by grep at implementation time), so the test pins zero — adding a hard delete anywhere in production turns it red by file:line with a message pointing at the soft-delete path. The cascade schema itself is deliberately untouched (the landmine is the reachability, not the DDL).
+
+**Verification.** `python -m pytest Tests/DB/test_library_ingest_jobs_db.py Tests/DB/test_rag_indexing_db.py Tests/Architecture/test_character_card_hard_delete_census.py -q` — 50 passed (includes the three new tests).
+
+**Remaining for this task:** F8, F9, F6 per the plan above — not started; reserved for the next session on this branch.
+
+ADR required: no (so far) — pragma enablement and a census guard implement existing policy; revisit if F8/F9's wire-or-retire decisions change a storage contract.
