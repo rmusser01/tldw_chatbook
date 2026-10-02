@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:30'
-updated_date: '2026-10-01 10:13'
+updated_date: '2026-10-02 00:50'
 labels:
   - plugins
   - implementation
@@ -50,4 +50,6 @@ Reason: implements the accepted versioned dialect and conservative foreign-seman
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented pinned OpenAI/Cursor interpretation through the existing bounded native inventory and authority owners. Inline overlays replace compatibility wholesale; explicit vendor paths and empty exclusions replace defaults. Retained catalog execution fields and chosen dialect survive protected review, materialization and registry-loss recovery. Supported instruction metadata uses the actual Console user lane; unsupported constraints, variables/apps and undocumented Codex presets remain unavailable. All foreign hook runtime mappings remain deliberately unsupported qualification proposals because full payload/cwd/timing/output/timeout contracts are not qualified; unknown/required root/group/handler guard scope fences affected material. This replaces the plan prototype HookHandler return without claiming original-host compatibility. ADR-162/163 and specs/plan/authoring/evidence docs updated. Targeted evidence: 117 parser/capture/adapter cases and 127 native Console/coordinator/recovery neighbors pass without skips; authored final 25 pass plus 2 post-lint controls. New Python lint/format, changed syntax/fixture JSON/whitespace and no-new-shared-lint checks pass. No full suite, GUI, original-host, Windows/Linux or Keychain/OAuth certification. Fixture provenance records independent AGPL bytes and exact upstream revisions/license context. I3+ remains outside this requested scope.
+
+PR #2946 Qodo review: malformed vendor skill metadata is rejected by the existing per-component blocker path, preserving usable siblings rather than rejecting the whole package. Eight original Cursor/Codex fixtures cover null/string/list/numeric metadata. All foreign hook mappings remain unsupported. ADR-162/163 apply; exact evidence and unchanged qualification limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

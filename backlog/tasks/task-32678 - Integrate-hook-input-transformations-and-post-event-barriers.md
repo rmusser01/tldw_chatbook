@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-01 00:10'
+updated_date: '2026-10-02 00:50'
 labels:
   - plugins
   - implementation
@@ -63,4 +63,6 @@ Baseline: initial unchanged neighbors stopped at 11 passed/1 failed because real
 Final frozen covering run across 18 exact affected feature/regression files: 514 passed in 88.47s, zero skips. Full Ruff/format on seven hook/new test files; Console regression file full Ruff; all changed source parses and TOML/whitespace pass. Existing shared Ruff diagnostics remain 3/20/51/10/27/30 in models/runtime/service/catalog/bridge/ConsoleRuntime; skill fixture improves 2 to 1. Exact command and evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 
 Self-review covers all four ACs. Existing ADR-163/162/197 apply; H3 spec and ADR163 interface notes updated. Controlled Darwin Console/SQLite/subprocess and runtime metadata qualification only. No full suite, live provider, graphical UI, native Plugin composition, Windows/Linux runtime or fresh full dependency resolution is claimed.
+
+PR #2946 Qodo review: shared post-checkpoint installation tolerates retired owners without masking an already settled definitive result or its terminal notifications. Live-owner errors still propagate; pending scopes/checkpoints close through the existing lifecycle. Tests cover retirement before and between postevents plus a live control. Definitive-tool/Library service group: 56 passes. ADR-163 applies; evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

@@ -180,3 +180,32 @@ def test_reviewed_dialect_and_catalog_survive_source_and_registry_loss(
     assert {
         row["component_id"] for row in state["selections"] if row["selected"]
     } == set(selection)
+
+
+@pytest.mark.parametrize(
+    "dialect,directory", [("cursor", "picked"), ("codex", "custom")]
+)
+@pytest.mark.parametrize("metadata", [None, "bad", [], 3])
+def test_bad_vendor_skill_metadata_keeps_valid_siblings(
+    interop_package, dialect, directory, metadata
+):
+    import yaml
+
+    root = interop_package(dialect)
+    skill = root / directory / "broken" / "SKILL.md"
+    skill.parent.mkdir()
+    skill.write_text(
+        "---\n"
+        + yaml.safe_dump(
+            {"name": "broken", "description": "bad component", "metadata": metadata}
+        )
+        + "---\nBody\n"
+    )
+    result = inspect_package(root)
+    assert not result.rejected
+    assert "skill:review" in result.inventory
+    assert not result.inventory["skill:review"].activation_blockers
+    bad = result.inventory["skill:broken"]
+    assert bad.path == str(skill.relative_to(root))
+    assert bad.support == "invalid"
+    assert "vendor_skill_metadata_invalid" in bad.activation_blockers

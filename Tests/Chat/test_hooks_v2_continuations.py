@@ -35,13 +35,28 @@ from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("propose, expected", [(False, 1), (True, 4)])
-async def test_real_queue_stop_continuations_are_bounded(tmp_path, propose, expected):
+@pytest.mark.parametrize("ephemeral", [False, True])
+async def test_real_queue_stop_continuations_are_bounded(
+    tmp_path, monkeypatch, propose, expected, ephemeral
+):
     rig = _controller_rig(tmp_path)
     db, app, runs_db, store, session, gateway, _, controller = rig
     runtime = ConsoleRuntime(app=app)
     app.console_runtime = runtime
     runtime.set_chat_store(store)
     runtime.set_chat_controller(controller)
+    if ephemeral:
+        session = store.create_session(ephemeral=True)
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationAdmission
+
+    consumed = []
+    original_consume = ContinuationAdmission.consume
+
+    def consume_once(gate):
+        consumed.append(gate.durable_acceptance_fingerprint()["gate_id"])
+        original_consume(gate)
+
+    monkeypatch.setattr(ContinuationAdmission, "consume", consume_once)
     result = (
         {"version": 2, "decision": "pass", "continuation": {"message": "follow up"}}
         if propose
@@ -62,6 +77,7 @@ async def test_real_queue_stop_continuations_are_bounded(tmp_path, propose, expe
         result = await runtime.wait_for_turn(turn_id)
         assert result.accepted
         assert len(gateway.payloads) == expected
+        assert len(consumed) == len(set(consumed)) == expected - 1
         assert controller.prompt_queue_registry.snapshot(session.id).total_count == 0
         assert db._connection_quiescence.connection_count() == 1
         import threading

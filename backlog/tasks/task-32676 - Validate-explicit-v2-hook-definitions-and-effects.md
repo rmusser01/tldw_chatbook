@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:22'
-updated_date: '2026-09-30 23:32'
+updated_date: '2026-10-02 00:50'
 labels:
   - plugins
   - implementation
@@ -56,4 +56,6 @@ Integrated the reviewed H1 implementation from codex/managed-plugins (H1 checkpo
 Reused the existing reviewed schema and loader regression tests. Real config/save tests now use the already-bound private bootstrap profile through the existing hook_file fixture, preserving recovery admission rather than switching a live config source. Baseline: one existing config test failed with raw_source_selection_changed and 81 tests passed. Public-loader RED: two expected missing-v2 assertion failures plus two passing controls. Integration qualification: 302 cases passed across the exact schema/legacy/config, consent, inventory and canonical Settings files in 50.69s; after fixture import cleanup the exact six metadata cases passed again. Counts overlap and are not aggregated. Eight authored Python files pass full Ruff/format; nine files parse; shared config.py retains the same 168 pre-existing Ruff diagnostics; whitespace passes. No new skips, full suite, provider generation, or cross-platform execution claim.
 
 Existing ADR-163 and ADR-148 govern validation and legacy behavior; ADR-197 remains the consent owner. Applied only reviewed H1 contract clarifications to the existing spec/ADR and completed H1 plan tracking. Production v2 command/MCP execution and new event producers remain the following tasks. Current integration evidence is in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. No new schema, dependency or permission owner.
+
+PR #2946 Qodo review: explicit command cwd reuses the shared existing-absolute-directory validator at definition and fresh launch boundaries. Explicit user-selected directories need not lie inside a workspace; native package containment remains with its existing owner. Actual child-marker/retarget controls exercise refusal and resource release. Existing ADR-163 applies; current targeted evidence is in Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

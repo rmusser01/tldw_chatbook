@@ -5,7 +5,7 @@ import json
 import os
 import re
 from datetime import datetime, timezone
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Mapping
 from uuid import uuid4
 
 from loguru import logger
@@ -32,6 +32,11 @@ from .local_store import (
     LocalGovernanceRule,
     LocalMCPStore,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Plugins.authority import DataRoot
+    from tldw_chatbook.Plugins.models import PackageInspection
+
 
 _ENV_PLACEHOLDER_PATTERN = re.compile(
     r"^\$(?:\{(?P<braced>[A-Za-z_][A-Za-z0-9_]*)\}|(?P<plain>[A-Za-z_][A-Za-z0-9_]*))$"
@@ -206,15 +211,15 @@ class LocalMCPControlService:
     def save_owned_profile(
         self,
         *,
-        installation_id,
-        inspection,
-        component_id,
-        data_root=None,
-        session_isolation="separate",
-        protocol_version="2026-07-28",
-        credential_reference=None,
-        credential_generation=None,
-        development_loopback=False,
+        installation_id: str,
+        inspection: PackageInspection,
+        component_id: str,
+        data_root: DataRoot | None = None,
+        session_isolation: str = "separate",
+        protocol_version: str = "2026-07-28",
+        credential_reference: str | None = None,
+        credential_generation: int | None = None,
+        development_loopback: bool = False,
     ) -> dict:
         """Save exact host configuration data. This never connects or grants tools."""
         from dataclasses import asdict

@@ -766,3 +766,40 @@ def test_orphan_snapshot_fixed_legacy_membership_is_exact(plugin_stack, native_p
         stack.call(stack.authority.retire_orphan_snapshots)
     assert stack.authority._snapshot_path(marker).exists()
     assert stack.call(stack.authority.verify_legacy_cutover) == fixed
+
+
+def test_quota_scan_closes_iterator_when_a_member_is_refused(tmp_path, monkeypatch):
+    import os
+
+    from tldw_chatbook.Plugins.retention import managed_usage
+
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    (staging / "link").symlink_to(tmp_path)
+    original = os.scandir
+    entered, closed, retained = [], [], []
+
+    class Scan:
+        def __init__(self, path):
+            self.iterator = original(path)
+            retained.append(self.iterator)
+
+        def __iter__(self):
+            return iter(self.iterator)
+
+        def __enter__(self):
+            entered.append(True)
+            return self
+
+        def __exit__(self, *_args):
+            self.iterator.close()
+            closed.append(True)
+
+    monkeypatch.setattr(os, "scandir", Scan)
+    try:
+        with pytest.raises(OSError, match="link"):
+            managed_usage(tmp_path)
+        assert entered == closed == [True]
+    finally:
+        for iterator in retained:
+            iterator.close()

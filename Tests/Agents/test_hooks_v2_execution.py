@@ -1011,3 +1011,39 @@ async def test_guarded_transport_cancellation_retains_uncertain_launch(monkeypat
         assert budget.snapshot()["tickets"] == 1
     finally:
         await engine.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("replace_directory", [False, True])
+async def test_command_launch_rechecks_the_reviewed_working_directory(
+    tmp_path, replace_directory
+):
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    selected = tmp_path / "selected"
+    target = tmp_path / "target"
+    selected.mkdir()
+    target.mkdir()
+    handler = command(
+        'from pathlib import Path;Path(\'marker\').touch();print(\'{"version":2,"decision":"pass"}\')',
+        cwd=str(selected),
+        effects=["deny"],
+    )
+    if replace_directory:
+        selected.rmdir()
+        selected.symlink_to(target, target_is_directory=True)
+    budget = HookBudgetOwner()
+    engine = HookEngine((handler,), lambda *_: True, budget)
+    try:
+        result = await engine.fire_async(event())
+        if replace_directory:
+            assert not result.allowed
+            assert not (target / "marker").exists()
+        else:
+            assert result.succeeded
+            assert (selected / "marker").exists()
+        assert not engine.processes.records
+        assert budget.snapshot()["tickets"] == 0
+    finally:
+        await engine.close()

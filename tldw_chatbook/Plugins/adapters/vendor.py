@@ -129,6 +129,10 @@ def _document(
     def transform(raw):
         raw = dict(raw)
         if kind == "skill":
+            require(
+                isinstance(raw.get("metadata", {}), dict),
+                "vendor_skill_metadata_invalid",
+            )
             metadata = dict(raw.get("metadata", {}))
             runtime_keys = {
                 "context",

@@ -11464,6 +11464,8 @@ class ConsoleChatController:
             session.id, queue_entry_id
         )
         if continuation_gate is not None:
+            # Durable acceptance returned above and consumes in its transaction.
+            # This gate belongs to the non-durable (ephemeral) acceptance path.
             try:
                 continuation_gate.consume()
             except PermissionError:

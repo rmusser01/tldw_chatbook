@@ -631,3 +631,23 @@ def test_lifecycle_projections_accept_only_the_closed_actual_fields():
     ):
         with pytest.raises(ValueError):
             lifecycle_event(name, "session", data=data)
+
+
+@pytest.mark.parametrize("kind", ["relative", "missing", "file", "valid"])
+def test_command_cwd_uses_explicit_existing_directory(tmp_path, kind):
+    from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+    selected = {
+        "relative": "relative",
+        "missing": str(tmp_path / "missing"),
+        "file": str(tmp_path / "file"),
+        "valid": str(tmp_path),
+    }[kind]
+    (tmp_path / "file").write_text("file")
+    if kind == "valid":
+        assert parse_handlers([_command(cwd=selected)])[0].cwd == str(
+            tmp_path.resolve()
+        )
+    else:
+        with pytest.raises(ValueError, match="cwd"):
+            parse_handlers([_command(cwd=selected)])

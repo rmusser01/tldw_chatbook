@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:16'
-updated_date: '2026-10-01 01:26'
+updated_date: '2026-10-02 00:50'
 labels:
   - plugins
   - implementation
@@ -43,4 +43,6 @@ ADR required: yes (existing accepted contracts). ADR paths: backlog/decisions/16
 
 <!-- SECTION:NOTES:BEGIN -->
 Reused reviewed F1 package inspection with its reviewed portable MCP syntax repair. Native component inventory, closed constraints, deterministic content/effective identity and descriptor-anchored bounded materialization publish no runtime authority. Targeted native inspection/file tests: 92 passed, zero skips/warnings; all 14 new Python files pass Ruff and formatting. Real macOS filesystem boundaries exercised; Windows fails closed and Linux/vendor execution remain unqualified. Existing ADR162/163 and authoring/provenance docs apply. Evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md. Implementation files: Plugins models, schemas, inspection, package_files and portable adapter; original test fixtures.
+
+PR #2946 Qodo review: the existing installed Pydantic dependency now strictly validates known manifest/author fields while retaining unknown top-level inspection fields and the dictionary API. Fixed-code errors omit raw external values; public Google-style contract documented. Existing ADR-162 applies. Current RED/GREEN and native manifest evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

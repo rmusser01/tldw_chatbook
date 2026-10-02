@@ -597,14 +597,25 @@ class ToolHookRun:
                 if record.policy in {"explicit_required", "event_control"}
                 and record.event in {None, event.event}
             )
-            token = self.checkpoints.begin(
-                event,
-                required,
-                dependency_requirements=dependent,
-                owner_id=self.run_id,
-                current=self._current,
-                stage_context=self._stage_context,
-            )
+            from .checkpoints import HookCheckpointError
+
+            try:
+                token = self.checkpoints.begin(
+                    event,
+                    required,
+                    dependency_requirements=dependent,
+                    owner_id=self.run_id,
+                    current=self._current,
+                    stage_context=self._stage_context,
+                )
+            except HookCheckpointError:
+                scope.close()
+                for _event, pending_scope, _plans, pending_token in planned:
+                    self.checkpoints.fail(pending_token, "hook owner retired")
+                    pending_scope.close()
+                if self.checkpoints.is_current(self.run_id):
+                    raise
+                return
             planned.append((event, scope, plans, token))
         if input_failure:
             for _event, scope, _plans, token in planned:

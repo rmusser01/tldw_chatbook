@@ -3061,7 +3061,8 @@ class ConsoleRuntime:
         )
         engine = self.get_hooks_v2(session_id)
         previous = self._hooks_v2_configured.get(session_id)
-        context_key = self._hooks_v2_context_key(session_id)
+        context_key = await asyncio.to_thread(self._hooks_v2_context_key, session_id)
+        self._raise_if_disposed_or_session_fenced(session_id)
         owner = self._hooks_v2_lifecycles.get(session_id)
         context_changed = owner is not None and owner.context_key != context_key
         if context_changed and native is not None and configuration is None:

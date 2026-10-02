@@ -8,9 +8,11 @@ codes only; package bodies and configuration values are never diagnostics.
 import math
 import re
 from collections.abc import Callable
+from typing import Literal
 from urllib.parse import urlsplit
 
 import yaml
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from tldw_chatbook.Utils.input_validation import validate_env_var_reference
 
@@ -62,32 +64,64 @@ def strings(value: object, *, nonempty: bool = False) -> bool:
     )
 
 
+class _ManifestAuthor(BaseModel):
+    model_config = ConfigDict(strict=True, extra="forbid")
+
+    name: str = ""
+    email: str = ""
+    url: str = ""
+
+
+class _PluginManifest(BaseModel):
+    model_config = ConfigDict(strict=True, extra="allow")
+
+    schema_url: Literal[PLUGIN_SCHEMA] = Field(alias="$schema")
+    name: str = Field(min_length=1, max_length=64)
+    version: str = ""
+    description: str = ""
+    homepage: str = ""
+    repository: str = ""
+    license: str = ""
+    author: _ManifestAuthor = Field(default_factory=_ManifestAuthor)
+    keywords: list[str] = Field(default_factory=list)
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        if (
+            re.fullmatch(r"(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", value)
+            is None
+        ):
+            raise ValueError("manifest_name_invalid")
+        return value
+
+
 def validate_manifest(value: dict) -> dict:
-    require(value.get("$schema") == PLUGIN_SCHEMA, "manifest_schema_unsupported")
-    name = value.get("name")
-    require(
-        isinstance(name, str)
-        and len(name) <= 64
-        and re.fullmatch(r"(?!.*(?:--|\.\.))[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?", name)
-        is not None,
-        "manifest_name_invalid",
-    )
-    for field in ("version", "description", "homepage", "repository", "license"):
-        require(
-            field not in value or isinstance(value[field], str),
-            "manifest_field_invalid",
+    """Validate portable manifest fields while retaining unknown inspection data.
+
+    Args:
+        value: The parsed, bounded external manifest dictionary.
+
+    Returns:
+        Strictly validated fields and retained extras, with absent fields omitted.
+
+    Raises:
+        PackageFileError: A fixed manifest error code for invalid known fields.
+    """
+    try:
+        return _PluginManifest.model_validate(value).model_dump(
+            by_alias=True, exclude_unset=True
         )
-    if "author" in value:
-        author = closed(value["author"], {"name", "email", "url"})
-        require(
-            all(isinstance(item, str) for item in author.values()),
-            "manifest_author_invalid",
-        )
-    require(
-        "keywords" not in value or strings(value["keywords"]),
-        "manifest_keywords_invalid",
-    )
-    return value
+    except ValidationError as exc:
+        location = exc.errors(include_input=False, include_context=False)[0]["loc"]
+        field = location[0] if location else None
+        code = {
+            "$schema": "manifest_schema_unsupported",
+            "name": "manifest_name_invalid",
+            "author": "manifest_author_invalid",
+            "keywords": "manifest_keywords_invalid",
+        }.get(field, "manifest_field_invalid")
+        raise PackageFileError(code) from None
 
 
 def validate_extension(value: object) -> dict:

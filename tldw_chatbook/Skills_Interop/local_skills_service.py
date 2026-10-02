@@ -1511,11 +1511,23 @@ class LocalSkillsService:
         """
         self._enforce("skills.detail.local")
         if self._owned_skill(skill_name):
-            return next(
-                row
-                for row in self.plugin_service.list_skills()
-                if skill_name in {row["name"], row["tool_name"], row["record_id"]}
+            service = self.plugin_service
+            row = (
+                next(
+                    (
+                        row
+                        for row in service.list_skills()
+                        if skill_name
+                        in {row["name"], row["tool_name"], row["record_id"]}
+                    ),
+                    None,
+                )
+                if service is not None
+                else None
             )
+            if row is None:
+                raise ValueError(f"Unknown skill: {skill_name}")
+            return row
         records = self._visible_records()
         record = self._require_record(skill_name, records)
         summary = self._summary_for_record(record)

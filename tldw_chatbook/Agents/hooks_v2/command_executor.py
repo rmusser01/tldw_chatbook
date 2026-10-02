@@ -12,6 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from uuid import uuid4
 
+from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
+
 from .budgets import HookTicket
 from .models import HookEvent, HookHandler, HookResult
 from .ownership import HookProcessOwner
@@ -172,6 +174,13 @@ class CommandExecutor:
                 return outcome
             job.token = await asyncio.to_thread(self.owner.reserve_launch, event)
             env = await asyncio.to_thread(environment, handler, event)
+            cwd = handler.cwd
+            if cwd is not None:
+                current_cwd = str(
+                    await asyncio.to_thread(validate_existing_absolute_directory, cwd)
+                )
+                if current_cwd != cwd:
+                    raise ValueError("hook cwd changed")
             if job.cancel.is_set() or time.monotonic() >= deadline:
                 outcome.failure = "cancelled"
                 terminal = True  # reserve succeeded, no launch attempted
@@ -195,7 +204,7 @@ class CommandExecutor:
                         stdin=subprocess.PIPE,
                         stdout=subprocess.PIPE,
                         stderr=subprocess.PIPE,
-                        cwd=handler.cwd,
+                        cwd=cwd,
                         env=env,
                         start_new_session=os.name != "nt",
                     )

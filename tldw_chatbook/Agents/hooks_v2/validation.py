@@ -1,4 +1,4 @@
-"""Pure, closed validation for explicit v2 hooks.
+"""Closed validation for explicit v2 hooks.
 
 Raw command/text results must enter through :func:`decode_result`. Validation
 of an already-decoded object cannot recover duplicate JSON keys or transport
@@ -13,6 +13,8 @@ import re
 from collections.abc import Callable, Mapping
 from types import MappingProxyType
 from typing import Any
+
+from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
 
 from .models import ContextBlock, HookEvent, HookHandler, HookResult
 
@@ -397,8 +399,13 @@ def parse_handlers(
                 else:
                     _fail("invalid environment value or undeclared reference")
             cwd = raw.get("cwd")
-            if cwd is not None and (type(cwd) is not str or not cwd or "\x00" in cwd):
-                _fail("invalid cwd")
+            if cwd is not None:
+                if type(cwd) is not str:
+                    _fail("invalid cwd")
+                try:
+                    cwd = str(validate_existing_absolute_directory(cwd))
+                except ValueError:
+                    _fail("invalid cwd")
             kwargs.update(argv=argv, env=_freeze(clean_env), cwd=cwd)
         else:
             for key in ("server", "tool"):

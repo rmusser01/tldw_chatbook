@@ -31,7 +31,6 @@ from tldw_chatbook.Utils.timestamps import utc_now_iso
 
 from .activation import client_guard, guarded
 from .local_store import TransportProfile
-from .protocol_profiles import protocol_profile
 
 from .tool_results import (
     MAX_JSON_DEPTH,
@@ -337,7 +336,6 @@ class _JSONRPCError(RuntimeError):
 
 
 class _StdioJSONRPCConnection:
-    profile = protocol_profile(_MCP_PROTOCOL_VERSION)
     client_name = "tldw_chatbook_client"
     _allow_negotiation = False
 
@@ -359,6 +357,8 @@ class _StdioJSONRPCConnection:
         self.server_info: Dict[str, Any] = {}
         self.server_capabilities: Dict[str, Any] = {}
         self.protocol_version = ""
+        from .protocol_profiles import protocol_profile
+
         self.profile = protocol_profile(_MCP_PROTOCOL_VERSION)
 
         self._request_ids = count(1)
@@ -385,6 +385,8 @@ class _StdioJSONRPCConnection:
         )
 
     async def initialize(self) -> Dict[str, Any]:
+        from .protocol_profiles import protocol_profile
+
         if self.profile.modern:
             try:
                 result = await self.request("server/discover", {})
@@ -1519,6 +1521,8 @@ class MCPClient:
                     server_request_dispatcher=connection_dispatcher,
                 )
                 if _profile is not None:
+                    from .protocol_profiles import protocol_profile
+
                     session.profile = protocol_profile(_profile.protocol_version)
                     session._allow_negotiation = True
             session._qualified_profile = _profile is not None

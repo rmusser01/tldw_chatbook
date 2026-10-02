@@ -1119,3 +1119,22 @@ async def test_hook_currentness_does_not_read_unrelated_skill_catalog(
             await runtime.dispose()
             runs.close()
             chacha.close()
+
+
+@pytest.mark.asyncio
+async def test_preparation_collects_authority_on_a_worker(session_case, monkeypatch):
+    import threading
+
+    case = session_case
+    case.allow_required_initialization()
+    ui_thread = threading.get_ident()
+    observed = []
+    collect = case.runtime._hooks_v2_context_key
+
+    def traced(session_id):
+        observed.append(threading.get_ident())
+        return collect(session_id)
+
+    monkeypatch.setattr(case.runtime, "_hooks_v2_context_key", traced)
+    assert (await case.submit()).accepted
+    assert observed and observed[0] != ui_thread

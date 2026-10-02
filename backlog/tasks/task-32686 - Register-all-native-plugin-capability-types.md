@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:29'
-updated_date: '2026-10-01 09:28'
+updated_date: '2026-10-02 00:50'
 labels:
   - plugins
   - implementation
@@ -51,4 +51,6 @@ Reason: implements the accepted immutable native capability/context and existing
 
 <!-- SECTION:NOTES:BEGIN -->
 Implemented selected commands/rules/agents/hooks/MCP through one immutable admission and the actual Console/AgentService owners. Reviewed builtin/owned-MCP/model references preserve EMPTY, parent routing and dependency semantics; live typed context remains attributed user material and whole overflow refuses. Native hooks reserve F2 process/root custody before H2 effects and retain it through revocation/terminal settlement. Existing ADR-162/163 apply and were updated; no separate authority/runtime owner. Qualification: 164 native/Console/MCP/admission checks, 138 isolated agent checks, 85 hook/lifecycle neighbors and 3 latest readiness/EMPTY-approval controls passed without skips. Authored Ruff lint/format, shared baseline lint ratchet, changed AST and whitespace checks pass. Evidence and limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md; API/authoring: Plugins/README.md. Skill model overrides remain unsupported. No OS Keychain/OAuth/vendor-host/cross-platform/full-suite/distribution certification.
+
+PR #2946 Qodo review: stale or missing owned Library skills return the documented ValueError for absent service, empty inventory and unrelated rows. Owned MCP profile inputs now carry existing model/data-root type hints behind TYPE_CHECKING. No new service or authority model. Definitive-tool/Library service group: 56 passes. ADR-162/163 apply; evidence: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

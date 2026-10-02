@@ -874,3 +874,87 @@ changed ranges/new owners are formatted, shared files add no Ruff diagnostics
 against rebased HEAD, and whitespace checks pass. Existing ADR-162/163/173 apply;
 these repairs add no new runtime, authority or storage boundary. Local evidence
 remains targeted and does not replace a new remote CI run or bot review.
+
+
+## PR #2946 Qodo review and boot-budget repair — 2026-10-01
+
+Reviewed Qodo's ten findings against published head
+`17c4734241a76148534535c74281fa01c473160b`, tracing actual callers and the
+existing authority owners before applying changes. Nine inline findings are
+identified below by GitHub comment ID; finding 10 appeared in the summary only.
+Existing ADR-162/163 govern these direct contract repairs. ADR-097 governs the
+unchanged startup ratchet; no new authority, storage, dependency or runtime
+boundary is introduced.
+
+| Finding | Disposition and evidence |
+| --- | --- |
+| 1 / 4161447234, continuation consumption | Incorrect control-flow inference. Durable `submit_draft` returns through `_accept_durable_turn` before reaching explicit consumption; its acceptance contribution consumes the gate in the transaction. The later explicit consumption belongs to ephemeral submission. Retained both owners and added a clarifying comment. Four actual queued-Console cases cover both storage modes, their real gateway submissions and exactly one consumption for each gate. Removing the ephemeral guard would weaken admission. |
+| 2 / 4161447184, hook cwd | Reused `validate_existing_absolute_directory` at definition validation and fresh command launch. Explicit user-selected cwd may be outside a workspace; it must be an existing absolute directory. Plugin-relative cwd remains contained by the existing native plugin owner. Retargeting a validated directory to a symlink is refused before launching the process. Actual child-marker controls verify the selected directory and no execution after retarget, with custody/tickets released. |
+| 3 / 4161447190, quota iterator | `managed_usage` now owns `os.scandir` with a context manager. A real retained iterator proves deterministic closure when recursive sizing refuses a symlink. |
+| 4 / 4161447195, UI-thread authority read | Moved initial `_hooks_v2_context_key` collection to `asyncio.to_thread`, retaining the operation-owned database connection and rechecking disposal/session fences after the await. A real accepted Console turn confirms the collection runs off the UI thread. Synchronous exact-currentness gates remain in their existing admission locations. |
+| 5 / 4161447211, validator documentation | Documented the manifest validator's actual Args, Returns and fixed-code Raises contract. |
+| 6 / 4161447217, public profile types | Annotated all `save_owned_profile` inputs using existing `PackageInspection`/`DataRoot` types behind `TYPE_CHECKING`. No eager plugin import or new public model. |
+| 7 / 4161447246, definitive tool settlement | Fixed shared `ToolHookRun.install_result`, the common checkpoint installation owner. Only owner-retirement checkpoint errors are tolerated; current-owner errors still propagate. Event scopes and already planned checkpoints close/fail through their existing lifecycle. Real definitive AgentService calls prove the original settled result identity and both terminal notifications survive retirement before installation and between the two postevents; a live-owner control passes. Retired owners stay closed with no retained checkpoint entries. |
+| 8 / 4161447255, missing Library skill | Optional plugin service and an absent owned row now produce the documented `ValueError`, using `next(..., None)`. Tests cover no service, an empty list and unrelated installed rows. |
+| 9 / 4161447202, strict manifest model | Existing installed Pydantic validates known manifest/author fields strictly; unknown top-level inspection fields remain retained, and absent optional fields remain absent. The public dictionary API and bounded package parser remain unchanged. Validation failures become fixed manifest codes without external values or raw Pydantic error bodies. Existing native manifest controls cover accepted fields, rejected coercions and retained extension data. |
+| 10, malformed vendor skill metadata | Added the missing dictionary check before metadata conversion, allowing the existing per-component failure path to retain a blocked skill alongside usable siblings. Eight independently authored Cursor/Codex fixtures cover null, string, list and numeric metadata. Each asserts the invalid component's fixed blocker and a valid sibling's retained usability. All foreign hook mappings remain unsupported. |
+
+The remote UI latency run `36939210300` failed the module-count ratchet at
+**1,034 against a 1,033 limit**. Reproduced that exact failure locally
+(`hooks-pr2946-boot-red.xml`, 20.889s), then deferred `MCP.protocol_profiles`
+loading until actual connection construction/initialization. Removed the unused
+private connection class default; constructed connections still receive the
+same instance profile and negotiate through the same code. No ratchet,
+snapshot, workflow or exclusion was changed. The isolated census passes
+(`hooks-pr2946-boot-green.xml`, 16.238s), and the exact six-file affected
+startup selection passes **22 cases in 159.636s**, zero skips
+(`hooks-pr2946-boot-final.xml`). Local optional dependencies are installed;
+the earlier remote selection's two missing-dependency skips are not evidence.
+
+Fresh covering checks:
+
+- Hook validation/execution/pipeline, native/Cursor/Codex inspection,
+  retention, owned MCP, protocol profiles, typed results and progress:
+  **488 passed / one fixture failure in 937.601s**, no skips
+  (`hooks-pr2946-qodo-neighbors.xml`). The remaining progress helper bypassed
+  `__init__` and relied on the removed class profile. Five initialization
+  variants independently reproduced the same missing instance state
+  (`hooks-pr2946-bare-init-red.xml`). The existing shared bare-connection
+  helper now sets exactly the real constructor's default instance profile;
+  the separate direct `__new__` fixture reuses that helper. The full catalog
+  pagination and progress files then pass **147 cases in 7.827s**, no skips
+  (`hooks-pr2946-bare-fixture-final.xml`), including real concurrent stdio
+  progress. Every case in the original covering group is now passing across
+  the retained run and corrected-file run. No production fallback was added.
+- Actual definitive tool and Library skill service files: **56 passed in
+  13.487s**, no skips (`hooks-pr2946-qodo-services.xml`).
+- Complete continuation/lifecycle Console files: **80 passed in 328.062s**,
+  no skips (`hooks-pr2946-qodo-console.xml`).
+- Native manifest controls plus real continuation/worker controls:
+  **77 passed in 10.938s**, no skips (`hooks-pr2946-qodo-manifest.xml`).
+- Authored behavioral regressions: **18 passed in 1.845s**
+  (`hooks-pr2946-qodo-green2.xml`); the later 56-case service run includes
+  the additional between-postevents retirement control. Counts overlap.
+- Diagnostic inventory, timestamp guard and all generated CSS bundles
+  reproduce without tracked artifact changes. All 20 changed Python files
+  parse, no Ruff diagnostics are added against the published head, authored
+  files/changed shared ranges are formatted, and whitespace checks pass.
+
+Retained RED evidence is scoped honestly: the initial combined authored run
+also contained five fixture setup failures (private bootstrap selection and
+an attempted read-only property assignment), and two vendor assertions assumed
+a global diagnostic instead of the actual component-blocker contract. Those
+are harness mistakes, not demonstrated production failures. Corrected
+constructor fixtures independently reproduce all three missing-skill errors
+(`hooks-pr2946-skill-red.xml`); the actual definitive owner-retirement path
+reproduces `HookCheckpointError` before repair
+(`hooks-pr2946-qodo-owner-red.xml`); the exact boot ratchet independently
+reproduces its failure as recorded above. No production guard was weakened to
+make a fixture pass.
+
+CodeRabbit's successful check explicitly skipped review because automatic
+review is disabled for this non-default target branch; it is not clean-review
+evidence. A new remote run and Qodo review must assess the repaired head.
+Qualification remains targeted Darwin Console/SQLite/subprocess behavior.
+No full-suite, full GUI, real Keychain/OAuth, foreign-host or Windows/Linux
+runtime certification is claimed.

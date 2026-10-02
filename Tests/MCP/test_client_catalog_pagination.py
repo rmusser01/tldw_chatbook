@@ -123,9 +123,12 @@ class _ConnectSession:
 def _bare_connection(
     process: object | None = None,
 ) -> client_module._StdioJSONRPCConnection:
+    from tldw_chatbook.MCP.protocol_profiles import protocol_profile
+
     connection = client_module._StdioJSONRPCConnection.__new__(
         client_module._StdioJSONRPCConnection
     )
+    connection.profile = protocol_profile(client_module._MCP_PROTOCOL_VERSION)
     connection._producer_lifetime = client_module.ProducerLifetime()
     connection.process = process or _Process()
     connection._request_ids = count(1)
@@ -208,9 +211,7 @@ def _assert_client_error(error: BaseException, expected_message: str) -> None:
 async def test_initialize_rejects_unexpected_protocol_version_without_payload_leakage(
     protocol_version: object,
 ) -> None:
-    connection = client_module._StdioJSONRPCConnection.__new__(
-        client_module._StdioJSONRPCConnection
-    )
+    connection = _bare_connection()
     connection.client_name = "test-client"
 
     async def request(_method: str, _params: dict[str, Any]) -> dict[str, Any]:

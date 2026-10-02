@@ -137,7 +137,8 @@ def managed_usage(root) -> int:
             return info.st_size
         if not stat.S_ISDIR(info.st_mode):
             raise OSError("unqualified managed storage type")
-        return sum(size(Path(entry.path)) for entry in os.scandir(path))
+        with os.scandir(path) as entries:
+            return sum(size(Path(entry.path)) for entry in entries)
 
     return sum(
         size(root / name)
