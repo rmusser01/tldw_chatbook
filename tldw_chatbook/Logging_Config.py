@@ -422,6 +422,14 @@ class LogsBufferHandler(logging.Handler):
     """
 
     def __init__(self, app: "TldwCli") -> None:
+        """Feed ``app``'s Logs buffers and its current Logs window.
+
+        Args:
+            app: The running app; owns ``_log_buffer``, ``_log_records`` and
+                ``_current_logs_window``. Gains ``_log_records_lock`` and
+                ``_log_records_seq``, which the Logs window reads when it seeds
+                from the buffer.
+        """
         super().__init__()
         self.app = app
         self.setFormatter(
@@ -430,6 +438,13 @@ class LogsBufferHandler(logging.Handler):
             )
         )
         self._loop = _running_loop()
+        # A worker record is buffered at once but displayed later on the loop.
+        # Numbering each buffered record under a lock the Logs window also
+        # seeds under lets the deferred display skip a record the window
+        # already loaded from the buffer (Qodo, #2904).
+        self._sequence = 0
+        app._log_records_lock = threading.Lock()
+        app._log_records_seq = 0
 
     def emit(self, record: logging.LogRecord) -> None:
         """Append the redacted line to the buffers, then show it in the Logs view.
@@ -440,23 +455,32 @@ class LogsBufferHandler(logging.Handler):
         try:
             message = self.format(record)
             name = _safe_logger_name(record.name)
-            self.app._log_buffer.append(message)
-            self.app._log_records.append((record.levelname, name, message))
+            app = self.app
+            with app._log_records_lock:
+                self._sequence += 1
+                sequence = self._sequence
+                app._log_buffer.append(message)
+                app._log_records.append((record.levelname, name, message))
+                app._log_records_seq = sequence
             loop = self._loop
             if loop is None or _running_loop() is loop:
-                self._display(record.levelname, name, message)
+                self._display(record.levelname, name, message, sequence)
             elif not loop.is_closed():  # else nothing is left to display it
-                loop.call_soon_threadsafe(self._display, record.levelname, name, message)
+                loop.call_soon_threadsafe(
+                    self._display, record.levelname, name, message, sequence
+                )
         except Exception:
             self.handleError(record)
 
-    def _display(self, level: str, name: str, message: str) -> None:
+    def _display(self, level: str, name: str, message: str, sequence: int) -> None:
         app = self.app
 
         # Preferred live path: the Logs screen's LogsWindow applies the user's
         # active filters as records arrive.
         logs_window = getattr(app, "_current_logs_window", None)
         if logs_window is not None:
+            if sequence <= getattr(logs_window, "_seeded_through", 0):
+                return  # loaded from the buffer when the window seeded
             try:
                 logs_window.append_record(level, name, message)
                 return

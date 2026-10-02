@@ -50,7 +50,7 @@ pytestmark = pytest.mark.unit
 SECRET = "".join(("sk", "-perf03SECRETsentinelKEYnotreal01"))
 
 
-class _AppStub:
+class AppStub:
     """The two stores and the live-feed slots ``LogsBufferHandler`` fills."""
 
     def __init__(self) -> None:
@@ -60,9 +60,12 @@ class _AppStub:
         self._current_log_widget = None
 
 
-class _FakeLogsWindow:
+class FakeLogsWindow:
+    """Records what the live feed appends; seeded through no record yet."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, str]] = []
+        self._seeded_through = 0
 
     def append_record(self, level: str, name: str, message: str) -> None:
         self.calls.append((level, name, message))
@@ -138,7 +141,7 @@ def test_file_sink_redacts_each_record_once(tmp_path, perf_logger, redactions):
 def test_file_and_logs_buffer_share_one_redaction(tmp_path, perf_logger, redactions):
     """Two redacting sinks, two formats, one sanitizer pass per record."""
     handler = _file_handler(tmp_path)
-    app = _AppStub()
+    app = AppStub()
     perf_logger.addHandler(handler)
     perf_logger.addHandler(LogsBufferHandler(app))
     _warm(perf_logger, redactions)
@@ -163,7 +166,7 @@ def test_exception_text_is_redacted_once_in_both_sinks(
 ):
     """The secret lives in ``str(exc)``: the traceback block must be covered."""
     handler = _file_handler(tmp_path)
-    app = _AppStub()
+    app = AppStub()
     perf_logger.addHandler(handler)
     perf_logger.addHandler(LogsBufferHandler(app))
     _warm(perf_logger, redactions)
@@ -187,7 +190,7 @@ def test_secret_straddling_the_cap_reaches_no_sink(tmp_path, perf_logger):
     stack), so that is where a straddling key has to be proven safe.
     """
     handler = _file_handler(tmp_path)
-    app = _AppStub()
+    app = AppStub()
     perf_logger.addHandler(handler)
     perf_logger.addHandler(LogsBufferHandler(app))
 
@@ -209,8 +212,8 @@ def test_secret_straddling_the_cap_reaches_no_sink(tmp_path, perf_logger):
 
 async def test_logs_buffer_stores_at_emit_and_displays_on_the_loop(redactions):
     """A worker-thread record is buffered at once; only the widget waits for the loop."""
-    app = _AppStub()
-    window = _FakeLogsWindow()
+    app = AppStub()
+    window = FakeLogsWindow()
     app._current_logs_window = window
     handler = LogsBufferHandler(app)  # built on the running loop
     display_threads: list[str] = []
@@ -257,7 +260,7 @@ def test_a_logger_name_is_sanitized_in_both_sinks(tmp_path, name):
     """Only the body is redacted per record, so the name needs its own pass."""
     logger = logging.Logger(name, level=logging.INFO)
     handler = _file_handler(tmp_path)
-    app = _AppStub()
+    app = AppStub()
     logger.addHandler(handler)
     logger.addHandler(LogsBufferHandler(app))
     try:
@@ -307,8 +310,8 @@ async def test_every_sink_masks_a_forwarded_loguru_secret(tmp_path):
     old_level = root.level
     root.setLevel(logging.INFO)
     handler = _file_handler(tmp_path)
-    app = _AppStub()
-    window = _FakeLogsWindow()
+    app = AppStub()
+    window = FakeLogsWindow()
     app._current_logs_window = window
     buffer_handler = LogsBufferHandler(app)
     root.addHandler(handler)
@@ -604,3 +607,71 @@ def test_timeit_times_the_awaited_coroutine(monkeypatch, info_messages):
     assert timings["perf03_async"] >= 0.04, timings
     assert "perf03_sync" in timings
     assert not [m for m in info_messages if "finished in" in m], info_messages
+
+
+
+def test_timeit_labels_a_cancelled_coroutine_cancelled(monkeypatch):
+    """A cancelled task is not a success (Qodo, #2904); cancellation still propagates."""
+    from tldw_chatbook.Metrics import metrics_logger
+
+    statuses: list[str] = []
+    monkeypatch.setattr(
+        metrics_logger,
+        "_log_metric",
+        lambda name, kind, value, labels=None: statuses.append((labels or {}).get("status")),
+    )
+
+    @metrics_logger.timeit("perf03_cancelled")
+    async def waits_forever():
+        await asyncio.Event().wait()
+
+    async def scenario():
+        task = asyncio.create_task(waits_forever())
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+    assert "cancelled" in statuses and "success" not in statuses, statuses
+
+
+class FakeLoop:
+    """Collects callbacks the handler defers to "the app loop"."""
+
+    def __init__(self) -> None:
+        self.callbacks: list = []
+
+    def is_closed(self) -> bool:
+        return False
+
+    def call_soon_threadsafe(self, callback, *args) -> None:
+        self.callbacks.append((callback, args))
+
+
+def test_a_record_seeded_before_its_deferred_display_is_shown_once():
+    """A worker record is buffered at once but displayed later; if the Logs
+    window seeds from the buffer in between, the deferred display must not
+    add it again (Qodo, #2904)."""
+    app = AppStub()
+    handler = Logging_Config.LogsBufferHandler(app)
+    loop = FakeLoop()
+    handler._loop = loop  # emit "from a worker thread": display is deferred
+
+    record = logging.LogRecord("tldw.worker", logging.INFO, __file__, 1, "from a worker", None, None)
+    handler.emit(record)
+    assert len(app._log_records) == 1 and loop.callbacks
+
+    window = FakeLogsWindow()  # the Logs screen mounts and seeds, as load_from_app does
+    with app._log_records_lock:
+        window._seeded_through = app._log_records_seq
+    app._current_logs_window = window
+    for callback, args in loop.callbacks:
+        callback(*args)
+    assert window.calls == [], "the seeded record was displayed a second time"
+
+    loop.callbacks.clear()
+    handler.emit(logging.LogRecord("tldw.worker", logging.INFO, __file__, 2, "after mount", None, None))
+    for callback, args in loop.callbacks:
+        callback(*args)
+    assert [call[2].endswith("after mount") for call in window.calls] == [True]

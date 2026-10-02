@@ -1,6 +1,7 @@
 # metrics_logger.py
 #
 # Imports
+import asyncio
 import functools
 import inspect
 import os
@@ -121,6 +122,11 @@ def timeit(
                 status = "success"
                 try:
                     return await func(*args, **kwargs)
+                except asyncio.CancelledError:
+                    # Not an Exception: without this a cancelled task was
+                    # labelled a success (Qodo, #2904).
+                    status = "cancelled"
+                    raise
                 except Exception:
                     status = "failure"
                     raise
