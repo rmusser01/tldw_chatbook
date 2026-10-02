@@ -241,4 +241,3 @@ Resend re-runs a broken LAST user turn in place from the user message. It never 
 ### Post-merge fix (2026-10-02)
 
 Dev's Perf Guard failed after #2956 merged: the `_ui_ready` census read 1034 against its limit of 1033. The cause was that `console_turn_resend` had become resident at boot through module-level imports in `message.py`, `wiring.py` and `console_transcript.py`. All three are now lazy, function-level imports. The census measures 1033 when run with `PYTHONPATH=<worktree>`, and the 75 Resend tests pass. `test_resend_worker_leaves_a_refused_echo_sync_timer_to_the_send_path` now patches `console_turn_resend.resend_turn`.
-
