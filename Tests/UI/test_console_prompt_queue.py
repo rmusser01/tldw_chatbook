@@ -326,14 +326,17 @@ def _shelf_snapshot(
 
 
 def _every_shelf_presentation():
-    """Every shelf state ``presentation_for`` can project, longest copy first.
+    """The shelf states ``presentation_for`` can project, by button label.
 
     Built through the production projection with the arguments
-    ``ConsolePromptQueueUIController.presentation_for`` passes, so a new
-    pause label or primary action lands here without a hand-kept list. The
-    failed turn's name uses the production preview budget at its full width:
-    that summary is the shelf's longest, and the one most likely to push a
-    button off the row.
+    ``ConsolePromptQueueUIController.presentation_for`` passes, so the labels
+    come from production, not from a copy kept here. Only a new
+    ``PromptQueuePauseReason`` is picked up automatically; a new
+    ``PromptQueueMode`` or a new ``presentation_for`` argument needs a row
+    here. 'Starting...' and the bare 'Turn failed' are not walked: their
+    buttons carry the same labels as states that are. The failed turn's name
+    uses the production preview budget at its full width: that summary is the
+    shelf's longest, and the one most likely to push a button off the row.
     """
 
     derive = derive_prompt_queue_presentation
@@ -388,10 +391,13 @@ def _every_shelf_presentation():
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "shelf_width",
-    # Both sides of the shelf's own 92-cell narrow threshold, then the
-    # widths the mounted Console gives the shelf at 80/100/120/160/235
-    # terminal columns (rails closed, so the shelf spans the terminal).
-    [60, 80, 91, 92, 100, 120, 160, 235],
+    # The shelf spans the whole Console shell, rails open or not, so its
+    # width is the terminal's. 40/44/46/47 are terminals narrower than the
+    # supported 80 columns: they straddle the 45-47 cells the widest label
+    # pair needed beside a 20-cell summary. Then both sides of the shelf's
+    # own 92-cell narrow threshold, then the widths the mounted Console
+    # gives the shelf at 80/100/120/160/235 terminal columns.
+    [40, 44, 46, 47, 60, 80, 91, 92, 100, 120, 160, 235],
 )
 async def test_every_shelf_button_paints_its_whole_label(shelf_width) -> None:
     """TASK-33625.4: the controls on the queue shelf never clip their label.

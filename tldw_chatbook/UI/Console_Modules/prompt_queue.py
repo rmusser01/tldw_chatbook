@@ -366,9 +366,14 @@ class ConsolePromptQueueRegion(Widget):
     }
 
     /* TASK-33621.19: a narrow shelf's summary (the named 'Turn failed: "..."'
-       is its longest label) truncates instead of pushing Retry off-screen. */
+       is its longest label) truncates instead of pushing Retry off-screen.
+       TASK-33625.4: it also gives up its min-width 20. The shelf spans the
+       Console shell (rails open or not), so this only binds in a terminal
+       under 47 columns, where Manage + Keep draining (27 cells) now stay
+       whole instead of painting 'Keep dra'. */
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
         width: 1fr;
+        min-width: 0;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }
