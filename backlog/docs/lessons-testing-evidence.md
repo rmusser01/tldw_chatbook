@@ -17839,3 +17839,16 @@ new-chat/fork-chat creation before final deletion. Check the committed Close
 generation at shared executor entry; decide and remember under the same lock
 as revocation. Verify rows and UI completion while the actual ticket retains
 the source, rather than testing only after the source disappears.
+
+
+**In-flight follow-up, same task/PR.** The entry fence did not stop a physical
+worker already creating a chat: the bounded runtime drain could retire its
+source before durable creation or a queued UI callback completed. Real SQLite
+pauses at creation and UI handoff reproduced live orphan rows for both tools;
+a refused Textual UI dispatch reproduced the same cleanup gap. Check currentness
+again at the synchronous UI handoff and use the existing worker-side soft-delete
+compensation, rather than holding a lock or DB transaction across that handoff.
+A peer review then reproduced a placed chat being deleted when its UI callback
+raised before a later source Close reached the worker. Record UI admission
+before calling the current sink; preserve an admitted result and its original
+exception. Soft-delete is compensation, not physical transaction rollback.

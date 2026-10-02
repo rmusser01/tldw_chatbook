@@ -469,3 +469,43 @@ preceding-candidate evidence. Current receipts and explicit equivalence limits:
 `/tmp/console-tool-ux-close-native/run26/qualification.json`.
 Fresh final-head Qodo/all four GitHub gates and a verified normal merge remain
 required. No full local sweep or CI/protection bypass.
+
+
+In-flight creation follow-up (2026-10-02, Qodo59151d44 and helper-doc rulee7e76a0):
+qualified code/test head `1bf350c729859069e093672c3dcf8d45b1ef41c9`, combined dev
+`bb865f5cfeae4c9d8c068f588ee0d85ff28a0e13`. Entry-only refusal reproduced late
+new-chat/fork-chat creation; queued UI dispatch refusal also stranded a live
+row. The shared executor now qualifies the source after worker I/O and on the
+synchronous UI thread, resolves the current view sink, and uses existing
+worker-side best-effort orphan soft-delete on refusal. A local admission flag
+preserves already-placed chats and the original UI exception if the source
+retires before exception delivery. No lock or transaction spans the UI hop.
+Four creation/handoff race cases, two refused-dispatch cases and one admitted
+exception case fail on preceding candidates; all nine race/view cases pass in
+the final combined run. Raw deleted rows remain; this is not physical rollback.
+
+78 unique checks pass without failures/errors/skips:56 full consent/execution,
+16 Close/UI/runtime neighbors,5 actual Resend integration neighbors and the
+ordinary exact storage census. All85 affected-source pins stay unchanged.
+Derived-artifact preflight passes with UI census124;25 changed Python files
+add zero Ruff diagnostics; changed ranges format cleanly; independent source
+and upstream-integration reviews are clear. Rebase retained all20 patches;
+only census conflict resolutions preserve all upstream/PR paths and floor124.
+
+Native approval24 passes9 Ask-gated local reads/denials at80x24 and235x52;
+Close27 passes6 real approval/question/standalone-chat-create worker closes
+and six-kind80x24→80x18 geometry. Apps/PTYs exit0, owned sockets/observer process
+are gone, no egress, real config/data unchanged, and exercised source pins match
+this final combined code. Root inspected current compact approval/Inspect,
+chat-create Close and scrolled short Close captures. AX is unqualified because
+Accessibility permission was unavailable; the completed owned Terminal viewer
+window may remain. No TCC changes or broad window cleanup. The replay does not
+force the durable worker race or exercise Resend/provider/hooks/plugins/MCP;
+the focused real-DB and mounted integration checks cover this patch's races
+and Resend neighbors. No full local suite. Earlier replays remain historical.
+
+Current receipts: `/tmp/console-tool-ux-inflight-create-final-manifest.json`,
+`/tmp/console-tool-ux-approval-run24-sanitized/isolation-qualified.json`,
+`/tmp/console-tool-ux-close-native/run27/qualification.json`.
+Fresh final-published-head Qodo and all four GitHub gates, latest-dev integration
+and verified normal merge remain required.

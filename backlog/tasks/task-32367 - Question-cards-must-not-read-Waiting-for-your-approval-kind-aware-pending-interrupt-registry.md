@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 20:09'
+updated_date: '2026-10-02 20:22'
 labels:
   - console
   - approvals
@@ -93,4 +93,6 @@ Reopened for fresh final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262:
 Final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262 is fixed at the existing shared boundary: final verdict/grant and resolver updates use the standalone round lock, and both new_chat/fork_chat executors refuse the exact committed Close generation before DB/UI work. Failed-provisional markers remain excluded. Three regressions reproduced grant resurrection and both durable late creates on the published source, then passed. Latest-dev f80d3e0090 qualification passes64 unique affected consent/execution/Close/projection and ordinary storage-census cases with no failures/errors/skips; final-byte artifact preflight passes(census123),25 changed Python files add zero Ruff diagnostics, and changed ranges format cleanly. Native approval23 passes9 journeys; Close26 passes6 real worker closes and short-terminal geometry, with process/socket exit0, no egress and real profiles unchanged. Native/affected replay byte pins are preserved; a subsequent whitespace-only return-dict format is separately proven whole-module AST-identical, and all3 race regressions pass on final bytes. User guide and incident lesson updated. Existing ADR-067/094/150 apply; no new owner/admission policy. Fresh exact-published-head Qodo/all4 GitHub gates and verified normal merge remain required in PR2953.
 
 Reopened for fresh exact-head Qodo59151d44-d74b-48d8-9844-aeeb441d6079: an executor already past entry can outlive bounded Close and queue a late created-chat completion. Existing orphan cleanup is best-effort soft-delete, not physical rollback; acceptance remains no live created chat/no late UI handoff. Helper Returns rulee7e76a0b-b7b4-476b-9ea5-665267b9629c will be corrected.
+
+In-flight Qodo59151d44 and helper-doc rulee7e76a0 are fixed at the existing shared completion boundary: qualify source ownership after worker I/O and synchronously on UI, resolve the current sink, and reuse worker-side best-effort orphan soft-delete when Close wins. Track local UI admission so later retirement never deletes an already-placed chat or masks its original exception. No lock/transaction spans UI handoff; detached live views preserve durable results. Seven interleaving cases reproduced the prior failures; all nine race/view cases pass in the final combined verification. Rebased onto devbb865f5cfe (Resend preserved, combined census124). 78 unique affected/Resend/ordinary-storage checks pass with zero failures/errors/skips; artifact preflight and edited-range formatting pass;25 changed Python files add zero Ruff diagnostics; independent source/integration reviews clear. Native approval24 passes9 journeys and Close27 six real worker closes plus short-terminal geometry; source pins stable, apps/PTYs/sockets clean, no egress and real profiles unchanged. Terminal AX unqualified; native scope excludes the forced race and broader provider/hooks/plugins/MCP coverage. User guide/incident lesson/QA updated. Existing ADR094/150 apply; no new owner or rollback contract. Fresh published-head Qodo/all four CI gates and verified normal merge remain required in PR2953.
 <!-- SECTION:NOTES:END -->

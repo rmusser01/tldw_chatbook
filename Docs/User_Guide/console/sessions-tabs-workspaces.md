@@ -126,7 +126,7 @@ On a local-only setup the server lines collapse into one line:
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
-Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab.
+Once a tab starts closing, pending requests to create another chat are declined, and previously confirmed requests cannot start from that tab. A creation still in progress cannot open a new tab after its source closes.
 
 Each tab keeps its own unsent draft: switch tabs mid-thought and the
 half-typed message is still in the composer when you come back.
