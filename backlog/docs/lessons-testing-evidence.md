@@ -117,6 +117,27 @@ control (`.approval-row-decision` widened to full width) failed it. Before you
 call a guard "environmental", check whether any runner runs it, and make it
 reach its assertions once.
 
+## Matching failure names at base and head does not mean matching failures
+
+**TASK-33661 review round, 2026-10-02.** The first Resend commit was cleared by
+comparing the failing test names in a 24-file suite: 125 at base, 125 at head, an
+identical set. One of those tests,
+`test_console_run_and_sync_workers_use_disjoint_groups`, failed on both sides for
+different reasons:
+- **Base:** one known missing dispatch site, `_summarize_console_up_to`.
+- **Head:** that site and also `_retry_console_message`. The commit had routed
+  Retry through `run = ...; run_worker(run(controller, id))`, and the AST guard
+  looks only for a direct call.
+
+The regression stayed hidden until the fix round reran that test file and read
+its assertion. A per-test diff of the first `E` line in the two logs then showed
+this as the only reason that differed.
+
+**What to do:** when a base-vs-head comparison clears a change, compare each
+shared failure's message as well as its name, at least for tests in the code the
+change touched. A test that already fails at base shields every new reason it
+could fail for.
+
 ## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
 
 `_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)

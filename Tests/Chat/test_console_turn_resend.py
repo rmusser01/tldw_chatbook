@@ -54,6 +54,7 @@ pytestmark = pytest.mark.bootstrap_profile
 USER = ConsoleMessageRole.USER
 ASSISTANT = ConsoleMessageRole.ASSISTANT
 SYSTEM = ConsoleMessageRole.SYSTEM
+TOOL = ConsoleMessageRole.TOOL
 REPLY = "fresh reply"
 BLOCKED_COPY = "Provider blocked: select a model"
 
@@ -90,6 +91,9 @@ class _Gateway:
         self.seen.append(list(messages))
         if self.mode == "error":
             raise RuntimeError("provider exploded")
+        if self.mode == "partial-error":
+            yield "partial text"
+            raise RuntimeError("provider exploded mid-stream")
         if self.mode == "hang":
             self.started.set()
             await self.release.wait()
@@ -281,6 +285,24 @@ def _m(role, *, status="complete", content="x", persisted=True, state=None):
             _m(USER), _m(ASSISTANT),
         ], False),
         ("no user row", [_m(ASSISTANT, status="failed")], False),
+        # Review C1: a Continue chain whose earlier reply has text is healthy
+        # history, never "no reply", even when its last reply failed.
+        ("continue chain, last failed", [
+            _m(USER), _m(ASSISTANT, state="complete"),
+            _m(ASSISTANT, status="failed", content="partial text"),
+        ], False),
+        ("continue chain, restored failed", [
+            _m(USER), _m(ASSISTANT, state="complete"),
+            _m(ASSISTANT, content="partial text", state="failed"),
+        ], False),
+        # Review I1: tool output is a partial reply.
+        ("stopped agent turn with tool output", [
+            _m(USER), _m(ASSISTANT, status="stopped", content=""),
+            _m(TOOL, content="read_file -> 3 lines"), _m(SYSTEM),
+        ], False),
+        ("tool output, no reply", [
+            _m(USER), _m(TOOL, content="read_file -> 3 lines"),
+        ], False),
     ],
 )
 def test_resend_target_is_the_last_user_row_of_a_broken_turn_only(label, rows, broken):
@@ -543,6 +565,64 @@ async def test_refused_echo_resend_never_overwrites_a_different_draft(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("error", [asyncio.CancelledError, RuntimeError])
+async def test_refused_echo_text_survives_a_dispatch_that_raises(
+    tmp_path, databases, error
+):
+    """Review I2: the echo is deleted and its recovery consumed before the
+    send-path await. A cancelled or failing dispatch must leave the text
+    recoverable, never gone."""
+    console = _console(tmp_path, databases, "blocked")
+    await console.controller.submit_draft("hello there")
+    echo = _user(console)
+    runtime = _Recoveries(
+        SimpleNamespace(turn_id="turn-1", draft="hello there", attachments=())
+    )
+    composer = _Composer()
+
+    async def explode(_draft, _stash, _session_id):
+        raise error("dispatch interrupted")
+
+    with pytest.raises(error):
+        await resend_refused_echo(
+            echo,
+            store=console.store,
+            runtime=runtime,
+            composer=composer,
+            dispatch=explode,
+        )
+
+    assert composer.text == "hello there"
+    assert console.store.session_draft(console.session_id) == "hello there"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_echo_resend_never_overwrites_text_typed_during_the_send(
+    tmp_path, databases
+):
+    """Review M2: the send path can refuse after the user typed more."""
+    console = _console(tmp_path, databases, "blocked")
+    await console.controller.submit_draft("hello there")
+    echo = _user(console)
+    composer = _Composer()
+
+    async def refuse_after_typing(_draft, _stash, _session_id):
+        composer.text = "newer typing"
+        return False
+
+    copy = await resend_refused_echo(
+        echo,
+        store=console.store,
+        runtime=None,
+        composer=composer,
+        dispatch=refuse_after_typing,
+    )
+
+    assert copy is None
+    assert composer.text == "newer typing"
+
+
+@pytest.mark.asyncio
 async def test_refused_echo_resend_keeps_the_draft_when_the_send_path_refuses(
     tmp_path, databases
 ):
@@ -698,6 +778,67 @@ async def test_a_refused_clear_is_reported_without_re_running(
 
 
 # --- negatives -------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("relaunch", [False, True])
+async def test_resend_never_touches_a_continue_chain_with_a_healthy_reply(
+    tmp_path, databases, relaunch
+):
+    """Review C1 (data loss): U -> A "fresh reply" -> Continue -> B fails with
+    partial text. After a relaunch, B reads complete+failed, and Resend used to
+    anchor its clear at U, tombstoning A's whole subtree."""
+    console = _console(tmp_path, databases)
+    await console.controller.submit_draft("hello there")
+    healthy = _path(console)[1]
+    console.gateway.mode = "partial-error"
+    await console.controller.continue_from_message(healthy.id)
+    if relaunch:
+        console = _restart(console)
+    user = _user(console)
+    before = sorted(_live_db_rows(console))
+
+    result = await resend_turn(console.controller, user.id)
+
+    assert sorted(_live_db_rows(console)) == before
+    contents = [row.content for row in _path(console) if row.role is ASSISTANT]
+    assert contents[0] == REPLY
+    assert (result.accepted, result.visible_copy) == (False, RESEND_NOT_BROKEN_COPY)
+    assert resend_target_id(_path(console)) is None
+
+
+@pytest.mark.asyncio
+async def test_resend_never_offers_a_stopped_turn_with_tool_output(
+    tmp_path, databases
+):
+    """Review I1: tool output is a partial reply; Resend would wipe the tool
+    trace and re-run the tools."""
+    console = _console(tmp_path, databases, "hang")
+    task = asyncio.create_task(console.controller.submit_draft("hello there"))
+    await asyncio.wait_for(console.gateway.started.wait(), 2)
+    console.store.append_message(
+        console.session_id, role=TOOL, content="read_file -> 3 lines"
+    )
+    assert console.controller.stop_active_run() is True
+    await asyncio.wait_for(task, 2)
+    user = _user(console)
+    assert [(row.role, row.content) for row in _path(console)][1:] == [
+        (ASSISTANT, ""),
+        (TOOL, "read_file -> 3 lines"),
+        (SYSTEM, "Response stopped by user."),
+    ]
+    before_rows = [row.id for row in _path(console)]
+    before_db = sorted(_live_db_rows(console))
+    console.gateway.mode = "ok"
+    contacts = len(console.gateway.seen)
+
+    result = await resend_turn(console.controller, user.id)
+
+    assert [row.id for row in _path(console)] == before_rows
+    assert sorted(_live_db_rows(console)) == before_db
+    assert len(console.gateway.seen) == contacts
+    assert (result.accepted, result.visible_copy) == (False, RESEND_NOT_BROKEN_COPY)
+    assert resend_target_id(_path(console)) is None
 
 
 @pytest.mark.asyncio

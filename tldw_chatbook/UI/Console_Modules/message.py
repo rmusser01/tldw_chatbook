@@ -1713,13 +1713,30 @@ class ConsoleMessageController:
             if refusal:
                 self.app_instance.notify(refusal, severity="warning")
                 return True
-            run = (
-                self._retry_console_message
-                if action_id == "retry"
-                else self._resend_console_turn
-            )
+            # TASK-33661 review I2: a refused echo's resend awaits the send
+            # path with no run state set yet, so a second press would pass the
+            # gate above and its exclusive worker would cancel the first
+            # mid-flight. Refuse while this session's resend worker is live.
+            if action_id == "resend" and any(
+                worker.name == "console-resend"
+                and worker.group == f"console-run-{target_session_id}"
+                and not worker.is_finished
+                for worker in self._screen.workers
+            ):
+                self.app_instance.notify(
+                    "Resend is already in progress.", severity="warning"
+                )
+                return True
+            if action_id == "resend":
+                self.run_worker(
+                    self._resend_console_turn(controller, message_id),
+                    name="console-resend",
+                    exclusive=True,
+                    group=f"console-run-{target_session_id}",
+                )
+                return True
             self.run_worker(
-                run(controller, message_id),
+                self._retry_console_message(controller, message_id),
                 exclusive=True,
                 group=f"console-run-{target_session_id}",
             )

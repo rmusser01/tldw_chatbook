@@ -179,6 +179,63 @@ async def test_resend_worker_leaves_a_refused_echo_sync_timer_to_the_send_path(
     assert len(starts) == timer_starts
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("in_flight", [True, False])
+async def test_a_second_resend_never_cancels_the_one_in_flight(in_flight):
+    """Review I2: a second press during a refused echo's send-path await used
+    to start an exclusive worker that cancelled the first mid-flight (echo
+    already deleted, recovery consumed), losing the text."""
+    from types import SimpleNamespace
+
+    from Tests.UI.console_controller_stubs import stub_message_controller
+    from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
+
+    echo = ConsoleChatMessage(role=USER, content="hello", id="u1", status="failed")
+    store = SimpleNamespace(
+        get_message=lambda _id: echo, active_session_id="s1"
+    )
+    controller = SimpleNamespace(store=store, send_refusal_copy=lambda _sid: None)
+    running = SimpleNamespace(
+        name="console-resend", group="console-run-s1", is_finished=not in_flight
+    )
+    started: list[dict] = []
+    notices: list[str] = []
+
+    def run_worker(work, **kwargs):
+        work.close()
+        started.append(kwargs)
+
+    owner = stub_message_controller(
+        SimpleNamespace(
+            run_worker=run_worker,
+            workers=[running],
+            _console_message_presentation=lambda message: SimpleNamespace(
+                content=message.content
+            ),
+        ),
+        app_instance=SimpleNamespace(
+            notify=lambda text, **_kwargs: notices.append(text)
+        ),
+        chat_store_accessor=lambda: store,
+        ensure_console_chat_controller=lambda: controller,
+    )
+    button = SimpleNamespace(
+        id="console-message-action-resend-u1",
+        console_action_id="resend",
+        console_message_id="u1",
+    )
+
+    assert await owner.handle_console_message_action(
+        SimpleNamespace(button=button, stop=lambda: None)
+    )
+
+    if in_flight:
+        assert started == []
+        assert notices == ["Resend is already in progress."]
+    else:
+        assert [kwargs["group"] for kwargs in started] == ["console-run-s1"]
+
+
 # --- the real Console --------------------------------------------------------
 
 

@@ -4,7 +4,9 @@ A turn is *broken* when its send was refused before acceptance, it got no
 assistant reply, its reply failed, or its reply is empty and stopped,
 discarded, or restored after a restart as "Response failed.". Only the last
 user turn on the active path qualifies: a failed reply higher up keeps its own
-Retry, and a partial (non-empty) stopped reply has Continue.
+Retry, and a partial (non-empty) stopped reply has Continue. A turn that holds
+any text an earlier reply produced (a Continue chain) or any tool output is
+partial, never broken: Resend would discard that work.
 
 Resend never forks: no ``create_sibling``, no ``edit_and_resend_message``.
 A failed live reply is retried in place on the same assistant row. Every other
@@ -69,7 +71,9 @@ def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
         The id of the user message Resend re-runs, or ``None`` when the last
         turn is healthy, partial, still running, or has no user message. An
         unpersisted user row with no reply is an in-flight send (validating,
-        or paused for preparation), never a broken one.
+        or paused for preparation), never a broken one. Text from an earlier
+        reply of the turn, or any tool output, makes the turn partial: the
+        clear would tombstone it (review C1/I1).
     """
     index = next(
         (
@@ -89,17 +93,24 @@ def resend_target_id(messages: Sequence[ConsoleChatMessage]) -> str | None:
         return None if replies else user.id
     if user.status != "complete":
         return None
+    tool_output = any(
+        row.role is ConsoleMessageRole.TOOL and row.content.strip()
+        for row in messages[index + 1 :]
+    )
     if not replies:
-        return user.id if user.persisted_message_id is not None else None
+        persisted = user.persisted_message_id is not None
+        return user.id if persisted and not tool_output else None
     last = replies[-1]
     if last.status in {"pending", "streaming"}:
+        return None
+    if any(_reply_text(reply) for reply in replies[:-1]):
         return None
     if last.status == "failed" or last.assistant_generation_state == "failed":
         return user.id
     ended_empty = (
         last.status == "stopped"
         or last.assistant_generation_state in {"stopped", "discarded"}
-    ) and not any(_reply_text(reply) for reply in replies)
+    ) and not (_reply_text(last) or tool_output)
     return user.id if ended_empty else None
 
 
@@ -140,13 +151,18 @@ async def resend_turn(
 ) -> ConsoleSubmitResult:
     """Re-run a broken last turn in place from its user message.
 
-    Gates run before anything is cleared: the send-refusal copy (a live run,
-    a queue, an unresolved dispatch recovery), the broken-turn check, and the
-    vision gate for the turn's own attachments. A refused echo goes to
-    ``resend_echo`` (the normal send path). A failed reply is retried in
-    place; otherwise the empty reply and the rows after the user message are
-    tombstoned and the turn re-runs from the user message with the thinking
-    preflight and pinned prefill a normal send applies.
+    Only some gates run before anything is cleared: the send-refusal copy (a
+    live run, a queue, an unresolved dispatch recovery), the broken-turn
+    check, and the vision gate for the turn's own attachments. A refused echo
+    then goes to ``resend_echo`` (the normal send path, with its own gates). A
+    failed reply's trailing rows are cleared and it is retried in place;
+    otherwise the empty reply and the rows after the user message are
+    tombstoned and the turn re-runs from the user message. Readiness, skill
+    refusal, the thinking preflight and the maintenance (backup) pause run
+    inside ``retry_message``/``continue_from_message``, after that clear: a
+    refusal there leaves the turn still broken (Resend stays on offer) but the
+    cleared rows stay cleared. In a temporary chat nothing is persisted, so a
+    cleared empty reply is simply gone.
 
     Args:
         controller: The Console chat controller owning the session.
@@ -280,9 +296,27 @@ async def resend_refused_echo(
             session_id, _pending_from_echo(echo)
         )
     stash = composer.capture_draft_for_send() if composer_text.strip() else None
-    if not await dispatch(draft, stash, session_id) and not composer_text.strip():
+    try:
+        sent = await dispatch(draft, stash, session_id)
+    except BaseException:
+        # The echo and its recovery are already gone: a cancelled or failing
+        # send must not take the text with it (review I2).
+        _keep_draft(store, session_id, composer, draft)
+        raise
+    if not sent:
         # A refused normal send keeps its draft in the composer; so does this.
-        store.set_session_draft(session_id, draft)
-        if composer is not None:
-            composer.load_draft(draft)
+        _keep_draft(store, session_id, composer, draft)
     return None
+
+
+def _keep_draft(store: Any, session_id: str, composer: Any | None, draft: str) -> None:
+    """Put an unsent draft back, never over text the composer holds now.
+
+    The composer is re-read after the send-path await: it may still hold this
+    draft, or text the user typed meanwhile, which always wins (review M2).
+    """
+    if composer is not None and composer.draft_text().strip():
+        return
+    store.set_session_draft(session_id, draft)
+    if composer is not None:
+        composer.load_draft(draft)

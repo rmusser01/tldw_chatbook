@@ -84,9 +84,7 @@ duplicate request because the previous delivery cannot be confirmed. **Discard**
 keeps your user message and settles the interrupted response without replaying
 the request. A failed recovery leaves the available controls usable so you can
 address the reported problem and try again or discard. Once recovery settles,
-the composer clears this blocker. After **Discard**, your user message offers
-**Resend** to ask again without forking — see
-[Resend a broken turn](#resend-a-broken-turn).
+the composer clears this blocker.
 
 ### Collapsed rail labels
 
@@ -557,6 +555,9 @@ and only when its turn is broken:
   "Response failed." after a restart.
 
 A reply with text that you stopped is not broken — use **Continue** on it.
+Nor is a turn that already holds text from an earlier reply (for example
+after **Continue**) or any tool output: Resend would throw that work away, so
+use **Retry** on the failed reply or **Edit** instead.
 Resend is not offered while a run is live in the tab (use **Stop** first)
 or while a response-recovery card is unresolved (the card's own **Retry
 anyway** / **Discard** decide that case).

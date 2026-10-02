@@ -20555,11 +20555,12 @@ class ConsoleChatController:
             )
             return self._block(session_id, visible_copy)
         assert turn_context is not None
-        blocked = resend and self._thinking_persistence_preflight(
-            session_id=session_id, resolution=resolution
-        )
-        if blocked:
-            return blocked
+        if resend and (
+            thinking_block := self._thinking_persistence_preflight(
+                session_id=session_id, resolution=resolution
+            )
+        ) is not None:
+            return thinking_block
 
         provider_messages = self._provider_messages_through_message(
             session_id,

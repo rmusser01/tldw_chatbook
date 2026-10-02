@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-10-01 17:30'
-updated_date: '2026-10-02 03:57'
+updated_date: '2026-10-02 04:37'
 labels:
   - console
   - transcript
@@ -180,4 +180,20 @@ Resend re-runs a broken LAST user turn in place from the user message. It never 
 - Pre-existing, outside this diff: after a real relaunch, the dispatch-recovery card cannot settle. Discard (and Retry) refuse with "That response recovery action is unavailable." The recovery state keys the persisted assistant id, but hydration gives each restored node a fresh native id, so `claim_dispatch_recovery_action` gets a KeyError on `_message_or_raise`. Reproduced at the controller level and live (`qa/task-33661-resend/e2`/`e3` captures). The dispatch-recovery suite's own restore keeps native ids equal to persisted ids, which hides it. Until this is fixed, the User Guide's "after Discard, Resend" path is reachable only within one process.
 - Plain Continue still has no thinking-persistence preflight (pre-existing; Resend adds it).
 - `Tests/UI/test_console_turn_resend_ui.py` could join `scripts/ui_pr_gate_census.txt` once it is verified green under the fast-lane dependency set.
+
+**Review fixes (fix round on 3a59ed8255)**
+- **C1, data loss: a turn whose earlier reply holds text is never broken.** `resend_target_id` returns None when any reply before the last has text. That case is a Continue chain whose last reply failed. Before the fix, Resend after a relaunch anchored its clear at the user row and tombstoned the healthy reply's subtree.
+- **I1: tool output is a partial reply.** Any TOOL row with content after the user message means no Resend for the no-reply and empty-stopped/discarded shapes. Ruling: failed replies keep Resend even when a tool or error marker is present — that is the owner's scope for I1. A restored failed agent turn always carries the re-derived "Error" warning marker, and it should stay resendable.
+- **I2: a refused echo's text survives a cancelled or failing send.** `resend_refused_echo` wraps the send-path await in `try/except BaseException`, puts the draft back, and re-raises.
+- **I2: per-session in-flight guard.** The Resend worker is now named `console-resend`. The handler refuses a second Resend while an unfinished `console-resend` worker exists in that session's `console-run-{sid}` group ("Resend is already in progress.").
+  - Ruling: guard on the worker's own state rather than a set kept by hand, or hiding the button. Reason: a hand-kept set is never cleared if its worker is cancelled before its first step, which would block Resend for that session for good. Hiding the button would need transcript state. This guard is about 10 lines in message.py, with nothing to clean up.
+- **M2: text typed during the send always wins.** The draft is put back only when the composer is empty after the await. Ruling: if the user typed different text during a failing send, the resend text is not put back. There is no ambiguous merge, matching the runtime's own `restore_turn_recovery` refusal.
+- **I3:** the Discard→Resend sentence was dropped from the User Guide's restart-recovery section, because after a reopen Discard fails (TASK-33662). The Resend section now names the Continue-chain and tool-output exclusions.
+- **M1:** the `resend_turn` docstring now says which gates run before the clear and which run after it (readiness, skill refusal, the thinking preflight, the maintenance pause). It also notes the temporary-chat cost: an empty reply cleared there is simply gone.
+- **M3:** `continue_from_message` uses the file's `thinking_block` idiom: `if resend and (thinking_block := ...) is not None: return thinking_block`.
+- **M4, Ruling:** Resend runs are traced as route CONTINUE (or RETRY on the in-place path). Left as is: the route tracks the controller entry point; a distinct RESEND route would need a trace-provenance vocabulary change.
+- **M5:** `select_next_variant` left alone (it has a test caller).
+- **M6, Ruling:** a persisted user leaf with no reply can still have an inactive reply on another branch, for example after deleting the active one of two sibling replies. Resend then adds the new reply beside it. Accepted: nothing is lost, `<`/`>` shows both, and the store exposes no child-count API to the transcript. Cost: AC#2's no-sibling property does not hold in that edge.
+- **M7:** `Tests/UI/test_console_turn_resend_ui.py` added to `scripts/ui_pr_gate_census.txt`, and `MINIMUM_FILES` raised from 119 to 120. Verified 10/10 green in a scratch venv with only the fast-lane dependencies (`pip install -e . pytest pytest-asyncio pytest-timeout packaging`, no xdist, `--timeout=180`).
+- **A regression in the first commit, found while fixing.** Routing Retry through `run = ...; run_worker(run(...))` hid `_retry_console_message`'s dispatch site from `test_console_run_and_sync_workers_use_disjoint_groups`. The name-set comparison missed it because that test already failed at base for another missing site. Fixed by keeping direct calls. `_resend_console_turn` added to the test's `RUN_COROUTINES`. Lesson added to `lessons-testing-evidence.md`.
 <!-- SECTION:NOTES:END -->
