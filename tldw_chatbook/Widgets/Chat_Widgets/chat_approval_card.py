@@ -790,6 +790,12 @@ class ChatApprovalCard(Container):
                 )
 
     def on_resize(self, event: Resize) -> None:
+        """Reflow existing decision controls when the card changes size.
+
+        Args:
+            event: Textual's notification that the card's size changed.
+
+        """
         self._sync_control_layout()
 
     def _sync_control_layout(self) -> None:

@@ -161,8 +161,10 @@ tools available to the agent (the chip stays hidden until tools are counted,
 which happens after your first send), and
 "Approvals: N pending" counts outstanding tool-approval rounds in the viewed
 conversation; a round may contain several calls. The Approvals chip is
-clickable: it jumps you to the pending approval card (with nothing pending it
-just says "No approval is pending."). A mutation already in **Finishing** is
+clickable: it jumps to the visible decision card, preferring an approval when
+one is displayed. If approvals are queued behind a skill confirmation, review
+reaches that confirmation first. With no decision visible it says
+"No approval is pending." A mutation already in **Finishing** is
 status, not a pending decision, so it no longer contributes to this count.
 
 ## Features & controls
@@ -248,7 +250,7 @@ Region     Which regions? (pick any)
   turn, leaving the question up for you to answer on the card.
 - The card never grabs focus from something you are typing. If you need to
   reach it from the keyboard, the inspector's **Review approval** action
-  focuses the question card when no approval is pending.
+  focuses the question card when no approval card is displayed.
 - By default the question waits as long as it takes. To make an unanswered
   question expire instead, set `ask_user_timeout_seconds` under `[console]`
   in your config; the card then shows *Auto-continues in m:ss* and the run

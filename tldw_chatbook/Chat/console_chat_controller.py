@@ -5117,6 +5117,8 @@ class ConsoleChatController:
         # from reusing the generation of an older, timed-out incarnation.
         self._session_close_generation = 0
         self._session_close_generations: dict[str, int] = {}
+        # Failed provisional rollbacks block retry without retiring live usage.
+        self._failed_session_close_generations: dict[str, int] = {}
         self._session_close_states: dict[
             str,
             tuple[ConsoleSessionCloseTicket, bool, Any, str | None],
@@ -14606,7 +14608,16 @@ class ConsoleChatController:
 
         Returns:
             Opaque ticket required by :meth:`finalize_session_close`.
+
+        Raises:
+            ConsoleLifecycleRevisionChanged: The approved impact changed.
+            RuntimeError: Recovery or an unreconciled close fence blocks close.
         """
+        if (
+            session_id in self._session_close_generations
+            or session_id in self._failed_session_close_generations
+        ):
+            raise RuntimeError("Console session close is already fenced.")
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
             raise ConsoleLifecycleRevisionChanged(
@@ -14647,52 +14658,66 @@ class ConsoleChatController:
                 "abort_fleet_fence",
                 None,
             )
-            if not callable(abort_fleet_fence):
-                return
             try:
-                abort_fleet_fence(
+                if callable(abort_fleet_fence) and abort_fleet_fence(
                     fleet_conversation_id,
                     generation=generation,
+                ):
+                    return
+            except Exception as exc:  # noqa: BLE001 -- failed rollback stays fenced
+                logger.warning(
+                    "close_session provisional fleet rollback failed (error_type={})",
+                    type(exc).__name__,
                 )
-            except Exception:  # noqa: BLE001 -- failed rollback stays fenced
-                logger.warning("close_session provisional fleet fence stayed latched")
+            # An uncertain rollback must never be replaced by a retry's new
+            # generation. Keep this close fail-closed even without a ticket;
+            # surviving children still own valid usage in the retained session.
+            self._failed_session_close_generations[session_id] = generation
+            logger.warning("close_session provisional fleet fence stayed latched")
 
         # A reservation publishes its lifecycle revision before the fleet
         # fence can acquire the coordinator lock. Recheck only after that
         # admission boundary is closed; a child admitted while the dialog was
         # open must refresh consent rather than silently widening it.
-        current_impact = self.lifecycle_impact(session_id=session_id)
-        if current_impact.revision != expected_revision:
-            abort_provisional_fleet_fence()
-            raise ConsoleLifecycleRevisionChanged(
-                "Console session activity changed during close."
+        try:
+            current_impact = self.lifecycle_impact(session_id=session_id)
+            if current_impact.revision != expected_revision:
+                raise ConsoleLifecycleRevisionChanged(
+                    "Console session activity changed during close."
+                )
+            if self._cancel_raw_cli_session is not None:
+                try:
+                    self._cancel_raw_cli_session(session_id)
+                except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                    logger.warning("close_session could not cancel raw CLI commands")
+            owns_active_stream = self._active_stream_belongs_to_session(session_id)
+            active_assistant_message_id = self._active_assistant_message_ids.get(
+                session_id
             )
-        if self._cancel_raw_cli_session is not None:
-            try:
-                self._cancel_raw_cli_session(session_id)
-            except Exception:  # noqa: BLE001 -- teardown remains best-effort
-                logger.warning("close_session could not cancel raw CLI commands")
-        owns_active_stream = self._active_stream_belongs_to_session(session_id)
-        active_assistant_message_id = self._active_assistant_message_ids.get(
-            session_id
-        )
-        if owns_active_stream and active_assistant_message_id is not None:
-            # Closing is an explicit cancellation boundary. Settle the durable
-            # dispatch before removing its in-memory owner so the cancelled
-            # task cannot leave a restart-visible ``dispatch_started`` row.
-            self._signal_stop(session_id=session_id)
-            try:
-                self._mark_stream_stopped(
-                    active_assistant_message_id,
-                    visible_copy="Session closed.",
-                )
-            except ConsoleDispatchSettlementError:
-                self._restore_dispatch_recovery_after_settlement_failure(
-                    session_id,
-                    active_assistant_message_id,
-                )
-                abort_provisional_fleet_fence()
-                raise
+            if owns_active_stream and active_assistant_message_id is not None:
+                # Closing is an explicit cancellation boundary. Settle the durable
+                # dispatch before removing its in-memory owner so the cancelled
+                # task cannot leave a restart-visible ``dispatch_started`` row.
+                self._signal_stop(session_id=session_id)
+                try:
+                    self._mark_stream_stopped(
+                        active_assistant_message_id,
+                        visible_copy="Session closed.",
+                    )
+                except ConsoleDispatchSettlementError:
+                    self._restore_dispatch_recovery_after_settlement_failure(
+                        session_id,
+                        active_assistant_message_id,
+                    )
+                    raise
+            # Progress ownership must release before child cancellation, but a
+            # failed callback must not commit wake, scratch or queue teardown.
+            close_progress = getattr(self._agent_bridge, "close_progress", None)
+            if callable(close_progress):
+                close_progress(session_id, conversation_id=fleet_conversation_id)
+        except BaseException:
+            abort_provisional_fleet_fence()
+            raise
         self._session_close_generations[session_id] = generation
         # Admission fences are the first irreversible close action after the
         # durable stream gate has settled successfully. They must beat every
@@ -14741,9 +14766,6 @@ class ConsoleChatController:
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
         fleet_conversation_id = self._agent_conversation_id(session_id)
-        close_progress = getattr(self._agent_bridge, "close_progress", None)
-        if callable(close_progress):
-            close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
             getattr(self._agent_bridge, "cancel_all_subagents", None)
             if self._agent_bridge is not None

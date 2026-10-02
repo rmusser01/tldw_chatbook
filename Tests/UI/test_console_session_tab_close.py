@@ -685,6 +685,10 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
                 ],
                 session_id=session_id,
             )
+        if kind == "worktree_merge":
+            return controller.request_worktree_merge_confirm(
+                {"run_id": "private-child", "action": "merge"}, session_id=session_id
+            )
         if kind == "skill_install":
             return controller.request_skill_install_confirm(
                 "https://example.com/private-skill", session_id=session_id
@@ -709,6 +713,11 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
     ("kind", "consequence", "result"),
     [
         ("approval", "Tool approvals: denied; runs cancelled.", {"close-call": "deny"}),
+        (
+            "worktree_merge",
+            "Worktree decisions: cancelled; no merge or discard.",
+            {"allow": False},
+        ),
         (
             "question",
             "Questions: cancelled without an answer.",
@@ -813,6 +822,11 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
             assert store.active_session_id == keeper
             assert not console._console_runtime().console_needs_attention
         finally:
+            # A copy assertion can fail before Close; release the real merge
+            # worker's cancellation signal before dropping its owning task.
+            cancel_event = controller._active_cancel_events.get(doomed.id)
+            if cancel_event is not None:
+                cancel_event.set()
             controller.revoke_approval_rounds_for_run(f"close-{kind}-{doomed.id}")
             controller._cancel_pending_decisions_for_session(doomed.id)
             run_task.cancel()
@@ -932,7 +946,13 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
             has_draft=True,
             pending_attachment_count=1,
             pending_round_kinds=frozenset(
-                {"approval", "question", "skill_install", "skill_script"}
+                {
+                    "approval",
+                    "question",
+                    "skill_install",
+                    "skill_script",
+                    "worktree_merge",
+                }
             ),
         )
         worker = console.run_worker(
@@ -966,6 +986,133 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                 )
                 assert text in painted, (selector, painted)
             assert title in dialog.title
+            assert (
+                "Worktree decisions: cancelled; no merge or discard." in dialog.message
+            )
         finally:
             dialog.dismiss(False)
             assert await worker.wait() is False
+
+
+@pytest.mark.asyncio
+@private_profile_test
+@pytest.mark.parametrize("rollback_refused", [False, True])
+async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
+    request, tmp_path, monkeypatch, rollback_refused
+):
+    """A failed provisional callback must not strand or replace an exact fence."""
+    from Tests.Chat.test_fleet_usage_reattach import _resolution, _turn_signals
+    from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
+    from tldw_chatbook.Chat.console_agent_bridge import FleetDrained, SettledChild
+
+    app = _ready_app()
+    _attach_real_dbs(app, tmp_path)
+    notes = _record_notifications(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=_SIZE) as pilot:
+        console = await _mounted_console(host, pilot, "#console-native-composer")
+        controller = console._ensure_console_chat_controller()
+        store = controller.store
+        keeper = store.active_session_id
+        doomed = controller.new_session(title="Progress retry")
+        assistant = store.append_message(
+            doomed.id, role=ConsoleMessageRole.ASSISTANT, content="Completed parent"
+        )
+        signals = _turn_signals(prompt=2, completion=1)
+        resolution = _resolution()
+        controller._attach_stream_usage(
+            assistant.id, signals, resolution, partial=False
+        )
+        controller._fleet_usage_reattach_sources[assistant.id] = (
+            signals,
+            resolution,
+            False,
+        )
+        signals.record_usage_payload({"prompt_tokens": 2, "completion_tokens": 1})
+        signals.close_usage_call()
+        doomed.persisted_conversation_id = "saved-progress-retry"
+        conversation_id = controller.conversation_id_for_session(doomed.id)
+        store.set_session_draft(doomed.id, "private draft")
+        controller.switch_session(keeper)
+        await _show_tabs(console, pilot, {keeper, doomed.id})
+        bridge = controller._agent_bridge
+        assert bridge is not None
+        close_progress = bridge.close_progress
+        abort_fence = bridge.abort_fleet_fence
+        calls = []
+
+        def fail_once(session_id, *, conversation_id):
+            calls.append(session_id)
+            if len(calls) == 1:
+                raise RuntimeError("progress cleanup unavailable")
+            return close_progress(session_id, conversation_id=conversation_id)
+
+        monkeypatch.setattr(bridge, "close_progress", fail_once)
+        if rollback_refused:
+            monkeypatch.setattr(
+                bridge, "abort_fleet_fence", lambda *_args, **_kwargs: False
+            )
+        try:
+            await _click(pilot, f"#console-close-session-tab-{doomed.id}")
+            first = await _wait_for_confirmation(host)
+            await _click(pilot, "#confirm-button")
+            second = await _wait_for_confirmation(host, previous=first)
+            generation = controller._session_close_generation
+            assert calls == [doomed.id], "failure must not retry automatically"
+            assert notes[-1][1] == "error"
+            assert doomed.id in _session_ids(store)
+            assert store.session_draft(doomed.id) == "private draft"
+            assert not controller._session_close_states
+            assert doomed.id not in controller._session_close_generations
+            assert not controller._fleet_wake._conversation_fences
+            assert await _settle(
+                pilot, lambda: second.query_one("#cancel-button").has_focus
+            )
+            if rollback_refused:
+                # A provisional failure never cancelled the fleet. Its later
+                # deterministic drain must still fold usage into the open tab.
+                bridge._fleet_drain_fanout.fire(
+                    FleetDrained(
+                        conversation_id=conversation_id,
+                        children=(
+                            SettledChild(
+                                run_id="surviving-child",
+                                status="done",
+                                session_id=doomed.id,
+                                assistant_message_id=assistant.id,
+                            ),
+                        ),
+                    )
+                )
+                assert await _settle(
+                    pilot,
+                    lambda: store.get_message(assistant.id).usage.total_tokens == 6,
+                ), "provisional close failure dropped surviving-child usage"
+                assert bridge._fleet_fence_generations == {conversation_id: generation}
+                assert controller._failed_session_close_generations == {
+                    doomed.id: generation
+                }
+                await _click(pilot, "#confirm-button")
+                third = await _wait_for_confirmation(host, previous=second)
+                assert controller._session_close_generation == generation
+                assert calls == [doomed.id]
+                assert bridge._fleet_fence_generations == {conversation_id: generation}
+                third.dismiss(False)
+            else:
+                assert not bridge._fleet_fence_generations
+                assert not controller._failed_session_close_generations
+                assert doomed.id not in controller._session_close_generations
+                await _click(pilot, "#confirm-button")
+                assert await _settle(
+                    pilot, lambda: doomed.id not in _session_ids(store)
+                )
+                await _await_tabs(console, pilot, {keeper})
+                assert calls == [doomed.id, doomed.id]
+                assert not bridge._fleet_fence_generations
+                assert not controller._fleet_wake._conversation_fences
+                assert not controller._session_close_states
+        finally:
+            monkeypatch.setattr(bridge, "abort_fleet_fence", abort_fence)
+            generation = bridge._fleet_fence_generations.get(conversation_id)
+            if generation is not None:
+                abort_fence(conversation_id, generation=generation)

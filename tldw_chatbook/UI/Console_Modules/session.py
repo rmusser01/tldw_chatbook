@@ -3090,12 +3090,16 @@ class ConsoleSessionController:
                 ("question", "Questions: cancelled without an answer."),
                 ("skill_install", "Skill installs: declined; runs cancelled."),
                 ("skill_script", "Skill scripts: declined; runs cancelled."),
+                (
+                    "worktree_merge",
+                    "Worktree decisions: cancelled; no merge or discard.",
+                ),
             )
             if kind in impact.pending_round_kinds
         )
         message = "Saved history stays in Library."
         if consequences:
-            message += "\n\nClosing will discard or cancel:\n" + "\n".join(consequences)
+            message += "\nClosing will discard or cancel:\n" + "\n".join(consequences)
         dialog = ConfirmationDialog(
             title=f'Close tab "{self._session_close_display_title(impact.session_id)}"?',
             message=message,

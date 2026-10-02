@@ -49,6 +49,7 @@ Files: UI/Console_Modules/session.py; close-impact model; Chat/console_chat_cont
 - [x] Include existing pending kind snapshot in the impact model. Reuse ConfirmationDialog and display title; omit zero consequences, name pending categories and their denial/cancellation effects, retain default Stay focus.
 - [x] Report a failed confirmed at-risk close and offer fresh confirmation without automatically retrying. Cancel exact-session unanswered questions through existing revoked-result semantics only after the regression proves the gap.
 - [x] Verify Close/Stay, sibling isolation, worker termination and cleared attention, including native terminal coverage. Preserve closed/stale session and idle failure behavior.
+- [ ] Address Qodo: include worktree-merge consequences with five-kind 80x24 geometry; validate native CLI before profile mutation; reconcile the exact provisional fleet fence before a failed Close can retry, retaining a separate failed-provisional generation if rollback cannot prove success so surviving child usage remains valid for the still-open session.
 
 ## Pending display: TASK-32367
 
@@ -62,6 +63,7 @@ Files: Chat/console_chat_controller.py count accessor; UI/Screens/chat_screen.py
 - [x] Add pending_round_count(session_id, *, kind='approval') under the existing lock, counting the existing map. The labels agent writes this first, then releases controller ownership to the close agent.
 - [x] Use authoritative active-session counts and shared pending copy in Inspector. Retain compatibility fallback only for unavailable legacy seams.
 - [x] Verify lone question, question plus approval, approval precedence, queued count2, resolution, sibling session and detach/remount. Reuse actual bridge snapshots rather than synthetic activity stubs.
+- [x] Address Qodo: scan visible decision cards in approval-first order independently of queued counts. Verify Alt+A, Inspector and attention-tab routes against a real skill-confirmation owner and queued approval.
 
 ## Integration
 

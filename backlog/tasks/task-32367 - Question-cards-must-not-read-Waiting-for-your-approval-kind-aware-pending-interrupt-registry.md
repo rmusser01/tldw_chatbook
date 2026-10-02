@@ -3,11 +3,11 @@ id: TASK-32367
 title: >-
   Question cards must not read Waiting for your approval (kind-aware
   pending-interrupt registry)
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 00:01'
+updated_date: '2026-10-02 00:11'
 labels:
   - console
   - approvals
@@ -28,6 +28,7 @@ Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/super
 - [x] #1 A pending question card never produces the "Waiting for your approval" activity line; it produces copy that names a question
 - [x] #2 The pending-interrupt registry exposes the interrupt kind to the activity classifier and the inspector count agrees with it
 - [x] #3 A test pins one question card + one approval card → the line names the approval, and a lone question card → the question copy
+- [ ] #4 Keyboard review focuses the visible pending decision card when a tool approval is queued behind another confirmation, while retaining visible approval priority.
 <!-- AC:END -->
 
 ## Implementation Plan

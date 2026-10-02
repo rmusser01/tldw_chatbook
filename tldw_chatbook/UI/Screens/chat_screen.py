@@ -20812,8 +20812,8 @@ class ChatScreen(BaseAppScreen):
         skill-script confirm reached the "no approval" warning instead of
         its own mounted card. The scan now walks every decision card in the
         same kind precedence the copy uses (approval first, then question,
-        then the confirmations), so it cannot disagree with what the run
-        chip is telling the user is waiting.
+        then the confirmations). Queued approvals still contribute to the
+        waiting copy and count, while focus reaches the card on screen.
 
         Args:
             notify_missing: Whether to warn when nothing is focusable. The
@@ -20824,23 +20824,13 @@ class ChatScreen(BaseAppScreen):
         Returns:
             Whether a card was found and focused.
         """
-        if self._console_pending_approval_count() > 0:
-            card = self._first_displayed_console_decision_card(
-                "#chat-approval-card"
-            )
+        # Registered approvals can be queued behind a visible confirmation.
+        # Route to painted cards in priority order, independently of that count.
+        for selector in CONSOLE_DECISION_CARD_SELECTORS:
+            card = self._first_displayed_console_decision_card(selector)
             if card is not None:
                 self._focus_console_decision_card(card)
                 return True
-        else:
-            # PRD A4: this focus action is how keyboard-only users reach a
-            # question card that deliberately never steals focus -- and,
-            # since Qodo #5, the skill/merge confirms that never had a
-            # route at all.
-            for selector in CONSOLE_DECISION_CARD_SELECTORS:
-                card = self._first_displayed_console_decision_card(selector)
-                if card is not None:
-                    self._focus_console_decision_card(card)
-                    return True
         if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"

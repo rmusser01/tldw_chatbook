@@ -4,10 +4,16 @@ import threading
 import time
 
 import pytest
-from textual.widgets import Static
+from textual.widgets import Button, Static
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.test_console_headless_approval import _arm, _risk_row, _wait_for_round
+from Tests.UI.test_console_headless_approval import (
+    _arm,
+    _arm_install,
+    _risk_row,
+    _toast_text,
+    _wait_for_round,
+)
 from Tests.UI.test_console_store_continuity import _navigate
 from Tests.UI.test_console_turn_activity_line import _rendered_row_text
 from Tests.UI.test_console_turn_navigation_continuity import _build_navigation_app
@@ -17,6 +23,9 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunState,
     ConsoleRunStatus,
+)
+from tldw_chatbook.Chat.console_display_state import (
+    CONSOLE_INSPECTOR_NO_APPROVAL_REASON,
 )
 from tldw_chatbook.config import save_setting_to_cli_config
 from tldw_chatbook.Utils.token_counter import resolve_context_window
@@ -174,6 +183,11 @@ async def test_question_and_approval_copy_survives_sibling_view_and_remount(
             await _assert_projection(
                 console, pilot, assistant_id, "Waiting for your approval", 1
             )
+            console.query_one("#console-native-composer").focus()
+            await pilot.press("alt+a")
+            assert app.focused in tuple(
+                console.query_one("#chat-approval-card").walk_children()
+            )
 
             sibling = controller.new_session(title="Unrelated session")
             await pilot.pause()
@@ -285,5 +299,74 @@ async def test_inspector_counts_queued_approval_rounds_for_its_own_session(
             await _assert_projection(
                 console, pilot, assistant_id, "Waiting for your approval", 1
             )
+        finally:
+            await _stop_workers(controller, workers, pilot)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_review_routes_reach_visible_skill_confirm_before_queued_approval(
+    request, tmp_path
+):
+    app = _build_app(tmp_path)
+    workers = []
+    async with app.run_test(size=(160, 48), notifications=True) as pilot:
+        console, controller, store, session_id = await _seed_console(app, pilot)
+        assistant_id = _start_live_turn(console, controller, store, session_id)
+        try:
+            install_worker, _ = _arm_install(controller, session_id)
+            workers.append(install_worker)
+            await _wait(
+                pilot,
+                lambda: (
+                    console.query_one("#chat-skill-install-card").display
+                    and bool(console.query_one("#chat-skill-install-card")._request_id)
+                ),
+            )
+            approval_worker, _ = _arm(controller, session_id, call=_risk_row())
+            workers.append(approval_worker)
+            assert await _wait_for_round(controller, session_id)
+            assert not console.query_one("#chat-approval-card").display
+            assert console._task_resume_state.pending_skill_install is not None
+            await _assert_projection(
+                console, pilot, assistant_id, "Waiting for your approval", 1
+            )
+
+            install_card = console.query_one("#chat-skill-install-card")
+            allow = install_card.query_one("#skill-install-allow", Button)
+            for entry_point in ("shortcut", "inspector", "session_tab"):
+                console.query_one("#console-native-composer").focus()
+                if entry_point == "shortcut":
+                    await pilot.press("alt+a")
+                elif entry_point == "inspector":
+                    console.query_one(
+                        "#console-inspector-review-approval", Button
+                    ).press()
+                else:
+                    console.query_one(
+                        f"#console-session-tab-{session_id}", Button
+                    ).press()
+                await pilot.pause()
+                assert app.focused is allow, (entry_point, _toast_text(app))
+                assert app.screen is console
+                assert CONSOLE_INSPECTOR_NO_APPROVAL_REASON not in _toast_text(app)
+
+            controller.resolve_pending_skill_install(
+                False, request_id=install_card._request_id
+            )
+            await _finish_worker(pilot, install_worker)
+            await _wait(
+                pilot,
+                lambda: (
+                    console.query_one("#chat-approval-card").display
+                    and console.query_one("#chat-approval-card")._batch_round_id
+                    in controller._pending_approval_rounds
+                ),
+            )
+            console.query_one("#console-native-composer").focus()
+            await pilot.press("alt+a")
+            approval_card = console.query_one("#chat-approval-card")
+            assert app.focused in tuple(approval_card.walk_children())
+            assert controller.pending_round_count(session_id) == 1
         finally:
             await _stop_workers(controller, workers, pilot)

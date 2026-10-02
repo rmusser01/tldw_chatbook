@@ -14,12 +14,21 @@ from pathlib import Path
 
 
 def main() -> None:
-    """Run ROOT TMUX_SOCKET SESSION in an existing, disposable tmux pane."""
+    """Run ROOT TMUX_SOCKET SESSION in an existing, disposable tmux pane.
+
+    Raises:
+        SystemExit: Status 2 for invalid arguments or profile paths, before
+            selecting the profile, importing the app or writing run evidence.
+    """
     here = Path(__file__).resolve().parent
     repo = here.parents[3]
     sys.path.insert(0, str(repo))
-    # Select the profile before the shared argument validator imports app utilities.
-    root = Path(sys.argv[1]).resolve()
+    # Shared validation imports pure input/path utilities, not app configuration.
+    args = runpy.run_path(str(here.parent / "native_runner_args.py"))[
+        "parse_native_args"
+    ]()
+    root, tmux_socket, session = args.root, args.tmux_socket, args.session
+    # Select the validated private profile before application imports.
     os.environ.update(
         HOME=str(root / "home"),
         USERPROFILE=str(root / "home"),
@@ -28,10 +37,6 @@ def main() -> None:
         XDG_CONFIG_HOME=str(root / "config"),
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
     )
-    args = runpy.run_path(str(here.parent / "native_runner_args.py"))[
-        "parse_native_args"
-    ]()
-    root, tmux_socket, session = args.root, args.tmux_socket, args.session
     attempts = []
     original_connect = socket.socket.connect
 
@@ -277,6 +282,7 @@ def main() -> None:
                     )
                     worker = arm(kind, chat.id)
                     owner = own_run(chat.id, worker)
+                    conversation_id = controller.conversation_id_for_session(chat.id)
                     await wait_for(
                         lambda kind=kind, sid=chat.id: (
                             kind in controller.pending_round_kinds(sid)
@@ -338,6 +344,15 @@ def main() -> None:
                     actual = await worker
                     assert actual == expected, actual
                     assert owner.cancelled()
+                    assert controller._agent_bridge is not None
+                    assert (
+                        conversation_id
+                        not in controller._agent_bridge._fleet_fence_generations
+                    )
+                    assert (
+                        conversation_id
+                        not in controller._fleet_wake._conversation_fences
+                    )
                     assert not controller.pending_round_kinds(chat.id)
                     assert not controller._interrupt_host.session_round_payloads(
                         kind, chat.id
@@ -358,6 +373,7 @@ def main() -> None:
                             "terminal_mouse_close": True,
                             "worker_result": actual,
                             "owning_task_cancelled": True,
+                            "target_fleet_and_wake_fences_released": True,
                             "target_rounds_removed": True,
                             "viewed_sibling_question_pending": True,
                         }
@@ -384,7 +400,13 @@ def main() -> None:
                 has_draft=True,
                 pending_attachment_count=1,
                 pending_round_kinds=frozenset(
-                    {"approval", "question", "skill_install", "skill_script"}
+                    {
+                        "approval",
+                        "question",
+                        "skill_install",
+                        "skill_script",
+                        "worktree_merge",
+                    }
                 ),
             )
             dialog_worker = console.run_worker(
@@ -399,6 +421,10 @@ def main() -> None:
                     lambda: dialog.query_one("#cancel-button").has_focus,
                     "max-risk Stay focus",
                 )
+                assert (
+                    "Worktree decisions: cancelled; no merge or discard."
+                    in dialog.message
+                )
                 container = dialog.query_one("#confirmation-dialog")
                 assert container.region.intersection(dialog.region) == container.region
                 for selector in (".dialog-title", "#cancel-button", "#confirm-button"):
@@ -410,7 +436,7 @@ def main() -> None:
                     "size": [80, 24],
                     "title_characters": 60,
                     "all_six_nonzero_counts": True,
-                    "all_four_pending_kinds": True,
+                    "all_five_pending_kinds": True,
                     "title_and_actions_fully_painted": True,
                     "default_stay": True,
                     "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",

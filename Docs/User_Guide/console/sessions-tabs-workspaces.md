@@ -122,7 +122,7 @@ On a local-only setup the server lines collapse into one line:
 | "New tab" (strip or control bar) / Ctrl+T | Opens a fresh chat tab |
 | Click a tab | Switches to it; a second click on the active tab opens "Rename Chat Tab" |
 | Middle-click a tab | Closes it, exactly like its "✕", without switching to it first |
-| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions and skill confirmations: "Close" closes the tab, "Stay" keeps it |
+| "✕" on a tab | Closes it at once when nothing would be lost — a saved, idle chat or a blank tab. If closing would discard something (unsaved messages, an unsent draft, pending attachments, a live agent run, delegated sub-agents, queued prompts), a dialog naming the tab first shows only what closing would discard or cancel, including pending approvals, questions, skill confirmations and worktree-merge confirmations: "Close" closes the tab, "Stay" keeps it |
 | Alt+1 … Alt+9 | Jumps straight to tab 1–9 |
 | Marker glyph (● ◆ ✓ ✗) | That tab's agent-run status — clears when you visit the tab |
 
@@ -609,4 +609,5 @@ close dialog names the tab and lists only the consequences that apply: unsaved
 messages, drafts, attachments, live or queued work, and pending human decisions.
 The concise consequence list keeps the tab title and both actions visible at 80×24.
 Closing denies pending tool approvals, cancels unanswered questions and declines
-skill confirmations, cancelling the owning work without affecting other tabs.
+skill and worktree-merge confirmations, cancelling the owning work without
+affecting other tabs. Declining a merge or discard confirmation performs neither action.
