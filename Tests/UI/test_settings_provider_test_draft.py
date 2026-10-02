@@ -911,6 +911,35 @@ def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
     assert rows["Generation"] == "not tested"
 
 
+@pytest.mark.parametrize("category", ("unauthorized", "forbidden"))
+def test_a_rejected_key_reads_rejected_on_the_key_row_too(category):
+    """TASK-33005 capture checkpoint (capture 08): Readiness said "Not ready ·
+    key rejected" while Key said "present, not verified". One rejection, one
+    word on both rows."""
+    identity = _semantic_identity(
+        "https://api.openai.com/v1/models",
+        provider_key="openai",
+        credential_source="stored",
+        credential_revision=7,
+    )
+    evidence = ProviderTestEvidence(identity, "unreachable", (), category=category)
+    app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
+    readiness = get_provider_readiness("openai", app_config, environ={})
+
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            readiness,
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="",
+            evidence=evidence,
+        )
+    )
+
+    assert rows["Readiness"] == "Not ready · key rejected"
+    assert rows["Key"] == "saved in config · key rejected"
+
+
 @pytest.mark.parametrize(
     ("category", "expected"),
     (

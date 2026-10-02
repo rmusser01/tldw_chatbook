@@ -13684,9 +13684,13 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
     The status must derive from the SAME check the send path uses
     (``get_provider_readiness`` / ``resolve_provider_api_key``), not the mere
     presence of a provider/model name. A profile with a selected provider but
-    no API key must read 'Status: Not ready: Missing API key' -- an identity
+    no API key must read 'Status: Not ready · no key' -- an identity
     echo ("Status: OpenAI / gpt-4.1") implied usability while an actual send
     failed with "OpenAI API Key is required but not found."
+
+    TASK-33005 capture checkpoint (rewritten on purpose): the status now
+    speaks the one readiness vocabulary, "Not ready: Missing API key" ->
+    "Not ready · no key".
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
@@ -13702,7 +13706,7 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Not ready: Missing API key" in config_text
+        assert "; Status: Not ready · no key" in config_text
         # The provider/model identity still shows; only the honesty of the
         # trailing Status verdict changed.
         assert "OpenAI / gpt-4.1" in config_text
@@ -13713,7 +13717,8 @@ async def test_settings_overview_status_reports_not_ready_without_credential(
 async def test_settings_overview_status_reports_ready_with_credential(
     request, monkeypatch
 ):
-    """Paired arm: a resolvable API key still reads 'Status: Ready'."""
+    """Paired arm: a resolvable API key reads 'Status: Ready · not tested'
+    (TASK-33005 capture checkpoint, rewritten on purpose from "Ready")."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
@@ -13730,7 +13735,7 @@ async def test_settings_overview_status_reports_ready_with_credential(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Ready" in config_text
+        assert config_text.endswith("; Status: Ready · not tested")
         assert "Not ready" not in config_text
 
 
@@ -13744,8 +13749,9 @@ async def test_settings_overview_status_reports_not_ready_without_model(
     A credential-only check would return Ready here while the Overview
     identity renders "not selected" and the send gateway blocks with "Select
     a model before sending." The Overview 'Status:' must agree with the send
-    path for BOTH missing-key AND missing-model, so this reports 'Not ready:
-    Select a model'.
+    path for BOTH missing-key AND missing-model, so this reports 'Not ready ·
+    no model' (TASK-33005 capture checkpoint, rewritten on purpose from "Not
+    ready: Select a model").
     """
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     app = _build_test_app()
@@ -13764,11 +13770,73 @@ async def test_settings_overview_status_reports_not_ready_without_model(
         config_text = str(
             screen.query_one("#settings-overview-configuration", Static).renderable
         )
-        assert "; Status: Not ready: Select a model" in config_text
+        assert "; Status: Not ready · no model" in config_text
         # The identity half shows the model is unselected, matching the status.
         assert "not selected" in config_text
         # Must NOT read a bare "Ready" verdict.
         assert "; Status: Ready" not in config_text
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_settings_overview_status_reads_a_refused_test_as_the_console_does(
+    request,
+):
+    """TASK-33005 capture checkpoint (capture 03): Overview read "Status:
+    Ready" right above "Last connection test: Readiness: Not ready · refused
+    :9199". The status line reads the shared connection evidence, in the
+    Console's words, so the two can never disagree."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+        console_send_connection,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+        shared_connection_evidence,
+    )
+
+    app = _build_test_app()
+    config = app.app_config
+    config["chat_defaults"] = {"provider": "llama_cpp", "model": "model-a"}
+    config.setdefault("api_settings", {})["llama_cpp"] = {
+        "api_url": "http://127.0.0.1:9199",
+        "model": "model-a",
+    }
+    host = DestinationHarness(app, "settings")
+    store = ProviderTestEvidenceStore(lambda: host)
+    store.settle(
+        store.begin(
+            console_send_connection(
+                build_target_default_console_session_settings(
+                    config, "llama_cpp", "model-a"
+                ),
+                app_config=config,
+            )
+        ),
+        ProviderProbeResult("unreachable", (), "connection_refused"),
+    )
+    console_word = readiness_words(
+        build_console_settings_readiness(
+            build_target_default_console_session_settings(
+                config, "llama_cpp", "model-a"
+            ),
+            app_config=config,
+            connection_evidence=shared_connection_evidence(lambda: host),
+        )
+    )
+    assert console_word == "Not ready · refused :9199"
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _settle_settings_mount_storm(pilot)
+        screen = _active_destination_screen(host)
+
+        config_text = str(
+            screen.query_one("#settings-overview-configuration", Static).renderable
+        )
+        assert config_text.endswith(f"; Status: {console_word}"), config_text
 
 
 @pytest.mark.asyncio

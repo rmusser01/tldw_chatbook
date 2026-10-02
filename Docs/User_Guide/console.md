@@ -558,6 +558,13 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
   group's heading says "Enter opens the fix or explains it"). A cloud
   provider whose key check timed out reads "Enter: open Settings" instead,
   since only **t** there checks it again.
+- **NOT RUNNING**, one line naming the local servers you never set up that
+  refused: a provider still at its shipped settings (such as TabbyAPI on
+  `localhost:8080`) that is not this chat's, the default's or a recent
+  chat's provider. They are checked like any other local server, so one
+  that is running reads "Ready · reachable" under READY PROVIDERS instead.
+  Change a provider's settings or use it, and its refusal is a NEEDS SETUP
+  row again.
 
 Each row shows the model, the provider's name, its context size (`~` marks
 an estimate), readiness and last use. Readiness comes from your

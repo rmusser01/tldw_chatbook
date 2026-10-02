@@ -101,8 +101,10 @@ async def test_settings_mount_and_overview_refresh_without_another_edit(
         assert credential_io.entered.is_set()
         assert len(credential_io.readers) == 1
         assert credential_io.readers[0] != threading.get_ident()
+        # TASK-33005 capture checkpoint (rewritten on purpose): the Overview
+        # status speaks the Console's word, "Checking Claude..." -> this.
         await wait_for_copy(
-            screen, "#settings-overview-configuration", "Checking Claude"
+            screen, "#settings-overview-configuration", "Not ready · checking login"
         )
         heartbeats = []
         timer = screen.set_interval(0.01, lambda: heartbeats.append(None))
@@ -117,7 +119,7 @@ async def test_settings_mount_and_overview_refresh_without_another_edit(
         credential_io.release.clear()
         credential_io.monotonic_clock[0] = 106.0
         await wait_for_copy(
-            screen, "#settings-overview-configuration", "Checking Claude"
+            screen, "#settings-overview-configuration", "Not ready · checking login"
         )
         assert credential_io.entered.is_set()
         assert len(credential_io.readers) == 2
@@ -146,7 +148,7 @@ async def test_settings_fast_completion_is_visible_on_first_poll(
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         await wait_for_copy(
-            screen, "#settings-overview-configuration", "Checking Claude"
+            screen, "#settings-overview-configuration", "Not ready · checking login"
         )
         assert screen._subscription_readiness_observation is None
         credential_io.release.set()

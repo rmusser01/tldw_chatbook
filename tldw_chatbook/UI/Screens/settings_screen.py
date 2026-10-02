@@ -131,6 +131,7 @@ from ...Chat.provider_test_evidence import (
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
     connection_credential_revision,
+    shared_connection_evidence,
 )
 from ...Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
@@ -143,7 +144,10 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
+    build_console_settings_readiness,
+    build_target_default_console_session_settings,
     normalize_console_model_value,
+    readiness_words,
     settings_provider_catalog,
     verdict_readiness_words,
 )
@@ -12310,40 +12314,28 @@ class SettingsScreen(BaseAppScreen):
         return "Provider readiness: needs provider and model"
 
     def _provider_overview_readiness_status(self) -> str:
-        """One-line send-path readiness verdict for the Overview status row.
+        """The Overview status row's readiness word, as the Console says it.
 
-        TASK-31805: the Overview 'Status:' must reflect what an actual send
-        would do, never the mere presence of a provider/model name. Two
-        blockers are surfaced, in the SAME order the send path enforces them
-        (``build_console_settings_readiness``): the credential check first
-        (``get_provider_readiness`` / ``resolve_provider_api_key``), then a
-        selected model. Without the credential check a fresh no-key profile
-        read as usable ("Status: OpenAI / gpt-4o") while a send failed with
-        "OpenAI API Key is required but not found."; without the model check a
-        provider whose credential resolves but with no model selected would
-        still read "Ready" while the identity shows "not selected" and the
-        send gateway blocks with "Select a model before sending."
+        TASK-31805: what a send would do, never the mere presence of a name.
+        TASK-33005: the Console's future-chat builder and words, test evidence
+        included, so it never reads "Ready" above a refused last test.
 
         Returns:
-            "Ready" when a send would proceed, "Not ready: <reason>" when a
-            credential or model blocker applies, or "needs provider and model"
-            when no provider is selected yet.
+            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
+            'Not ready · <reason>'.
         """
         resolved = self._resolve_provider_model_for_settings()
-        provider = str(resolved.provider or "").strip()
-        if not provider or provider == "not selected":
-            return "needs provider and model"
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_readiness_app_config(),
-            background_credentials=True,
+        app_config = self._provider_readiness_app_config()
+        settings = build_target_default_console_session_settings(
+            app_config, str(resolved.provider or ""), resolved.model
         )
-        if not readiness.ready:
-            return f"Not ready: {readiness.reason}"
-        # Credential resolves (or is not required); a send still needs a model.
-        if normalize_console_model_value(resolved.model) is None:
-            return "Not ready: Select a model"
-        return "Ready"
+        readiness = build_console_settings_readiness(
+            # The model the Overview names, never a provider-table fallback.
+            replace(settings, model=normalize_console_model_value(resolved.model)),
+            app_config=app_config,
+            connection_evidence=shared_connection_evidence(lambda: self.app),
+        )
+        return readiness_words(readiness)
 
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
@@ -15995,6 +15987,13 @@ class SettingsScreen(BaseAppScreen):
         ):
             # ADR-020: this listing is public, so it proves nothing (AC#6).
             key += " · models listed; key not checked"
+        elif (
+            source
+            and listing == "unreachable"
+            and getattr(evidence, "category", None) in {"unauthorized", "forbidden"}
+        ):
+            # The evidence the Readiness row reads as "key rejected".
+            key += " · key rejected"
         elif source:
             key += " · present, not verified"
 

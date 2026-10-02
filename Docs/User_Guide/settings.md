@@ -182,7 +182,10 @@ page links to each backend's setup guide and displays these restrictions.
 
 Overview leads with configuration readiness, the last connection test (its
 leading row, then its Endpoint row, so it says whether the endpoint was
-reached), storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
+reached), storage/privacy, and sync status. Its "Status:" is the same
+readiness word the Console shows for the default provider and model, test
+results included: after a refused test it reads "Not ready · refused :9199",
+never "Ready". **Open Providers & Models**, **Open Storage**,
 and **Open Privacy & Security** take you to the corresponding settings. Use
 **Tab** to reach each action; the detail pane scrolls to the focused control,
 and paired actions stack at compact widths.
@@ -286,7 +289,8 @@ unreachable server leads with, for example, "model listing failed
 same in one line. While another setting blocks the provider, the Key row says
 "not checked until the provider is ready" rather than guessing. Until a cloud
 key is checked, the Key row says the key is present but not verified, and
-Generation says not tested. With the Endpoint field empty, the Endpoint row
+Generation says not tested; after a 401 or 403 it says "key rejected", as the
+Readiness row does. With the Endpoint field empty, the Endpoint row
 names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
@@ -769,19 +773,19 @@ another provider enables those controls again.
 
 If the entry's `api_key_env` is not a valid environment variable name (for
 example `gpu-key`, hand-edited into `config.toml`), the entry stays listed
-but is not ready: Overview reads **Not ready: Invalid provider settings** and
+but is not ready: Overview reads **Not ready · check settings** and
 the credential line says the endpoint's credential env var name is invalid.
 Fix it with **Edit ▸ Env var** (letters, digits, and underscores, not
 starting with a digit). A stored key on the entry still works meanwhile.
 
 If the entry the default names no longer exists (for example, it was removed
-from `config.toml` by hand), Overview reads **Not ready: Endpoint not found**
+from `config.toml` by hand), Overview reads **Not ready · unsupported**
 and Providers & Models reads **Not ready · endpoint not found; choose another
 provider**. Pick another provider, or recreate the endpoint.
 
 A hand-edited default that is not a provider id at all — `custom-ep:` with
 no slug, `foo:bar`, or an uppercase `CUSTOM-EP:<slug>` (endpoint ids are
-lowercase) — reads **Not ready: Unknown provider**. Pick a provider in
+lowercase) — reads **Not ready · unsupported**. Pick a provider in
 Providers & Models.
 
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are

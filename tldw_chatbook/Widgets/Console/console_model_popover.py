@@ -48,6 +48,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    provider_left_at_shipped_default,
     readiness_words,
     resolve_console_value_layers,
 )
@@ -1116,9 +1117,23 @@ class ConsoleModelPopover(
         matches: list[tuple[int, int, int, SwitcherRow]] = []
         setup_rows: list[SwitcherRow] = []
         setup_extra = 0
+        not_running: list[str] = []
+        used = self._used_provider_keys()
         for rank, key in enumerate(self._visible_providers()):
             readiness = self._readiness.get(key)
             if readiness is None:
+                continue
+            if (
+                # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
+                # the user never set up or used is still probed, so a running
+                # one is found, but its refusal is no setup task.
+                readiness.endpoint_category == "connection_refused"
+                and _retries_in_place(readiness)
+                and key not in used
+                and provider_left_at_shipped_default(self._app_config, key)
+            ):
+                if self._pair_score(query, tokens, key, "") is not None:
+                    not_running.append(self._display(key))
                 continue
             models = list(self._models_for(key))
             if key == current_key and current_model:
@@ -1188,6 +1203,10 @@ class ConsoleModelPopover(
             if self._pick_only
             else "NEEDS SETUP · Enter opens the fix or explains it",
             setup_rows,
+        )
+        group(
+            "NOT RUNNING · local servers never set up · rechecked on open",
+            [SwitcherRow("info", "  " + " · ".join(not_running))] if not_running else [],
         )
         rows.extend(self._typed_rows(tokens))
         return rows

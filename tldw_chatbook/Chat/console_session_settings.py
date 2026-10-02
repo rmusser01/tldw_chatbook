@@ -94,6 +94,7 @@ from tldw_chatbook.Chat.sampling_params import (
     VERBOSITY_VALUES as _VERBOSITY_VALUES,
 )
 from tldw_chatbook.config import (
+    DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
     provider_settings_for_key,
     resolve_provider_api_key,
@@ -2490,6 +2491,36 @@ def console_send_connection(
     return _console_connection_identity(
         provider_key, base_url, provider_settings, readiness, entry, environ
     )
+
+
+def provider_left_at_shipped_default(
+    app_config: Mapping[str, object], provider_key: str
+) -> bool:
+    """Whether the user never set this provider up (TASK-33005.6 AC#3 ruling).
+
+    Every loaded profile carries the shipped template's ``[api_settings.*]``
+    tables, so having a table proves nothing (``any_provider_configured``
+    refuses template endpoints for the same reason); a table that still
+    equals the template's does. A ``custom-ep:`` registry entry is always the
+    user's own.
+
+    Args:
+        app_config: The live configuration snapshot.
+        provider_key: A canonical provider key or ``custom-ep:`` id.
+
+    Returns:
+        Whether its saved settings are exactly the shipped template's.
+    """
+    if provider_key.startswith("custom-ep:"):
+        return False
+    try:
+        return provider_settings_for_key(
+            app_config.get("api_settings"), provider_key
+        ) == provider_settings_for_key(
+            DEFAULT_CONFIG_FROM_TOML.get("api_settings"), provider_key
+        )
+    except ProviderSettingsError:
+        return False
 
 
 def _custom_endpoint_missing_key_readiness(

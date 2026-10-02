@@ -10,6 +10,7 @@ from __future__ import annotations
 import errno
 import inspect
 import threading
+from copy import deepcopy
 
 import httpx
 import pytest
@@ -359,6 +360,108 @@ async def test_closing_mid_probe_raises_nothing_and_a_late_result_loses(servers)
         await pilot.pause(0.2)
         assert _evidence(app, LLAMA)[1].endpoint == "reachable"
     assert app.return_code in {None, 0}
+
+
+TABBY, APHRODITE = 8080, 2242  # Their shipped localhost defaults.
+SHIPPED_MODELS = {
+    **PROVIDERS_MODELS,
+    "tabbyapi": ["tabby-model"],
+    "aphrodite": ["aphrodite-engine"],
+}
+
+
+def _with_shipped(*providers: str) -> dict:
+    """CONFIG plus template tables exactly as every profile carries them."""
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML
+
+    config = deepcopy(CONFIG)
+    for provider in providers:
+        config["api_settings"][provider] = deepcopy(
+            DEFAULT_CONFIG_FROM_TOML["api_settings"][provider]
+        )
+    return config
+
+
+def _group(switcher: ConsoleModelPopover, header: str) -> list:
+    rows = switcher._rows
+    start = next(
+        (i for i, row in enumerate(rows) if row.kind == "header" and row.text.startswith(header)),
+        None,
+    )
+    if start is None:
+        return []
+    end = next(
+        (i for i in range(start + 1, len(rows)) if rows[i].kind == "header"), len(rows)
+    )
+    return rows[start + 1 : end]
+
+
+async def test_an_untouched_shipped_default_that_refuses_is_quietly_not_running(
+    servers,
+):
+    """TASK-33005.6 AC#3 (owner ruling 2026-10-02): shipped localhost defaults
+    are still probed, so a server already running is found; one the user never
+    set up or used that refuses is listed once as not running, never as a
+    "refused :PORT" NEEDS SETUP row. A configured one keeps its row."""
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app,
+            config=_with_shipped("tabbyapi", "aphrodite"),
+            providers_models=SHIPPED_MODELS,
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        setup = {row.provider for row in _group(switcher, "NEEDS SETUP")}
+        quiet = _group(switcher, "NOT RUNNING")
+        lines = list_lines(app, switcher)
+
+    assert {TABBY, APHRODITE} <= set(servers.ports)  # Still probed.
+    assert "llama_cpp" in setup  # Edited to :9099, refused: unchanged.
+    assert not {"tabbyapi", "aphrodite"} & setup, setup
+    assert [row.kind for row in quiet] == ["info"], quiet
+    assert "TabbyAPI" in quiet[0].text and "Aphrodite Engine" in quiet[0].text
+    assert not any(f"refused :{TABBY}" in line or f"refused :{APHRODITE}" in line for line in lines)
+
+
+@pytest.mark.parametrize("owned_by", ("chat default", "edit"))
+async def test_a_configured_default_that_refuses_still_reads_refused(
+    servers, owned_by
+):
+    """TASK-33005.6 AC#3: the chat default, or a table the user changed (here
+    only its model), is configured, so its refusal stays a NEEDS SETUP row."""
+    config = _with_shipped("tabbyapi")
+    if owned_by == "chat default":
+        config["chat_defaults"] = {"provider": "tabbyapi", "model": "tabby-model"}
+    else:
+        config["api_settings"]["tabbyapi"]["model"] = "my-own-tabby-model"
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(app, config=config, providers_models=SHIPPED_MODELS)
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        setup = {row.provider for row in _group(switcher, "NEEDS SETUP")}
+        word = popover_module.switcher_readiness_words(switcher._readiness["tabbyapi"])
+
+    assert "tabbyapi" in setup
+    assert word == f"Not ready · refused :{TABBY}"
+
+
+async def test_an_untouched_shipped_default_that_runs_reads_reachable(servers):
+    """TASK-33005.6 AC#3: the reason to keep probing shipped defaults."""
+    servers.up = {TABBY}
+    app = _harness()
+    async with app.run_test(size=(211, 44)) as pilot:
+        switcher = build(
+            app, config=_with_shipped("tabbyapi"), providers_models=SHIPPED_MODELS
+        )
+        await app.push_screen(switcher)
+        await _settle(app, pilot)
+        ready = {row.provider for row in _group(switcher, "READY PROVIDERS")}
+        word = popover_module.switcher_readiness_words(switcher._readiness["tabbyapi"])
+
+    assert "tabbyapi" in ready
+    assert word.startswith("Ready · reachable ")
 
 
 async def test_the_switcher_widget_makes_no_network_call_itself(servers):
