@@ -220,6 +220,7 @@ async def test_ctrl_q_over_a_dirty_draft_asks_and_stay_keeps_every_draft(
 
 
 async def test_ctrl_q_discard_drops_the_draft_and_quits(monkeypatch):
+    """AC#1: Discard drops the unsaved draft without saving it, then the quit runs."""
     events: list[object] = []
     _Store(monkeypatch, events)
     app = _build_test_app(configured_default="personas")
@@ -239,6 +240,7 @@ async def test_ctrl_q_discard_drops_the_draft_and_quits(monkeypatch):
 
 
 async def test_ctrl_q_save_saves_the_draft_then_quits(monkeypatch):
+    """AC#2: Save saves the draft first, and only then does the quit run."""
     events: list[object] = []
     _Store(monkeypatch, events)
     app = _build_test_app(configured_default="personas")
@@ -462,6 +464,7 @@ async def test_ctrl_q_during_roleplay_work_says_it_is_waiting_then_asks(
 
 
 async def test_ctrl_q_with_clean_drafts_quits_without_asking(monkeypatch):
+    """With nothing unsaved, Ctrl+Q quits at once and never shows the question."""
     events: list[object] = []
     _Store(monkeypatch, events)
     app = _build_test_app(configured_default="personas")
@@ -481,3 +484,30 @@ async def test_ctrl_q_with_clean_drafts_quits_without_asking(monkeypatch):
         await _until(pilot, _quit_ran_without_asking, "a clean Roleplay to quit")
         assert asked == []
         assert events == ["quit"]
+
+
+async def test_ctrl_q_stays_when_the_roleplay_question_cannot_be_shown(monkeypatch):
+    """A Roleplay question that cannot be shown never becomes a silent quit.
+
+    If the Save / Discard / Stay dialog fails to build, the quit ends as Stay
+    and the unsaved draft is intact. (The guard and the app's quit flow both
+    fail closed here; this pins the user-visible outcome, not which layer.)
+    """
+    import tldw_chatbook.UI.Persona_Modules.roleplay_draft_guard as guard
+
+    events: list[object] = []
+    _Store(monkeypatch, events)
+    app = _build_test_app(configured_default="personas")
+    monkeypatch.setattr(app, "_run_approved_quit_cleanup", _quit_recorder(app, events))
+
+    def _broken_dialog(*_args, **_kwargs):
+        raise RuntimeError("dialog could not be built")
+
+    async with app.run_test(size=(160, 48)) as pilot:
+        screen, name = await _roleplay_editor(app, pilot)
+        await _dirty(pilot, screen, name)
+        monkeypatch.setattr(guard, "RoleplayDraftNavigationDialog", _broken_dialog)
+
+        await pilot.press("ctrl+q")
+        await _assert_stayed(pilot, app, screen, name, events)
+        assert events == []
