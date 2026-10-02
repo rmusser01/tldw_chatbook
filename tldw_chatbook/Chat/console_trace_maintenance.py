@@ -741,6 +741,11 @@ class LegacyTraceMaintenance:
         self.max_bytes = max_bytes
         self.max_seconds = float(max_seconds)
         self.clock = clock
+        #: TASK-33801: skip the read-only idle check on the next pass. The check
+        #: costs a storage admission of its own, which a pass with work pays
+        #: only to fall through to the write path. True at first (the state is
+        #: unknown); the runtime loop sets it when an exchange write wakes it.
+        self.expect_work = True
 
     def _complete_without_pending_work(self) -> bool:
         """Read-only: True when the migration is complete with no newer exchange.
@@ -779,7 +784,8 @@ class LegacyTraceMaintenance:
 
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
-        if self._complete_without_pending_work():
+        expect_work, self.expect_work = self.expect_work, False
+        if not expect_work and self._complete_without_pending_work():
             return LegacyMaintenanceBatch(True, 0, 0, True)
         started = self.clock()
         processed_rows = 0
