@@ -33,6 +33,14 @@ cannot allocate a new generation. Trace every reader before reusing an
 ownership marker; successful cleanup tests do not cover surviving work after
 an unsuccessful boundary.
 
+**Follow-up, 2026-10-02.** Recreating a closed native ID exposed a second
+reader: the runtime retains its own admission tombstone even after a proven
+drain. Clearing only the controller marker would admit a queued old usage
+callback against a restored assistant ID. The regression now delivers both
+immediate and already-queued stale drains, preserving the restored usage and
+source; retained Close refuses before voice ownership with the authored restart
+message and ends the confirmation flow. Normal resume uses a fresh native ID.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
@@ -17781,3 +17789,9 @@ expanded to the viewport and lost its intended frame. Independent review caught
 the mismatch before native qualification. The corrected selector retains both
 body types; the mounted and native regressions now assert the original 60-cell
 width alongside painted actions, keyboard scrolling and focus across resize.
+
+The same PR later missed `CancelConfirmationDialog`'s inherited primary-border
+override: its selector still named only `Container`, so the scroll body inherited
+the base accent. A mounted production-CSS check now asserts all four computed
+border edges, literal prose and safe Enter/Escape dismissal. Review subclass
+body selectors as well as the shared frame when changing the body type.

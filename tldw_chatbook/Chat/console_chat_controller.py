@@ -14617,7 +14617,7 @@ class ConsoleChatController:
         if session_id in self._failed_session_close_generations:
             raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         if session_id in self._session_close_generations:
-            raise RuntimeError("Console session close is already fenced.")
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
             raise ConsoleLifecycleRevisionChanged(

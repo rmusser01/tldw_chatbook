@@ -131,6 +131,7 @@ from uuid import uuid4
 from loguru import logger
 
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     ConsoleLifecycleRevisionChanged,
     ConsoleRunStatus,
     ConsoleSubmissionOrigin,
@@ -4685,6 +4686,10 @@ class ConsoleRuntime:
     ) -> Any | None:
         """Drain already-claimed voice publication before closing its session."""
 
+        # A recreated store row cannot retire this app-lifetime close fence.
+        # Refuse before taking any new voice-close ownership.
+        if session_id in self._admission_fenced_sessions:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         owner = self._voice_promotion_owner
         if owner is None:
             if session_id in self._voice_promotion_pending_closes:

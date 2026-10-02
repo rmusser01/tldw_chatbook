@@ -505,7 +505,7 @@ in a full accent box.
   close did not finish. Try again in a moment.` A Temporary chat with a
   pending turn cannot close until you finish or discard that turn. A failed
   confirmed close offers a fresh dialog; another Close click is required to retry.
-  If provisional cleanup cannot safely release its fence, the tab stays open
+  When earlier Close cleanup needs recovery, the tab stays open
   and shows `Close cleanup needs recovery. Restart the app before closing this
   tab.` The confirmation flow ends instead of repeatedly asking to retry.
 - If the tab closed but the Console could not finish updating afterwards, a

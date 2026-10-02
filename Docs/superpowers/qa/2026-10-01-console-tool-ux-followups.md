@@ -316,3 +316,46 @@ owned processes/sockets, and left real config/data unchanged. This qualifies
 combined app behavior, not logging performance. Earlier receipts remain
 historical; final published-head CI/Qodo and a verified normal merge remain
 required.
+
+## Final retained-ID and cancellation review corrections
+
+Qodo on `6f82aca15073` reproduced two issues. The cancellation subclass still
+styled only a direct Container after the shared body became VerticalScroll;
+its existing primary-border selector now also matches `.confirmation-scroll`.
+All four computed edges, literal prose, safe default and Enter/Escape dismissal
+are covered by the production-CSS regression.
+
+Retained committed native IDs already remain fenced by the runtime and the
+controller's late-usage ownership. Close now uses the existing authored restart
+refusal at both boundaries, before voice ownership. The actual mounted Close
+flow ends after one confirmation and reports the named tab. Same-ID create and
+restore probes retain the exact generation and tombstones; both immediate and
+already-queued old drains leave restored usage/source unchanged. Normal saved
+resume and new sessions continue to allocate fresh UUIDs. Recycling a closed
+native ID within the same runtime is not added by this correction.
+
+The final private-basetemp/XML run passes10 Close/lifecycle/privacy cases,
+including the unrelated-error fixture's original type-only redaction and actual
+successful retry. Eleven affected confirmation cases and9 design-token/actual
+boot-byte checks also pass: **30 distinct targeted checks, zero failures/errors/
+skips**. The two actual private-profile UI children pass. Preflight passes with
+census122; boot CSS remains607,219 bytes under the unchanged608,090 cap. Ruff
+adds zero diagnostics across21 modified Python files against dev92a; an
+inherited F811 source-line reference is normalized for comparison. Independent
+production/test review is clear.
+
+Fresh native approval14 passes nine Ask-gated fs_read journeys (three reads,
+six denials), with24 current/stable source pins. Native Close15 passes four real
+decision-worker closes, target cleanup and sibling isolation, plus60-cell
+80×24→80×18 crowded geometry and native Shift+Tab/End/Home/Tab scrolling, with19
+current/stable pins. Both apps/processes/socket owners exit0, attempt no network
+and leave real profiles unchanged (533/515 data file mtimes respectively).
+The first Close15 profile was rejected by the existing path validator before
+app imports; contained fixture paths were corrected before the valid launch.
+The existing native exports remain historical; current receipts and source pins
+are in `review_followups_2026_10_02` of the sanitized integration receipt.
+
+These checks qualify the pinned working source bytes on dev92a, before the
+review-fix commit. Final published-head GitHub gates and fresh clean/resolved
+Qodo remain the separate normal-merge checkpoint. No full local sweep, new
+incarnation machinery, cleared authority, dependency or CI-limit change.

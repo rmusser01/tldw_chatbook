@@ -333,15 +333,18 @@ async def test_middle_click_closes_a_tab_without_switching_to_it(request):
 @pytest.mark.asyncio
 @private_profile_test
 async def test_internal_close_error_names_the_tab_but_never_the_error_text(
-    request, tmp_path
+    request, tmp_path, monkeypatch
 ):
     """AC #4: a close that fails inside the runtime is shown and logged.
 
-    The runtime refuses to close a session it has already fenced with an
-    internal ``RuntimeError("Console session is closed.")`` -- text that
-    would contradict the still-open tab, so the toast names only the error
-    type, and the log carries the type and origin but never the text
-    (TASK-15103). The next ✕ press is not swallowed by the in-flight guard.
+    An unrelated internal failure may contain private bytes. The toast
+    names only the error type; the log carries type and origin without the
+    exception text (TASK-15103). The next ✕ press remains available.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Temporary directory for the private database fixture.
+        monkeypatch: Fixture injecting an unrelated runtime Close failure.
     """
 
     app = _ready_app()
@@ -359,8 +362,13 @@ async def test_internal_close_error_names_the_tab_but_never_the_error_text(
             store.switch_session(keeper)
             await _show_tabs(console, pilot, {keeper, saved.id})
             runtime = console._console_runtime()
-            runtime._admission_fenced_sessions.add(saved.id)
+            close_session = runtime.close_session
+            private_error_text = "private-runtime-close-error-bytes"
 
+            async def fail_close(_session_id, **_kwargs):
+                raise RuntimeError(private_error_text)
+
+            monkeypatch.setattr(runtime, "close_session", fail_close)
             await _click(pilot, f"#console-close-session-tab-{saved.id}")
             assert await _settle(pilot, lambda: bool(notes)), "refused close was silent"
             assert notes[-1] == (
@@ -373,11 +381,12 @@ async def test_internal_close_error_names_the_tab_but_never_the_error_text(
                 and "error_type=RuntimeError" in record
                 for record in records
             ), records
-            assert not any("Console session is closed" in r for r in records)
+            assert not any(private_error_text in record for record in records)
+            assert not any(private_error_text in text for text, _severity in notes)
             assert saved.id in _session_ids(store)
             await _await_tabs(console, pilot, {keeper, saved.id})
 
-            runtime._admission_fenced_sessions.discard(saved.id)
+            monkeypatch.setattr(runtime, "close_session", close_session)
             await _click(pilot, f"#console-close-session-tab-{saved.id}")
             closed = await _settle(pilot, lambda: saved.id not in _session_ids(store))
             assert closed, "the retry after a refused close was dropped"
@@ -1259,6 +1268,96 @@ async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
                         assert not bridge._fleet_fence_generations
                         assert not controller._fleet_wake._conversation_fences
                         assert not controller._session_close_states
+
+                        # Low-level recreation can reuse the native ID, but it
+                        # cannot retire the old close/late-usage authority.
+                        generation = controller._session_close_generations[doomed.id]
+                        reopened = store.create_session(
+                            session_id=doomed.id,
+                            title="Reopened Progress retry",
+                            activate=False,
+                        )
+                        reopened.persisted_conversation_id = conversation_id
+                        restored = store.append_message(
+                            reopened.id,
+                            role=ConsoleMessageRole.ASSISTANT,
+                            content="Restored parent",
+                            message_id=assistant.id,
+                        )
+                        controller._attach_stream_usage(
+                            restored.id,
+                            _turn_signals(prompt=2, completion=1),
+                            resolution,
+                            partial=False,
+                        )
+                        stale_drain = FleetDrained(
+                            conversation_id=conversation_id,
+                            children=(
+                                SettledChild(
+                                    run_id="old-incarnation-child",
+                                    status="done",
+                                    session_id=doomed.id,
+                                    assistant_message_id=assistant.id,
+                                ),
+                            ),
+                        )
+                        assert controller._fleet_event_is_stale(stale_drain)
+                        bridge._fleet_drain_fanout.fire(stale_drain)
+                        # Pin the second guard too: a drain may have already
+                        # been queued on the app loop before close committed.
+                        controller._reattach_fleet_usage_guarded(stale_drain)
+                        await pilot.pause()
+                        assert store.get_message(restored.id).usage.total_tokens == 3
+                        assert (
+                            controller._fleet_usage_reattach_sources[assistant.id][0]
+                            is signals
+                        )
+                        store.set_session_draft(reopened.id, "restored private draft")
+                        await _show_tabs(console, pilot, {keeper, reopened.id})
+                        note_count = len(notes)
+                        await _click(pilot, f"#console-close-session-tab-{reopened.id}")
+                        refusal_dialog = await _wait_for_confirmation(
+                            host, previous=second
+                        )
+                        assert await _settle(
+                            pilot,
+                            lambda refusal_dialog=refusal_dialog: (
+                                refusal_dialog.query_one("#cancel-button").has_focus
+                            ),
+                        )
+                        await _click(pilot, "#confirm-button")
+                        assert await _settle(
+                            pilot,
+                            lambda notes=notes, note_count=note_count: (
+                                len(notes) == note_count + 1
+                            ),
+                        )
+                        assert await _settle(
+                            pilot,
+                            lambda session=console._session, reopened=reopened: (
+                                reopened.id not in session._closing_session_requests
+                            ),
+                        ), "reused ID close kept a replacement confirmation open"
+                        assert not isinstance(host.screen, ConfirmationDialog)
+                        assert "Reopened Progress retry" in notes[-1][0]
+                        assert "restart" in notes[-1][0].casefold()
+                        assert notes[-1][1] == "error"
+                        assert controller._session_close_generations == {
+                            doomed.id: generation
+                        }
+                        assert controller._session_close_generation == generation
+                        assert not controller._session_close_states
+                        assert reopened.id in (
+                            console._console_runtime()._admission_fenced_sessions
+                        )
+                        assert not bridge._fleet_fence_generations
+                        assert not controller._fleet_wake._conversation_fences
+                        assert calls == [doomed.id, doomed.id]
+                        assert reopened.id in _session_ids(store)
+                        assert (
+                            store.session_draft(reopened.id) == "restored private draft"
+                        )
+                        assert store.get_message(restored.id).usage.total_tokens == 3
                 finally:
                     if isinstance(host.screen, ConfirmationDialog):
                         host.screen.dismiss(False)

@@ -115,8 +115,14 @@ shared short-height scrolling correction, retaining all four real closes and
 adding the 80×18 native geometry/keyboard journey. Final run14 repeated these
 unchanged journeys after the logging PERF-03 rebase onto
 `92a95170a5406b3ebdc9be6dc26a12f2741d756f`, with local head `ba46a5c7d5`.
-The exported captures and source hashes are from run14; current production,
-model-copy, config, app/logging and unchanged runner bytes matched the pins.
+The exported captures and source hashes retain historical run14 and its
+production/model-copy/config/app/logging pins. Review-fix run15 qualifies the
+current controller/runtime/cancellation bytes with19 stable source pins in
+[`review_followups_2026_10_02`](../2026-10-01-console-tool-ux-config-integration.json).
+It repeats all four real worker closes and the80×18 keyboard/geometry matrix;
+app/process/socket exit0, no network and515 real data mtimes remain unchanged.
+The retained-ID recovery refusal is covered separately by the mounted/direct
+lifecycle tests; this unchanged native runner exercises ordinary worker closes.
 This refresh qualifies the combined app startup and Close/decision-worker
 journeys; logging throughput and sanitizer checks remain separate. The qualified fixture
 creates/switches tabs before arming the viewed question, uses distinct round

@@ -736,5 +736,262 @@
       "receipt": "/tmp/console-tool-ux-close-native/run14/qualification.json"
     },
     "scope": "Actual combined app/Console behavior, targeted logging/worker contracts and generated artifacts; no new feature behavior, full sweep or logging performance claim. Fresh CI and Qodo are required on the published head."
+  },
+  "review_followups_2026_10_02": {
+    "qualified_working_sources_before_commit": "6f82aca15073fec296848769765973d4e6df75ec",
+    "qualification": "working source bytes on base92a before review-fix commit; published-head GitHub gates and Qodo still required",
+    "upstream_base": "92a95170a5406b3ebdc9be6dc26a12f2741d756f",
+    "scope": {
+      "cancel_border": "existing primary selector also matches native scroll body; literal text/safe dismissal unchanged",
+      "retained_native_id": "authored recovery refusal ends Close before voice ownership; permanent controller/runtime tombstones remain; normal saved resume/new session uses fresh UUID"
+    },
+    "source_sha256": {
+      "tldw_chatbook/Chat/console_chat_controller.py": "bc7814ce995bc8b58abd7c440e2740aeccc31d79617f974c9e0deb96c52bd656",
+      "tldw_chatbook/Chat/console_runtime.py": "22e149d40489064b3894bb416fc33d448e5b65f76fb78c59ba274bc515f9488d",
+      "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": "b77ad79318ed8297d3413ede3776bf83d6c5c5be7234a08569276d0600474262",
+      "Tests/Chat/test_console_runtime_shutdown.py": "84c5eb64fa08d6ab1b15516eb52e73c3d36a6338e6ae6a9443fbe7d7e34289ca",
+      "Tests/UI/test_console_session_tab_close.py": "c38012e85a048efaf8bfcecc55d54045eb93a6cf9097576e1cef21caf1896643",
+      "Tests/Widgets/test_confirmation_dialog_literal_text.py": "0e7b042c56e13f35d03c3aa2a4a26f0ee7140289bf49477560b1e8d98699a516"
+    },
+    "targeted_cases": {
+      "cancel_confirmation": 11,
+      "close_lifecycle_and_privacy": 10,
+      "design_tokens_and_boot_bytes": 9,
+      "total_distinct": 30,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "receipts": {
+      "cancel": "/tmp/console-tool-ux-cancel-border/green-module-receipt.json",
+      "close": "/tmp/console-tool-ux-close/id-reuse/final10-command.json",
+      "close_xml": "/tmp/console-tool-ux-close/id-reuse/final10.xml",
+      "tokens": "/tmp/console-tool-ux-review-token-receipt.json",
+      "preflight": "/tmp/console-tool-ux-review-fixes-final-preflight.txt",
+      "ruff": "/tmp/console-tool-ux-final-review-lint.json"
+    },
+    "earlier_probes_retained": [
+      "/tmp/console-tool-ux-cancel-border/red-literal-receipt.json",
+      "/tmp/console-tool-ux-close/id-reuse/mounted-authored-refusal-red-child.log",
+      "/tmp/console-tool-ux-close/id-reuse/authored-refusal-green.log"
+    ],
+    "preflight_passed": true,
+    "ruff": {
+      "base": "92a95170a5406b3ebdc9be6dc26a12f2741d756f",
+      "modified_python_files": 21,
+      "new_diagnostics": 0,
+      "legacy_f811_line_reference_normalized": true
+    },
+    "formatting": "Changed production lines and new test blocks checked; inherited whole-file formatting retained.",
+    "boot_css": {
+      "bytes": 607219,
+      "unchanged_cap": 608090,
+      "gated_ui_file_census": 122
+    },
+    "independent_review": "No remaining actionable production or test findings after unrelated-error fixture preserves generic redaction coverage",
+    "native_approval14": {
+      "passed": true,
+      "journeys": 9,
+      "approved_local_executor_journeys": 3,
+      "denied_journeys": 6,
+      "app_exit_code": 0,
+      "process_exit_code": 0,
+      "exact_app_process_gone": true,
+      "driver": "LinuxDriver",
+      "tty_streams": true,
+      "lock_acquired": true,
+      "network_attempts": [],
+      "real_config_directory_unchanged": true,
+      "real_config_entries_tracked": 21,
+      "real_data_mtimes_unchanged": true,
+      "real_data_files_tracked": 533,
+      "frozen_source_hashes_unchanged": true,
+      "native_source_pins_current": true,
+      "workspace_state": "Dirty feature sources pinned before and after this replay; commit/tree identify current HEAD only",
+      "owned_tmux_socket_removed": true,
+      "source_sha256": {
+        "tldw_chatbook/Chat/console_runtime.py": "22e149d40489064b3894bb416fc33d448e5b65f76fb78c59ba274bc515f9488d",
+        "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": "b77ad79318ed8297d3413ede3776bf83d6c5c5be7234a08569276d0600474262",
+        "tldw_chatbook/app.py": "38813319b1bea8c9209ddece1dbca24288272891210ef427683c619d754eb959",
+        "tldw_chatbook/Logging_Config.py": "1f2b7d86684a58b9829eab940b089aacfa1526de588c16972f39c672f90a068a",
+        "tldw_chatbook/Utils/startup_logging.py": "4873546719e5dfe01c1dbc45afa961a1724cf8d1d010739323cfa30a42181d82",
+        "tldw_chatbook/Event_Handlers/worker_handlers/base_handler.py": "d902ce49af720e43345aa1318071e0f43c4d0f8c8fa040f654c518efc7b68c27",
+        "tldw_chatbook/Metrics/metrics_logger.py": "1fb77851fe885105cc787b389d1bd6eb3643a15a63ae61948225fc566c03fc74",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "edd4ec0dde98376a28a70a6683df9cf4a8863577bdba7bdbdc0962c73138d259",
+        "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+        "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+        "tldw_chatbook/Widgets/confirmation_dialog.py": "b9e67df05e3777b791d8134e2fbee39817c097945dd98a5027dbb35aea64fed4",
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+        "tldw_chatbook/Chat/console_chat_controller.py": "bc7814ce995bc8b58abd7c440e2740aeccc31d79617f974c9e0deb96c52bd656",
+        "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+        "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+        "tldw_chatbook/Chat/console_display_state.py": "716748622b441c056d38bad7021f439944e1caa6feb1ae56996586cc2293b10d",
+        "tldw_chatbook/css/tldw_cli_modular.tcss": "e1731b135a3c70e61dab56a6727cdb15a78bb883cee228099d953f6ed70a09e8",
+        "tldw_chatbook/css/widget_defaults_scoped.tcss": "64958e3290cd2d7de727872a6bc00f78c463442423987a47054f1cb29a702899",
+        "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
+        "tldw_chatbook/css/core/_variables.tcss": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
+        "tldw_chatbook/css/components/_dialogs.tcss": "2ffc3df81ea999d523e46322896007618aa08b06a2c6ec73a03306878c3acaf2",
+        "tldw_chatbook/css/features/_console.tcss": "9e13a20c4d207fa1319f5ecb1c8c66851878385b2d860b9e39edff1ce755e535",
+        "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+        "Docs/superpowers/qa/2026-10-01-console-approval-layout/native_check.py": "20023d46b23d7112ce5566725d5b275828d5189bf8941bca9d2b88bd729fac47"
+      },
+      "receipt": "/tmp/console-tool-ux-approval-run14-sanitized/isolation-qualified.json"
+    },
+    "native_close15": {
+      "passed": true,
+      "profile": "run15",
+      "launch_head": "6f82aca15073fec296848769765973d4e6df75ec",
+      "root_provided_upstream": "92a95170a5406b3ebdc9be6dc26a12f2741d756f",
+      "terminal": {
+        "pane_dead": true,
+        "process_exit_code": 0,
+        "qualified_profile": "run15",
+        "pane_status": "1 0",
+        "app_pid_exited": true,
+        "owned_socket_released": true,
+        "socket_cleanup_exit_code": 0
+      },
+      "cells": [
+        {
+          "size": [
+            235,
+            52
+          ],
+          "kind": "approval",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "close-call": "deny"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            235,
+            52
+          ],
+          "kind": "question",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "answered": false,
+            "reason": "cancelled"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            80,
+            24
+          ],
+          "kind": "approval",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "close-call": "deny"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        },
+        {
+          "size": [
+            80,
+            24
+          ],
+          "kind": "question",
+          "named_dialog_painted": true,
+          "default_stay": true,
+          "zero_consequences_absent": true,
+          "terminal_mouse_close": true,
+          "worker_result": {
+            "answered": false,
+            "reason": "cancelled"
+          },
+          "owning_task_cancelled": true,
+          "target_fleet_and_wake_fences_released": true,
+          "target_rounds_removed": true,
+          "viewed_sibling_question_pending": true
+        }
+      ],
+      "max_risk_dialog": {
+        "size": [
+          80,
+          24
+        ],
+        "title_characters": 60,
+        "all_six_nonzero_counts": true,
+        "all_five_pending_kinds": true,
+        "title_and_actions_fully_painted": true,
+        "default_stay": true,
+        "fixture_scope": "Synthetic impact snapshot exercises only real confirmation geometry; not real work in these six categories.",
+        "short_height": {
+          "size": [
+            80,
+            18
+          ],
+          "title_characters": 60,
+          "all_six_nonzero_counts": true,
+          "all_five_pending_kinds": true,
+          "original_dialog_width": 60,
+          "title_fully_painted_at_top": true,
+          "actions_fully_painted_and_hit_testable_before_and_after_scroll": true,
+          "default_stay": true,
+          "native_keyboard_scroll": true,
+          "scroll_y_before": 0.0,
+          "scroll_y_after": 6,
+          "last_consequence_readable_after_scroll": true,
+          "native_home_and_tab_restored_stay": true
+        }
+      },
+      "source_hashes": {
+        "tldw_chatbook/UI/Console_Modules/session.py": "be32fa85fd1af36497d56ee4115c4da98f12abfce510c7847e9133f0cff67433",
+        "tldw_chatbook/Chat/console_chat_controller.py": "bc7814ce995bc8b58abd7c440e2740aeccc31d79617f974c9e0deb96c52bd656",
+        "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+        "tldw_chatbook/Widgets/confirmation_dialog.py": "b9e67df05e3777b791d8134e2fbee39817c097945dd98a5027dbb35aea64fed4",
+        "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+        "tldw_chatbook/css/tldw_cli_modular.tcss": "e1731b135a3c70e61dab56a6727cdb15a78bb883cee228099d953f6ed70a09e8",
+        "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e",
+        "tldw_chatbook/css/components/_dialogs.tcss": "2ffc3df81ea999d523e46322896007618aa08b06a2c6ec73a03306878c3acaf2",
+        "tldw_chatbook/Chat/console_chat_models.py": "206a09e380cfcc4ca587f08c760029afaff312f8e4e2ac0745e415aa947c8007",
+        "tldw_chatbook/config.py": "c798e9cd4f28ad4d042c5b99dcdd68397bcbbdf2db9d5f70044535d4ede3a30a",
+        "tldw_chatbook/Backup_Recovery/config_participants.py": "a91411771463a5d6e22620af09d8deb5e10dbd87d2842ff20a0d119f6b945d67",
+        "Docs/superpowers/qa/2026-10-01-console-close-followup/native_check.py": "9b7d9c79f3f88cef317fa6623b1bc6e9e5172a6c04d10fc8b74f9ecef818f4d4",
+        "tldw_chatbook/app.py": "38813319b1bea8c9209ddece1dbca24288272891210ef427683c619d754eb959",
+        "tldw_chatbook/Logging_Config.py": "1f2b7d86684a58b9829eab940b089aacfa1526de588c16972f39c672f90a068a",
+        "tldw_chatbook/Event_Handlers/worker_handlers/base_handler.py": "d902ce49af720e43345aa1318071e0f43c4d0f8c8fa040f654c518efc7b68c27",
+        "tldw_chatbook/Metrics/metrics_logger.py": "1fb77851fe885105cc787b389d1bd6eb3643a15a63ae61948225fc566c03fc74",
+        "tldw_chatbook/DB/ChaChaNotes_DB.py": "edd4ec0dde98376a28a70a6683df9cf4a8863577bdba7bdbdc0962c73138d259",
+        "tldw_chatbook/Chat/console_runtime.py": "22e149d40489064b3894bb416fc33d448e5b65f76fb78c59ba274bc515f9488d",
+        "tldw_chatbook/Widgets/cancel_confirmation_dialog.py": "b77ad79318ed8297d3413ede3776bf83d6c5c5be7234a08569276d0600474262"
+      },
+      "sources_stable_and_current": true,
+      "real_config_unchanged": true,
+      "real_data_mtimes_unchanged": true,
+      "real_data_file_count": 515,
+      "network_attempts": [],
+      "fixture_scope": "Actual TldwCli and LinuxDriver. Real request_user_questions and request_mcp_approvals worker rounds; deterministic registered owning asyncio task, no provider, tool dispatch or external server. Actual ConsoleRuntime closes the requested background session. Terminal SGR mouse input presses both tab close and confirmation buttons.",
+      "same_id_recovery_refusal_scope": "Covered by focused mounted/controller/runtime tests; existing native matrix qualifies normal worker closes and shared confirmation geometry.",
+      "prelaunch_refusal": "Shared parser exited2 before app import because copied post-run template had tilde DB paths; retained log and fixed only owned unused profile config before successful launch."
+    },
+    "scope_limits": [
+      "No support added for recycling closed native IDs within one runtime; retained-fence recovery is terminal guidance, not cleared authority",
+      "Crowded Close snapshot is synthetic; native Close does not dispatch provider/tools",
+      "No full local sweep, CI cap, global configuration, branch-protection or dependency changes"
+    ],
+    "published_head_github_ci_and_qodo": "Required separately before normal merge; no predecessor CI is counted as final-head success."
   }
 }

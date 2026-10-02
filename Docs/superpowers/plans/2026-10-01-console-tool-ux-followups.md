@@ -114,3 +114,14 @@ Reason: Repair overflow using the canonical confirmation primitive and existing 
   this integrates already-approved dev logging without adding feature behavior.
 - Final published-head CI/Qodo resolution and a verified normal merge remain the
   integration checkpoint. See the linked QA report and receipts.
+
+### Final retained-ID/cancellation review follow-up
+
+Existing ADR-094 ownership and ADR-150/161 confirmation patterns apply; no new
+ADR. Preserve permanent native-ID tombstones and use the authored terminal
+recovery refusal before voice ownership. Extend the cancellation body selector
+to preserve the existing primary border. Both defects have focused RED/GREEN
+evidence;30 targeted checks, current native approval14/Close15, preflight and
+baseline Ruff pass. The unrelated-error fixture retains its original privacy
+assertions and actual retry. See the combined QA/receipt for scope and source
+pins. Final published-head CI/Qodo/normal merge remains the PR checkpoint.
