@@ -135,3 +135,43 @@ def test_an_environment_override_is_seen_by_the_next_sensitive_context(request, 
     context = sensitive_paths.resolve_sensitive_context()
     assert moved.resolve() in context.direct_child_denied_dirs
     assert sensitive_paths.is_sensitive_path(moved / "chroma.sqlite3", context)
+
+
+@private_profile_test
+def test_an_override_changed_while_the_inputs_build_is_not_memoized(request, monkeypatch, tmp_path):
+    """The memo key is read before the inputs are built; if the environment moves
+    during the build, those inputs describe another key and are not kept. An
+    override switched and restored meanwhile must not leave a deny list missing
+    the restored directory (Qodo, #2924).
+
+    Args:
+        request: pytest fixture the private-profile runner needs.
+        monkeypatch: Sets the override and switches it mid-build.
+        tmp_path: Holds the two Chroma directories.
+    """
+    from tldw_chatbook.Utils import sensitive_paths
+
+    _warm(monkeypatch)
+    original = tmp_path / "chroma-original"
+    switched = tmp_path / "chroma-switched"
+    original.mkdir()
+    switched.mkdir()
+    monkeypatch.setenv("RAG_PERSIST_DIR", str(original))
+    real_containers = sensitive_paths._direct_child_rule_container_dirs
+
+    def switching_containers():
+        monkeypatch.setattr(
+            sensitive_paths, "_direct_child_rule_container_dirs", real_containers
+        )
+        os.environ["RAG_PERSIST_DIR"] = str(switched)
+        return real_containers()
+
+    monkeypatch.setattr(
+        sensitive_paths, "_direct_child_rule_container_dirs", switching_containers
+    )
+    sensitive_paths.resolve_sensitive_context()  # built against the switched value
+    os.environ["RAG_PERSIST_DIR"] = str(original)  # restored: the original key again
+
+    context = sensitive_paths.resolve_sensitive_context()
+    assert original.resolve() in context.direct_child_denied_dirs
+    assert sensitive_paths.is_sensitive_path(original / "chroma.sqlite3", context)

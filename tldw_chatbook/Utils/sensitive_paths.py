@@ -637,6 +637,40 @@ def _raw_inputs() -> tuple:
         container_dirs)``, unresolved.
     """
     global _RAW_INPUTS_MEMO
+    user_data_dir, config_path, key = _raw_inputs_key()
+    with _RAW_INPUTS_LOCK:
+        memo = _RAW_INPUTS_MEMO
+    if memo is not None and _same_key(memo[0], key):
+        return memo[1]
+    failures = getattr(_failures, "count", 0)
+    inputs = (
+        user_data_dir,
+        _sensitive_single_file_paths(),
+        _sensitive_skill_trust_dir(),
+        _sensitive_db_paths(),
+        _direct_child_rule_container_dirs(),
+    )
+    # The accessors read the live config and environment, so inputs built
+    # while either moved describe some other key; keeping them could serve a
+    # deny list with a gap once the override returns to this key's value.
+    if (
+        user_data_dir is not None
+        and config_path is not None
+        and getattr(_failures, "count", 0) == failures
+        and _same_key(key, _raw_inputs_key()[2])
+    ):
+        with _RAW_INPUTS_LOCK:
+            _RAW_INPUTS_MEMO = (key, inputs)
+    return inputs
+
+
+def _raw_inputs_key() -> tuple:
+    """Read what the raw inputs depend on, as ``_raw_inputs``' memo key.
+
+    Returns:
+        ``(user_data_dir, config_path, key)``; either of the first two is
+        ``None`` when it could not be resolved, and such a key is not memoized.
+    """
     from .. import config as _config
 
     try:
@@ -656,24 +690,21 @@ def _raw_inputs() -> tuple:
         str(user_data_dir),
         os.environ.copy(),
     )
-    with _RAW_INPUTS_LOCK:
-        memo = _RAW_INPUTS_MEMO
-    if memo is not None and memo[0][0] is key[0] and memo[0][1:] == key[1:]:
-        return memo[1]
-    failures = getattr(_failures, "count", 0)
-    inputs = (
-        user_data_dir,
-        _sensitive_single_file_paths(),
-        _sensitive_skill_trust_dir(),
-        _sensitive_db_paths(),
-        _direct_child_rule_container_dirs(),
-    )
-    if user_data_dir is not None and config_path is not None and (
-        getattr(_failures, "count", 0) == failures
-    ):
-        with _RAW_INPUTS_LOCK:
-            _RAW_INPUTS_MEMO = (key, inputs)
-    return inputs
+    return user_data_dir, config_path, key
+
+
+def _same_key(left: tuple, right: tuple) -> bool:
+    """Compare two memo keys: the config cache by identity, the rest by value.
+
+    Args:
+        left: A key from ``_raw_inputs_key``.
+        right: Another key from ``_raw_inputs_key``.
+
+    Returns:
+        True when both describe the same config object, generation, source,
+        paths and environment.
+    """
+    return left[0] is right[0] and left[1:] == right[1:]
 
 
 def resolve_sensitive_context() -> SensitivePathContext:
