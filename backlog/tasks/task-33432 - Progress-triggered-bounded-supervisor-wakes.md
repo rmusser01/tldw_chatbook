@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:11'
-updated_date: '2026-10-02 02:23'
+updated_date: '2026-10-02 05:59'
 labels:
   - agents
   - console
@@ -65,4 +65,6 @@ Reopened for incoming compaction changes on dev 27e718f01d; accepted compaction 
 Final incoming compaction integration: independent source review finds no actionable wake/compaction overlap. Acceptance precedes compaction, so accepted failures retain generation and nonreplay custody; exact recovery-copy ownership and durable-parent lineage remain intact. Ten real compaction/refund/nonreplay cases pass in 82.63s (/private/tmp/review-pr2918-compaction-wake-rebase.log), including both hook-refund provider paths. Mounted saved reopen/close passes 2 in 18.15s. Startup/CSS/guide guards pass 4 in 51.29s: imports 679/686, UI-ready 1032/1033, original CSS and module pins unchanged. No production timing or authority change.
 
 The preserving Chat 73→74→75 composition and exact recovery gates are qualified under TASK-33431. Final 79-file changed-code/new-file/owned-range static and whitespace checks pass; audited diagnostic inventory verifies 629 owners and 15 sink files. Independent schema review approves 39 overlapping checks. ADR required: no new ADR; existing ADR-199/052. Docs-only dev 922440b93e is the following rebase target and changes no runtime file. All five criteria remain satisfied; Done. Original 13-task burn-down is complete; fresh PR-head remote checks remain required, with no full suite, live provider, Windows or merge claim.
+
+Requested merge qualification on dev ab4df99959: 79 previously qualified patch Python files unchanged. Incoming settings/census/wake selection passes 19 in74.62s; startup/CSS 3 in20.64s (imports679/686, UI1032/1033); independent warm-config consumer/fallback review approves5 in8.91s. 79-file changed-code/new-file/format/whitespace and unchanged audited diagnostic guards pass. Qodo marks all four findings resolved on8136542ce4; that head passed all GitHub jobs. User authorized merge after fresh published-head review/checks; pending merge is not claimed. No new ADR or functional edit; task criteria remain satisfied.
 <!-- SECTION:NOTES:END -->
