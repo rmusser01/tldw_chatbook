@@ -2890,7 +2890,7 @@ class ConsoleSessionController:
                     await self._report_session_close_failure(session_id, title, exc)
                     if self._session_is_gone(session_id) or (
                         isinstance(exc, RuntimeError)
-                        and str(exc) == CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL
+                        and str(exc) in _USER_ACTIONABLE_CLOSE_REFUSALS
                     ):
                         return
                     # A failed confirmed close gets another fresh dialog, even

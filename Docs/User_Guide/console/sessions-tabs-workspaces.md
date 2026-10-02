@@ -503,8 +503,9 @@ in a full accent box.
 - If a tab cannot be closed, it stays open and an error toast names it and
   gives the reason — for example `Couldn't close tab "Weekly notes": The
   close did not finish. Try again in a moment.` A Temporary chat with a
-  pending turn cannot close until you finish or discard that turn. A failed
-  confirmed close offers a fresh dialog; another Close click is required to retry.
+  pending turn cannot close until you finish or discard that turn. The dialog
+  closes so you can resolve the pending work. A temporary cleanup failure offers
+  a fresh dialog; another Close click is required to retry.
   When earlier Close cleanup needs recovery, the tab stays open
   and shows `Close cleanup needs recovery. Restart the app before closing this
   tab.` The confirmation flow ends instead of repeatedly asking to retry.

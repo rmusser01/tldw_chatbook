@@ -17795,3 +17795,13 @@ override: its selector still named only `Container`, so the scroll body inherite
 the base accent. A mounted production-CSS check now asserts all four computed
 border edges, literal prose and safe Enter/Escape dismissal. Review subclass
 body selectors as well as the shared frame when changing the body type.
+
+## A refusal toast does not prove the user can resolve it (TASK-33621.16, 2026-10-02)
+
+Qodo's final-head review found that the temporary-turn Close regression checked
+the authored refusal toast but allowed a replacement confirmation to cover the
+tab immediately. Strengthening the same real pending-turn test to require the
+close worker's claim to end reproduced the defect. The shared existing refusal
+allowlist now governs both safe wording and terminal exit; transient cleanup
+failures retain their separate fresh-consent retry check. Assert the user can
+reach the work a refusal asks them to resolve, as well as the refusal's wording.

@@ -1230,5 +1230,52 @@
     },
     "receipt_bookkeeping": "Approval receipt initially could not read a now-packed commit as a loose object; read-only Git identity recovered the immutable tree. Native execution was unaffected; failure log retained.",
     "scope": "No source/runner edit during requalification, new ownership state, logging/trace/GC throughput claim, full local sweep, dependency or CI cap change. Published-head CI and Qodo remain required."
+  },
+  "actionable_refusal_review_followup": {
+    "qualified_worktree_head": "8ef520896e3cc76fd98aea6281a5735a5e5cbfe6",
+    "qualified_base": "113e435ab0bff12e89ae1c9f06ec154f32f776bf",
+    "qualification_includes_uncommitted_correction": true,
+    "change": "One comparison reuses the authored-refusal allowlist to end Close when the user must resolve pending work; transient cleanup retries retain fresh consent.",
+    "modified_source_sha256": {
+      "tldw_chatbook/UI/Console_Modules/session.py": "b6676677eae3e6c61b5245b7d928cf8d747ccd511429a179975806d72fa5bc7f",
+      "Tests/UI/test_console_session_tab_close.py": "25c0da82457e0e55c91420d3ae3feffcf3eec052bdc86bf1b93ef07d58027337"
+    },
+    "red": {
+      "receipt": "/tmp/console-tool-ux-actionable-refusal-red.json",
+      "cases": 1,
+      "failures": 1,
+      "errors": 0,
+      "skipped": 0,
+      "failure": "Close worker keeps its claim while replacement confirmation covers the pending tab"
+    },
+    "green": {
+      "receipt": "/tmp/console-tool-ux-actionable-refusal-green.json",
+      "cases": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0,
+      "scope": "Actual actionable temporary-turn refusal, explicit transient retry, retained-fence/rollback, stale-usage and private-error regressions"
+    },
+    "new_base_checks": {
+      "receipt": "/tmp/console-tool-ux-admission-receipt.json",
+      "passed": 47,
+      "expected_skips": 1,
+      "skip_reason": "An unbound selection has no profile record to edit; no failing/error cases"
+    },
+    "native_approval": {
+      "receipt": "/tmp/console-tool-ux-approval-run16-sanitized/isolation-qualified.json",
+      "journeys": 9,
+      "source_pins": 35,
+      "scope": "Actual approvals unchanged by the one-line Close correction"
+    },
+    "native_close": {
+      "receipt": "/tmp/console-tool-ux-close-native/run18/qualification.json",
+      "worker_journeys": 4,
+      "source_pins": 33,
+      "same_source_sha256": "b6676677eae3e6c61b5245b7d928cf8d747ccd511429a179975806d72fa5bc7f",
+      "scope": "Ordinary worker Close/80x18 geometry; actionable refusal verified separately in mounted regression"
+    },
+    "static_analysis": "21 modified Python files; zero new Ruff diagnostics against 113e435ab0bf; modified test format and diff check pass",
+    "remaining_external_checkpoint": "Latest dev rebase, fresh exact-head CI and clean/resolved Qodo, verified normal merge in PR2953; subsequent qualification belongs to that published commit."
   }
 }

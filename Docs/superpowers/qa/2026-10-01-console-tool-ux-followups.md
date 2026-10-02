@@ -390,3 +390,16 @@ Git packed the commit; read-only Git recovered the exact unchanged identity,
 separate from the successful native journey. Its failure log is retained.
 Current source hashes and scope are in `latest_dev_queue_gc_integration` of the
 sanitized receipt; historical native exports remain identified as such.
+
+### Final authored-refusal review correction
+
+Qodo found that an accepted Temporary turn's authored refusal was shown while
+a replacement Close dialog immediately covered the tab. The existing mounted
+regression now requires the close worker's claim to end and pending work to
+remain accessible; it fails before the one-line allowlist correction. All12
+affected plain cases pass, including transient explicit retry, retained fences
+and private-error redaction. Native Close18 qualifies the corrected source;
+approval16 is unchanged. The storage-admission base adds47 passed checks and
+one intentional unbound-profile skip. Exact receipts, pins and limits are in
+`actionable_refusal_review_followup` in the combined JSON. Subsequent dev
+rebases require fresh published-commit CI/review before PR2953 merges.

@@ -568,7 +568,11 @@ def _pending_temporary_turn(store) -> str:
 @pytest.mark.asyncio
 @private_profile_test
 async def test_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
-    """AC #4: a refusal meant for the user is shown in its own words."""
+    """An actionable pending-turn refusal leaves the tab accessible.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
 
     app = _ready_app()
     notes = _record_notifications(app)
@@ -591,6 +595,13 @@ async def test_a_refusal_the_user_can_act_on_shows_its_own_reason(request):
             "error",
         )
         assert pending in _session_ids(store)
+        assert await _settle(
+            pilot, lambda: pending not in console._session._closing_session_requests
+        ), "an actionable pending-turn refusal kept Close covering the tab"
+        assert not isinstance(host.screen, ConfirmationDialog)
+        assert store.dispatch_recovery_for_session(pending).recovery_needed
+        assert store.active_session_id == keeper
+        assert len(notes) == 1
         await _await_tabs(console, pilot, {keeper, pending})
 
 
