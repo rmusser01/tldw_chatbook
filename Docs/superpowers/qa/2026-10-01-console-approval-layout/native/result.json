@@ -1,5 +1,5 @@
 {
-  "pid": 73553,
+  "pid": 74725,
   "cells": [
     {
       "size": [
@@ -128,13 +128,13 @@
     "tldw_chatbook.Chat.console_chat_controller": "/Users/macbook-dev/.codex/worktrees/console-tool-lifecycle/tldw_chatbook/tldw_chatbook/Chat/console_chat_controller.py"
   },
   "source_hashes": {
-    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "1ea4fd88586f1a141e7df1a064087b7e1d8adcaff80176e592970e8d4a0aac30",
-    "tldw_chatbook/Chat/console_chat_controller.py": "edfc4af0cffc18869ac309c4ee6b4fe87c88bde30d7fe83497df58ecf49a2849",
-    "tldw_chatbook/UI/Screens/chat_screen.py": "8c466a147e9b34504d12b9615d05333c442beda536521d607a815d01a25c58a8",
-    "tldw_chatbook/css/tldw_cli_modular.tcss": "6392bd59928f9e8bc2ce2fc9e48c60f23cd7d438573f9278531663dd39736d40",
+    "tldw_chatbook/Widgets/Chat_Widgets/chat_approval_card.py": "684b896d52185044525607b6c45e325ceb99e9dcb425e716aa568fb88c7136bf",
+    "tldw_chatbook/Chat/console_chat_controller.py": "f55cfe82e94c916fda3eb2fbb774bcab89fcb223e0bd3818ff3ef1f003f1a8b9",
+    "tldw_chatbook/UI/Screens/chat_screen.py": "e41d4e97b352fa4373814b9ff8204d78493b425066aaa0adcbea3175b658ec0f",
+    "tldw_chatbook/css/tldw_cli_modular.tcss": "5eab1e94f6d7c13e84b275fe208b23fef2177105fcca131b01abb8adc096d97f",
     "tldw_chatbook/css/widget_defaults_scoped.tcss": "64958e3290cd2d7de727872a6bc00f78c463442423987a47054f1cb29a702899",
     "tldw_chatbook/css/widget_defaults_self.tcss": "100d5febf97b1dd445cba53eea6e35eba95375d820a9f11c5a3a410d6234a779",
-    "tldw_chatbook/css/core/_variables.tcss": "ab65759cde52d9cd66a0366eb70287b98871f6a6443a47646e748227f841cff2",
+    "tldw_chatbook/css/core/_variables.tcss": "a28132137a6ff8d6c247e64b340f1b96c2d3106db58c6c6d20f7d31cca817287",
     "Docs/superpowers/qa/native_runner_args.py": "6a124899e4e7d85507f21be3a8edc816954b8cb6500f94934e15b1989606034e"
   },
   "runner_sha256": "20023d46b23d7112ce5566725d5b275828d5189bf8941bca9d2b88bd729fac47",

@@ -49,7 +49,7 @@ Files: UI/Console_Modules/session.py; close-impact model; Chat/console_chat_cont
 - [x] Include existing pending kind snapshot in the impact model. Reuse ConfirmationDialog and display title; omit zero consequences, name pending categories and their denial/cancellation effects, retain default Stay focus.
 - [x] Report a failed confirmed at-risk close and offer fresh confirmation without automatically retrying. Cancel exact-session unanswered questions through existing revoked-result semantics only after the regression proves the gap.
 - [x] Verify Close/Stay, sibling isolation, worker termination and cleared attention, including native terminal coverage. Preserve closed/stale session and idle failure behavior.
-- [ ] Address Qodo: include worktree-merge consequences with five-kind 80x24 geometry; validate native CLI before profile mutation; reconcile the exact provisional fleet fence before a failed Close can retry, retaining a separate failed-provisional generation if rollback cannot prove success so surviving child usage remains valid for the still-open session.
+- [x] Address Qodo: include worktree-merge consequences with five-kind 80x24 geometry; validate native CLI before profile mutation; reconcile the exact provisional fleet fence before a failed Close can retry, retaining a separate failed-provisional generation if rollback cannot prove success so surviving child usage remains valid for the still-open session.
 
 ## Pending display: TASK-32367
 

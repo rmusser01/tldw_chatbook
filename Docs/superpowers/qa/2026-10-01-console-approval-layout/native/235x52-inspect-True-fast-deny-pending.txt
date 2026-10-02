@@ -32,7 +32,7 @@
             │                                                                                                                                                                         │  Scope: everything                      Narrow…
             │                                                                                                                                                                         │
             │                                                                                                                                                                         │ Run
-            │                                                                    Ready — type a message to begin.                                                                     │ Run recipe: llama.cpp / local-model / sources
+            │                                                                            No messages yet.                                                                             │ Run recipe: llama.cpp / local-model / sources
             │                                                                                                                                                                         │ not staged / tools 0 / approvals 1
             │                                                                                                                                                                         │ Live work: Waiting for your approval
             │                                                                                                                                                                         │ Provider: ready
@@ -49,4 +49,4 @@
 
 │  Composer ▾  Menu  Ask, command, or paste task...                                                                                                             Send disabled: type a message       Send         Dictate
 
-  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Y trace | Ctrl+Q

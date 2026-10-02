@@ -22,7 +22,11 @@ Independent review found crowded Close copy could hide the title at 80×24.
 Shorter consequence lines and removing a repeated question corrected the
 27/29-row overflow; short and 60-character titles now fit. Final review
 checked scrolling reason-input focus, height transitions and control reuse.
-No unresolved local review finding.
+No unresolved local review finding. Qodo follow-ups add all five pending kinds
+to Close copy, validate QA arguments before profile mutation, reconcile exact
+provisional fleet fences, and route review to the visible decision before a
+queued approval. A separate failed-provisional marker blocks unsafe retries
+while preserving surviving-child usage in the retained session.
 
 ## Targeted receipts
 
@@ -36,7 +40,7 @@ No unresolved local review finding.
   with worker rounds, queued count 2→1, precedence, sibling isolation,
   navigation and fresh remount.
 - Stop: **33 passed**; /tmp/console-tool-ux-stop.txt.
-- Derived-artifact preflight passes; generated CSS and UI census121 verified.
+- Derived-artifact preflight passes; generated CSS and UI census122 verified.
   Both new suites are added to that existing gate.
 - New Python files pass Ruff/format. Modified legacy files add zero diagnostics;
   [comparison](2026-10-01-console-approval-layout/lint-delta.json).
@@ -51,6 +55,48 @@ scrolling/height mode fixed them. Failed receipts remain in /tmp.
 CSS whitespace was removed only in the owning source sheet to pay for compact
 rules within the unchanged startup budget. Other visual declarations were
 retained; generated CSS was rebuilt.
+
+## Review follow-up receipts
+
+- Real mounted Close file: **19 passed**. Final provisional retry/refusal and
+  surviving-usage correction: **2 passed**; close/usage boundaries: **21 passed**.
+- All three keyboard/Inspector/tab review routes with a real skill confirmation
+  and queued approval: **3 mounted cases passed**.
+- Native Close runner malformed CLI: **7 passed** without traceback or profile writes.
+- Independent review repeated full-finalize usage 120→165 and same-generation
+  retry refusal; no remaining actionable finding.
+- Diagnostic inventory reviewed against latest dev: one new rollback warning
+  records only `type(exc).__name__`, with no exception text, user content, paths
+  or secrets and no new sink. Its existing owner pin was regenerated after
+  reviewing /tmp/console-tool-ux-diagnostic-review.txt.
+- Preceding combined Console, Close, controller-attribute and latency invocation:
+  **44 passed**, one expected empty-exemption parameter set skipped;
+  /tmp/console-tool-ux-final-dev-qualified.txt. Fresh final preflight passes:
+  /tmp/console-tool-ux-final-dev-preflight-qualified.txt.
+- Latest-dev combined token/startup-budget checks: **9 passed**. Declaration-neutral
+  whitespace in the owning sheet preserves the unchanged 608,090-byte cap;
+  final census is **608,077 bytes**. Dev's model-switcher and both new UI suites
+  remain in the 122-file census.
+
+Receipts: /tmp/console-tool-ux-close/qodo-{close,usage,usage-boundary,args}-green.log,
+/tmp/console-tool-ux-labels/qodo-focus-final.log,
+/tmp/console-tool-ux-latest-dev-tokens.txt. No full-suite sweep.
+
+## Latest-dev integration
+
+The clean rebase onto dev84247cb843 includes the healthy-run/provider-readiness
+fix from PR #2948. Shared pending-kind, focus and layout behavior is retained.
+Compact approval layout, startup ratchets and design-token governance pass:
+**26 tests**, /tmp/console-tool-ux-dev842-layout-qualified.txt. Fresh preflight
+passes, /tmp/console-tool-ux-dev842-preflight.txt; Ruff comparison against this
+base remains identical with zero new diagnostics in 16 modified Python files.
+All six mounted pending-projection and latest-dev readiness cases pass, including
+the healthy-run, held-regenerate and missing-key control. Exact-node private
+child receipts are /tmp/console-tool-ux-combined-rfotoln6/run-000..005/pytest.log;
+aggregate /tmp/console-tool-ux-labels/combined-readiness.log. Each child uses
+the designated temporary profile and disables pytest caching.
+Native approval run08 and Close run9 requalify the changed Console screen;
+source hashes match the combined tree and the real profile stays unchanged.
 
 ## Native evidence
 
@@ -69,13 +115,16 @@ Session projection is synchronized and its pending count asserted before capture
 [80×24 denial](2026-10-01-console-approval-layout/native/80x24-inspect-True-deny-all-decision.svg),
 [80×24 Inspect closed](2026-10-01-console-approval-layout/native/80x24-inspect-False-approve-once-pending.svg),
 [235×52 wide](2026-10-01-console-approval-layout/native/235x52-inspect-True-fast-deny-pending.svg).
-Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–06 remain under
-/tmp/console-tool-ux-approval-native-*; 06 qualified the final patch.
+Matching terminal text is retained. Approval choices use Pilot key events in the live native app; Close uses tmux SGR mouse input. Raster previews were inspected locally; Cairo font fallback is not pixel-perfect terminal evidence. Attempts01–08 remain under
+/tmp/console-tool-ux-approval-native-*; 08 requalified all nine journeys after
+the Qodo fixes and healthy-run/readiness dev84247cb843 rebase. Exported source hashes match that tree.
 
 [Close report](2026-10-01-console-close-followup/README.md): four real decision
 worker closes, owning task cancellation, sibling isolation and explicitly
 synthetic maximum-risk geometry. No provider/server execution is claimed
-for Close. Its isolation receipt verifies the real profile was unchanged.
+for Close. Final run9 requalified the four real closes and all-five-kind geometry
+after the Qodo fixes and healthy-run/readiness dev84247cb843 rebase, including target fleet/wake fence release. Its
+isolation receipt verifies the real profile was unchanged.
 
 ## Inherited optional-governance failures
 

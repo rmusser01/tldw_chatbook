@@ -20,10 +20,11 @@
   ▊  Filter visible titles   ▎           │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │ │                                                                                                                                                                                  │ │
                                          │ │                                                                                                                                                                                  │ │
-  Chats                             ▾    │ │                                                                                                                                                                      Submit      │ │
+   New conversation                      │ │                                                                                                                                                                      Submit      │ │
+  Chats                             ▾    │ │                                                                                                                                                                                  │ │
    Viewed question                 ✋    │ │                                                                                                                                                                                  │ │
-   Approval required                     │ │                                                                                                                                                                                  │ │
-                                         │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │◂ Inspect
+   Approval required                     │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │◂ Inspect
+                                         │                                                                                                                                                                                      │
  ──────────────────────────────────────  │                                                                                                                                                                                      │
  Character · No chats               ▸    │                                                                                                                                                                                      │
  ──────────────────────────────────────  │                                                                                                                                                                                      │
@@ -32,7 +33,6 @@
  Agent                              ▸    │                                                                                                                                                                                      │
  ──────────────────────────────────────  │                                                                                                                                                                                      │
  Details                            ▸    │                                                                                                                                                                                      │
-                                         │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
@@ -49,4 +49,4 @@
 
 █  Composer ▾  Menu   Ask, command, or paste task...                                                                                              Send blocked — add an API key to continue ›       Send         Dictate
 
-  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Y trace | Ctrl+Q

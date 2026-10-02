@@ -5,18 +5,18 @@
    New tab█                        AAAAAAA"?                         █  Help
 ──────────█                                                          █──────────
  Conversat█             Saved history stays in Library.              █
-    ◆ View█                                                          █
- Each tab █             Closing will discard or cancel:              █ >     ✕
-   ? Quest█             Temporary or unsaved messages: 1             █
-     Priva█                    Unsent draft: yes                     █       ▃
-  ────────█                  Pending attachments: 1                  █───────
-   Tool   █                   Live agent turns: 1                    █
-   ? Quest█                   Delegated agents: 1                    █
-     Priva█                 Unsent queued prompts: 1                 █
-  ────────█         Tool approvals: denied; runs cancelled.          █───────
-   Tool   █         Questions: cancelled without an answer.          █
-   ? Quest█        Skill installs: declined; runs cancelled.         █
-     Priva█         Skill scripts: declined; runs cancelled.         █
+    ◆ View█             Closing will discard or cancel:              █
+ Each tab █             Temporary or unsaved messages: 1             █ >     ✕
+   ? Quest█                    Unsent draft: yes                     █
+     Priva█                  Pending attachments: 1                  █       ▃
+  ────────█                   Live agent turns: 1                    █───────
+   Tool   █                   Delegated agents: 1                    █
+   ? Quest█                 Unsent queued prompts: 1                 █
+     Priva█         Tool approvals: denied; runs cancelled.          █
+  ────────█         Questions: cancelled without an answer.          █───────
+   Tool   █        Skill installs: declined; runs cancelled.         █
+   ? Quest█         Skill scripts: declined; runs cancelled.         █
+     Priva█   Worktree decisions: cancelled; no merge or discard.    █
   ────────█                                                          █───────
 ──────────█                                                          █──────────
  Status ▾ █                    Stay        Close                     █  Model:

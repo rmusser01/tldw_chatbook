@@ -47,6 +47,6 @@
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context unknown · Current $0.00 · On next send —
 
-█  Composer ▾  Menu   Ask, command, or paste task...                                                                                              Send blocked — add an API key to continue ›       Send         Dictate
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                              Send blocked — add an API key to continue ›       Send         Dictate
 
-  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Y trace | Ctrl+Q

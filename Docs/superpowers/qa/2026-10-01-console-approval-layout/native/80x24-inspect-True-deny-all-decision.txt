@@ -5,7 +5,7 @@
    New tab     Settings     ⚓      Context rail     Search Library     Help
 ────────────────────────────────────────────────────────────────────────────────
  Conversation | Approval review fixture       │
- ◂    Chat 1         ✕ ◌ Approval review fi…▸ │  ▸ Inspect
+         Chat 1         ✕ ◌ Approval review ▸ │  ▸ Inspect
  Each tab runs its own agent — up to 3 in  ✕  │     Choose folder · Project
  █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█ │  If I send now? · +4 more
  █  Approval required                       █ │  Run: Waiting for approval

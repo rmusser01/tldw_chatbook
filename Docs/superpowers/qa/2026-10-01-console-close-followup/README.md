@@ -13,8 +13,9 @@ zero draft, attachment, delegated-agent and queue categories were absent.
 Stay had default focus. SGR mouse input sent through tmux clicked the actual
 background tab’s ✕ and then Close. The real approval worker returned deny; the
 real question worker returned cancelled. The deterministic registered owning
-task was cancelled, the target round and payload disappeared, and the viewed
-tab’s question stayed pending until explicit fixture cleanup.
+task was cancelled, the target round and payload disappeared, and its exact
+fleet/wake fences released. The viewed tab’s question stayed pending until
+explicit fixture cleanup.
 
 | Native cell | Painted confirmation | Closed background tab |
 | --- | --- | --- |
@@ -25,17 +26,18 @@ tab’s question stayed pending until explicit fixture cleanup.
 
 All four terminal captures and rasterized confirmation previews were inspected.
 At 80×24 the full title, consequences and both action buttons fit. Every pending
-consequence fits on one line in the final copy. PNG previews use local Cairo fonts, which
-lack some border/icon glyphs; the terminal text and original SVG are retained.
+consequence fits on one line in the final copy. PNG previews use local Cairo fallback fonts, which differ in glyphs and spacing
+from the native terminal. The terminal text records actual painted positions;
+original SVGs are retained.
 
 The final native run also inspected an [all-consequences capture](native/dark-80x24-all-consequences-long-title.txt)
 ([SVG](native/dark-80x24-all-consequences-long-title.svg)) at 80×24 with a
-60-character title, all six nonzero loss counts and all four pending kinds.
+60-character title, all six nonzero loss counts and all five pending kinds.
 The title, Stay and Close were wholly contained in the screen and compositor
 clip after default Stay autofocus. This geometry case supplies a synthetic
 impact snapshot to the real confirmation method; it does not claim actual work
-in those categories. Compact consequence lines and removing the repeated bottom
-question kept the complete dialog visible. The focused mounted regression was
+in those categories. The worktree row states that no merge or discard occurs;
+removing the spare blank row before the list keeps the complete dialog visible. The focused mounted regression was
 RED at 27/29 rows before that copy correction and GREEN for both short and
 60-character titles afterwards; receipts are in
 `/tmp/console-tool-ux-close/max-risk-{red-qualified,green}.log`.
@@ -57,8 +59,9 @@ keep stderr attached to the terminal. The runner resizes to 80×24 itself.
 
 This is an actual app/driver/controller/runtime journey with real blocking
 human-decision rounds and a deterministic owning asyncio task. It does **not**
-exercise a provider, external server or tool dispatch. Actual skill-confirmation cancellation, orphan-question cleanup without an
-active turn, and failed-close retry are covered by the separate focused mounted
+exercise a provider, external server or tool dispatch. Actual skill- and
+worktree-confirmation cancellation, orphan-question cleanup without an active
+turn, and failed-close retry are covered by the separate focused mounted
 regressions, not by this native matrix. The extra all-kinds snapshot verifies
 geometry only.
 
@@ -74,11 +77,25 @@ when fixture tabs were synchronously switched during pending repaint; run3’s
 merged config was rejected by the shared fresh-profile validator; run4 passed
 both wide cells but attempted the narrow tab click while a transient toast
 covered it. Run5 qualified the earlier copy; run6 reverified all four real-close cells and
-the crowded long-title geometry after the copy correction. Final run7 repeated
-those five checks against the combined approval-card, screen and CSS changes;
-the exported captures and source hashes are from run7. The qualified fixture
+the crowded long-title geometry after the copy correction. Run7 repeated those
+checks against the combined approval-card, screen and CSS changes. Run8
+reverified the reviewed Close corrections after rebasing onto dev31d4f9b764 and
+the final CSS budget paydown. It added target fence-release postconditions and
+the fifth pending kind to the crowded snapshot. Final run9 repeated the unchanged
+matrix after the healthy-run/readiness rebase onto dev84247cb843, at the
+root-provided combined head feffe122d8. The exported captures and source hashes
+are from run9; current source and runner bytes matched the recorded hashes. The qualified fixture
 creates/switches tabs before arming the viewed question, uses distinct round
 owners, and waits for notices to clear before checking paint and sending
 terminal mouse input. All started app
 attempts returned normally after cleanup; no production fixes were added for
 those fixture issues.
+
+
+The review regressions also verified malformed runner commands exit 2 with
+usage and no traceback or profile writes; real pending worktree decisions return
+Allow false on Close; failed progress cleanup rolls back only its exact
+provisional fence; and a refused rollback blocks a new generation while
+surviving-child usage still folds into the retained open session. Focused
+RED/GREEN receipts are under `/tmp/console-tool-ux-close/qodo-*.log`; the
+independent full-finalize probe folded 165 tokens after the state correction.

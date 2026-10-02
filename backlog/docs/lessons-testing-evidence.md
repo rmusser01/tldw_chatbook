@@ -15,6 +15,24 @@ the test must take what the text says and execute it through the real tool or ro
 the real first-request plan, read each alias the note names, call `fs_list` with it). A
 text-shape assertion cannot notice that the thing it describes moved.
 
+## A provisional close fence is not a closed-session usage marker
+
+**TASK-33621.16 / PR #2953, 2026-10-01.** The first Close retry repair
+retained an uncertain fleet rollback in `_session_close_generations` so
+another attempt could not replace its generation. All 19 mounted Close
+checks passed, but independent review traced that map's other reader:
+`_fleet_event_is_stale` treats its sessions as closed and drops child usage.
+A live-controller probe retained an open session with no close ticket;
+parent usage stayed at 120 tokens after a 45-token child drain. Removing
+only that marker let the same drain fold the total to 165.
+
+Keep failed-provisional retry markers separate from committed-close
+markers. The mounted refused-rollback regression now delivers a deterministic
+drain through the real bridge fanout, checks usage 3→6, and proves a retry
+cannot allocate a new generation. Trace every reader before reusing an
+ownership marker; successful cleanup tests do not cover surviving work after
+an unsuccessful boundary.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889

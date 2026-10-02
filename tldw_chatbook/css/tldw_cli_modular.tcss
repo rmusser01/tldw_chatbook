@@ -3596,22 +3596,12 @@ Button.mcp-callout {
 
 
 
-#mcp-detail-builtin-toggles {
-    height: auto;
-    min-height: $ds-size-0;
-}
+#mcp-detail-builtin-toggles{height:auto;min-height:$ds-size-0;}
 
 
-#mcp-detail-tool-gates {
-    height: auto;
-    min-height: $ds-size-0;
-}
+#mcp-detail-tool-gates{height:auto;min-height:$ds-size-0;}
 
-#mcp-detail-toolbar Button {
-    height: $ds-size-1;
-    min-height: $ds-size-1;
-    border: none;
-}
+#mcp-detail-toolbar Button{height:$ds-size-1;min-height:$ds-size-1;border:none;}
 
 .mcp-compact #mcp-detail-toolbar {
     layout: grid;
@@ -3627,75 +3617,41 @@ Button.mcp-callout {
 }
 
 
-#mcp-import-list {
-    height: auto;
-    min-height: $ds-size-0;
-}
+#mcp-import-list{height:auto;min-height:$ds-size-0;}
 
 
 #mcp-detail-scroll:focus,
-#mcp-adv-scroll:focus {
-    outline: none;
-    border: none;
-    background: $ds-surface-panel;
-}
+#mcp-adv-scroll:focus{outline:none;border:none;background:$ds-surface-panel;}
 
 
-MCPSchemaForm Checkbox {
-    width: auto;
-    height: auto;
-    min-height: $ds-size-1;
-}
-MCPSchemaForm Checkbox > .toggle--button {
-    color: $ds-surface-panel;
-}
-MCPSchemaForm Checkbox.-on > .toggle--button {
-    color: $success;
-}
+MCPSchemaForm Checkbox{width:auto;height:auto;min-height:$ds-size-1;}
+MCPSchemaForm Checkbox > .toggle--button{color:$ds-surface-panel;}
+MCPSchemaForm Checkbox.-on > .toggle--button{color:$success;}
 
 
 
 
-#mcp-audit-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
-}
+#mcp-audit-table{height:auto;max-height:$ds-agentic-mcp-table-cap;}
 
 
-#mcp-audit-findings-table {
-    height: auto;
-    max-height: $ds-agentic-mcp-table-cap;
-}
+#mcp-audit-findings-table{height:auto;max-height:$ds-agentic-mcp-table-cap;}
 
 
-#mcp-audit-subview-strip {
-    height: auto;
-    min-height: $ds-size-0;
-}
+#mcp-audit-subview-strip{height:auto;min-height:$ds-size-0;}
 
 
 #mcp-audit-filter-text,
 #mcp-audit-filter-decision,
-#mcp-audit-filter-initiator {
-    width: $ds-width-full;
-}
+#mcp-audit-filter-initiator{width:$ds-width-full;}
 
 
 #approval-batch-body,
-#approval-batch-actions{
-height:auto;
-}
+#approval-batch-actions{height:auto;}
 
 
-#approval-batch-rows{
-height:auto;
-min-height:$ds-size-0;
+#approval-batch-rows{height:auto;min-height:$ds-size-0; max-height:$ds-size-15;overflow-y:auto;}
 
-max-height:$ds-size-15;
-overflow-y:auto;
-}
-
-.approval-row, .approval-row-controls {height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
+.approval-row, .approval-row-controls{height:auto;min-height:$ds-size-1;width:$ds-width-fill;}
 .approval-row-header,.approval-row-args{width:$ds-width-fill;}
 .approval-row-full-command{width:$ds-width-fill;height:$ds-size-6;min-height:$ds-size-3;}
 
@@ -3712,24 +3668,15 @@ overflow-y:auto;
 .approval-compact .approval-row-decision{column-span:$ds-size-2;width:$ds-width-fill;}
 .approval-compact #approval-batch-actions Button{width:$ds-width-fill;min-width:$ds-size-0;padding:$ds-space-0;}
 
-.approval-row.needs-decision{
-border:solid $ds-status-approval-required;
-background:$ds-status-approval-required 10%;
-}
+.approval-row.needs-decision{border:solid $ds-status-approval-required;background:$ds-status-approval-required 10%;}
 
 
-ConsoleScopePickerModal {
-    align: center middle;
-}
+ConsoleScopePickerModal{align:center middle;}
 
 
-ConsolePromptsModal {
-    align: center middle;
-}
+ConsolePromptsModal{align:center middle;}
 
-ConsolePromptDraftSaveDialog {
-    align: center middle;
-}
+ConsolePromptDraftSaveDialog{align:center middle;}
 
 #console-prompt-draft-save-dialog{
 width:$ds-size-60;

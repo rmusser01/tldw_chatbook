@@ -16,12 +16,12 @@
            Archive this chat             │ │ ▐●▌ One — First choice                                                                                                                                                           │ │
             Archived chats               │ │ ▐●▌ Two — Second choice                                                                                                                                                          │ │
            Search all chats…             │ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │ │
-   Viewed question                       │ │ ▊  Other…                                 █▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█                                                                        ▎  │ │
-                                         │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█                                                          █▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ │                                           █               Close tab "Pending [notes]"?               █                                                                           │ │
-  ▊  Filter visible titles   ▎           │ │                                           █                                                          █                                                                           │ │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │ │                                           █             Saved history stays in Library.              █                                                               Submit      │ │
-                                         │ │                                           █                                                          █                                                                           │ │
+   Viewed question                       │ │ ▊  Other…                                                                                                                                                                     ▎  │ │
+                                         │ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁█▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀█▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │ │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ │                                           █                                                          █                                                                           │ │
+  ▊  Filter visible titles   ▎           │ │                                           █               Close tab "Pending [notes]"?               █                                                                           │ │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │ │                                           █                                                          █                                                               Submit      │ │
+                                         │ │                                           █             Saved history stays in Library.              █                                                                           │ │
   Chats                             ▾    │ │                                           █             Closing will discard or cancel:              █                                                                           │ │
    Pending [notes]                 ✋    │ ╰───────────────────────────────────────────█             Temporary or unsaved messages: 1             █───────────────────────────────────────────────────────────────────────────╯ │◂ Inspect
    Approval required                     │                                             █                   Live agent turns: 1                    █                                                                             │
@@ -49,4 +49,4 @@
 
 │  Composer ▾  Menu  Ask, command, or paste task...                                                                                               Send blocked — add an API key to continue ›       Send         Dictate
 
-  Ctrl+Shift+F focus | F6 next pane | Shift+F6 previous pane | F1 help | Enter send / queue | Y trace | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Ctrl+Q quit
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Y trace | Ctrl+Q
