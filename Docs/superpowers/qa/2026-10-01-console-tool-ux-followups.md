@@ -509,3 +509,54 @@ Current receipts: `/tmp/console-tool-ux-inflight-create-final-manifest.json`,
 `/tmp/console-tool-ux-close-native/run27/qualification.json`.
 Fresh final-published-head Qodo and all four GitHub gates, latest-dev integration
 and verified normal merge remain required.
+
+
+## Current readiness-base and final CI corrections
+
+Clean rebase onto dev `185c845fe836bf452e4beaaf8853162ce49b1e8d` preserves
+all22 patches, including the upstream model-readiness integration. The existing
+pure Resend eligibility helpers moved into the resident message-action owner;
+execution imports only on explicit Resend, with compatibility exports and
+executable helper AST preserved. Fresh projection and real warm-start guards
+fail before and pass after; module ceiling and snapshot remain1033 unchanged.
+
+Qodo496a9bd8 now retains only primary Close error class and raising function
+before the existing authored recovery refusal. Successful/refused/raised rollback
+regressions preserve exact fences, generation, session/grants and retry refusal,
+with no exception content/capture, private IDs/paths or new sink. The reviewed
+one-record diagnostic inventory delta preserves all upstream entries.
+
+**230 scoped cases pass**, without errors/skips:193 behavior/grouped/cache
+cases and37 exact three-group Perf Guard cases, including both new readiness
+storage-census variants. The inherited isolated normalization test first counted
+3669 versus9:3660 belonged to cold static support-set initialization. One real
+no-evidence build outside profiling makes both comparisons equivalent; positive
+baseline, exact equality and first shared-owner lookup remain measured. Five
+comparison/keyed-evidence/cache contracts pass. Production readiness is unchanged.
+
+Four projection journeys and two no-owning-turn Close kinds now use two bounded
+private children, retaining fresh apps/controllers/stores/workers and all original
+body assertions/cleanup. AST proof permits only two loop-local default bindings.
+One paired local sample improves91.55 to64.84 seconds; the final bound Close
+rerun passes in23.55 seconds. This is not a CI deadline guarantee; the180-second
+child and20-minute workflow limits, census, counter seams, canaries and ceilings
+remain unchanged. The preceding derived failure was the unsuccessful UI dependency,
+not an artifact reproduction error.
+
+Approval26 passes nine Ask-gated reads/denials; Close28 passes six actual worker
+closes plus six-kind80x24→80x18 crowded geometry. All111/183 source pins stay
+current;65/94 naturally loaded origins, including15 Close readiness origins,
+are verified. Apps/PTYs/sockets exit0, real profiles unchanged, zero egress. Root
+viewed fresh compact approval/Inspect, chat-create Close and scrolled80x18 frames.
+The initial Close private-path prelaunch rejection is retained; only that external
+fixture was corrected. AX remains unqualified and no Terminal/TCC/viewer was opened.
+Native excludes readiness requests, Resend execution and forced race/rollback paths;
+focused real-DB/runtime/UI checks cover the selected changes. Earlier broad action
+failures and their baseline-comparison limits remain recorded separately.
+
+Current combined preflight passes (UI census124); all34 changed Python files
+introduce zero Ruff diagnostics and edited ranges format cleanly. Independent
+source/isolation/privacy review is clear. Exact receipts, byte pins and scope:
+`readiness_base_final_followup` in the combined integration JSON and
+`/tmp/console-tool-ux-readiness-integrated-final-performance.json`. Fresh published-head
+Qodo/all four GitHub gates, latest dev and verified normal merge remain pending.

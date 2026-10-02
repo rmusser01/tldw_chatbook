@@ -17829,6 +17829,19 @@ canaries and ceilings. This removes a proven setup timing window; it does not
 attribute the original aggregate failure or remove the production cold cost.
 
 
+## A first baseline call can count setup absent from its comparison
+
+**TASK-33260 / PR #2953, 2026-10-02.** After the readiness rebase, the
+isolated shared-evidence normalization comparison counted3669 without evidence
+and9 with it. The first call initialized the cached support set:59 non-direct
+handlers each normalized62 keys, plus two direct handlers, exactly3660 calls.
+One real no-evidence build before either profile preserves the positive baseline
+and exact equality while leaving the first shared-owner lookup measured. Existing
+cached/injected/derived-set contracts remain green; production and boot ceilings
+are unchanged. Initialize equivalent setup on both sides of a per-build comparison,
+and keep startup cost and cache semantics covered separately.
+
+
 ## A retained Close source still needs an execution fence
 
 **TASK-32367 / PR #2953, 2026-10-02.** Qodo found that a standalone

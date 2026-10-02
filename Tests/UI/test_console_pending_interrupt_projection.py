@@ -2,6 +2,7 @@
 
 import threading
 import time
+from pathlib import Path
 
 import pytest
 from textual.widgets import Button, Static
@@ -143,9 +144,7 @@ async def _stop_workers(controller, workers, pilot):
         await _finish_worker(pilot, worker)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_question_and_approval_copy_survives_sibling_view_and_remount(
+async def _verify_question_and_approval_copy_survives_sibling_view_and_remount(
     request, tmp_path
 ):
     """Keep question and approval copy bound to its session across remounts.
@@ -267,9 +266,7 @@ async def test_question_and_approval_copy_survives_sibling_view_and_remount(
             await _stop_workers(controller, workers, pilot)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_inspector_counts_queued_approval_rounds_for_its_own_session(
+async def _verify_inspector_counts_queued_approval_rounds_for_its_own_session(
     request, tmp_path
 ):
     """Count queued approvals only for the session shown in Inspector.
@@ -315,9 +312,7 @@ async def test_inspector_counts_queued_approval_rounds_for_its_own_session(
             await _stop_workers(controller, workers, pilot)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_review_routes_reach_visible_skill_confirm_before_queued_approval(
+async def _verify_review_routes_reach_visible_skill_confirm_before_queued_approval(
     request, tmp_path
 ):
     """Route each review action to the displayed decision before queued approval.
@@ -390,9 +385,7 @@ async def test_review_routes_reach_visible_skill_confirm_before_queued_approval(
             await _stop_workers(controller, workers, pilot)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_chat_create_confirmation_has_its_own_kind_and_review_route(
+async def _verify_chat_create_confirmation_has_its_own_kind_and_review_route(
     request, tmp_path
 ):
     """Keep real chat creation separate from tool approvals and reviewable.
@@ -463,9 +456,34 @@ async def test_chat_create_confirmation_has_its_own_kind_and_review_route(
             assert not controller.pending_round_kinds(sibling.id)
             controller.switch_session(session_id)
             await _wait(pilot, lambda: console.query_one("#chat-create-card").display)
-            controller.resolve_pending_chat_create(False, False, request_id=card._request_id)
+            controller.resolve_pending_chat_create(
+                False, False, request_id=card._request_id
+            )
             await _finish_worker(pilot, worker)
             assert result == {"allow": False, "remember": False}
             assert controller.pending_round_kinds(session_id) == {"approval"}
         finally:
             await _stop_workers(controller, workers, pilot)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_owned_pending_projection_journeys(
+    request: pytest.FixtureRequest, tmp_path: Path
+) -> None:
+    """Run every mounted projection journey with fresh app and worker ownership.
+
+    Args:
+        request: Pytest request selecting the one isolated private-profile child.
+        tmp_path: Parent directory for each journey's separate database fixture.
+    """
+    journeys = (
+        _verify_question_and_approval_copy_survives_sibling_view_and_remount,
+        _verify_inspector_counts_queued_approval_rounds_for_its_own_session,
+        _verify_review_routes_reach_visible_skill_confirm_before_queued_approval,
+        _verify_chat_create_confirmation_has_its_own_kind_and_review_route,
+    )
+    for index, journey in enumerate(journeys):
+        case_path = tmp_path / str(index)
+        case_path.mkdir()
+        await journey(request, case_path)

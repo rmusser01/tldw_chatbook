@@ -3,11 +3,11 @@ id: TASK-33260
 title: >-
   PERF-01: Perf guards that count admissions, helper spawns and pre-import
   payload
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 21:03'
+updated_date: '2026-10-02 21:42'
 labels:
   - performance
   - ci
@@ -33,7 +33,9 @@ The two biggest regressions since the 09-04 perf review shipped with every perf 
 - [x] #3 run_console_mount_profile.py produces a profile against the reusable Console route
 - [x] #4 Startup/footer guards previously masked by RecoveryRequired('raw_source_selection_changed') run and report real results
 - [x] #5 The stale CSS-source meta-test matches the current source count
-- [ ] #6 Resend execution stays off first paint and broken-row action projection; the unchanged UI-ready module ceiling holds, and existing Resend click/key, refusal and partial-output behavior passes.
+- [x] #6 Resend execution stays off first paint and broken-row action projection; the unchanged UI-ready module ceiling holds, and existing Resend click/key, refusal and partial-output behavior passes.
+- [x] #7 Mounted pending-projection and orphan-decision Close checks retain every scenario and assertion with independent app/controller/worker lifetimes while avoiding redundant private interpreter startups within unchanged per-child deadlines.
+- [x] #8 The connection-evidence normalization comparison uses equivalent initialized readiness builds, retains a nonzero baseline and exact equality, and existing cached/injected/derived support-set contracts remain green.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -53,12 +55,16 @@ PR2953 CI follow-up (2026-10-02): ADR required: no. ADR path: backlog/decisions/
 PR2953 typing-fixture follow-up: ADR required: no; existing ADR-097/125/126 apply. Call-through diagnostics found the five-second media startup helper finishing within milliseconds of the first measured key; it is a plain asyncio task outside the Textual worker drain. Hold only this private fixture startup schedule and await the same real cleanup once before counting. Retain all measured operations, ticks, counters, canaries and ceilings; run the exact plain guard plus the existing census canaries and inspect actual cleanup evidence. The original aggregate typing-helper failure was not directly attributed; this removes the confirmed unowned setup window, without claiming production cost reduction.
 
 PR2953 latest-dev UI-ready follow-up: ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md. Reason: mechanically place existing pure eligibility in the already-resident message-action owner and defer execution to its existing first-use paths; preserve public exports and behavior, with no new runtime boundary or budget exception. Upstream dev and this PR both fail at 1034 modules against unchanged 1033. Add a fresh-process guard proving broken-row action projection does not import execution, and pin execution absent in the real warm UI-ready census. Move the three existing pure helpers into console_message_actions, keep compatibility re-exports, and defer the two execution imports until explicit Resend. Adjust the defining-module monkeypatch. Verify real warm census, full affected Resend shape/action/click/key tests and boot guard neighbors; peer review, artifact/lint checks and current-source native qualification; require fresh final-head Qodo/all four CI gates before normal merge. No ceiling or snapshot refresh.
+
+PR2953 UI timeout follow-up: ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; existing ADR-126 private-profile test isolation. Reason: remove redundant private interpreter startup only in this workstream's mounted checks, preserving all assertions and fresh per-scenario app/controller/store/worker ownership. Exact head8e UIjob111015408914 reached74% without assertion failure, then hit unchanged20m limit; its four pending-projection children cost111s and Close file353s. Consolidate only four projection journeys into one bounded private child with distinct case dirs, and both no-owning-turn Close kinds into their existing local-loop pattern. Preserve every body, safe cleanup, independent apps and unchanged180s deadline. Measure the affected mounted groups, prove unchanged scenario bodies, review isolation, then rerun combined latest-dev guards/native/preflight and fresh final-head CI. Do not collapse the full Close file or change global CI/caps.
+
+PR2953 latest-dev evidence-counter follow-up: ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md. Reason: test-only setup correction of the inherited TASK-33005.2 normalization comparison. Its isolated first baseline counts3669 versus9 after support-set initialization; source arithmetic identifies exactly3660 static catalog normalizations. Perform one real readiness build without evidence before profiling either branch, preserving the nonzero baseline and exact equality assertion and measuring the first shared-evidence lookup. Do not alter production, support-cache semantics or any census ceiling. Verify the exact comparison plus existing cache/keyed-evidence guards in a fresh private process; retain the red log and record the current-base validation.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Test/CI-only change; no production code touched.
+Original guard implementation was test/CI-only. PR2953 follow-up also defers existing Resend execution imports as documented below.
 
 AC#1 (ratchet, per the controller's AC adjustment): Tests/Performance/test_console_keystroke_work_census.py gains _count_storage_units (wraps config_participants.operation [outermost per thread], storage_admission._acquire_storage [the one global every acquire_storage binding reaches], HelperLease.start, and os.open via a sys.addaudithook 'open' event with mode=None -- NOT by replacing os.open: raw_participants requires os.open in os.supports_dir_fd, and a wrapper turns every config read into RecoveryRequired('raw_source_selection_changed')). New test test_console_storage_units_stay_within_their_ratchets censuses five phases: typing burst (24 keys), typing pause (the 0.2 s trailing draft-spend refresh, fired once), credential-poll tick and legacy trace-maintenance tick (each driven directly, per tick), and a warm Console visit (Library -> Console on the reusable route) plus a get_user_data_dir canary (anti-vacuity). Wall-clock loops are held still only in this mode (credential poll stopped, trace maintenance captured not scheduled, draft-spend refresh delayed, scheduler poll stretched to 1 h via the scratch config); the four existing census tests run exactly as before. Pinned ceilings (maxima over 19 runs on macOS): typing 27 config / 54 storage / 0 helpers / 19,224 opens; pause 22/53/3/18,359; poll per tick 1/2/0/790.6; trace per tick 0/2/1/715.4; visit 37/107/9/35,351. Config admissions reproduce exactly; storage/helpers jitter downward (executor-thread connection reuse), os_opens upward in ~37-open steps (source not isolated) so os_opens gets OS_OPENS_JITTER_SLACK=1.05. Paydown owners named in the pin: TASK-33265 (PERF-06), TASK-33267 (PERF-08), TASK-33268 (PERF-09), TASK-33269 (PERF-10).
 
@@ -81,6 +87,8 @@ The private settled-typing fixture holds its media startup timer and awaits the 
 Reopened for exact final-head UI latency failure: PR run37060344703 and pure latest-dev run37058139830 both measure1034>1033. Three eager Resend imports load execution from first-paint consumers. Existing budget and snapshot will remain unchanged.
 
 Latest-dev Resend correction: the three pure eligibility helpers now live in the already-resident message-action owner, with compatibility exports preserved; execution imports only on explicit Resend. Both new startup regressions fail before and pass after; real warm census1033/1033, unchanged limit/snapshot. All64 Resend core cases,11 actual UI/click/key/timer cases and22 boot neighbors pass. Other action logic is AST-identical to dev. Broader action-file run has120 passes/10 unchanged Canvas or legacy-label failures, exactly reproduced with the dev action owner in an otherwise combined-tree private process (not a pure full-dev checkout); initial pre-bootstrap comparison error retained. This follow-up introduces production import deferral, unlike the original test-only guard work. Artifact preflight and zero-new Ruff33 pass. Native approval25 qualifies the preceding bb865 combined candidate; newly advanced dev185c845 requires rebase/current-source verification before Done or merge.
+
+Latest readiness-base qualification (dev185c845, code anchore4577e27): all230 scoped cases pass with zero failures/errors/skips, including193 behavior/grouping/cache cases and37 exact three-group Perf Guard cases. Warm census1033/1033; both tested/untested ordinary storage variants retain real seams, canaries, ticks and ceilings. Four projection journeys and two orphan-decision kinds retain fresh apps/controllers/workers in two private children; full body AST preserved except two explicit loop-local lambda defaults. One paired timing91.55->64.84s, final bound Close rerun23.55s; unchanged180s/20m deadlines, no CI guarantee. Inherited isolated normalization counter red3669 vs9 was exactly3660 cold static support-set calls; one real no-evidence setup build preserves positive/exact comparison and measures first shared lookup; five existing related contracts pass. Native approval26(9 journeys/111pins) and Close28(6 real journeys+six-kind geometry/183pins), current loaded origins, exit0/cleanup/no-egress/real-profile invariants pass. Initial external Close path rejection retained. AX and wider native requests/races remain unqualified; earlier10 broad action failures retain explicit baseline limits. Current preflight(census124), zero-new Ruff34, edited-range format and independent review pass. Existing ADR-097/094/126 apply; no new ADR. QA readiness_base_final_followup in combined integration JSON. Final published-head CI/Qodo/normal merge remains PR2953.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
