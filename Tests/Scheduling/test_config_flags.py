@@ -54,7 +54,9 @@ def test_watchlist_flag_fallbacks_match_shipped_config(flag, expected) -> None:
 
     source = inspect.getsource(app_service_wiring)
     match = re.search(
-        r'get_cli_setting\(\s*"scheduling",\s*"' + flag + r'",\s*(True|False)\s*,?\s*\)',
+        r'get_cli_setting\(\s*"scheduling",\s*"'
+        + flag
+        + r'",\s*(True|False)\s*,?\s*\)',
         source,
     )
     assert match is not None, f"no get_cli_setting call found for {flag}"

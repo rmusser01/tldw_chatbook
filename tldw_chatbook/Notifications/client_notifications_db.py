@@ -177,8 +177,7 @@ class ClientNotificationsDB(BaseDB):
             last_used = getattr(self._thread_local, "conn_last_used", None)
             if (
                 last_used is None
-                or (time.monotonic() - last_used)
-                >= self._LIVENESS_PING_IDLE_SECONDS
+                or (time.monotonic() - last_used) >= self._LIVENESS_PING_IDLE_SECONDS
             ):
                 try:
                     conn.execute("SELECT 1")
