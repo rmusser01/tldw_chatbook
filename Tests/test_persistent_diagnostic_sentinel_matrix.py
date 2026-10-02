@@ -43,8 +43,7 @@ def _generations(path: Path) -> str:
 
 def _emit_owned_loguru_payload(module_name: str, message: str) -> None:
     source = (
-        Path(__file__).resolve().parents[1]
-        / Path(*module_name.split("."))
+        Path(__file__).resolve().parents[1] / Path(*module_name.split("."))
     ).with_suffix(".py")
     code = compile(
         "loguru_logger.debug(message)",

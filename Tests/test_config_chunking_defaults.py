@@ -22,9 +22,7 @@ def test_config_template_ships_chunking_section():
 
 
 def test_default_config_tree_carries_chunking_section():
-    assert (
-        config_module.DEFAULT_CONFIG_FROM_TOML["chunking"]["default_template"] == ""
-    )
+    assert config_module.DEFAULT_CONFIG_FROM_TOML["chunking"]["default_template"] == ""
 
 
 def test_real_loader_emits_chunking_section(tmp_path, monkeypatch):

@@ -30,6 +30,7 @@ from tldw_chatbook.Utils.config_encryption import config_encryption
 def _mode(path) -> int:
     return stat.S_IMODE(path.stat().st_mode)
 
+
 PASSWORD = "test-master-pw"
 NEW_PASSWORD = "test-master-pw-2"
 PLAINTEXT_KEY = "sk-proj-test-plaintext-openai-key"
@@ -62,8 +63,7 @@ def isolated_config_paths(tmp_path, monkeypatch):
 
 def _write_plain_profile(profile_path, extra_toml: str = "") -> None:
     profile_path.write_text(
-        '[api_settings.openai]\n'
-        f'api_key = "{PLAINTEXT_KEY}"\n' + extra_toml
+        f'[api_settings.openai]\napi_key = "{PLAINTEXT_KEY}"\n' + extra_toml
     )
 
 
