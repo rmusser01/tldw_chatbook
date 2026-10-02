@@ -357,9 +357,7 @@ def character_png(tmp_path: Path) -> Path:
             saw_idat = True
         if chunk_type == b"IEND":
             assert saw_idat
-            output.extend(
-                png_chunk(b"tEXt", b"chara\x00" + payload.encode("latin-1"))
-            )
+            output.extend(png_chunk(b"tEXt", b"chara\x00" + payload.encode("latin-1")))
             inserted = True
         output.extend(raw[offset:chunk_end])
         offset = chunk_end
@@ -547,17 +545,21 @@ async def launch_clean_chatbook():
         context.pilot = await context.run_context.__aenter__()
         wizard = await _wait_for(
             app,
-            lambda: app.screen
-            if type(app.screen).__name__ == "FirstRunSetupWizard"
-            else None,
+            lambda: (
+                app.screen
+                if type(app.screen).__name__ == "FirstRunSetupWizard"
+                else None
+            ),
             timeout=30.0,
         )
         await context.pilot.pause(0.2)
         await _wait_for(
             app,
-            lambda: wizard.query_one(SetupWizardContainer)
-            if wizard.query_one(SetupWizardContainer).current_step == 0
-            else None,
+            lambda: (
+                wizard.query_one(SetupWizardContainer)
+                if wizard.query_one(SetupWizardContainer).current_step == 0
+                else None
+            ),
         )
     except BaseException:
         await _close_retained_run_context(context)
@@ -608,18 +610,20 @@ async def complete_quick_setup(
     assert isinstance(provider_step, ProviderStep)
     await _wait_for(
         app,
-        lambda: next(iter(provider_step.query("#setup-provider-key-status")), None)
-        if container.current_step == provider_index
-        else None,
+        lambda: (
+            next(iter(provider_step.query("#setup-provider-key-status")), None)
+            if container.current_step == provider_index
+            else None
+        ),
     )
     provider_step.select_provider("llama_cpp")
     await _wait_for(
         app,
         lambda: next(iter(provider_step.query("#setup-provider-endpoint")), None),
     )
-    provider_step.query_one("#setup-provider-endpoint", Input).value = (
-        context.fake_chat.base_url
-    )
+    provider_step.query_one(
+        "#setup-provider-endpoint", Input
+    ).value = context.fake_chat.base_url
     await context.pilot.pause()
     provider_step.query_one("#setup-provider-test", Button).press()
 
@@ -628,7 +632,11 @@ async def complete_quick_setup(
         if identity is None:
             return None
         evidence = provider_step._provider_evidence_store().evidence_for(identity)
-        return evidence if evidence is not None and evidence.endpoint == "reachable" else None
+        return (
+            evidence
+            if evidence is not None and evidence.endpoint == "reachable"
+            else None
+        )
 
     await _wait_for(app, provider_tested)
     assert provider_step.compose_failure is None
@@ -670,24 +678,30 @@ async def complete_quick_setup(
     voice_step.query_one("#setup-voice-test", Button).press()
     await _wait_for(
         app,
-        lambda: "Verified"
-        in str(voice_step.query_one("#setup-voice-status", Static).renderable),
+        lambda: (
+            "Verified"
+            in str(voice_step.query_one("#setup-voice-status", Static).renderable)
+        ),
     )
     await context.pilot.click("#wizard-next")
     await _wait_for(
         app,
-        lambda: next(iter(wizard.query("#setup-exit-home")), None)
-        if container.steps[container.current_step].config.id == STEP_SUMMARY
-        else None,
+        lambda: (
+            next(iter(wizard.query("#setup-exit-home")), None)
+            if container.steps[container.current_step].config.id == STEP_SUMMARY
+            else None
+        ),
     )
     await _wait_for(
         app,
-        lambda: wizard.query_one("#setup-summary-rows", Static)
-        if str(wizard.query_one("#setup-summary-rows", Static).renderable).strip()
-        and str(wizard.query_one("#setup-summary-footer", Static).renderable).startswith(
-            "Config file:"
-        )
-        else None,
+        lambda: (
+            wizard.query_one("#setup-summary-rows", Static)
+            if str(wizard.query_one("#setup-summary-rows", Static).renderable).strip()
+            and str(
+                wizard.query_one("#setup-summary-footer", Static).renderable
+            ).startswith("Config file:")
+            else None
+        ),
     )
     wizard.query_one("#setup-exit-home", Button).press()
     await _wait_for(
@@ -707,16 +721,20 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
     app.post_message(NavigateToScreen("personas"))
     personas = await _wait_for(
         app,
-        lambda: app.screen
-        if type(app.screen).__name__ == "PersonasScreen" and app.screen.is_mounted
-        else None,
+        lambda: (
+            app.screen
+            if type(app.screen).__name__ == "PersonasScreen" and app.screen.is_mounted
+            else None
+        ),
         timeout=30.0,
     )
     await _wait_for(
         app,
-        lambda: next(iter(personas.query(".loading-text")), None)
-        if personas.state.active_mode == "characters"
-        else None,
+        lambda: (
+            next(iter(personas.query(".loading-text")), None)
+            if personas.state.active_mode == "characters"
+            else None
+        ),
     )
     await personas._import_character_from_path(str(character_png))
     await context.pilot.pause(0.3)
@@ -736,19 +754,20 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
         )
 
     await _wait_for(app, character_loads_settled)
-    await context.pilot.click(
-        f"#personas-library-row-character-{character_id}"
-    )
+    await context.pilot.click(f"#personas-library-row-character-{character_id}")
     await context.pilot.pause()
     await _wait_for(
         app,
-        lambda: character_loads_settled()
-        and str(personas.state.selected_entity_id) == str(character_id)
-        and str(personas.character_handler.current_character_id) == str(character_id)
-        and str(
-            (personas.character_handler.current_character_data or {}).get("name")
-        )
-        == "Pocket Ann",
+        lambda: (
+            character_loads_settled()
+            and str(personas.state.selected_entity_id) == str(character_id)
+            and str(personas.character_handler.current_character_id)
+            == str(character_id)
+            and str(
+                (personas.character_handler.current_character_data or {}).get("name")
+            )
+            == "Pocket Ann"
+        ),
     )
     start = personas.query_one("#personas-start-chat", Button)
     await _wait_for(app, lambda: not start.disabled)
@@ -756,9 +775,11 @@ async def import_character_and_start_chat(app, character_png: Path) -> None:
 
     chat_screen = await _wait_for(
         app,
-        lambda: app.screen
-        if type(app.screen).__name__ == "ChatScreen" and app.screen.is_mounted
-        else None,
+        lambda: (
+            app.screen
+            if type(app.screen).__name__ == "ChatScreen" and app.screen.is_mounted
+            else None
+        ),
         timeout=30.0,
     )
     context.chat_screen = chat_screen
@@ -835,9 +856,9 @@ async def enable_speak_replies_and_confirm(app) -> None:
 
     modal = await _wait_for(
         app,
-        lambda: app.screen
-        if type(app.screen).__name__ == "AutoSpeakConsentModal"
-        else None,
+        lambda: (
+            app.screen if type(app.screen).__name__ == "AutoSpeakConsentModal" else None
+        ),
     )
     destination = str(
         modal.query_one("#console-auto-speak-consent-destination", Static).renderable
@@ -936,12 +957,16 @@ async def wait_for_audio_playback(app) -> None:
 
     def stopped_controls():
         return (
-            status,
-            action,
-        ) if (
-            str(status.renderable) == "Stopped"
-            and action.console_action_id == "speak"
-        ) else None
+            (
+                status,
+                action,
+            )
+            if (
+                str(status.renderable) == "Stopped"
+                and action.console_action_id == "speak"
+            )
+            else None
+        )
 
     stopped_status, speak_action = await _wait_for(app, stopped_controls)
     assert str(stopped_status.renderable) == "Stopped"
@@ -1014,13 +1039,10 @@ async def test_clean_profile_character_roleplay_uses_pocket_tts(
         completion_requests = [
             request
             for request in fake_chat.requests
-            if request.method == "POST"
-            and request.path == "/v1/chat/completions"
+            if request.method == "POST" and request.path == "/v1/chat/completions"
         ]
         assert len(completion_requests) == 1
-        assert {
-            (request.method, request.path) for request in fake_chat.requests
-        } <= {
+        assert {(request.method, request.path) for request in fake_chat.requests} <= {
             ("GET", "/v1/models"),
             ("GET", "/health"),
             ("POST", "/v1/chat/completions"),
@@ -1050,14 +1072,13 @@ async def test_clean_profile_character_roleplay_uses_pocket_tts(
         assert character_context_matches, messages
         character_context_index = character_context_matches[0]
         character_context = str(messages[character_context_index]["content"])
-        assert character_context.index(_CHARACTER_DESCRIPTION) < character_context.index(
-            "Hello, I am Ann."
-        )
+        assert character_context.index(
+            _CHARACTER_DESCRIPTION
+        ) < character_context.index("Hello, I am Ann.")
         user_index = next(
             index
             for index, message in enumerate(messages)
-            if message.get("role") == "user"
-            and message.get("content") == "Hello there"
+            if message.get("role") == "user" and message.get("content") == "Hello there"
         )
         assert character_context_index < user_index
         assert user_index == len(messages) - 1
@@ -1095,9 +1116,7 @@ async def test_fake_pocket_tts_rejects_unexpected_methods_and_paths(
     assert wrong_method.status_code == 405
     assert unsupported_method.status_code == 405
     assert unknown_path.status_code == 404
-    assert [
-        (request.method, request.path) for request in fake_pocket_tts.requests
-    ] == [
+    assert [(request.method, request.path) for request in fake_pocket_tts.requests] == [
         ("GET", "/v1/audio/speech"),
         ("DELETE", "/v1/audio/speech"),
         ("POST", "/unexpected"),
