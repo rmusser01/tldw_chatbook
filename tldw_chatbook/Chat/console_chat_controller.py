@@ -9887,6 +9887,7 @@ class ConsoleChatController:
         custody_acceptance_hook: Callable[[], None] | None = None,
         _resume_preparation_id: str | None = None,
         _resume_resolution: Any | None = None,
+        _operation: Callable[[], Awaitable[ConsoleSubmitResult]] | None = None,
     ) -> ConsoleSubmitResult:
         """Fence one complete submit lifecycle for close and shutdown."""
 
@@ -9927,6 +9928,8 @@ class ConsoleChatController:
             if active_task is not None:
                 self._register_submit_task(active_task, owner_key)
         if active_task is None:
+            if _operation is not None:
+                return await _operation()
             return await self._submit_draft_inner(
                 draft,
                 session_id=session_id,
@@ -9949,6 +9952,8 @@ class ConsoleChatController:
                 _resume_resolution=_resume_resolution,
             )
         try:
+            if _operation is not None:
+                return await _operation()
             return await self._submit_draft_inner(
                 draft,
                 session_id=session_id,
@@ -10112,6 +10117,107 @@ class ConsoleChatController:
         ):
             wake_authorization.preflight_refused = True
         return result
+
+    async def _prepare_submission_hooks(
+        self, session, configuration, origin, queue_authorization=None
+    ) -> ConsoleSubmitResult | None:
+        """Reuse the owning submission's provisional hook scope and reservation."""
+        session_id = session.id
+        hook_runtime = getattr(self, "_hooks_v2_runtime", None)
+        if hook_runtime is not None:
+            # Recheck after awaited reference expansion; reserve without an await.
+            busy = self._live_busy_session_ids()
+            if (
+                origin is ConsoleSubmissionOrigin.QUEUED
+                and self.prompt_queue_coordinator.reuses_claimed_slot(
+                    queue_authorization, session_id
+                )
+            ):
+                # The queue holds this slot across terminal settlement. Its
+                # claimed next turn must reuse that reservation, not compete
+                # with itself during H4 provisional initialization.
+                busy = [identity for identity in busy if identity != session_id]
+            if session_id in busy or len(busy) >= self.max_parallel_runs:
+                return ConsoleSubmitResult(False, False, "A run is already preparing.")
+            self._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
+                session_id=session_id,
+            )
+            submissions = getattr(self, "_hooks_v2_submissions", None)
+            if submissions is None:
+                submissions = self._hooks_v2_submissions = {}
+            submissions[asyncio.current_task()] = (None, None, session_id)
+            try:
+                lifecycle = await hook_runtime.prepare_hooks_v2(
+                    session_id,
+                    configuration=configuration,
+                    reason="resume" if session.persisted_conversation_id else "startup",
+                    initiator=(
+                        "manual"
+                        if origin is ConsoleSubmissionOrigin.MANUAL
+                        else "scheduled"
+                    ),
+                )
+                if lifecycle is not None:
+                    scope = lifecycle.turn_scope or lifecycle.open_scope()
+                    lifecycle.turn_scope = scope
+                    submissions[asyncio.current_task()] = (lifecycle, scope, session_id)
+                    await lifecycle.wait(scope)
+            except asyncio.CancelledError:
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED, "Initialization cancelled."
+                    ),
+                    session_id=session_id,
+                )
+                raise
+            except Exception:  # noqa: BLE001 -- hook boundary
+                self._set_run_state(
+                    ConsoleRunState(
+                        ConsoleRunStatus.BLOCKED, "Required hook initialization failed."
+                    ),
+                    session_id=session_id,
+                )
+                return ConsoleSubmitResult(
+                    False, False, "Required hook initialization failed."
+                )
+        return None
+
+    async def _submission_hook_input(
+        self, draft, origin, provider_messages=()
+    ) -> list[dict[str, Any]]:
+        """Fire input under the exact task's existing scope and deliver its context."""
+        hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
+            asyncio.current_task()
+        )
+        if hook_owner is None or hook_owner[0] is None:
+            return []
+        lifecycle, scope, _session_key = hook_owner
+        if origin is ConsoleSubmissionOrigin.MANUAL:
+            await lifecycle.fire(
+                lifecycle.event("UserPromptSubmit", data={"prompt": draft}), scope
+            )
+        await lifecycle.wait(scope)
+        rows = lifecycle.context.blocks(scope, "model")
+        from tldw_chatbook.Agents.agent_models import check_host_context
+
+        check_host_context([*provider_messages, *rows], strip=False)
+        return rows
+
+    async def _legacy_submission_hook_input(self, draft, session_id):
+        """Use the existing legacy engine and bounded prompt projection."""
+        from tldw_chatbook.Agents.run_hooks import truncate_hook_text
+
+        hooks_engine = self._run_hooks_engine()
+        return (
+            await hooks_engine.fire_async(
+                "UserPromptSubmit",
+                session_id=session_id,
+                data={"prompt": truncate_hook_text(draft)},
+            )
+            if hooks_engine is not None
+            else None
+        )
 
     async def _submit_draft_body(
         self,
@@ -10467,64 +10573,11 @@ class ConsoleChatController:
             return self._block(
                 session.id, turn_selection.workspace_context.recovery_copy
             )
-        hook_runtime = getattr(self, "_hooks_v2_runtime", None)
-        if hook_runtime is not None:
-            # Recheck after awaited reference expansion; reserve without an await.
-            busy = self._live_busy_session_ids()
-            if (
-                origin is ConsoleSubmissionOrigin.QUEUED
-                and self.prompt_queue_coordinator.reuses_claimed_slot(
-                    queue_authorization, session.id
-                )
-            ):
-                # The queue holds this slot across terminal settlement. Its
-                # claimed next turn must reuse that reservation, not compete
-                # with itself during H4 provisional initialization.
-                busy = [identity for identity in busy if identity != session.id]
-            if session.id in busy or len(busy) >= self.max_parallel_runs:
-                return ConsoleSubmitResult(False, False, "A run is already preparing.")
-            self._set_run_state(
-                ConsoleRunState(ConsoleRunStatus.VALIDATING, "Initializing hooks."),
-                session_id=session.id,
-            )
-            submissions = getattr(self, "_hooks_v2_submissions", None)
-            if submissions is None:
-                submissions = self._hooks_v2_submissions = {}
-            submissions[asyncio.current_task()] = (None, None, session.id)
-            try:
-                lifecycle = await hook_runtime.prepare_hooks_v2(
-                    session.id,
-                    configuration=configuration,
-                    reason="resume" if session.persisted_conversation_id else "startup",
-                    initiator=(
-                        "manual"
-                        if origin is ConsoleSubmissionOrigin.MANUAL
-                        else "scheduled"
-                    ),
-                )
-                if lifecycle is not None:
-                    scope = lifecycle.turn_scope or lifecycle.open_scope()
-                    lifecycle.turn_scope = scope
-                    submissions[asyncio.current_task()] = (lifecycle, scope, session.id)
-                    await lifecycle.wait(scope)
-            except asyncio.CancelledError:
-                self._set_run_state(
-                    ConsoleRunState(
-                        ConsoleRunStatus.STOPPED, "Initialization cancelled."
-                    ),
-                    session_id=session.id,
-                )
-                raise
-            except Exception:  # noqa: BLE001 -- hook boundary
-                self._set_run_state(
-                    ConsoleRunState(
-                        ConsoleRunStatus.BLOCKED, "Required hook initialization failed."
-                    ),
-                    session_id=session.id,
-                )
-                return ConsoleSubmitResult(
-                    False, False, "Required hook initialization failed."
-                )
+        hook_refusal = await self._prepare_submission_hooks(
+            session, configuration, origin, queue_authorization
+        )
+        if hook_refusal is not None:
+            return hook_refusal
         library_authority = (
             resumed_preparation.execution_context.library_authority
             if resumed_preparation is not None
@@ -11325,44 +11378,24 @@ class ConsoleChatController:
         hook_owner = getattr(self, "_hooks_v2_submissions", {}).get(
             asyncio.current_task()
         )
-        if hook_owner is not None and hook_owner[0] is not None:
-            lifecycle, scope, _session_key = hook_owner
-            try:
-                if origin is ConsoleSubmissionOrigin.MANUAL:
-                    await lifecycle.fire(
-                        lifecycle.event(
-                            "UserPromptSubmit",
-                            data={"prompt": clean_draft},
-                        ),
-                        scope,
-                    )
-                await lifecycle.wait(scope)
-                provider_messages = [
-                    *provider_messages,
-                    *lifecycle.context.blocks(scope, "model"),
-                ]
-                from tldw_chatbook.Agents.agent_models import check_host_context
-
-                check_host_context(provider_messages, strip=False)
-            except Exception:  # noqa: BLE001 -- hook boundary
-                if echoed_user is not None:
-                    self._mark_transient_echo_blocked(echoed_user.id)
-                return self._block(session.id, "Required hook input failed.")
+        try:
+            provider_messages = [
+                *provider_messages,
+                *await self._submission_hook_input(
+                    clean_draft, origin, provider_messages
+                ),
+            ]
+        except Exception:  # noqa: BLE001 -- hook boundary
+            if echoed_user is not None:
+                self._mark_transient_echo_blocked(echoed_user.id)
+            return self._block(session.id, "Required hook input failed.")
         # This await remains before acceptance. A refusal or cancellation must
         # release the exact optimistic echo and preparation, preserving custody.
         hook_context = ""
         if origin is ConsoleSubmissionOrigin.MANUAL:
             try:
-                from tldw_chatbook.Agents.run_hooks import truncate_hook_text
-
-                hooks_engine = self._run_hooks_engine()
-                outcome = (
-                    await hooks_engine.fire_async(
-                        "UserPromptSubmit",
-                        session_id=session.id,
-                        data={"prompt": truncate_hook_text(clean_draft)},
-                    )
-                    if hooks_engine is not None else None
+                outcome = await self._legacy_submission_hook_input(
+                    clean_draft, session.id
                 )
             except BaseException:
                 if echoed_user is not None:
@@ -11370,7 +11403,9 @@ class ConsoleChatController:
                 if preparation is not None:
                     self._abandon_preparation(preparation.preparation_id)
                 self._set_run_state(
-                    ConsoleRunState(ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."),
+                    ConsoleRunState(
+                        ConsoleRunStatus.STOPPED, "Send cancelled before acceptance."
+                    ),
                     session_id=session.id,
                 )
                 raise
@@ -20417,20 +20452,24 @@ class ConsoleChatController:
         if message.status != "failed":
             return self._block(session_id, "Only failed messages can be retried.")
 
-        self._set_run_state(
-            ConsoleRunState.retrying("Retrying failed response."),
-            session_id=session_id,
+        from .console_turn_resend import _replay_message
+
+        return await _replay_message(
+            self,
+            message_id,
+            lambda resolution, context, rows: self._retry_message_body(
+                message_id, resolution, context, rows
+            ),
+            queue_authorization=queue_authorization,
         )
-        (
-            resolution,
-            turn_context,
-        ) = await self._capture_and_resolve_turn_execution_context(session_id)
-        if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(
-                getattr(resolution, "visible_copy", "")
-            )
-            return self._block(session_id, visible_copy)
-        assert turn_context is not None
+
+    async def _retry_message_body(
+        self, message_id, resolution, turn_context, hook_rows
+    ):
+        session_id = turn_context.session_id
+        self._set_run_state(
+            ConsoleRunState.retrying("Retrying failed response."), session_id=session_id
+        )
         thinking_block = self._thinking_persistence_preflight(
             session_id=session_id,
             resolution=resolution,
@@ -20466,6 +20505,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        provider_messages = [*provider_messages, *hook_rows]
         prefill = self._pinned_prefill_for_session(session_id)
         return await self._stream_assistant_response(
             route=ConsoleRequestRoute.RETRY,
@@ -20585,25 +20625,35 @@ class ConsoleChatController:
             )
             return ConsoleSubmitResult(False, False, visible_copy)
 
-        self._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
-            session_id=session_id,
+        from .console_turn_resend import _replay_message
+
+        message = self.store.get_message(message_id)
+        return await _replay_message(
+            self,
+            message_id,
+            lambda resolution, context, rows: self._continue_from_message_body(
+                message_id, resolution, context, rows, resend=resend
+            ),
+            prompt=(
+                CONSOLE_CONTINUE_INSTRUCTION
+                if message.role is ConsoleMessageRole.ASSISTANT
+                else message.content
+            ),
         )
-        (
-            resolution,
-            turn_context,
-        ) = await self._capture_and_resolve_turn_execution_context(session_id)
-        if not getattr(resolution, "ready", False):
-            visible_copy = self._blocked_visible_copy(
-                getattr(resolution, "visible_copy", "")
+
+    async def _continue_from_message_body(
+        self, message_id, resolution, turn_context, hook_rows, *, resend=False
+    ):
+        session_id = turn_context.session_id
+        if (
+            resend
+            and (
+                thinking_block := self._thinking_persistence_preflight(
+                    session_id=session_id, resolution=resolution
+                )
             )
-            return self._block(session_id, visible_copy)
-        assert turn_context is not None
-        if resend and (
-            thinking_block := self._thinking_persistence_preflight(
-                session_id=session_id, resolution=resolution
-            )
-        ) is not None:
+            is not None
+        ):
             return thinking_block
         provider_messages = self._provider_messages_through_message(
             session_id,
@@ -20638,6 +20688,7 @@ class ConsoleChatController:
         provider_messages = await self._apply_world_info(
             provider_messages, session_id, turn_context
         )
+        provider_messages = [*provider_messages, *hook_rows]
         assistant = self.store.append_message(
             session_id,
             role=ConsoleMessageRole.ASSISTANT,
