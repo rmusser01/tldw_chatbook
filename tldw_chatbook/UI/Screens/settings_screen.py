@@ -91,6 +91,8 @@ from ...Chat.local_reasoning import (
 from ...Widgets.glyph_fallback import set_ascii_glyph_mode
 from ...Chat.console_provider_endpoints import (
     URL_BASED_PROVIDER_KEYS,
+    builtin_provider_endpoint,
+    effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     safe_endpoint_display,
@@ -106,7 +108,9 @@ from ...Chat.custom_endpoint_registry import (
     split_custom_endpoint_id,
     validate_entry,
 )
+from ...Chat.local_server_discovery import MODEL_IDS_MAX_COUNT
 from ...Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
     ProviderReadiness,
     get_provider_readiness,
     provider_config_key,
@@ -120,10 +124,14 @@ from ...Chat.provider_setup_persistence import (
     resolve_remembered_provider_model,
 )
 from ...Chat.provider_test_evidence import (
+    PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderDraftIdentity,
     ProviderProbeResult,
+    ProviderReadinessSnapshot,
     ProviderTestEvidence,
     ProviderTestEvidenceStore,
+    connection_credential_revision,
+    shared_connection_evidence,
 )
 from ...Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
@@ -136,8 +144,12 @@ from ...Chat.console_provider_support import (
 )
 from ...Chat.console_session_settings import (
     _custom_endpoint_declared_credential,
+    build_console_settings_readiness,
+    build_target_default_console_session_settings,
     normalize_console_model_value,
+    readiness_words,
     settings_provider_catalog,
+    verdict_readiness_words,
 )
 from ...ACP_Interop.runtime_session import ACPRuntimeSessionState
 from ...runtime_policy.server_event_scope import event_principal_id_from_active_context
@@ -186,6 +198,7 @@ from ...Chat.provider_catalog import (
 )
 from ...config import (
     ConfigMutationResult,
+    resolve_provider_api_key,
     DEFAULT_CONFIG_FROM_TOML,
     DEFAULT_CONSOLE_AGENT_MAX_MODEL_TURNS,
     DEFAULT_CONSOLE_AGENT_MAX_STEPS,
@@ -731,9 +744,10 @@ class _VllmDefaultPresentationSnapshot:
     draft: SettingsDraft | None
     provider_save_result: str
     provider_test_result: str
-    provider_test_evidence_store: ProviderTestEvidenceStore
+    # TASK-33005.1: no evidence store and no credential counter here. Test
+    # evidence is shared with Chat settings and the Console, so restoring a
+    # private copy would roll back what another surface settled.
     provider_draft_generation: int
-    provider_credential_revision: int
     model_discovery_status: str
     model_discovery_models: tuple[object, ...]
     model_discovery_selected_model_ids: frozenset[str]
@@ -1012,6 +1026,34 @@ class _SettingsWorkspaceLifecycleResult(Static):
 
 #: Cells the Test result's label column takes ("Generation" plus a gap).
 _PROVIDER_TEST_LABEL_CELLS = 12
+#: TASK-33005.4 (ADR-012 amendment 2026-09-26): what 't' checks, said once
+#: for the Test button's tooltip, its visible guidance and the F1 notes.
+PROVIDER_TEST_GUIDANCE = (
+    "Checks the settings, then lists models without generating: a cloud "
+    "provider's listing checks the API key, a local server's shows it "
+    "answers. Nothing is saved."
+)
+#: Providers whose 't' is the local probe (or a local check), never a key check.
+_LOCAL_TEST_PROVIDER_KEYS = URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+#: Cloud handlers the Console gateway leaves unpinned, which read only
+#: ``api_base_url`` from their own table (TASK-2117 open); proven against the
+#: real handlers in Tests/UI/test_settings_provider_key_check.py.
+_SEND_READS_ONLY_API_BASE_URL = frozenset(
+    {"openai", "cohere", "google", "groq", "openrouter", "deepseek"}
+)
+#: TASK-30014 AC#1's wording, for a key check that would prove nothing.
+_NO_KEY_CHECK_COPY = (
+    "No non-billable key check is available for {name} at this endpoint; "
+    "the configuration was checked locally."
+)
+
+
+def _listed_models_copy(model_ids: tuple[str, ...]) -> str:
+    """Count a listing's models; evidence keeps at most 100 of them."""
+    count = len(model_ids)
+    if count >= MODEL_IDS_MAX_COUNT:
+        return f"{MODEL_IDS_MAX_COUNT}+ models listed"
+    return f"{count} model{'' if count == 1 else 's'} listed"
 
 
 class _ProviderTestResult(Static):
@@ -3184,7 +3226,8 @@ class SettingsScreen(BaseAppScreen):
         self._snapshot_preferences_unavailable = False
         self._web_search_settings: WebSearchSettings | None = None
         self._provider_test_result = self._PROVIDER_TEST_NOT_RUN_COPY
-        self._provider_test_evidence_store = ProviderTestEvidenceStore()
+        # TASK-33005.1: draft-scoped, publishing to the app's shared owner.
+        self._provider_test_evidence_store = ProviderTestEvidenceStore(lambda: self.app)
         self._provider_draft_generation = 0
         # Bumped whenever the Test rows go stale; every live probe carries it.
         self._provider_test_draft_generation = 0
@@ -3194,7 +3237,6 @@ class SettingsScreen(BaseAppScreen):
         self._local_model_review_token = None
         self._local_model_review_busy = False
         self._local_model_review_prompt_open = False
-        self._provider_credential_revision = 0
         self._subscription_readiness_timer = None
         self._subscription_readiness_observation: tuple[str, str, str | None] | None = (
             None
@@ -4273,6 +4315,8 @@ class SettingsScreen(BaseAppScreen):
                 notes.append(f"{prefix}{value}")
         if not self._category_footer_shortcuts(category):
             notes.append("No shortcut keys are specific to this category.")
+        if category is SettingsCategoryId.PROVIDERS_MODELS:
+            notes.append(f"Test provider (t): {PROVIDER_TEST_GUIDANCE}")
         if category is SettingsCategoryId.THEME:
             notes.append("The keys below act on the highlighted theme while the theme list has focus.")
         return tuple(notes)
@@ -12270,40 +12314,28 @@ class SettingsScreen(BaseAppScreen):
         return "Provider readiness: needs provider and model"
 
     def _provider_overview_readiness_status(self) -> str:
-        """One-line send-path readiness verdict for the Overview status row.
+        """The Overview status row's readiness word, as the Console says it.
 
-        TASK-31805: the Overview 'Status:' must reflect what an actual send
-        would do, never the mere presence of a provider/model name. Two
-        blockers are surfaced, in the SAME order the send path enforces them
-        (``build_console_settings_readiness``): the credential check first
-        (``get_provider_readiness`` / ``resolve_provider_api_key``), then a
-        selected model. Without the credential check a fresh no-key profile
-        read as usable ("Status: OpenAI / gpt-4o") while a send failed with
-        "OpenAI API Key is required but not found."; without the model check a
-        provider whose credential resolves but with no model selected would
-        still read "Ready" while the identity shows "not selected" and the
-        send gateway blocks with "Select a model before sending."
+        TASK-31805: what a send would do, never the mere presence of a name.
+        TASK-33005: the Console's future-chat builder and words, test evidence
+        included, so it never reads "Ready" above a refused last test.
 
         Returns:
-            "Ready" when a send would proceed, "Not ready: <reason>" when a
-            credential or model blocker applies, or "needs provider and model"
-            when no provider is selected yet.
+            'Ready · not tested', 'Ready · reachable/verified HH:MM' or
+            'Not ready · <reason>'.
         """
         resolved = self._resolve_provider_model_for_settings()
-        provider = str(resolved.provider or "").strip()
-        if not provider or provider == "not selected":
-            return "needs provider and model"
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_readiness_app_config(),
-            background_credentials=True,
+        app_config = self._provider_readiness_app_config()
+        settings = build_target_default_console_session_settings(
+            app_config, str(resolved.provider or ""), resolved.model
         )
-        if not readiness.ready:
-            return f"Not ready: {readiness.reason}"
-        # Credential resolves (or is not required); a send still needs a model.
-        if normalize_console_model_value(resolved.model) is None:
-            return "Not ready: Select a model"
-        return "Ready"
+        readiness = build_console_settings_readiness(
+            # The model the Overview names, never a provider-table fallback.
+            replace(settings, model=normalize_console_model_value(resolved.model)),
+            app_config=app_config,
+            connection_evidence=shared_connection_evidence(lambda: self.app),
+        )
+        return readiness_words(readiness)
 
     def _provider_draft(self) -> SettingsDraft | None:
         return self._settings_drafts.get(SettingsCategoryId.PROVIDERS_MODELS)
@@ -13334,11 +13366,7 @@ class SettingsScreen(BaseAppScreen):
             draft=copy.deepcopy(self._provider_draft()),
             provider_save_result=self._provider_save_result,
             provider_test_result=self._provider_test_result,
-            provider_test_evidence_store=copy.copy(
-                self._provider_test_evidence_store
-            ),
             provider_draft_generation=self._provider_draft_generation,
-            provider_credential_revision=self._provider_credential_revision,
             model_discovery_status=self._model_discovery_status,
             model_discovery_models=tuple(self._model_discovery_models),
             model_discovery_selected_model_ids=frozenset(
@@ -13433,11 +13461,7 @@ class SettingsScreen(BaseAppScreen):
                 snapshot.draft
             )
         self._provider_test_result = snapshot.provider_test_result
-        self._provider_test_evidence_store = copy.copy(
-            snapshot.provider_test_evidence_store
-        )
         self._provider_draft_generation = snapshot.provider_draft_generation
-        self._provider_credential_revision = snapshot.provider_credential_revision
         self._model_discovery_status = snapshot.model_discovery_status
         self._model_discovery_models = tuple(snapshot.model_discovery_models)
         self._model_discovery_selected_model_ids = set(
@@ -13824,7 +13848,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_evidence_store(self) -> ProviderTestEvidenceStore:
         store = getattr(self, "_provider_test_evidence_store", None)
         if not isinstance(store, ProviderTestEvidenceStore):
-            store = ProviderTestEvidenceStore()
+            store = ProviderTestEvidenceStore(lambda: self.app)
             self._provider_test_evidence_store = store
         return store
 
@@ -13834,10 +13858,6 @@ class SettingsScreen(BaseAppScreen):
             self._provider_draft_generation = (
                 getattr(self, "_provider_draft_generation", 0) + 1
             )
-            if key in {"credential_env_var", "api_key"}:
-                self._provider_credential_revision = (
-                    getattr(self, "_provider_credential_revision", 0) + 1
-                )
             self._provider_evidence_store().invalidate()
             self._mark_provider_test_result_stale()
             return
@@ -13925,13 +13945,87 @@ class SettingsScreen(BaseAppScreen):
             return "stored"
         return "none"
 
-    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+    def _provider_draft_credential_revision(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> int:
+        """Return the draft's credential as a cross-surface revision.
+
+        TASK-33005.1: the digest of the key a send would use once this draft
+        is saved -- the readiness key for an untouched credential, exactly as
+        Chat settings and the Console compute it -- so one key is one
+        connection on every surface, and Save carries Test evidence only when
+        the saved key is the tested one.
+
+        Args:
+            provider: The draft provider.
+            credential_source: ``_provider_current_credential_source`` result.
+            values: Draft values holding ``api_key`` and ``credential_env_var``.
+
+        Returns:
+            The :func:`connection_credential_revision` of that key.
+        """
+        return connection_credential_revision(
+            self._provider_draft_credential(provider, credential_source, values)
+        )
+
+    def _provider_current_draft_values(self) -> Mapping[str, object]:
         try:
-            values = self._provider_form_values_from_widgets()
+            return self._provider_form_values_from_widgets()
         except (QueryError, ValueError, AttributeError):
-            values = self._provider_setting_values_mapping()
+            return self._provider_setting_values_mapping()
+
+    def _provider_current_draft_credential(self) -> str | None:
+        """Return the key the current draft sends: what 't' probes with.
+
+        TASK-33005.2 review I-1: the probe must carry the key the evidence
+        identity digests (ADR-012), or a keyed local server answers 401 and
+        the Console reads "key rejected" for a key that was never sent.
+        """
+        values = self._provider_current_draft_values()
+        provider = str(values.get("provider") or "").strip()
+        if not provider:
+            return None
+        return self._provider_draft_credential(
+            provider, self._provider_current_credential_source(provider), values
+        )
+
+    def _provider_draft_credential(
+        self,
+        provider: str,
+        credential_source: str,
+        values: Mapping[str, object],
+    ) -> str | None:
+        """Return the key a send would use once this draft is saved."""
+        draft = self._provider_draft()
+        dirty = draft.dirty_keys if draft is not None else set()
+        if credential_source == "none":
+            key = None
+        elif credential_source == "draft":
+            key = str(values.get("api_key") or "").strip()
+        elif not {"api_key", "credential_env_var"} & dirty:
+            key = get_provider_readiness(
+                provider, self._app_config_mapping(), background_credentials=True
+            ).api_key
+        elif credential_source == "environment":
+            env_var = str(values.get("credential_env_var") or "").strip()
+            key = os.environ.get(env_var) if env_var else None
+        else:
+            key = self._provider_api_key_value(provider)
+        return resolve_provider_api_key(key)
+
+    def _provider_current_draft_identity(self) -> ProviderDraftIdentity | None:
+        values = self._provider_current_draft_values()
         provider = str(values.get("provider") or "").strip()
         endpoint = str(values.get("endpoint") or "").strip()
+        if provider and not endpoint and not self._provider_endpoint_value(provider):
+            # TASK-33005.1: no endpoint saved or typed -> the built-in one a
+            # send uses, the connection Chat settings and the Console key.
+            endpoint = builtin_provider_endpoint(
+                provider_config_key(provider), self._provider_config(provider)
+            ) or ""
         if not provider or not endpoint:
             return None
         credential_source = self._provider_current_credential_source(provider)
@@ -13942,8 +14036,8 @@ class SettingsScreen(BaseAppScreen):
                     model=str(values.get("model") or "").strip(),
                     endpoint=endpoint,
                     credential_source=credential_source,
-                    credential_revision=getattr(
-                        self, "_provider_credential_revision", 0
+                    credential_revision=self._provider_draft_credential_revision(
+                        provider, credential_source, values
                     ),
                     draft_generation=getattr(self, "_provider_draft_generation", 0),
                     credential_value=(
@@ -15811,8 +15905,10 @@ class SettingsScreen(BaseAppScreen):
 
         TASK-33002.2 (spec §5): Config, Key, Endpoint, Model and Generation --
         never a " | " dump, a config-key spelling or a secret. The row that
-        holds the failure that matters leads; otherwise the rows keep that
-        order. Reads no widgets, config or environment.
+        holds the failure that matters leads them; otherwise the rows keep
+        that order. TASK-33005.3: above them all, the Readiness row gives the
+        one readiness word every other model surface shows for this
+        connection. Reads no widgets, config or environment.
 
         Args:
             readiness: ``ProviderReadiness`` of the draft-overlaid config.
@@ -15827,9 +15923,15 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             The rows as (label, text) pairs in display order.
         """
+        if isinstance(evidence, ProviderTestEvidence):
+            # Qodo #2958: a paid test proves only the model it sent.
+            evidence = evidence.for_model(model.strip() or None)
         listing = (
             "testing" if checking else getattr(evidence, "endpoint", "not_tested")
         )
+        model_ids = getattr(evidence, "model_ids", ())
+        # TASK-33005.4: a cloud provider's listing is its key check.
+        cloud = readiness.provider_key not in _LOCAL_TEST_PROVIDER_KEYS
         # A blocker owned by the Key or Endpoint row is stated there, with a
         # Settings-local next step; Config then keeps only the verdict, so no
         # fact repeats and readiness.recovery's config-table spellings never
@@ -15876,12 +15978,27 @@ class SettingsScreen(BaseAppScreen):
             )
         else:
             key = "missing — enter one in the API key field"
-        if source:
-            key += (
-                " · accepted by a generation test"
-                if getattr(evidence, "credential", "") == "authenticated"
-                else " · present, not verified"
-            )
+        credential = getattr(evidence, "credential", "")
+        if source and credential == "listing_accepted":
+            key += f" · key accepted ({_listed_models_copy(model_ids)})"
+        elif source and credential == "authenticated":
+            key += " · accepted by a generation test"
+        elif (
+            source
+            and listing == "reachable"
+            and readiness.provider_key in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+        ):
+            # ADR-020: this listing is public, so it proves nothing (AC#6).
+            key += " · models listed; key not checked"
+        elif (
+            source
+            and listing == "unreachable"
+            and getattr(evidence, "category", None) == "unauthorized"
+        ):
+            # Only a 401 rejects a key (Qodo #2958, owner ruling).
+            key += " · key rejected"
+        elif source:
+            key += " · present, not verified"
 
         shown = safe_endpoint_display(endpoint)
         if issue == "endpoint_missing":
@@ -15903,14 +16020,13 @@ class SettingsScreen(BaseAppScreen):
         }.get(listing, "")
         if listing == "unreachable":
             shown += " · " + SettingsScreen._provider_listing_failure_copy(
-                getattr(evidence, "category", None)
+                getattr(evidence, "category", None), cloud=cloud
             )
 
         if not model:
             model_text = "not set — choose a default model"
         else:
             model_text = f"{model} (draft)" if "model" in dirty else model
-            model_ids = getattr(evidence, "model_ids", ())
             if listing == "reachable" and model_ids:
                 model_text += (
                     " · listed by the server"
@@ -15946,7 +16062,28 @@ class SettingsScreen(BaseAppScreen):
             ("Model", model_text),
             ("Generation", generation_text),
         )
-        return tuple(sorted(rows, key=lambda row: row[0] != lead))
+        word = verdict_readiness_words(
+            ProviderReadinessSnapshot(
+                configuration=readiness.configuration_facet,
+                endpoint=listing,
+                model=(
+                    "missing"
+                    if not model
+                    else "confirmed"
+                    if listing == "reachable" and model in model_ids
+                    else "unconfirmed"
+                ),
+                category=(
+                    getattr(evidence, "category", None)
+                    if listing in {"unreachable", "model_listing_unavailable"}
+                    else None
+                ),
+                configuration_issue=readiness.configuration_issue,
+            ),
+            evidence,
+            subscription_status=readiness.subscription_status,
+        )
+        return (("Readiness", word), *sorted(rows, key=lambda row: row[0] != lead))
 
     @staticmethod
     def _provider_test_headline(result: str) -> str:
@@ -15963,16 +16100,49 @@ class SettingsScreen(BaseAppScreen):
         return headline
 
     @staticmethod
-    def _provider_listing_failure_copy(category: str | None) -> str:
-        """Name a failed model listing and the next step (TASK-33002.2 AC#2)."""
+    def _provider_listing_failure_copy(
+        category: str | None, *, cloud: bool = False
+    ) -> str:
+        """Name a failed model listing and the next step (TASK-33002.2 AC#2).
+
+        A cloud provider has no server to start (TASK-33005.4).
+        """
         next_step = {
             "unauthorized": "check the API key",
             "forbidden": "check the API key's permissions",
             "http_status": "check the URL",
             "invalid_payload": "check the URL",
-        }.get(category or "", "start the server or check the URL")
+        }.get(
+            category or "",
+            "check your network or the endpoint URL"
+            if cloud
+            else "start the server or check the URL",
+        )
         failure = SettingsScreen._provider_endpoint_category_copy(category)
         return f"model listing failed ({failure}) — {next_step}"
+
+    @staticmethod
+    def _provider_key_check_copy(display_name: str, evidence: object) -> str:
+        """Say what one cloud key-check listing proved (ADR-012 table)."""
+        listing = getattr(evidence, "endpoint", None)
+        category = getattr(evidence, "category", None)
+        if listing == "reachable":
+            listed = _listed_models_copy(getattr(evidence, "model_ids", ()))
+            if getattr(evidence, "credential", "") == "listing_accepted":
+                return f"key accepted ({listed}) · generation not tested"
+            return f"{listed}; key not checked · generation not tested"
+        if listing == "unreachable" and category == "unauthorized":
+            return (
+                f"{display_name} rejected the API key ("
+                f"{SettingsScreen._provider_endpoint_category_copy(category)}); "
+                "enter a valid key, then Test again"
+            )
+        if listing == "unreachable":
+            return SettingsScreen._provider_listing_failure_copy(category, cloud=True)
+        return (
+            "the model listing gave no usable list, so the key was not checked; "
+            "generation not tested"
+        )
 
     @staticmethod
     def _provider_endpoint_category_copy(category: str | None) -> str:
@@ -16047,6 +16217,7 @@ class SettingsScreen(BaseAppScreen):
         rows = tuple((label, registry_rows.get(label, text)) for label, text in rows)
         generation = dict(rows)["Generation"]
         listing = None if checking else getattr(evidence, "endpoint", None)
+        choose = "" if model else " Choose a default model."
         # task-185 / TASK-33002.2 AC#6: one line stating the outcome that the
         # first row states.
         if not readiness.ready:
@@ -16056,16 +16227,36 @@ class SettingsScreen(BaseAppScreen):
             )
             if not model:
                 summary += " Also set a default model."
-        elif not model:
+        elif (
+            entry is None
+            and readiness.provider_key not in _LOCAL_TEST_PROVIDER_KEYS
+            and listing in {"reachable", "unreachable", "model_listing_unavailable"}
+        ):
+            # TASK-33005.4 (ADR-012 amendment 2026-09-26): a key check's
+            # outcome, led by the readiness word (it carries the time).
             summary = (
-                f"Configuration check blocked: {display_name} is configured but "
-                "no default model is set."
+                f"{rows[0][1]} — "
+                f"{self._provider_key_check_copy(display_name, evidence)}.{choose}"
             )
         elif listing == "unreachable":
             failure = self._provider_listing_failure_copy(
                 getattr(evidence, "category", None)
             )
-            summary = f"{failure[:1].upper()}{failure[1:]}; generation {generation}."
+            summary = (
+                f"{failure[:1].upper()}{failure[1:]}; generation {generation}.{choose}"
+            )
+        elif not model and listing == "reachable":
+            # AC#11: the listing is how a first run finds a model to choose.
+            summary = (
+                "Model listing reached "
+                f"({_listed_models_copy(getattr(evidence, 'model_ids', ()))});"
+                " choose a default model."
+            )
+        elif not model:
+            summary = (
+                f"Configuration check blocked: {display_name} is configured but "
+                "no default model is set."
+            )
         elif listing == "model_listing_unavailable":
             summary = (
                 "Configuration valid; model listing unavailable; "
@@ -16086,6 +16277,25 @@ class SettingsScreen(BaseAppScreen):
         )
         return redact_secret_text(detail), redact_secret_text(summary), passed
 
+    def _adopt_shared_provider_test_evidence(self) -> str:
+        """Show the saved connection's last result from any surface on a visit.
+
+        TASK-33005.1 (AC#6): Settings is rebuilt on every visit, so its draft
+        store starts empty, while the app's shared owner still holds what
+        Chat settings, the Console or an earlier visit settled.
+
+        Returns:
+            The Test result text to render.
+        """
+        if self._provider_test_result == self._PROVIDER_TEST_NOT_RUN_COPY:
+            identity = self._provider_current_draft_identity()
+            if (
+                identity is not None
+                and self._provider_evidence_store().evidence_for(identity) is not None
+            ):
+                self._provider_test_result = self._provider_readiness_test_report()[0]
+        return self._provider_test_result
+
     def _run_provider_readiness_test(self) -> str:
         detail, _summary, _passed = self._provider_readiness_test_report()
         return detail
@@ -16094,8 +16304,8 @@ class SettingsScreen(BaseAppScreen):
         """Return the endpoint to live-probe after a passing readiness test.
 
         task-191: only URL-based/local providers with a concrete endpoint
-        (unsaved widget value first, then saved config) are probed; cloud and
-        key-based providers keep the local-only Test behavior.
+        (unsaved widget value first, then saved config) are probed here; a
+        cloud provider's 't' is the key-check listing (TASK-33005.4).
 
         Returns:
             The endpoint base URL, or ``""`` when no live probe applies.
@@ -16119,6 +16329,8 @@ class SettingsScreen(BaseAppScreen):
         identity: ProviderDraftIdentity | None = None,
         token: object | None = None,
         generation: int | None = None,
+        *,
+        key_check: bool = False,
     ) -> None:
         from .settings_endpoint_probe import (
             SettingsEndpointProbePurpose,
@@ -16126,11 +16338,18 @@ class SettingsScreen(BaseAppScreen):
         )
 
         try:
-            outcome = await probe_settings_endpoint(
-                base_url,
-                provider=provider,
-                purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
-            )
+            # Resolved here, not passed in: a worker argument lands in the
+            # worker's description, and this is the identity's key.
+            api_key = self._provider_current_draft_credential()
+            if key_check:
+                outcome = await self._provider_key_check(provider, base_url, api_key)
+            else:
+                outcome = await probe_settings_endpoint(
+                    base_url,
+                    provider=provider,
+                    purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
+                    **({"api_key": api_key} if api_key else {}),
+                )
         except asyncio.CancelledError:
             cancelled_current = bool(
                 token is not None
@@ -16140,8 +16359,24 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_test_result = "Configuration check cancelled; run again."
                 self._update_provider_test_result()
             raise
-        except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
-            outcome = self._provider_probe_connection_error_outcome()
+        except Exception as exc:  # noqa: BLE001 - probe failures must settle as bounded UI state.
+            logger.debug("Provider test probe failed: %s", type(exc).__name__)
+            # The discovery client turns every transport failure into a
+            # result, so a key check that raised (e.g. a runtime-policy
+            # denial in server mode) learned nothing -- never a send blocker.
+            outcome = (
+                "Key not checked: the model listing could not run for "
+                f"{self._provider_display_name(provider)}."
+                if key_check
+                else self._provider_probe_connection_error_outcome()
+            )
+        if isinstance(outcome, str):
+            # Nothing was sent, so nothing was learned (TASK-33005.4 AC#8).
+            if token is not None:
+                self._provider_evidence_store().cancel_probe(token)
+            if self._provider_probe_generation_current(generation):
+                self._show_provider_key_check_unavailable(outcome)
+            return
         try:
             self._apply_provider_endpoint_probe_outcome(
                 outcome,
@@ -16163,6 +16398,122 @@ class SettingsScreen(BaseAppScreen):
                 "Configuration check could not finish; run it again."
             )
             self._update_provider_test_result()
+
+    def _provider_key_check_applies(self, provider: str) -> bool:
+        """Whether 't' checks this provider's key by a listing (TASK-33005.4).
+
+        Cloud providers only: URL-based and keyless providers keep the local
+        probe or check, and a custom endpoint is a local connection.
+        """
+        provider_key = provider_config_key(provider)
+        return bool(provider_key) and not (
+            provider_key in _LOCAL_TEST_PROVIDER_KEYS
+            or self._provider_is_registry_id(provider)
+        )
+
+    def _provider_key_check_unavailable(
+        self, provider: str, readiness: ProviderReadiness
+    ) -> str | None:
+        """Why a configured cloud provider gets no key check, sending nothing.
+
+        Returns:
+            The sentence to show, or ``None`` when the listing may run.
+        """
+        name = self._provider_display_name(provider)
+        if readiness.subscription_status is not None:
+            return (
+                f"No non-billable key check is available for {name} with a "
+                "Claude subscription; the login was checked locally."
+            )
+        key = self._provider_current_draft_credential()
+        if readiness.requires_api_key and key is None:
+            # TASK-32806.1's rule: a placeholder or blank key is no key.
+            return (
+                f"Key not checked: {name}'s API key is missing or a placeholder — "
+                "enter one in the API key field."
+            )
+        provider_key = provider_config_key(provider)
+        draft_endpoint = str(
+            self._provider_current_draft_values().get("endpoint") or ""
+        ).strip()
+        if provider_key == "huggingface" or (
+            provider_key in _SEND_READS_ONLY_API_BASE_URL
+            and (
+                self._provider_endpoint_setting_key(provider) != "api_base_url"
+                # A blank draft sends to the default, while the listing
+                # would follow any saved alias (fix round 2).
+                or (
+                    not draft_endpoint
+                    and first_configured_endpoint(self._provider_config(provider))
+                )
+            )
+        ):
+            # ADR-012 "same destination" (AC#10): a send would not use the
+            # endpoint this listing resolves -- Hugging Face sends read the
+            # legacy [API] table, and these handlers no other spelling.
+            # TASK-2117 (the gateway pins api_base_url) retires this guard.
+            return _NO_KEY_CHECK_COPY.format(name=name)
+        return None
+
+    def _show_provider_key_check_unavailable(self, note: str) -> None:
+        """Show the readiness rows plus why no key check ran (AC#7/#8)."""
+        detail, _summary, _passed = self._provider_readiness_test_report()
+        self._provider_test_result = (
+            f"{detail}\n{'Key check':<{_PROVIDER_TEST_LABEL_CELLS}}{note}"
+        )
+        self._update_provider_test_result()
+        self.app.notify(note, severity="warning")
+
+    async def _provider_key_check(
+        self, provider: str, endpoint: str, api_key: str | None
+    ) -> ProviderProbeResult | str:
+        """List a cloud provider's models with the draft key (TASK-33005.4).
+
+        ADR-012 amendment 2026-09-26: one explicit, non-generating listing
+        through the shared discovery client, at the endpoint and with the
+        key a send would use for this draft. Nothing is cached or saved
+        (ADR-002/ADR-020).
+
+        Returns:
+            The listing's evidence, or why nothing was sent.
+        """
+        from .settings_endpoint_probe import key_check_probe_result
+
+        name = self._provider_display_name(provider)
+        scope = getattr(self.app_instance, "llm_provider_catalog_scope_service", None)
+        if scope is None:
+            return f"Key not checked: model listing is unavailable for {name} here."
+        section, _config = self._provider_config_entry(provider)
+        staged: dict[str, object] = {}
+        if endpoint:
+            staged[self._provider_endpoint_setting_key(provider)] = endpoint
+        if api_key:
+            staged["api_key"] = api_key
+        result = await scope.discover_models(
+            mode="local",
+            provider=provider_config_key(provider),
+            staged_settings={
+                "api_settings": {section or provider_config_key(provider): staged}
+            },
+            use_shared_cache=False,
+        )
+        probe = key_check_probe_result(
+            result,
+            key_sent=bool(api_key),
+            model=str(self._provider_current_draft_values().get("model") or "").strip(),
+        )
+        if probe is not None:
+            return probe
+        kind = getattr(getattr(result, "error", None), "kind", "")
+        if kind in {"unsupported_endpoint", "malformed_endpoint"}:
+            return _NO_KEY_CHECK_COPY.format(name=name)
+        no_list = getattr(result, "provider_list_key", "") is None
+        if kind == "missing_endpoint" and no_list:
+            return (
+                f"Key not checked: no model list is configured for {name} in "
+                "[providers]."
+            )
+        return f"Key not checked: {name}'s settings could not be resolved."
 
     @staticmethod
     def _provider_probe_connection_error_outcome() -> "SettingsEndpointProbeOutcome":
@@ -16201,9 +16552,12 @@ class SettingsScreen(BaseAppScreen):
         """
         from .settings_endpoint_probe import SettingsEndpointProbeOutcome
 
-        if type(outcome) is not SettingsEndpointProbeOutcome:
-            outcome = self._provider_probe_connection_error_outcome()
-        probe_result = self._provider_probe_result_from_outcome(outcome)
+        if type(outcome) is ProviderProbeResult:  # A key check's (TASK-33005.4).
+            probe_result = outcome
+        else:
+            if type(outcome) is not SettingsEndpointProbeOutcome:
+                outcome = self._provider_probe_connection_error_outcome()
+            probe_result = self._provider_probe_result_from_outcome(outcome)
         if (
             identity is not None
             and token is not None
@@ -17184,7 +17538,7 @@ class SettingsScreen(BaseAppScreen):
                     f"{self._provider_overview_readiness_status()}"
                 ),
                 "last_connection_test": self._provider_test_headline(
-                    self._provider_test_result
+                    self._adopt_shared_provider_test_evidence()
                 ),
                 "storage_privacy": (
                     f"Config path: {self._config_path_overview_value()}; "
@@ -17605,22 +17959,18 @@ class SettingsScreen(BaseAppScreen):
             yield Button(
                 "Test Provider",
                 id="settings-test-provider",
-                tooltip=(
-                    "Run a local readiness check for this provider configuration; "
-                    "URL-based local providers also get a short live endpoint probe."
-                ),
+                tooltip=PROVIDER_TEST_GUIDANCE,
             )
             # TASK-386 (AC#2): the readiness / live-probe explanation must also
             # exist as visible static text -- a hover tooltip is invisible to
             # keyboard users and self-occludes the result line below it.
             yield Static(
-                "Runs a local readiness check; URL-based local providers also get "
-                "a short live endpoint probe.",
+                PROVIDER_TEST_GUIDANCE,
                 id="settings-test-provider-guidance",
                 classes="settings-status-row",
             )
             yield _ProviderTestResult(
-                self._provider_test_result,
+                self._adopt_shared_provider_test_evidence(),
                 id="settings-provider-test-result",
                 markup=False,
             )
@@ -31657,8 +32007,13 @@ class SettingsScreen(BaseAppScreen):
                             model=model,
                             endpoint=endpoint,
                             credential_source=credential_source,
-                            credential_revision=getattr(
-                                self, "_provider_credential_revision", 0
+                            credential_revision=self._provider_draft_credential_revision(
+                                provider,
+                                credential_source,
+                                {
+                                    "api_key": api_key,
+                                    "credential_env_var": credential_env_var,
+                                },
                             ),
                             draft_generation=getattr(
                                 self, "_provider_draft_generation", 0
@@ -31758,9 +32113,22 @@ class SettingsScreen(BaseAppScreen):
                 and save_lease is not None
                 and tested_identity is not None
             ):
+                saved_identity = setup_mutation.semantic_identity
+                if saved_identity is None and not endpoint:
+                    # TASK-33005.4 (AC#12): no endpoint is saved, so the send
+                    # uses the built-in one the tested identity already keys
+                    # (TASK-33005.1); a typed key is now the stored key.
+                    saved_identity = replace(
+                        tested_identity,
+                        credential_source=(
+                            "stored"
+                            if tested_identity.credential_source == "draft"
+                            else tested_identity.credential_source
+                        ),
+                    )
                 evidence_preserved = evidence_store.rebase_after_save(
                     tested_identity,
-                    setup_mutation.semantic_identity,
+                    saved_identity,
                     mutation_result,
                     lease=save_lease,
                 )
@@ -32388,9 +32756,37 @@ class SettingsScreen(BaseAppScreen):
         if self._active_category_id() is SettingsCategoryId.PROVIDERS_MODELS:
             live_probe_url = self._provider_live_probe_base_url()
             detail, summary, passed = self._provider_readiness_test_report()
-            if passed and live_probe_url:
-                # task-191: readiness passed for a URL-based provider; run a
-                # short live probe in a worker and fold it into the rows.
+            provider = self._provider_widget_value()
+            readiness = get_provider_readiness(
+                provider,
+                self._provider_test_staged_config(provider),
+                background_credentials=True,
+            )
+            key_check = not live_probe_url and self._provider_key_check_applies(
+                provider
+            )
+            unavailable = (
+                self._provider_key_check_unavailable(provider, readiness)
+                if key_check and readiness.ready
+                else None
+            )
+            if unavailable is not None:
+                self._show_provider_key_check_unavailable(unavailable)
+                return
+            if key_check:
+                # TASK-33005.4 (ADR-012 amendment 2026-09-26): the endpoint a
+                # send would use for this draft ("" lets the provider's own
+                # resolver name it, e.g. an engine preset's default).
+                live_probe_url = effective_provider_endpoint(
+                    provider_config_key(provider),
+                    str(self._provider_current_draft_values().get("endpoint") or "")
+                    .strip(),
+                    self._provider_config(provider),
+                ) or ""
+            # task-191 / TASK-33005.4 (AC#11): a configured provider is
+            # listed even before a model is chosen -- that is how a first
+            # run finds one.
+            if readiness.ready and (live_probe_url or key_check):
                 identity = self._provider_current_draft_identity()
                 token = None
                 if identity is not None:
@@ -32408,6 +32804,7 @@ class SettingsScreen(BaseAppScreen):
                     identity,
                     token,
                     getattr(self, "_provider_test_draft_generation", 0),
+                    key_check=key_check,
                 )
                 return
             self._provider_test_result = detail

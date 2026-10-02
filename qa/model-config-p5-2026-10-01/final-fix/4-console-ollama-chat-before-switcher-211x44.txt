@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Say hi in three words.                                                                                                                             │
+                         Context ◂  │   Say hi in three wo…  ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Conversations                 ▾    │                                                                                                                                                                   │
+   New conversation                 │                                                                                                                                                                   │
+        Archive this chat           │                                                                                                                                                                   │
+          Archived chats            │                                                                                                                                                                   │
+        Search all chats…           │                                                                                                                                                                   │
+   Say hi in three words.           │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                                   │
+  ▊  Filter visible     ▎           │                                                                                                                                                                   │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │◂ Inspect
+                                    │                                                                                                                                                                   │
+  Chats                        ▾    │                                                                                                                                                                   │
+   Say hi in three words.     💬    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Character · No chats          ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ Model                         ▸    │   User                                                                                                                                                            │
+ ─────────────────────────────────  │   Say hi in three words.                                                                                                                                          │
+ Agent                         ▸    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ─────────────────────────────────  │  ▊ Assistant                                                                                                                                                      │
+ Details                       ▸    │  ▊                                                                                                                                                                │
+                                    │  ▊  Hello!                                                                                                                                                        │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ▊                                                                                                                                                                │
+                                    │  ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Ollama     Model: qwen2.5:0.5b     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending     Context 0
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

@@ -182,7 +182,10 @@ page links to each backend's setup guide and displays these restrictions.
 
 Overview leads with configuration readiness, the last connection test (its
 leading row, then its Endpoint row, so it says whether the endpoint was
-reached), storage/privacy, and sync status. **Open Providers & Models**, **Open Storage**,
+reached), storage/privacy, and sync status. Its "Status:" is the same
+readiness word the Console shows for the default provider and model, test
+results included: after a refused test it reads "Not ready · refused :9199",
+never "Ready". **Open Providers & Models**, **Open Storage**,
 and **Open Privacy & Security** take you to the corresponding settings. Use
 **Tab** to reach each action; the detail pane scrolls to the focused control,
 and paired actions stack at compact widths.
@@ -241,27 +244,65 @@ accepts fractional hours; **0** refreshes on every launch. Empty, negative, and
 invalid values explain how to recover without replacing the saved interval.
 Changing these controls does not record startup consent.
 
-**Test Provider** checks your current draft before saving. URL-based local
-providers also get a short endpoint or model-listing probe. The result is five
-labelled rows, one fact each: **Config** (configured, or not ready),
-**Key** (saved in config, from env var *NAME*, or missing; never the key
-itself), **Endpoint** (the address without any user name, query or fragment,
-plus the model-listing outcome), **Model** and **Generation**. The row with
-the problem comes first and says what to do next: a missing key leads with
+**Test Provider** (**t**) checks your current draft before saving, then lists
+the provider's models. Nothing is generated and nothing is saved. A URL-based
+local provider gets a short model-listing probe, sent with the draft's API key
+when it has one (a server started with a key is tested with it, never
+without), and it is listed even before you choose a model, since the list is
+how you find one. As for a cloud provider below, only a 401 reads "key
+rejected"; a 403 means the key may not list models and blocks nothing. A cloud provider gets one model listing at the endpoint a
+send would use, with the key a send would use (saved, from the env var, or
+typed and not yet saved). That listing is the key check: "Ready · verified
+14:01" with "key accepted (*N* models listed) · generation not tested", or
+"Not ready · key rejected" after a 401, or its own reason for a timeout
+("timed out") or a failed connection. Any other answer checked nothing: a 403
+(this key may not list models, which says nothing about chatting), a 404, a
+429, a server error, or a list with no model in it. It reads "model listing
+unavailable", stays "Ready · not tested" and never blocks sending. Only **t** sends it: opening Settings,
+typing, saving, the Console and the model switcher never contact a cloud
+provider, and the paid one-token test stays a separate, confirmed action. Two
+cases are not key checks. OpenRouter's model list is public, so it reads
+"models listed; key not checked" and stays "Ready · not tested". A provider
+with no non-billable listing (for example Google) says "No non-billable key
+check is available" and sends nothing, as does a provider with no model list
+in `[providers]`. The same holds when a send would not go where the listing
+would: Hugging Face (its sends still take the endpoint from the legacy `[API]`
+section) and, for OpenAI, Cohere, Google, Groq, OpenRouter and DeepSeek
+(their sends read only `api_base_url`), an endpoint saved under another key or
+behind a blank `api_base_url`. Moonshot (Kimi) and Z.AI sends use the first
+endpoint key that is set, and so does their listing. A missing, placeholder
+or blank key is reported as missing
+and nothing is sent. If the listing cannot run at all (for example while
+Chatbook uses a server), the result says "Key not checked" and records
+nothing. The result leads with a **Readiness** row in the same
+words the Console uses for that connection ("Ready · not tested",
+"Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
+\<reason\>", see [Console](console.md); with no model chosen it reads "Not
+ready · no model" even when the listing failed), then five labelled rows, one fact
+each: **Config** (configured, or not ready), **Key** (saved in config, from
+env var *NAME*, or missing; never the key itself), **Endpoint** (the address
+without any user name, query or fragment, plus the model-listing outcome),
+**Model** and **Generation**. Below the Readiness row, the row with the
+problem comes first and says what to do next: a missing key leads with
 "Key missing — enter one in the API key field or set *NAME*", a Databricks
 profile without a workspace URL leads with the Endpoint row, and an
 unreachable server leads with, for example, "model listing failed
 (connection refused) — start the server or check the URL". The toast says the
 same in one line. While another setting blocks the provider, the Key row says
-"not checked until the provider is ready" rather than guessing. For cloud providers
-the check stays local: the Key row says the key is present but not verified,
-and Generation says not tested. With the Endpoint field empty, the Endpoint row
+"not checked until the provider is ready" rather than guessing. Until a cloud
+key is checked, the Key row says the key is present but not verified, and
+Generation says not tested; after a 401 it says "key rejected", as the
+Readiness row does. With the Endpoint field empty, the Endpoint row
 names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
 each fact appears once. If the tested values change, run **Test Provider**
-again.
+again. The last result for the saved connection is kept for the rest of the
+session, whichever surface ran it: leave Settings and return, and the rows show
+it, including a **Test connection & list models** run in Chat settings of the
+same provider, endpoint and key. Nothing is saved; after a restart every
+connection reads as not tested.
 
 Model and Endpoint edits stay as a draft when you visit another destination and
 return to Settings. Use **Tab** to move between fields. While typing, press
@@ -734,19 +775,19 @@ another provider enables those controls again.
 
 If the entry's `api_key_env` is not a valid environment variable name (for
 example `gpu-key`, hand-edited into `config.toml`), the entry stays listed
-but is not ready: Overview reads **Not ready: Invalid provider settings** and
+but is not ready: Overview reads **Not ready · check settings** and
 the credential line says the endpoint's credential env var name is invalid.
 Fix it with **Edit ▸ Env var** (letters, digits, and underscores, not
 starting with a digit). A stored key on the entry still works meanwhile.
 
 If the entry the default names no longer exists (for example, it was removed
-from `config.toml` by hand), Overview reads **Not ready: Endpoint not found**
+from `config.toml` by hand), Overview reads **Not ready · unsupported**
 and Providers & Models reads **Not ready · endpoint not found; choose another
 provider**. Pick another provider, or recreate the endpoint.
 
 A hand-edited default that is not a provider id at all — `custom-ep:` with
 no slug, `foo:bar`, or an uppercase `CUSTOM-EP:<slug>` (endpoint ids are
-lowercase) — reads **Not ready: Unknown provider**. Pick a provider in
+lowercase) — reads **Not ready · unsupported**. Pick a provider in
 Providers & Models.
 
 The two built-in Custom OpenAI-compatible slots (`custom`, `custom_2`) are
@@ -1424,9 +1465,11 @@ a note on what would have to exist before Settings could own a default.
 1. **Point the app at a provider and check it works.** Open **Providers &
    Models**, pick your **Provider**, type or discover a **Model**, then fill in
    **Endpoint** for a local server or **API key** (or **Env var**) for a cloud
-   one. Press **Test Provider** *before* saving — it tests your draft. When the
-   result ends "status=ready", press **s**, then run **Test Provider** once
-   more: saving clears the previous verdict on purpose.
+   one. Press **Test Provider** *before* saving — it tests your draft. For a
+   cloud provider it checks the key with one model listing ("Ready · verified
+   *HH:MM*"); for a local server it lists its models, so you can pick one even
+   before a model is set. Then press **s**: a result for exactly the saved
+   values carries over, so the Console shows the same word.
 2. **Change what the app sounds like.** Open **Speech & TTS**, pick a
    **Default TTS Provider**, set model and voice policy (or an exact ID),
    choose **Output format** and **Speed**, then press **s** or **Save**.
@@ -1480,7 +1523,7 @@ hints as "Esc, s" while a field has focus. Only then do the letters work.
 |---|---|
 | s | Save this category — only on the seven **Draft — save with s** categories |
 | r | Revert this category — same seven. On Theme, Splash Screen, Internal Prompts, and Workspaces it answers "Use the editor's own buttons for this category" |
-| t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one |
+| t | Run this category's check. The footer names the real verb: **test provider**, **validate config**, **check storage**, **check privacy**, **preview appearance**, **check index**. Only Providers & Models, Diagnostics, Storage, Privacy & Security, Appearance, and RAG have one. On Providers & Models it lists models without generating: a cloud provider's listing checks the API key, a local server's shows it answers |
 | / | Focus the category filter from anywhere on the screen. Pressing it again while the filter has focus re-selects the text rather than typing a slash |
 | Esc | Release a focused field; or, when the filter has text, clear the filter |
 | Tab | From the nav bar, drop focus into the rail at **Overview**; then walk on into the detail pane |

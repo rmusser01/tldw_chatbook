@@ -2395,14 +2395,18 @@ class ConsoleLeftRail(Vertical):
                     ("streaming", "Streaming", summary_state.streaming),
                 )
             )
+            # TASK-33005.3: the readiness word, always (red only when blocked).
             readiness = (summary_state.readiness_label or "").strip()
             recovery = Static(
-                readiness or "",
+                readiness,
                 id="console-model-section-recovery",
-                classes="console-model-section-recovery",
                 markup=False,
             )
-            recovery.styles.display = "none"
+            recovery.styles.display = "block" if readiness else "none"
+            recovery.set_class(
+                getattr(summary_state.readiness, "operability", "") == "not_ready",
+                "conversation-attention-error",
+            )
             generation_recovery = Vertical(
                 Static(
                     "Not saved: generation settings",

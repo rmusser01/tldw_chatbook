@@ -1180,3 +1180,71 @@ async def test_discovery_handles_a_real_openai_sized_catalog():
     assert result.status == "success"
     assert result.error is None
     assert len(result.models) == observed_openai_catalog_size
+
+
+def _refused(request: httpx.Request) -> httpx.Response:
+    import errno
+
+    raise httpx.ConnectError("secret refused URL") from OSError(
+        errno.ECONNREFUSED, "Connection refused"
+    )
+
+
+def _timed_out(request: httpx.Request) -> httpx.Response:
+    raise httpx.ReadTimeout("secret slow URL", request=request)
+
+
+def _unreachable(request: httpx.Request) -> httpx.Response:
+    raise httpx.ConnectError("secret dns URL", request=request)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("handler", "status", "kind", "category"),
+    [
+        (lambda request: httpx.Response(401), "error", "missing_credentials", "unauthorized"),
+        (lambda request: httpx.Response(403), "error", "missing_credentials", "forbidden"),
+        (lambda request: httpx.Response(404), "unsupported", "unsupported_endpoint", "http_status"),
+        (lambda request: httpx.Response(503), "error", "request_failed", "http_status"),
+        (_timed_out, "error", "request_failed", "timeout"),
+        (_refused, "error", "request_failed", "connection_refused"),
+        (_unreachable, "error", "request_failed", "connection_error"),
+    ],
+    ids=["401", "403", "404", "503", "timeout", "refused", "connect-error"],
+)
+async def test_discovery_error_names_its_bounded_failure_category(
+    handler, status, kind, category
+):
+    """TASK-33005.4 (AC#3/#4): Settings 't' reports a timeout, a refused
+    connection and a rejected key each in its own words, so the discovery
+    error carries the probe's bounded category beside its kind."""
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await discover_openai_compatible_models(
+            provider="openai",
+            provider_list_key="OpenAI",
+            endpoint="https://api.example.test/v1",
+            api_key="sk-secret-test-key",
+            client=client,
+        )
+
+    assert (result.status, result.error.kind, result.error.category) == (
+        status,
+        kind,
+        category,
+    )
+    assert "secret" not in repr(result)
+
+
+@pytest.mark.asyncio
+async def test_discovery_refused_before_any_request_has_no_failure_category():
+    """A shape the client will not request reports no transport category: a
+    caller can tell "nothing was sent" from "the server said 404"."""
+    result = await discover_openai_compatible_models(
+        provider="anthropic",
+        provider_list_key="Anthropic",
+        endpoint="https://api.anthropic.com",
+        api_key="sk-secret-test-key",
+    )
+
+    assert result.status == "unsupported"
+    assert result.error.category is None

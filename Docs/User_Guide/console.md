@@ -35,8 +35,10 @@ This page is the orientation tour; the details live on the child pages below:
 Top to bottom:
 
 - **Header** — the title "Console", the subtitle "— Chat, source handoffs,
-  live runs, and control actions.", and a status badge that reads **Ready**,
-  **Running**, or **Blocked** depending on the active session.
+  live runs, and control actions.", and a status badge with the active
+  chat's readiness word (see **Readiness words** below), or **Running** while
+  a reply is generating. Below 84 columns, where the word does not fit, the
+  badge reads **Ready** or **Blocked**.
 - **Control bar** — one row of buttons: **New tab**, **Settings**,
   **Context rail**, **Search Library**, **Help**. (**Save as Chatbook**
   lives in the composer's **Menu** button, left of the draft.)
@@ -269,6 +271,43 @@ provider**, then **Choose model**) and opens the Console Settings modal.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
+**Readiness words.** Every model surface — the header's status badge, the
+Model section's status line, this card's current step, the
+Switch model rows, Chat settings and the Settings test result — says the
+same one of four things for the same connection:
+
+| Word | Means |
+|---|---|
+| **Ready · not tested** | Nothing blocks a send, and nothing has been checked this session. |
+| **Ready · reachable 14:01** | A local, URL or custom endpoint answered its model listing at that local time. |
+| **Ready · verified 14:01** | The provider accepted a cloud key in an authenticated model listing, or a paid generation test of this model succeeded, at that time. A test of one model never verifies another, and a listing alone never means generation was tested. |
+| **Not ready · \<reason\>** | A setup blocker or a known failure, such as "no key", "key rejected", "refused :9099", "timed out" or "no model". A setup blocker is named before a failed test: with no model chosen, a refused server still reads "no model". |
+
+The words carry the state; colour only repeats it (the Model section line
+turns red when Not ready). A provider whose model list is public, such as
+OpenRouter, stays "Ready · not tested" after its list loads, because the list
+proves nothing about your key.
+
+A known connection failure blocks sending too. When a connection test of
+this chat's server — **Test connection & list models** in Chat settings, or
+**Test Provider** in Settings — was refused or timed out, the Console reads,
+for example, "Not ready · refused :9099" (the header badge, the Model
+section, the Conversation settings rows and this card's "Reconnect the
+provider server" step), and the composer reads "Send blocked — retry the
+connection to continue". **Retry connection** tests that same server again
+in place; it opens no settings. If the server now answers, the chat is Ready and Send
+unlocks; if not, a "still unreachable" notice says so. A cloud provider's
+key check (Settings **t**) that timed out or could not connect is the
+exception: the Console never contacts a cloud provider itself, so **Retry
+connection** opens **Settings ▸ Providers & Models** at that provider and
+says "Press t to test \<provider\> again". Every test sends the
+API key a message would use, so a local server started with a key (vLLM's
+`--api-key`, for example) is tested with it, and "key rejected" means that
+key was refused (a 401). A 403 from any model listing, local or cloud, means
+only that the key may not list models: it reads "Ready · not tested" and
+never blocks sending. Test results last for this session only, and a test of a
+different endpoint or key never changes this chat's readiness.
+
 A second action, **Write a note in Library**, stays available beside it for
 as long as the card is showing — it needs no provider, and opens Library's
 New note view directly. A local-first user who came for notes is not stuck
@@ -342,7 +381,7 @@ fails without playing a truncated file.
 | **Sessions** section | Names the active chat. Hovering it shows the durable conversation id. |
 | **Workspaces** section | Shows every named workspace with its associated conversations in a native Tree. Its compact strip keeps **Switch**, **New**, and **RAG** together; **Switch** is also the route to Default. Starred conversations sort first within their workspace. |
 | **Conversations** section | Independently searches, starts, and resumes only Default and unassigned conversations; favourited entries sort first and are marked beside the title. Each row carries an **\*** that opens its action menu — Favourite, Change status, Archive, Rename, and More ▸ Delete. See [Context & RAG](console/context-and-rag.md#workspaces-and-conversation-ownership). |
-| **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) / system-prompt lines plus **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |
+| **Model** section | Read-only Temperature / Max tokens / Streaming (On or Off) lines, the chat's readiness word (red only when Not ready), the system-prompt line and **Change  Alt+M**, which opens Switch model. The rows follow the chat through Apply, a new chat and switching chats. The active provider and model are read from the status bar, which shows them at every width. |
 | **Agent** section | Live run status and the full run log — see [Agent runs & tools](console/agent-runs-and-tools.md). |
 | **Details** section | Storage, sync, file tools, server, and handoff status for the workspace. |
 | **Character** section | Appears only when the character-avatar preference is on. Its complete portrait is centered and keeps its aspect ratio; it only scales down to fit and is never stretched, cropped, or enlarged merely to fill the 35-row body. |
@@ -515,15 +554,39 @@ the palette's "Console: Switch model…" and `/model` open it too. `/model
 - **NEEDS SETUP**, providers with a blocker such as a missing key. **Enter**
   on one never applies it: it closes the list and opens **Settings ▸
   Providers & Models** at that provider, with its key or endpoint field in
-  focus. Keys are only ever entered in Settings.
+  focus. Keys are only ever entered in Settings. A local server that refused
+  or timed out is listed first and reads "start it; rechecked on open": the
+  fix is outside the app, so **Enter** on it only repeats that hint (the
+  group's heading says "Enter opens the fix or explains it"). A cloud
+  provider whose key check timed out reads "Enter: open Settings" instead,
+  since only **t** there checks it again.
+- **NOT RUNNING**, one line naming the local servers you never set up that
+  refused: a provider still at its shipped settings (such as TabbyAPI on
+  `localhost:8080`) that is not this chat's, the default's or a recent
+  chat's provider. They are checked like any other local server, so one
+  that is running reads "Ready · reachable" under READY PROVIDERS instead.
+  Change a provider's settings or use it, and its refusal is a NEEDS SETUP
+  row again.
 
 Each row shows the model, the provider's name, its context size (`~` marks
 an estimate), readiness and last use. Readiness comes from your
-configuration only, so it reads "Ready · not tested" or "Not ready · no
-key" (or another reason); the list never claims a provider was verified or
-reachable. Typing filters every provider's saved and cached models in
-memory and highlights the best match; it never starts a model listing or a
-network call. A model id that no list has appears under **TYPED MODEL ID**
+configuration plus any connection test of that provider's connection this
+session, in the same words as the rest of the Console: "Ready · not tested",
+"Ready · reachable 14:01" once a local server's model listing answered,
+"Ready · verified 14:01" once a cloud key was accepted, or "Not ready · no
+key" (or another reason, such as "refused :9099" after a refused test).
+Opening the list also checks, in the background, each local server it lists
+that needs no key and runs on this computer or a private-network address
+(llama.cpp, Ollama, vLLM and the like): at most three at a time, each with
+the same short timeout as **Test connection**, and a result under 10 seconds
+old is reused. The list opens and takes keys at once; the words change as
+the answers come in, and a stopped server's "refused" reaches this chat's
+status at once, under the open list. A server on a carrier-grade NAT address
+(100.64.0.0/10, as some VPNs use) counts as public and is not checked. Cloud providers, a server on a public address or host name, and
+any endpoint that would send a key are never contacted automatically.
+Typing filters every provider's saved and cached models in memory and
+highlights the best match; it never starts a model listing or a network
+call. A model id that no list has appears under **TYPED MODEL ID**
 for this chat's provider; type a provider's name first ("Ollama qwen3:32b")
 to pair the id with that provider. A provider whose list is still loading,
 empty or unavailable says so in its own row. Legacy alias providers (such

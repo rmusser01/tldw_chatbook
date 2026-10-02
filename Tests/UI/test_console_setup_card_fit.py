@@ -56,6 +56,22 @@ def _card_state_with_step_three() -> ConsoleSetupCardState:
     )
 
 
+def test_the_active_steps_readiness_word_gets_its_own_line():
+    """TASK-33005.3: a wrap must not split "Not ready · refused :9199" (live at
+    211x44 the port wrapped alone onto the next row), so the active step's
+    word sits on its own line under the label, which the card fits whole."""
+    step = ConsoleSetupStep(
+        state="active",
+        label="Reconnect the provider server",
+        detail="Not ready · refused :9199",
+    )
+    line = ConsoleSetupModal._step_text(1, step)
+
+    assert line == "1. ● Reconnect the provider server\n     Not ready · refused :9199"
+    # The card is $ds-size-66 wide: 60 content cells after border and padding.
+    assert max(cell_len(row) for row in line.split("\n")) <= 60
+
+
 def test_setup_card_is_wide_enough_for_the_step_three_line():
     """AC#1: the full step-3 sentence fits inside the card's content width."""
     step_three = ConsoleSetupStep(

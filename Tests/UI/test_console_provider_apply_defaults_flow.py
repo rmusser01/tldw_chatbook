@@ -1439,7 +1439,8 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
         assert summary.provider_row == "Provider: vLLM"
         assert summary.model_row == "Model: chatbook-vllm"
         assert "127.0.0.1:8000" in summary.endpoint_row
-        assert summary.readiness_label == ""
+        # TASK-33005.3 (rewritten on purpose): the typed spec §5 word (was "").
+        assert summary.readiness_label == "Not ready · endpoint unsaved"
         assert summary.readiness.blocker == "endpoint_not_saved"
         assert summary.readiness.recovery_action == "save_endpoint"
         assert not app.pending_handoffs.has_pending(HandoffChannel.VLLM_CONSOLE)
@@ -2392,7 +2393,10 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
     """Late compensation restores authoritative draft and every staged widget."""
 
     from tldw_chatbook.config import get_cli_config_path
-    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderProbeResult,
+        provider_connection_evidence,
+    )
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmDefaultIntent
 
@@ -2436,9 +2440,7 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 
         draft_before = copy.deepcopy(screen._provider_draft())
         assert draft_before is not None and draft_before.is_dirty
-        test_evidence_before = evidence_store.latest_evidence()
         draft_generation_before = screen._provider_draft_generation
-        credential_revision_before = screen._provider_credential_revision
         discovery_before = (
             screen._model_discovery_status,
             screen._model_discovery_models,
@@ -2540,11 +2542,15 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
 
         assert screen._provider_draft() == draft_before
         assert presentation() == presentation_before
-        assert screen._provider_test_evidence_store.latest_evidence() == (
-            test_evidence_before
-        )
+        # TASK-33005.1 (ruling 3), rewritten on purpose: the restore used to
+        # swap in a private copy of the evidence store. Evidence is now shared
+        # with Chat settings and the Console, so the live store stays and the
+        # settled result stays in the app's owner -- a restore cannot roll back
+        # what another surface settled meanwhile.
+        assert screen._provider_test_evidence_store is evidence_store
+        shared = provider_connection_evidence(screen.app).evidence_for(identity)
+        assert shared is not None and shared.endpoint == "reachable"
         assert screen._provider_draft_generation == draft_generation_before
-        assert screen._provider_credential_revision == credential_revision_before
         assert (
             screen._model_discovery_status,
             screen._model_discovery_models,

@@ -342,6 +342,8 @@ def build_console_disabled_reason(
             or "missing provider" in setup_reason_lower
         ):
             return "Send blocked — choose a provider to continue"
+        if "retry connection" in setup_reason_lower:  # TASK-33005.2
+            return "Send blocked — retry the connection to continue"
         return "Send blocked — finish provider setup to continue"
     if queue_blocked:
         # TASK-33620.4: any other queue refusal names itself -- it never

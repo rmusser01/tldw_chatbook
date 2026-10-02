@@ -112,7 +112,9 @@ async def test_settings_opens_on_a_dangling_registry_default_honestly(request):
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         overview = _text(screen, "#settings-overview-configuration")
-        assert "Not ready: Endpoint not found" in overview, overview
+        # TASK-33005 capture checkpoint (rewritten on purpose): the Overview
+        # status speaks the Console's word; the pane below names the cause.
+        assert "Status: Not ready · unsupported" in overview, overview
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
@@ -235,7 +237,8 @@ def test_settings_test_findings_render_a_markup_like_entry_name(api_key_env):
 def test_settings_test_rows_state_a_dangling_registry_endpoint():
     rows, _summary = _test_rows("custom-ep:gone", _config())
     assert rows["Endpoint"].startswith("not found"), rows
-    assert list(rows)[0] == "Endpoint", rows
+    # TASK-33005.3: the Readiness word leads, then the blocking fact.
+    assert list(rows)[:2] == ["Readiness", "Endpoint"], rows
 
 
 @pytest.mark.parametrize("spelling", ["custom-ep:gpu-box", "custom_ep:gpu_box"])
@@ -349,7 +352,8 @@ async def test_settings_opens_on_an_entry_with_an_invalid_api_key_env(request):
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         overview = _text(screen, "#settings-overview-configuration")
-        assert "Not ready: Invalid provider settings" in overview, overview
+        # TASK-33005 capture checkpoint (rewritten on purpose): the Console's word.
+        assert "Status: Not ready · check settings" in overview, overview
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)
@@ -567,7 +571,8 @@ async def test_settings_opens_on_a_malformed_hand_edited_default(request, provid
         await _settle_settings_mount_storm(pilot)
         screen = _active_destination_screen(host)
         overview = _text(screen, "#settings-overview-configuration")
-        assert "Not ready: Unknown provider" in overview, overview
+        # TASK-33005 capture checkpoint (rewritten on purpose): the Console's word.
+        assert "Status: Not ready · unsupported" in overview, overview
 
         await _open_settings_category(pilot, "#settings-category-providers-models")
         await _settle_settings_mount_storm(pilot)

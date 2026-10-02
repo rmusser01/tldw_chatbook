@@ -164,7 +164,7 @@ async def test_model_section_stays_within_its_15_row_cap() -> None:
         ):
             console.query_one(selector).styles.display = "block"
         console.query_one("#console-model-section-recovery", Static).update(
-            "Not ready — API key missing"
+            "Not ready · no key"
         )
         console.query_one("#console-default-recovery-copy", Static).update(
             "Not saved: default"

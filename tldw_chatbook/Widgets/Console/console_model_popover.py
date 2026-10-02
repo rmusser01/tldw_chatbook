@@ -48,6 +48,8 @@ from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsReadiness,
     build_console_provider_options,
+    provider_left_at_shipped_default,
+    readiness_words,
     resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.console_settings_apply import (
@@ -68,6 +70,7 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     provider_display_name,
 )
+from tldw_chatbook.Chat.provider_endpoint_contract import URL_BASED_PROVIDER_KEYS
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.sampling_params import MIN_MAX_TOKENS
 from tldw_chatbook.Utils.input_validation import validate_text_input
@@ -121,24 +124,36 @@ _PROVIDER_COLUMNS = 20
 _CONTEXT_COLUMNS = 5
 _READINESS_COLUMNS = 28
 
-_NOT_READY_REASONS = {
-    "provider_missing": "no provider",
-    "provider_unsupported": "unsupported",
-    "provider_configuration_invalid": "check settings",
-    "endpoint_invalid": "invalid URL",
-    "endpoint_not_saved": "endpoint unsaved",
-    "credential_missing": "no key",
-    "credential_rejected": "key rejected",
-    "model_missing": "no model",
-    "endpoint_unreachable": "unreachable",
-    "active_run": "run active",
-    "readiness_unknown": "check settings",
-}
 _SETUP_HINTS = {
     "configure_credential": "Enter: add key in Settings",
     "configure_endpoint": "Enter: endpoint in Settings",
     "save_endpoint": "Enter: endpoint in Settings",
+    # TASK-33005.5: a server that refused or timed out is fixed outside the
+    # app, so Enter explains in place instead of opening Settings.
+    "retry_connection": "start it; rechecked on open",
 }
+
+
+def _retries_in_place(readiness: ConsoleSettingsReadiness) -> bool:
+    """A refused or timed-out server the user starts: Enter explains in place.
+
+    A built-in cloud's failed key check is re-run only by Settings 't' (D2),
+    so its row opens Settings instead (TASK-33005 final review I-4), as the
+    Console's Retry connection does.
+    """
+    connection = readiness.connection
+    return readiness.recovery_action == "retry_connection" and (
+        connection is None
+        or connection.custom_endpoint_id is not None
+        or connection.provider_key in URL_BASED_PROVIDER_KEYS
+    )
+
+
+#: Blockers a connection test produced; such a row leads NEEDS SETUP, so the
+#: row cap never hides a stopped local server behind keyless cloud rows.
+_TEST_FAILURES = frozenset({"endpoint_unreachable", "credential_rejected"})
+#: A local probe can change only these rows: Ready, or a failed test.
+_PROBED_BLOCKERS = _TEST_FAILURES | {None}
 
 
 class DraftRebaser(Protocol):
@@ -182,6 +197,11 @@ RecentPairsLoader = Callable[[], Awaitable[Sequence[PairUse]]]
 PreviousPairResolver = Callable[[Sequence[PairUse]], "PairUse | None"]
 CatalogLoader = Callable[[str], Awaitable[Sequence[str]]]
 SetupOpener = Callable[[str, "str | None"], None]
+#: Probes listed providers' local servers (provider -> row model) and calls
+#: back with each provider whose shared evidence settled (TASK-33005.5).
+ConnectionProber = Callable[
+    [Mapping[str, "str | None"], Callable[[str], None]], Awaitable[None]
+]
 
 RowKind = Literal["header", "info", "pair", "setup", "more", "typed"]
 
@@ -208,13 +228,8 @@ class SwitcherRow:
 
 
 def switcher_readiness_words(readiness: ConsoleSettingsReadiness | None) -> str:
-    """Spec §5 words for a row. Config-only evidence never says verified."""
-    if readiness is None:
-        return "checking…"
-    if readiness.operability == "ready_to_send":
-        return "Ready · not tested"
-    reason = _NOT_READY_REASONS.get(str(readiness.blocker or ""), "check settings")
-    return f"Not ready · {reason}"
+    """A row's spec §5 word (TASK-33005.3: the one shared mapping)."""
+    return "checking…" if readiness is None else readiness_words(readiness)
 
 
 def _is_ready(readiness: ConsoleSettingsReadiness | None) -> bool:
@@ -444,6 +459,7 @@ class ConsoleModelPopover(
         setup_opener: SetupOpener | None = None,
         pick_only: bool = False,
         query: str = "",
+        connection_prober: ConnectionProber | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -474,6 +490,8 @@ class ConsoleModelPopover(
                 cannot be picked.
             query: Text Find opens with (``/model <query>``); the best match
                 is highlighted, and nothing applies until Enter.
+            connection_prober: The screen's local-server probe, run once per
+                listed provider per open; this widget calls no network.
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -495,6 +513,8 @@ class ConsoleModelPopover(
         self._catalog_loader = catalog_loader
         self._setup_opener = setup_opener
         self._pick_only = pick_only
+        self._connection_prober = connection_prober
+        self._probes_offered: set[str] = set()
         settings = initial_draft.settings
         self._chat_settings = settings
         self._streaming = bool(settings.streaming)
@@ -806,12 +826,16 @@ class ConsoleModelPopover(
         models = self._models_for(key)
         return models[0] if models else None
 
-    def _request_readiness(self, providers: Sequence[str]) -> None:
-        """Resolve readiness for providers not yet asked, in one worker."""
+    def _request_readiness(
+        self, providers: Sequence[str], *, refresh: bool = False
+    ) -> None:
+        """Resolve readiness for providers not yet asked (or ``refresh``), in one worker."""
         missing = tuple(
             key
             for key in providers
-            if key and key not in self._readiness and key not in self._readiness_pending
+            if key
+            and (refresh or key not in self._readiness)
+            and key not in self._readiness_pending
         )
         if not missing:
             return
@@ -846,6 +870,29 @@ class ConsoleModelPopover(
         self._rebuild_rows()
         self._sync_find_placeholder()
         self._load_ready_catalogs(tuple(resolved))
+        self._offer_probes(resolved)
+
+    def _offer_probes(self, resolved: Mapping[str, ConsoleSettingsReadiness]) -> None:
+        """Hand rows a probe can change to the screen's probe, once per open."""
+        targets = {
+            key: self._representative_model(key)
+            for key, readiness in resolved.items()
+            if key not in self._probes_offered
+            and readiness.blocker in _PROBED_BLOCKERS
+        }
+        if self._connection_prober is None or not targets or not self.is_attached:
+            return
+        self._probes_offered.update(targets)
+        self.run_worker(
+            self._connection_prober(targets, self.refresh_readiness),
+            group="console-switcher-probes",
+            exit_on_error=False,
+        )
+
+    def refresh_readiness(self, provider: str) -> None:
+        """Re-read one provider's readiness after a probe settled; no network."""
+        if self.is_attached:  # A popped screen stays "mounted".
+            self._request_readiness((provider_key(provider),), refresh=True)
 
     def _sync_find_placeholder(self) -> None:
         for find in self.query("#console-popover-find").results(Input):
@@ -981,7 +1028,7 @@ class ConsoleModelPopover(
         return SwitcherRow(kind, provider=provider, model=model, note=note, score=score)
 
     def _visible_providers(self) -> list[str]:
-        """Current provider first, then listing order.
+        """Current provider first, then failed tests, then listing order.
 
         Legacy aliases never get readiness unless used (``_readiness_targets``),
         so they drop out below with every other unresolved provider.
@@ -990,13 +1037,15 @@ class ConsoleModelPopover(
         order = [current] if current else []
         order += [key for key in self._provider_order if key != current]
         order += sorted(self._used_provider_keys() - set(order))
-        return [
-            key
-            for key in order
-            if key == current
-            or getattr(self._readiness.get(key), "blocker", None)
-            != "provider_unsupported"
-        ]
+        blockers = {key: getattr(self._readiness.get(key), "blocker", None) for key in order}
+        return sorted(
+            (
+                key
+                for key in order
+                if key == current or blockers[key] != "provider_unsupported"
+            ),
+            key=lambda key: key != current and blockers[key] not in _TEST_FAILURES,
+        )
 
     def _build_rows(self) -> list[SwitcherRow]:
         query = self._query.strip().casefold()
@@ -1068,9 +1117,23 @@ class ConsoleModelPopover(
         matches: list[tuple[int, int, int, SwitcherRow]] = []
         setup_rows: list[SwitcherRow] = []
         setup_extra = 0
+        not_running: list[str] = []
+        used = self._used_provider_keys()
         for rank, key in enumerate(self._visible_providers()):
             readiness = self._readiness.get(key)
             if readiness is None:
+                continue
+            if (
+                # TASK-33005.6 AC#3 (owner ruling): a shipped localhost default
+                # the user never set up or used is still probed, so a running
+                # one is found, but its refusal is no setup task.
+                readiness.endpoint_category == "connection_refused"
+                and _retries_in_place(readiness)
+                and key not in used
+                and provider_left_at_shipped_default(self._app_config, key)
+            ):
+                if self._pair_score(query, tokens, key, "") is not None:
+                    not_running.append(self._display(key))
                 continue
             models = list(self._models_for(key))
             if key == current_key and current_model:
@@ -1138,8 +1201,12 @@ class ConsoleModelPopover(
         group(
             "NEEDS SETUP · set up in Settings first"
             if self._pick_only
-            else "NEEDS SETUP · Enter opens the fix",
+            else "NEEDS SETUP · Enter opens the fix or explains it",
             setup_rows,
+        )
+        group(
+            "NOT RUNNING · local servers never set up · rechecked on open",
+            [SwitcherRow("info", "  " + " · ".join(not_running))] if not_running else [],
         )
         rows.extend(self._typed_rows(tokens))
         return rows
@@ -1170,13 +1237,10 @@ class ConsoleModelPopover(
         current_shown: bool,
     ) -> list[SwitcherRow]:
         # Pick-only Enter cannot open the fix, so no row promises it.
-        hint = (
-            ""
-            if self._pick_only
-            else _SETUP_HINTS.get(
-                str(readiness.recovery_action or ""), "Enter: open Settings"
-            )
-        )
+        action = str(readiness.recovery_action or "")
+        if action == "retry_connection" and not _retries_in_place(readiness):
+            action = ""  # Settings 't' re-tests it: "Enter: open Settings".
+        hint = "" if self._pick_only else _SETUP_HINTS.get(action, "Enter: open Settings")
         current_provider, current_model = self._current
         is_current_provider = key == provider_key(current_provider)
         if not tokens:
@@ -1462,6 +1526,12 @@ class ConsoleModelPopover(
             return
         if row.kind == "setup" and action is ConsoleSettingsAction.APPLY_TO_CHAT:
             key = provider_key(row.provider)
+            readiness = self._readiness.get(key)
+            if readiness is not None and _retries_in_place(readiness):
+                self._set_error(
+                    f"{self._display(key)} did not answer: start it; rechecked on open."
+                )
+                return
             self._open_setup(key, row.model or self._representative_model(key))
             return
         if row.kind in {"pair", "typed", "setup"} and row.model:

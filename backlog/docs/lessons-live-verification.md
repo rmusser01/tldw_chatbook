@@ -145,6 +145,21 @@ temporary Canvas settlement. Normal `resolve_for_send` and an assertion of
 committed, reachable source resolved those harness defects. Keep that headless
 bridge evidence separate from the full Console UI and durable persistence.
 
+## A refused `localhost` is an exception group, not one ECONNREFUSED
+
+**TASK-33005.5, 2026-10-02.** Every unit test of the "refused :PORT" word
+passed, because each faked a refusal as one `ConnectError` whose cause was
+one `OSError(ECONNREFUSED)`. In the live switcher, the shipped defaults
+(Aphrodite `localhost:2242`, the custom slots, llama.cpp's own
+`localhost:8080`) read "Not ready · unreachable" instead. `localhost` resolves
+to ::1 and 127.0.0.1, and httpx then reports `ConnectError <- OSError <-
+ExceptionGroup(two ConnectionRefusedError)`. `connect_error_is_refused`
+walked only `__cause__`/`__context__`, so it never saw the errno. A numeric
+`127.0.0.1` host gave the plain chain and read "refused" correctly, so the
+bug only showed against a host name. Build a fake failure from a real one:
+print the live exception chain once (plain httpx, no app import), then copy
+its shape into the test.
+
 ## A healthy local model does not prove capture or tool outcomes (TASK-32194–32197)
 
 **2026-09-09.** The llama.cpp server answered uncaptured messages while captured
@@ -389,6 +404,30 @@ tmux -L verify kill-server                  # done
 Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state (see
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
+
+---
+
+## A widget fed only by a sync method is blank on the first frame
+
+**TASK-33005.3, 2026-10-01.** The new Console readiness chip was filled only by
+`sync_readiness_chip`, which the settings-summary sync calls. Every integration test
+passed, because each one drives a sync before asserting. Live at 211x44 the chip was
+missing when the Console opened. It appeared only after an unrelated rail toggle
+happened to run the sync, because nothing runs that sync after the first mount
+when readiness has not changed. The fix was the existing F1 precedent in
+`ConsoleStatusChips` (`ephemeral`, `cost_state`, `run_copy`): pass the
+compose-time value into the constructor (`readiness_word`). Review round 1 then
+deleted the chip and `sync_readiness_chip` (the word moved to the header badge, see
+below), so neither name exists any more; the lesson stands. Whenever a new widget is
+refreshed by a sync method, open the screen fresh and capture it before touching
+anything. A test that syncs first cannot see the first frame.
+
+The same captures hid a second defect that only a reviewer saw: the status strip
+already overflowed at 211x44 before the chip existed (it ended "Context 0% · Current
+$0.00 · O…"), so the new chip pushed the Context/cost chip off-screen in every
+capture, and with "Not ready · refused :9199" it vanished entirely. Review round 1
+moved the word into the header badge instead. When you add to a row, diff its last
+visible cells against a base capture at the primary size, not just the new widget.
 
 ---
 
