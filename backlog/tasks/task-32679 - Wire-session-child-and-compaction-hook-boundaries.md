@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-16 04:24'
-updated_date: '2026-10-02 06:03'
+updated_date: '2026-10-02 07:06'
 labels:
   - plugins
   - implementation
@@ -54,4 +54,6 @@ PR #2946 rebased onto dev 84247cb843 with production repairs unchanged. Fixture 
 PR #2946 rebase onto dev 27e718f01d preserves the compaction retry latch, structural no-cost fences and durable parent-lineage fallback; the existing hook owner is forwarded into compact-once. Required PreCompact refusal uses the existing terminal helper with a fixed reason and attempted=False, with no summary/main-provider call or memory commit. Covering compaction/migration/recovery run: 497 passes and two failures; the manual-refusal fixture is corrected and the full hook-compaction/receipt files pass 25 cases in 31.102s. The remaining dormant-pet call-site failure reproduces on frozen dev and is explicitly excluded. Boot: 22 passes at census 1032/1033 with unchanged limits. ADR-163/052 apply; no new ADR. Exact evidence and limitations: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 
 PR #2946 authorized merge closeout rebased onto live dev ab4df99959 (ADR-210 and warm-config PR #2903). All 25 branch commits replay identically; eight upstream settings/snapshot/path-posture/guard ASTs are retained exactly. Fresh warm-config/compaction/v75 migration controls pass 38 cases, persistent consent 56 and the full mounted hook-review file eight, all with no skips. The previous Windows GGUF failure passes its exact node locally but still requires fresh Windows CI; no unrelated UI or deadline change was made. Qodo marks nine findings resolved and one independently disproved finding outdated; all nine inline threads are resolved. ADR-126/163/197 (amended by ADR-210) apply. Detailed evidence/limits: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
+
+PR #2946 final latest-dev logging rebase onto 92a95170a5 preserves all 27 replayed implementation/repair patches; only appended testing-lesson context changes. All six upstream logging files, the actual worker-state event AST and 40 DB log demotions remain exact. Fresh targeted logging/compaction/v75 controls pass 42 cases; full mounted hook review plus affected boot guards pass 30 cases with no skips, retaining existing limits. Diagnostic inventory and all 117 timestamp occurrences pass; all 197 branch Python files parse and whitespace is clean. Native Windows GGUF fixture qualification passes all 31+7 cases on published repair 583d2c4bea, closing TASK-2062.2. Existing ADR-052/097/126/163/197/210 govern; no new ADR. Fresh final-head CI, Qodo comments and independently read live dev remain required before the authorized head-pinned merge. Exact evidence and prior frozen upstream exclusions: Docs/superpowers/reviews/2026-09-30-expanded-hooks-integration.md.
 <!-- SECTION:NOTES:END -->

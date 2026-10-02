@@ -1176,3 +1176,36 @@ formatting, no-added-Ruff comparison and whitespace checks pass. Existing
 ADR-025 governs; no new ADR is required. TASK-2062.2 AC #7 is reopened pending
 fresh native Windows qualification; the earlier historical implementation remains
 unchanged. Fresh CI must assess the newly published repair before merge.
+
+
+Native requalification on published repair `583d2c4beaddddefb01dbf07d17625a44a66e03e`
+passes [all three GGUF source jobs](https://github.com/rmusser01/tldw_chatbook/actions/runs/36974337203).
+The [Windows job](https://github.com/rmusser01/tldw_chatbook/actions/runs/36974337203/job/110734792443)
+passes all **31 source/lifecycle controls plus seven individually isolated
+full-app cases**, with no skipped cases. Both repaired delayed-selector variants
+pass in **56.42s and 56.88s**, retaining the original deadlines and authority
+assertions. Retain `hooks-pr2946-windows-583d-success.log`. TASK-2062.2 AC #7 is
+checked and status is Done through the Backlog CLI; the subsequent rebase retains
+the exact GGUF fixture/runtime bytes. Final-head CI remains required before merge.
+
+### Final rebase onto logging dev 92a95170a5
+
+Live dev advanced during CI to `92a95170a5406b3ebdc9be6dc26a12f2741d756f`
+(PR #2904 / TASK-33262). All **27 implementation/repair commits** replay; the
+only range-diff change is append context in the testing-lessons conflict. Both
+independent lessons are retained. Six upstream logging implementation files are
+byte-identical to dev, the actual worker-state event owner's AST is identical,
+and all **40 upstream DB log demotions** are retained. Existing runtime/receipt
+and consent ADRs apply; this integration introduces no architectural decision.
+
+Fresh targeted logging, hook-compaction and actual v75 migration controls:
+**42 passed in 72.21s**, no skips (`hooks-pr2946-92a-logging-compaction.xml`).
+The merged diagnostic inventory reproduces exactly at **630 owners, 1425 TASK-492
+calls, 56 TASK-31551 calls, 7590 TASK-494 calls and 16 sink files**. All **117**
+pinned timestamp occurrences pass. The full mounted Console hook-review file
+and affected boot selection pass **30 cases in 175.19s**, with no skips and three
+existing headroom warnings (`hooks-pr2946-92a-console-boot.xml`). Limits and
+snapshots remain unchanged. All **197 branch-changed Python files** parse;
+whitespace checks pass. Earlier static, authority, teardown and recovery evidence
+retains its exact original head/base and exclusions. The final candidate must
+pass fresh remote CI and comment checks before the authorized head-pinned merge.
