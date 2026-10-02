@@ -15923,6 +15923,9 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             The rows as (label, text) pairs in display order.
         """
+        if isinstance(evidence, ProviderTestEvidence):
+            # Qodo #2958: a paid test proves only the model it sent.
+            evidence = evidence.for_model(model.strip() or None)
         listing = (
             "testing" if checking else getattr(evidence, "endpoint", "not_tested")
         )
@@ -15990,9 +15993,9 @@ class SettingsScreen(BaseAppScreen):
         elif (
             source
             and listing == "unreachable"
-            and getattr(evidence, "category", None) in {"unauthorized", "forbidden"}
+            and getattr(evidence, "category", None) == "unauthorized"
         ):
-            # The evidence the Readiness row reads as "key rejected".
+            # Only a 401 rejects a key (Qodo #2958, owner ruling).
             key += " · key rejected"
         elif source:
             key += " · present, not verified"
@@ -16128,7 +16131,7 @@ class SettingsScreen(BaseAppScreen):
             if getattr(evidence, "credential", "") == "listing_accepted":
                 return f"key accepted ({listed}) · generation not tested"
             return f"{listed}; key not checked · generation not tested"
-        if listing == "unreachable" and category in {"unauthorized", "forbidden"}:
+        if listing == "unreachable" and category == "unauthorized":
             return (
                 f"{display_name} rejected the API key ("
                 f"{SettingsScreen._provider_endpoint_category_copy(category)}); "

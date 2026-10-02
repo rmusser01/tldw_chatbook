@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-26 11:47'
-updated_date: '2026-10-02 08:30'
+updated_date: '2026-10-02 10:30'
 labels:
   - model-config-redesign
   - phase-5
@@ -122,6 +122,13 @@ Constraints.
 - The Overview "Status:" was config-only ("Ready" above a refused "Last connection test"). It now reads the Console's future-chat readiness through `build_console_settings_readiness` with the shared evidence and `readiness_words` (`test_settings_overview_status_reads_a_refused_test_as_the_console_does`). Rewritten on purpose to the one vocabulary: the three TASK-31805 Overview pins in Tests/UI/test_settings_configuration_hub.py ("Not ready · no key", "Ready · not tested", "Not ready · no model"), three in Tests/UI/test_settings_custom_endpoint_default.py ("unsupported", "check settings") and the "Checking Claude" waits in Tests/UI/test_settings_subscription_readiness.py ("Not ready · checking login").
 - Switch model lists a refused, untouched shipped default once under NOT RUNNING instead of NEEDS SETUP (TASK-33005.6 AC#3).
 Riders filed from the checkpoint: TASK-33005.11 ("verified" for a model the key check did not list), .12 (switcher rows ignore the models a probe listed), .13 ("not saved this session" counts per visit), .14 (Test Provider looks like a heading, provider names cut at 20 columns, "~4k" vs "Context unknown"). Live: qa/model-config-33005-captures/fix/.
+
+**Qodo round on #2958 (2026-10-02).** Commit "fix(model-config): address Qodo review on #2958 — …":
+1. A paid test verifies only the model it tested. The evidence records `generation_model`, and `for_model` gates Console and Settings; listing and key facts stay model-free. See TASK-33005.3's notes.
+2. Google-style Args/Returns on `ProviderConnectionEvidence.carry` and `provider_connection_evidence`.
+3. `CUSTOM_ENDPOINT_ID_PREFIX` replaces the literal in `provider_left_at_shipped_default`, lazily imported because `custom_endpoint_registry` imports this module, and in `switcher_probe_plan`.
+4. An empty listing is "model listing unavailable", never a key acceptance.
+5. Owner ruling: only a 401 from the key check reads "key rejected" and blocks; a 403 is "model listing unavailable". ADR-012's outcome table is amended to match. See TASK-33005.4's notes.
 
 **Pre-existing reds (not this branch).** ADR-126 `RecoveryRequired: raw_source_selection_changed` locally in clean worktrees (failure-name sets compared instead). Size rows red at base `92a95170a5` and unchanged: chat_screen.py and library_screen.py screen rows; console_chat_controller, console_chat_store, mcp_workbench, llm_screen, personas_screen, watchlists_collections_screen, FirstRunSetupWizard, console_transcript, tldw_api/client module rows (11 names, identical at base and wave). `test_css_class_coverage_contract` red on dev with the same message.
 

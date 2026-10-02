@@ -254,11 +254,13 @@ def key_check_probe_result(
     """Project one explicit cloud key-check listing into bounded evidence.
 
     TASK-33005.4 (ADR-012 amendment 2026-09-26): Settings 't' lists a cloud
-    provider's models with the draft key. A listing that answered accepted
-    the key it was sent; a 401/403 rejected it. A server that answered but
-    gave no usable list (any other HTTP status -- 404, 429, 5xx -- or an
-    unreadable body) checked nothing and blocks nothing: a 429 says nothing
-    about whether a send would work (TASK-33005 final review I-4).
+    provider's models with the draft key. A listing that returned model ids
+    accepted the key it was sent; only a 401 rejects it. A server that gave
+    no usable list -- no model ids, any other HTTP status (403, 404, 429,
+    5xx) or an unreadable body -- checked nothing and blocks nothing: a 429
+    says nothing about whether a send would work (TASK-33005 final review
+    I-4), and a 403 means this key may not list models, not that it cannot
+    chat (Qodo #2958, owner ruling 2026-10-02).
 
     Args:
         result: The ``ModelDiscoveryResult`` of the listing.
@@ -276,17 +278,16 @@ def key_check_probe_result(
         listed = [str(model_entry.model_id) for model_entry in result.models]
         if model in listed:
             listed.insert(0, model)
-        return ProviderProbeResult(
-            "reachable", model_ids_from_payload(listed) or (), key_accepted=key_sent
-        )
+        model_ids = model_ids_from_payload(listed) or ()
+        if not model_ids:  # An empty list proves nothing about the key.
+            return ProviderProbeResult("model_listing_unavailable", ())
+        return ProviderProbeResult("reachable", model_ids, key_accepted=key_sent)
     if kind == "missing_credentials":
         if not key_sent:
             return ProviderProbeResult("model_listing_unavailable", ())
-        return ProviderProbeResult(
-            "unreachable",
-            (),
-            "forbidden" if category == "forbidden" else "unauthorized",
-        )
+        if category == "forbidden":  # Listing not permitted: no key verdict.
+            return ProviderProbeResult("model_listing_unavailable", (), "http_status")
+        return ProviderProbeResult("unreachable", (), "unauthorized")
     if kind == "request_failed" and category in {
         "timeout",
         "connection_refused",

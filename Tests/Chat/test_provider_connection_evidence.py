@@ -461,3 +461,19 @@ def test_store_without_an_active_app_stays_draft_only():
 def test_observed_time_must_be_an_aware_datetime(observed_at):
     with pytest.raises(ValueError):
         ProviderTestEvidence(_identity(), "reachable", (), observed_at=observed_at)
+
+
+def test_the_public_evidence_seams_document_their_arguments():
+    """Qodo #2958 finding 2: Google-style sections on the owner's seams."""
+    import inspect
+
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderConnectionEvidence,
+        provider_connection_evidence,
+    )
+
+    carry = inspect.getdoc(ProviderConnectionEvidence.carry)
+    owner = inspect.getdoc(provider_connection_evidence)
+    assert "Args:" in carry and "tested:" in carry and "saved:" in carry
+    assert "Returns:" in carry
+    assert "Args:" in owner and "owner:" in owner and "Returns:" in owner

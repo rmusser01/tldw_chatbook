@@ -148,10 +148,12 @@ def _console_word(app, host, provider: str, model: str) -> str:
             "Not ready · key rejected",
             "OpenAI rejected the API key (unauthorized); enter a valid key",
         ),
+        # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403
+        # means this key may not list models; it checked nothing.
         (
             httpx.Response(403),
-            "Not ready · key rejected",
-            "OpenAI rejected the API key (forbidden)",
+            "Ready · not tested",
+            "the model listing gave no usable list, so the key was not checked",
         ),
         (
             httpx.ReadTimeout,

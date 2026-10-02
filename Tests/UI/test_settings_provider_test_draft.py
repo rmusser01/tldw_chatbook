@@ -911,8 +911,60 @@ def test_a_key_accepted_by_its_listing_reads_verified_and_never_generated():
     assert rows["Generation"] == "not tested"
 
 
-@pytest.mark.parametrize("category", ("unauthorized", "forbidden"))
-def test_a_rejected_key_reads_rejected_on_the_key_row_too(category):
+def test_a_paid_test_of_another_model_never_verifies_the_settings_rows():
+    """Qodo #2958 finding 1: the Settings rows read the shared record, so a
+    Chat settings paid test of model-a must not read model-b verified here
+    either; the listing still reads "reachable"."""
+    from datetime import datetime
+
+    identity = _semantic_identity("http://127.0.0.1:9099/v1/models")
+    evidence = ProviderTestEvidence(
+        identity,
+        "reachable",
+        ("model-a", "model-b"),
+        generation="succeeded",
+        generation_model="model-a",
+        observed_at=datetime(2026, 10, 1, 9, 0).astimezone(),
+        generation_observed_at=datetime(2026, 10, 1, 9, 30).astimezone(),
+    )
+    readiness = get_provider_readiness("custom", {}, environ={})
+
+    def rows(model: str) -> dict[str, str]:
+        return dict(
+            SettingsScreen._provider_test_rows(
+                readiness,
+                display_name="Custom",
+                model=model,
+                endpoint="http://127.0.0.1:9099/v1",
+                evidence=evidence,
+            )
+        )
+
+    assert rows("model-a")["Readiness"] == "Ready · verified 09:30"
+    assert rows("model-a")["Generation"] == "succeeded"
+    assert rows("model-b")["Readiness"] == "Ready · reachable 09:00"
+    assert rows("model-b")["Generation"] == "not tested"
+
+
+@pytest.mark.parametrize(
+    ("listing", "category", "readiness_word", "key_text"),
+    (
+        ("unreachable", "unauthorized", "Not ready · key rejected", "key rejected"),
+        # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403 key
+        # check now records "listing unavailable", so neither row rejects the
+        # key and nothing blocks.
+        (
+            "model_listing_unavailable",
+            "http_status",
+            "Ready · not tested",
+            "present, not verified",
+        ),
+    ),
+    ids=("401", "403"),
+)
+def test_a_rejected_key_reads_rejected_on_the_key_row_too(
+    listing, category, readiness_word, key_text
+):
     """TASK-33005 capture checkpoint (capture 08): Readiness said "Not ready ·
     key rejected" while Key said "present, not verified". One rejection, one
     word on both rows."""
@@ -922,7 +974,7 @@ def test_a_rejected_key_reads_rejected_on_the_key_row_too(category):
         credential_source="stored",
         credential_revision=7,
     )
-    evidence = ProviderTestEvidence(identity, "unreachable", (), category=category)
+    evidence = ProviderTestEvidence(identity, listing, (), category=category)
     app_config = {"api_settings": {"openai": {"api_key": "fake-test-key"}}}
     readiness = get_provider_readiness("openai", app_config, environ={})
 
@@ -936,8 +988,8 @@ def test_a_rejected_key_reads_rejected_on_the_key_row_too(category):
         )
     )
 
-    assert rows["Readiness"] == "Not ready · key rejected"
-    assert rows["Key"] == "saved in config · key rejected"
+    assert rows["Readiness"] == readiness_word
+    assert rows["Key"] == f"saved in config · {key_text}"
 
 
 @pytest.mark.parametrize(
@@ -1183,7 +1235,8 @@ def test_generation_row_and_in_flight_line_read_stored_generation_evidence():
         "http://127.0.0.1:9099", provider_key="llama_cpp"
     )
     evidence = ProviderTestEvidence(
-        identity, "testing", (), generation="succeeded"
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        identity, "testing", (), generation="succeeded", generation_model="llama-3"
     )
     readiness = get_provider_readiness(
         "llama.cpp",

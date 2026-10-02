@@ -211,8 +211,14 @@ def test_a_successful_paid_test_reads_verified():
         "llama_cpp",
         LLAMA_CONFIG,
         # Review round 1 (rewritten on purpose): the paid test's own time.
+        # Qodo #2958 (rewritten on purpose): and the model it tested.
         ProviderTestEvidence(
-            LLAMA, "not_tested", (), generation="succeeded", generation_observed_at=SEEN
+            LLAMA,
+            "not_tested",
+            (),
+            generation="succeeded",
+            generation_model="model-a",
+            generation_observed_at=SEEN,
         ),
     )
 
@@ -448,13 +454,60 @@ def test_verified_by_a_paid_test_reads_the_time_of_that_test(monkeypatch):
     store = ProviderTestEvidenceStore(lambda: app)
     store.settle(store.begin(LLAMA), ProviderProbeResult("reachable", ("model-a",)))
     store.settle_generation(
-        store.begin_generation(LLAMA), ProviderGenerationProbeResult("succeeded")
+        # Qodo #2958 (rewritten on purpose): the test names its model.
+        store.begin_generation(LLAMA, model="model-a"),
+        ProviderGenerationProbeResult("succeeded"),
     )
     console = _console("llama_cpp", LLAMA_CONFIG, store.evidence_for(LLAMA))
 
     assert readiness_words(console) == "Ready · verified 09:30"
     assert provider_connection_evidence(app).evidence_for(LLAMA).observed_at.hour == 9
     assert provider_connection_evidence(app).evidence_for(LLAMA).observed_at.minute == 0
+
+
+@pytest.mark.parametrize(
+    ("provider", "identity", "config", "listing", "other"),
+    (
+        # Keyless: the listing still reads "reachable" for the untested model.
+        ("llama_cpp", LLAMA, LLAMA_CONFIG, {}, "Ready · reachable 09:00"),
+        # Keyed: the accepted key listing still reads "verified" at its time.
+        ("openai", OPENAI, OPENAI_CONFIG, {"key_accepted": True}, "Ready · verified 09:00"),
+    ),
+)
+def test_a_paid_test_verifies_only_the_model_it_tested(
+    monkeypatch, provider, identity, config, listing, other
+):
+    """Qodo #2958 finding 1: a paid test of model-a read model-b, on the same
+    provider, endpoint and key, as "verified" at the test's time. The test
+    belongs to its model; the listing and the key check do not."""
+    times = iter(
+        [datetime(2026, 10, 1, 9, 0).astimezone(), datetime(2026, 10, 1, 9, 30).astimezone()]
+    )
+    monkeypatch.setattr(evidence_module, "_local_now", lambda: next(times))
+    app = type("App", (), {})()
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(
+        store.begin(identity),
+        ProviderProbeResult("reachable", ("model-a", "model-b"), **listing),
+    )
+    store.settle_generation(
+        store.begin_generation(identity, model="model-a"),
+        ProviderGenerationProbeResult("succeeded"),
+    )
+    owner = provider_connection_evidence(app)
+
+    def word(model: str) -> str:
+        return readiness_words(
+            build_console_settings_readiness(
+                ConsoleSessionSettings(provider=provider, model=model),
+                app_config=config,
+                environ={},
+                connection_evidence=owner,
+            )
+        )
+
+    assert word("model-a") == "Ready · verified 09:30"
+    assert word("model-b") == other
 
 
 def test_a_public_listing_never_records_an_accepted_key():

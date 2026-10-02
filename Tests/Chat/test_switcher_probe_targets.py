@@ -134,3 +134,30 @@ def test_no_test_directory_opens_switch_model_onto_the_network():
     model from the palette on the shipped profile, which lists eight localhost
     servers. The real seam is reached only by a by-name import, as here."""
     assert connection_probe.switcher_connection_prober is not switcher_connection_prober
+
+
+def test_the_registry_prefix_is_named_once():
+    """Qodo #2958 finding 3: both switcher seams use CUSTOM_ENDPOINT_ID_PREFIX,
+    never a second spelling of the registry id prefix."""
+    import inspect
+
+    from tldw_chatbook.Chat.console_session_settings import (
+        provider_left_at_shipped_default,
+    )
+    from tldw_chatbook.UI.Console_Modules.connection_probe import switcher_probe_plan
+
+    for function in (provider_left_at_shipped_default, switcher_probe_plan):
+        code = inspect.getsource(function).split('"""')[-1]  # Past the docstring.
+        assert '"custom-ep:"' not in code, function.__name__
+        assert "CUSTOM_ENDPOINT_ID_PREFIX" in code, function.__name__
+
+
+def test_a_registry_entry_is_never_a_shipped_default():
+    """Finding 3 behaviour pin: a ``custom-ep:`` id is always the user's own."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        provider_left_at_shipped_default,
+    )
+    from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+
+    assert not provider_left_at_shipped_default({}, f"{CUSTOM_ENDPOINT_ID_PREFIX}gpu")
+    assert provider_left_at_shipped_default({}, "not-a-provider")  # {} == {}

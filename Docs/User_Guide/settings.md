@@ -253,10 +253,11 @@ how you find one. A cloud provider gets one model listing at the endpoint a
 send would use, with the key a send would use (saved, from the env var, or
 typed and not yet saved). That listing is the key check: "Ready · verified
 14:01" with "key accepted (*N* models listed) · generation not tested", or
-"Not ready · key rejected" after a 401 or 403, or its own reason for a timeout
-("timed out") or a failed connection. Any other HTTP answer (404, 429, a
-server error) checked nothing: it reads "model listing unavailable" and never
-blocks sending. Only **t** sends it: opening Settings,
+"Not ready · key rejected" after a 401, or its own reason for a timeout
+("timed out") or a failed connection. Any other answer checked nothing: a 403
+(this key may not list models, which says nothing about chatting), a 404, a
+429, a server error, or a list with no model in it. It reads "model listing
+unavailable", stays "Ready · not tested" and never blocks sending. Only **t** sends it: opening Settings,
 typing, saving, the Console and the model switcher never contact a cloud
 provider, and the paid one-token test stays a separate, confirmed action. Two
 cases are not key checks. OpenRouter's model list is public, so it reads
@@ -289,7 +290,7 @@ unreachable server leads with, for example, "model listing failed
 same in one line. While another setting blocks the provider, the Key row says
 "not checked until the provider is ready" rather than guessing. Until a cloud
 key is checked, the Key row says the key is present but not verified, and
-Generation says not tested; after a 401 or 403 it says "key rejected", as the
+Generation says not tested; after a 401 it says "key rejected", as the
 Readiness row does. With the Endpoint field empty, the Endpoint row
 names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that

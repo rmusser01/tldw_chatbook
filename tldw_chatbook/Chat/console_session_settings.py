@@ -67,6 +67,7 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     GenerationFailureCategory,
     GenerationFacet,
     ModelFacet,
+    PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
     ProviderConnectionEvidence,
     ProviderDraftIdentity,
     ProviderReadinessSnapshot,
@@ -1866,9 +1867,13 @@ def build_console_settings_readiness(
         current_identity=current_identity if evidence_is_current else None,
     )
 
+    generation_at = None
     if evidence_is_current and evidence is not None:
-        generation: GenerationFacet = evidence.generation
-        generation_category = evidence.generation_category
+        # Qodo #2958: a paid test proves only the model it sent.
+        tested = evidence.for_model(normalize_console_model_value(settings.model))
+        generation: GenerationFacet = tested.generation
+        generation_category = tested.generation_category
+        generation_at = tested.generation_observed_at
     elif evidence is not None and evidence.generation in {
         "succeeded",
         "failed",
@@ -2011,9 +2016,7 @@ def build_console_settings_readiness(
         subscription_status=readiness.subscription_status,
         connection=current_identity if evidence_is_current else None,
         observed_at=evidence.observed_at if evidence_is_current and evidence else None,
-        generation_observed_at=(
-            evidence.generation_observed_at if evidence_is_current and evidence else None
-        ),
+        generation_observed_at=generation_at,
     )
 
 
@@ -2511,7 +2514,11 @@ def provider_left_at_shipped_default(
     Returns:
         Whether its saved settings are exactly the shipped template's.
     """
-    if provider_key.startswith("custom-ep:"):
+    # Lazy: custom_endpoint_registry imports this module (a module-level
+    # import would cycle).
+    from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+
+    if provider_key.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
         return False
     try:
         return provider_settings_for_key(
@@ -2812,7 +2819,14 @@ def _ready_words(
         or connection.provider_key in _LOCAL_PROVIDER_KEYS
     )
     when = endpoint_at.astimezone().strftime("%H:%M")
-    if credential == "listing_accepted" and not local:
+    accepted = credential == "listing_accepted" or (
+        # Qodo #2958: a paid test (of another model) upgraded the listing's
+        # acceptance; a public or failed listing accepted nothing.
+        credential == "authenticated"
+        and endpoint == "reachable"
+        and connection.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+    )
+    if accepted and not local:
         return f"Ready · verified {when}"
     if endpoint == "reachable" and local:
         return f"Ready · reachable {when}"

@@ -1183,10 +1183,20 @@ def _discovery(status, *, kind=None, category=None, models=()):
             True,
             ("unreachable", 0, "unauthorized", False),
         ),
+        # Qodo #2958 finding 5 (owner ruling, rewritten on purpose): a 403
+        # means this key may not LIST models, not that it cannot chat. It
+        # checked nothing and blocks nothing; only a 401 rejects the key.
         (
             _discovery("error", kind="missing_credentials", category="forbidden"),
             True,
-            ("unreachable", 0, "forbidden", False),
+            ("model_listing_unavailable", 0, "http_status", False),
+        ),
+        # Qodo #2958 finding 4: an answer with no usable model id lists
+        # nothing, so it is no key acceptance either.
+        (
+            _discovery("success", models=()),
+            True,
+            ("model_listing_unavailable", 0, None, False),
         ),
         # No key was sent, so a 401 rejected no key: the listing needs one.
         (
@@ -1244,6 +1254,74 @@ def test_key_check_listing_maps_to_bounded_evidence(result, key_sent, expected):
         probe.category,
         probe.key_accepted,
     ) == expected
+
+
+@pytest.mark.parametrize(
+    ("category", "word", "blocked"),
+    [
+        ("unauthorized", "Not ready · key rejected", True),
+        ("forbidden", "Ready · not tested", False),
+    ],
+)
+def test_only_a_401_from_the_key_check_blocks_sending(category, word, blocked):
+    """Qodo #2958 finding 5 (owner ruling): a key that may chat but not list
+    models must not read "key rejected" or block the Console; a 401 still
+    does. Driven through the real mapping, shared owner, Console readiness
+    and Settings rows."""
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        build_console_settings_readiness,
+        build_target_default_console_session_settings,
+        console_send_connection,
+        readiness_words,
+    )
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderTestEvidenceStore,
+        provider_connection_evidence,
+    )
+    from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
+        key_check_probe_result,
+    )
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    config = {"api_settings": {"openai": {"api_key": "sk-test-403-0123456789"}}}
+    app = type("App", (), {})()
+    identity = console_send_connection(
+        build_target_default_console_session_settings(config, "openai", "gpt-4o"),
+        app_config=config,
+        environ={},
+    )
+    store = ProviderTestEvidenceStore(lambda: app)
+    store.settle(
+        store.begin(identity),
+        key_check_probe_result(
+            _discovery("error", kind="missing_credentials", category=category),
+            key_sent=True,
+        ),
+    )
+
+    console = build_console_settings_readiness(
+        ConsoleSessionSettings(provider="openai", model="gpt-4o"),
+        app_config=config,
+        environ={},
+        connection_evidence=provider_connection_evidence(app),
+    )
+    rows = dict(
+        SettingsScreen._provider_test_rows(
+            get_provider_readiness("openai", config, environ={}),
+            display_name="OpenAI",
+            model="gpt-4o",
+            endpoint="",
+            evidence=store.evidence_for(identity),
+        )
+    )
+
+    assert console.connection == identity  # The Console read this result.
+    assert readiness_words(console) == rows["Readiness"] == word
+    assert (console.operability != "ready_to_send") is blocked
+    assert ("key rejected" in rows["Key"]) is blocked
+    assert "verified" not in rows["Readiness"]
 
 
 @pytest.mark.parametrize(

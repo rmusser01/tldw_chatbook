@@ -1566,6 +1566,8 @@ def test_console_readiness_projects_exact_generation_and_credential_evidence():
         (),
         credential="present_unverified",
         generation="succeeded",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="gpt-test",
     )
 
     readiness = build_console_settings_readiness(
@@ -1627,6 +1629,8 @@ def test_failed_generation_remains_evidence_and_does_not_block_an_attempt():
         ("model",),
         generation="failed",
         generation_category="provider_error",
+        # Qodo #2958 (rewritten on purpose): a paid test names its model.
+        generation_model="model",
     )
 
     readiness = build_console_settings_readiness(

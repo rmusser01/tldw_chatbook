@@ -493,6 +493,9 @@ class ProviderTestEvidence:
     #: TASK-33005.3: local time of the generation fact, so a paid test never
     #: restamps when the listing answered. Not part of equality.
     generation_observed_at: datetime | None = field(default=None, compare=False)
+    #: Qodo #2958 (appended last): the model the generation test sent. A paid
+    #: test proves only that model; listing and key facts are model-free.
+    generation_model: str | None = None
 
     def __post_init__(self) -> None:
         if type(self.identity) is not ProviderDraftIdentity:
@@ -527,6 +530,10 @@ class ProviderTestEvidence:
             or self.generation_category not in _GENERATION_FAILURE_CATEGORIES
         ):
             raise ValueError("Provider evidence generation category is invalid.")
+        if self.generation_model is not None and (
+            type(self.generation_model) is not str or not self.generation_model
+        ):
+            raise ValueError("Provider evidence generation model is invalid.")
 
         if self.endpoint == "reachable":
             if self.category is not None:
@@ -561,6 +568,30 @@ class ProviderTestEvidence:
         object.__setattr__(self, "credential", normalized_credential)
         if normalized_credential == "listing_accepted" and self.endpoint != "reachable":
             raise ValueError("Only a listing that answered can accept a key.")
+
+    def for_model(self, model: str | None) -> ProviderTestEvidence:
+        """This evidence as it applies to ``model`` (Qodo #2958).
+
+        A paid generation result belongs to the model it sent; the listing
+        and key facts are the connection's, whatever the model.
+
+        Args:
+            model: The selected model id, or ``None``.
+
+        Returns:
+            ``self``, or a copy whose generation reads not tested.
+        """
+        if self.generation not in {"succeeded", "failed"} or (
+            self.generation_model == model
+        ):
+            return self
+        return replace(
+            self,
+            generation="not_tested",
+            generation_category=None,
+            generation_model=None,
+            generation_observed_at=None,
+        )
 
 
 class _MutationResult(Protocol):
@@ -635,12 +666,14 @@ class ProviderTestEvidenceStore:
         self._current_generation_token: _ProviderGenerationTestToken | None = None
         self._current_generation_token_epoch: int | None = None
         self._current_generation_identity: ProviderDraftIdentity | None = None
+        self._current_generation_model: str | None = None
         self._generation_settling: tuple[ProviderDraftIdentity, int] | None = None
         self._generation_cancel_restore: (
             tuple[
                 ProviderDraftIdentity,
                 Literal["succeeded", "failed"],
                 GenerationFailureCategory | None,
+                str | None,
             ]
             | None
         ) = None
@@ -738,11 +771,14 @@ class ProviderTestEvidenceStore:
             self._publish(settled, token.order, generation=False)
         return True
 
-    def begin_generation(self, identity: ProviderDraftIdentity) -> object:
+    def begin_generation(
+        self, identity: ProviderDraftIdentity, model: str | None = None
+    ) -> object:
         """Start an exact-identity generation probe and return its token.
 
         Args:
             identity: Exact provider draft identity that owns the probe.
+            model: The model the test sends; its result verifies only it.
 
         Returns:
             Opaque token required to settle or cancel this probe.
@@ -767,6 +803,7 @@ class ProviderTestEvidenceStore:
                         identity,
                         evidence.generation,
                         evidence.generation_category,
+                        evidence.generation_model,
                     )
                     if evidence is not None
                     and evidence.identity == identity
@@ -778,11 +815,15 @@ class ProviderTestEvidenceStore:
             self._current_generation_token = token
             self._current_generation_token_epoch = self._generation_operation_epoch
             self._current_generation_identity = identity
+            self._current_generation_model = (
+                model.strip() or None if isinstance(model, str) else None
+            )
             self._evidence = _replace_generation_evidence(
                 self._evidence,
                 identity=identity,
                 generation="testing",
                 category=None,
+                model=self._current_generation_model,
             )
             return token
 
@@ -802,6 +843,7 @@ class ProviderTestEvidenceStore:
             ):
                 return False
             identity = self._current_generation_identity
+            model = self._current_generation_model
             claim_epoch = self._current_generation_token_epoch
             self._current_generation_token = None
             self._current_generation_token_epoch = None
@@ -840,6 +882,12 @@ class ProviderTestEvidenceStore:
                     identity=identity,
                     generation=generation,
                     category=category,
+                    # A rebound earlier result keeps the model it tested.
+                    model=(
+                        outcome.generation_model
+                        if type(outcome) is ProviderTestEvidence
+                        else model
+                    ),
                 ),
                 generation_observed_at=observed_at or _local_now(),
             )
@@ -894,6 +942,7 @@ class ProviderTestEvidenceStore:
                 identity=identity,
                 generation="changed_since_test",
                 category=None,
+                model=evidence.generation_model,
             )
             self._save_lease = None
             self._generation_cancel_restore = None
@@ -960,6 +1009,7 @@ class ProviderTestEvidenceStore:
                     identity=restore[0],
                     generation=restore[1],
                     category=restore[2],
+                    model=restore[3],
                 )
             self._advance_generation_operation()
             return True
@@ -1279,6 +1329,10 @@ class ProviderConnectionEvidence:
         draft store's rebase), e.g. a typed key that is now the stored key.
         Each fact keeps its begin order, so a newer result is never replaced.
 
+        Args:
+            tested: The draft connection the facts were observed for.
+            saved: The connection the save produced from those same values.
+
         Returns:
             Whether the saved connection's record changed.
         """
@@ -1339,6 +1393,7 @@ class ProviderConnectionEvidence:
                 identity=identity,
                 generation=evidence.generation,
                 category=evidence.generation_category,
+                model=evidence.generation_model,
             )
             times["generation_observed_at"] = (
                 evidence.generation_observed_at or _local_now()
@@ -1361,6 +1416,12 @@ def provider_connection_evidence(owner: object) -> ProviderConnectionEvidence:
 
     Mirrors ``process_provider_test_evidence_store`` (TTS): a private
     attribute on the running app, so a restart starts with nothing tested.
+
+    Args:
+        owner: The running app (any object that can carry the attribute).
+
+    Returns:
+        The owner's ``ProviderConnectionEvidence``, created on first use.
     """
 
     existing = getattr(owner, _OWNER_ATTRIBUTE, None)
@@ -1567,6 +1628,7 @@ def _replace_generation_evidence(
     identity: ProviderDraftIdentity,
     generation: GenerationFacet,
     category: GenerationFailureCategory | None,
+    model: str | None = None,
 ) -> ProviderTestEvidence:
     if evidence is None or evidence.identity != identity:
         return ProviderTestEvidence(
@@ -1580,8 +1642,14 @@ def _replace_generation_evidence(
             ),
             generation=generation,
             generation_category=category,
+            generation_model=model,
         )
-    return replace(evidence, generation=generation, generation_category=category)
+    return replace(
+        evidence,
+        generation=generation,
+        generation_category=category,
+        generation_model=model,
+    )
 
 
 def _mutation_flags(mutation_result: object) -> tuple[bool, bool] | None:

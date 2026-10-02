@@ -6155,7 +6155,7 @@ class ConsoleSettingsModal(
             )
             self._sync_generation_test_controls()
             return
-        token = self._connection_evidence_store.begin_generation(identity)
+        token = self._connection_evidence_store.begin_generation(identity, draft.model)
         self._generation_changed_since_test = False
         self._generation_cancel_warning_visible = False
         self._active_generation_probe_token = token

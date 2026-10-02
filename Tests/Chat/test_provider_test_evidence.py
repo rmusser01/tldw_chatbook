@@ -418,6 +418,8 @@ def test_extended_records_remain_frozen_and_slotted():
         "observed_at",
         # TASK-33005.3 review round 1 (on purpose): the generation fact's time.
         "generation_observed_at",
+        # Qodo #2958 (on purpose): the model a generation test sent.
+        "generation_model",
     ]
     assert not hasattr(evidence, "__dict__")
     with pytest.raises(AttributeError):

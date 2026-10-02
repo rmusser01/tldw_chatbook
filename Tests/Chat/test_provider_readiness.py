@@ -583,6 +583,8 @@ def test_evidence_records_are_frozen_slotted_and_secret_free():
         "observed_at",
         # TASK-33005.3 review round 1 (on purpose): the generation fact's time.
         "generation_observed_at",
+        # Qodo #2958 (on purpose): the model a generation test sent.
+        "generation_model",
     ]
     assert not hasattr(identity, "__dict__")
     assert not hasattr(evidence, "__dict__")

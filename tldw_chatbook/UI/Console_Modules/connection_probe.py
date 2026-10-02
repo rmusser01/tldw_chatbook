@@ -28,6 +28,7 @@ from tldw_chatbook.Chat.console_session_settings import (
     build_target_default_console_session_settings,
     console_send_connection,
 )
+from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
 from tldw_chatbook.Chat.provider_endpoint_contract import (
     URL_BASED_PROVIDER_KEYS,
     ConnectionProbeAvailability,
@@ -273,7 +274,7 @@ def switcher_probe_plan(
     plan: dict[ProviderDraftIdentity, list[str]] = {}
     for provider, model in targets.items():
         if provider not in _SWITCHER_PROBE_PROVIDER_KEYS and not provider.startswith(
-            "custom-ep:"
+            CUSTOM_ENDPOINT_ID_PREFIX
         ):
             continue
         try:
