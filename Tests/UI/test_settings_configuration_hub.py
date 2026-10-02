@@ -1159,7 +1159,11 @@ async def test_settings_defaults_to_overview_category(request):
         assert "Where changes happen" in text
 
 
+@pytest.mark.bootstrap_profile
 def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (same enrollment as the four tests above).
     app = _build_test_app()
     screen = SettingsScreen(app)
 
@@ -1187,6 +1191,12 @@ def test_settings_ownership_records_cover_categories_and_runtime_boundaries():
         # the screen writes it at `_save_provider_category` -- but left this
         # exhaustive tuple behind. Stale contract, not a product change.
         "model_capabilities.models.<model>.context_window",
+        # task-15512 re-triage: added by 2bb226428b (manual prompt-cache
+        # snapshots in Models and Settings) -- the screen writes both at
+        # `_save_provider_category` -- with the tuple left behind again.
+        # Same stale-contract class, not a product change.
+        "llamacpp_snapshots.enabled",
+        "llamacpp_snapshots.keep_count",
     )
     assert records_by_category[
         SettingsCategoryId.CONSOLE_BEHAVIOR
@@ -7327,7 +7337,11 @@ async def test_settings_console_behavior_saves_global_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_console_behavior_saves_display_name_exactly(monkeypatch):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"user_display_name": "Rowan"}
     saved = []
@@ -9207,9 +9221,13 @@ async def test_settings_provider_test_redacts_secrets(request, monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_provider_category_saves_provider_defaults_without_sampling(
     monkeypatch,
 ):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",
@@ -10697,7 +10715,11 @@ async def test_settings_user_emptied_context_window_still_refuses_the_save(monke
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_settings_provider_switch_does_not_save_stale_endpoint(monkeypatch):
+    # TASK-15512: real-app mount + guarded config loader under the per-test
+    # sandbox trips the config-participant admission; keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     app.app_config["chat_defaults"] = {
         "provider": "OpenAI",

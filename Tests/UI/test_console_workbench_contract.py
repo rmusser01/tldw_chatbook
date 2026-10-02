@@ -1874,7 +1874,12 @@ async def test_console_f1_help_lists_visible_actions():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_console_registers_footer_workbench_shortcuts():
+    # TASK-15512: the real-app mount reads config through the guarded loader;
+    # under the per-test sandbox that trips the config-participant admission
+    # (RecoveryRequired("raw_source_selection_changed")). Keep the
+    # collection-time profile (TASK-32873 per-node enrollment).
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleFooterHarness(app)
