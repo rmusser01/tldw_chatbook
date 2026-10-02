@@ -11,6 +11,7 @@ Handles the import and validation of chatbooks into the application.
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
 
 import codecs
+from datetime import datetime, timezone
 import hashlib
 import heapq
 import json
@@ -1428,9 +1429,18 @@ class ChatbookImporter:
                                 if graph_messages is not None:
                                     variant_of = msg.get("variant_of")
                                     connection.execute(
+                                        # task-19566 F9: graph fields ride a
+                                        # versioned write (version bump,
+                                        # last_modified, client_id) so the
+                                        # imported rows stay consistent with
+                                        # the sync log instead of silently
+                                        # desynchronising from it.
                                         "UPDATE messages SET variant_of = ?, "
                                         "variant_number = ?, is_selected_variant = ?, "
-                                        "total_variants = ?, deleted = ? WHERE id = ?",
+                                        "total_variants = ?, deleted = ?, "
+                                        "version = version + 1, "
+                                        "last_modified = ?, client_id = ? "
+                                        "WHERE id = ?",
                                         (
                                             message_id_map.get(
                                                 str(variant_of)
@@ -1441,6 +1451,8 @@ class ChatbookImporter:
                                             int(msg["is_selected_variant"]),
                                             msg["total_variants"],
                                             int(msg["deleted"]),
+                                            datetime.now(timezone.utc).isoformat(),
+                                            db.client_id,
                                             new_message_id,
                                         ),
                                     )
@@ -1450,9 +1462,18 @@ class ChatbookImporter:
                         if graph_messages is not None:
                             active_leaf = conv_data.get("active_leaf_message_id")
                             connection.execute(
-                                "UPDATE conversations SET active_leaf_message_id = ? "
+                                # task-19566 F9: same versioned-write contract
+                                # as the message graph patch above.
+                                "UPDATE conversations SET active_leaf_message_id = ?, "
+                                "version = version + 1, "
+                                "last_modified = ?, client_id = ? "
                                 "WHERE id = ?",
-                                (message_id_map.get(active_leaf), new_conv_id),
+                                (
+                                    message_id_map.get(active_leaf),
+                                    datetime.now(timezone.utc).isoformat(),
+                                    db.client_id,
+                                    new_conv_id,
+                                ),
                             )
                         if canvas_batch is not None:
                             CanvasRepository.import_batch_in_transaction(
