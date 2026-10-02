@@ -709,6 +709,10 @@ async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console
     share (6 rows) clipped it, so the compositor handed those coordinates
     to the transcript's empty state instead. `get_widget_at` is the check
     that fails on the bug the live pass actually saw.
+
+    Args:
+        request: Pytest fixture used by the private-profile wrapper to select
+            this test and allocate its isolated child process.
     """
     import time
 
