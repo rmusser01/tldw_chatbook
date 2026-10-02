@@ -152,7 +152,9 @@ async def test_second_session_send_does_not_cancel_first_sessions_worker() -> No
 
 
 @pytest.mark.asyncio
-async def test_stop_visible_action_only_cancels_viewed_session_background_completes() -> None:
+async def test_stop_visible_action_only_cancels_viewed_session_background_completes() -> (
+    None
+):
     """Requirement 5c (Task 3b): two concurrent fake runs, mirroring the
     tests above, but this time each REGISTERS itself in the controller's
     per-session stream/cancel maps like a real run would. Pressing the
@@ -173,9 +175,7 @@ async def test_stop_visible_action_only_cancels_viewed_session_background_comple
         store.switch_session(session_a)  # A is VIEWED (new_session() activates B)
 
         def _seed(session_id: str) -> str:
-            store.append_message(
-                session_id, role=ConsoleMessageRole.USER, content="hi"
-            )
+            store.append_message(session_id, role=ConsoleMessageRole.USER, content="hi")
             assistant = store.append_message(
                 session_id, role=ConsoleMessageRole.ASSISTANT, content=""
             )
@@ -374,7 +374,9 @@ async def test_tab_and_sidebar_show_run_markers_and_fleet_line() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_viewed_idle() -> None:
+async def test_transcript_sync_timer_keeps_ticking_for_background_run_while_viewed_idle() -> (
+    None
+):
     """Fix round 1 / Critical 1 regression (PA-T8 review): `_poll_transcript`
     used to self-stop off `controller.run_state` alone -- a read-only facade
     for the VIEWED session ONLY (parallel-agents spec §2). That froze the
@@ -506,9 +508,7 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         assert not approval_card.display  # parked: never mounted over the viewed tab
         approval_toasts = [n for n in notifications if "needs approval" in n]
         assert len(approval_toasts) == 1
-        assert (
-            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
-        )
+        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
 
         # Visiting mounts the card through the existing mount path.
         controller.switch_session(background)
@@ -527,9 +527,7 @@ async def test_background_approval_parks_with_badge_and_single_toast() -> None:
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.1)
         assert console.query_one("#chat-approval-card").display
-        assert len(
-            [n for n in notifications if "needs approval" in n]
-        ) == 1
+        assert len([n for n in notifications if "needs approval" in n]) == 1
 
 
 @pytest.mark.asyncio
@@ -752,7 +750,9 @@ async def test_park_toast_fires_again_for_a_genuinely_new_round_same_session() -
 
 
 @pytest.mark.asyncio
-async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round() -> None:
+async def test_park_toast_survives_a_post_teardown_re_invocation_for_the_same_round() -> (
+    None
+):
     """TASK-1141 review round 1 (reviewer-reproduced live on HEAD before
     this fix): `_current_park_round_ids` alone only inspects the three
     LIVE `_parked_*_payloads` maps -- every owning bridge's own `finally`
@@ -1087,9 +1087,11 @@ async def test_fleet_summary_line_is_reachable_on_the_live_rendered_surface() ->
         await console._sync_native_console_chat_ui()
         await pilot.pause(0.3)
         fleet_summary = console.query_one("#console-agent-fleet-summary", Static)
-        assert not fleet_summary.display or str(
-            getattr(fleet_summary.renderable, "plain", fleet_summary.renderable)
-        ) == ""
+        assert (
+            not fleet_summary.display
+            or str(getattr(fleet_summary.renderable, "plain", fleet_summary.renderable))
+            == ""
+        )
 
 
 class _TallStepsFleetBridge:
@@ -1128,6 +1130,7 @@ class _TallStepsFleetBridge:
 
     def subagent_runs(self, conversation_id: str) -> list:
         return []
+
 
 async def _setup_tall_steps_and_parked_fleet(
     console, *, collapse_session_and_model: bool
@@ -1188,9 +1191,7 @@ def _assert_painted_at_own_region(host, widget) -> None:
     try:
         hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
     except Exception as exc:  # textual.errors.NoWidget
-        pytest.fail(
-            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
-        )
+        pytest.fail(f"nothing is painted at {widget!r}'s own region {region!r}: {exc}")
     assert hit_widget is widget, (
         f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
         "itself -- the widget's display chain is all-True but it is not "
@@ -1199,7 +1200,9 @@ def _assert_painted_at_own_region(host, widget) -> None:
 
 
 @pytest.mark.asyncio
-async def test_fleet_summary_line_intersects_the_visible_viewport_default_sections() -> None:
+async def test_fleet_summary_line_intersects_the_visible_viewport_default_sections() -> (
+    None
+):
     """AC#2 (task-1140 / UAT F1), fix round 1 regression: Session and Model
     are BOTH open by PERSISTED DEFAULT (``ConsoleRailPreferences.
     session_open``/``model_open``) -- the layout every real session
@@ -1242,7 +1245,9 @@ async def test_fleet_summary_line_intersects_the_visible_viewport_default_sectio
 
 
 @pytest.mark.asyncio
-async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sections() -> None:
+async def test_fleet_summary_line_intersects_the_visible_viewport_collapsed_sections() -> (
+    None
+):
     """Same repro as the sibling default-sections test above, but with
     Session/Model explicitly collapsed first. Kept alongside the default-
     arrangement test (not replaced by it) -- the pinned fleet line must
@@ -1677,7 +1682,9 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left() -
 
 
 @pytest.mark.asyncio
-async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_on_visit() -> (
+    None
+):
     """TASK-910: `request_skill_install_confirm` now gets the SAME park/
     badge/toast/re-mount treatment as `request_mcp_approvals` -- see
     `test_background_approval_parks_with_badge_and_single_toast` above,
@@ -1720,9 +1727,7 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         assert not install_card.display  # parked: never mounted over the viewed tab
         approval_toasts = [n for n in notifications if "needs approval" in n]
         assert len(approval_toasts) == 1
-        assert (
-            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
-        )
+        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
 
         # Visiting mounts the card through the existing mount path.
         controller.switch_session(background)
@@ -1751,7 +1756,9 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
 
 
 @pytest.mark.asyncio
-async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit() -> None:
+async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on_visit() -> (
+    None
+):
     """TASK-910: `request_skill_script_confirm` gets the identical
     treatment -- see the sibling skill-install test above."""
     app = _build_test_app()
@@ -1784,9 +1791,7 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         assert not script_card.display  # parked: never mounted over the viewed tab
         approval_toasts = [n for n in notifications if "needs approval" in n]
         assert len(approval_toasts) == 1
-        assert (
-            controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
-        )
+        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
 
         controller.switch_session(background)
         await console._sync_native_console_chat_ui()
@@ -1813,7 +1818,9 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
 
 
 @pytest.mark.asyncio
-async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_round() -> (
+    None
+):
     """TASK-1141 sweep: `_park_console_approval` is the SAME shared seam
     for all three bridges (see its own docstring) -- this pins that the
     round-identity guard covers the skill-install park path too, not just
@@ -1861,7 +1868,9 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
 
 
 @pytest.mark.asyncio
-async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round() -> None:
+async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_round() -> (
+    None
+):
     """TASK-1141 sweep: same guard, skill-script park path."""
     app = _build_test_app()
     host = ConsoleHarness(app)
@@ -2060,8 +2069,7 @@ async def test_navigation_storm_with_busy_fleet_never_raises_a_dialog() -> None:
             app.post_message(NavigateToScreen("home"))
             await _wait_for_screen("HomeScreen")
             if any(
-                isinstance(screen, ConfirmationDialog)
-                for screen in app.screen_stack
+                isinstance(screen, ConfirmationDialog) for screen in app.screen_stack
             ):
                 dialogs_seen += 1
             app.post_message(NavigateToScreen("chat"))
