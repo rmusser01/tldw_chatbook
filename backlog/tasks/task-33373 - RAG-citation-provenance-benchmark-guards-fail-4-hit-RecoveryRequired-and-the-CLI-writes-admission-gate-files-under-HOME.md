@@ -1,18 +1,17 @@
 ---
 id: TASK-33373
-title: >-
-  RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired and the
-  CLI writes admission gate files under HOME
+title: 'RAG citation-provenance benchmark guards fail: 4 hit RecoveryRequired and
+  the CLI writes admission gate files under HOME'
 status: In Progress
 assignee: []
-created_date: '2026-09-28 20:12'
-updated_date: '2026-10-02 02:40'
+created_date: 2026-09-28 20:12
+updated_date: 2026-10-02 14:45
 labels:
-  - testing
-  - rag
-  - backup-recovery
+- testing
+- rag
+- backup-recovery
 dependencies:
-  - TASK-33370
+- TASK-33370
 priority: medium
 ---
 
@@ -40,23 +39,18 @@ ADR required: no. Correct existing benchmark isolation contract under ADR-126.
 
 ## Implementation Notes
 
-<!-- SECTION:NOTES:BEGIN -->
+<!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
 2026-10-01 scoped fix: migration ran after the inner benchmark isolation context had retired, so its real DB owner enrolled the caller HOME (metadata-only diagnostic observed112 host admissions). One private profile now owns validation imports and every measured group; HOME and USERPROFILE share it, and both restore afterward. Direct callers must supply an already selected private profile before work. No application guard, migration budget, credential/backend permission or timeout changed. Root conftest retention also allows the four real Console first-token guards to reach/pass their original assertions. Original host-state regression and new direct-runner refusal passed in final four-case /private/tmp/backup-followup-check-rlwf4wjg (4/4,0 fail/error/skip); the CLI test preserves complete host bytes, private output/redaction checks, original overall budget and exit-code checks. Earlier phase /private/tmp/backup-followup-check-pmf0m1gw retained a migration budget miss49.715 vs100; do not erase it or claim an established cause. Diagnostic after fix observed0 host admissions/controls/network. Independent immutable code review /private/tmp/backup-followup-final-independent-review-zxtrobnq/report.md passed; remaining integration verification will follow the dev rebase. TASK-33267 remains separate, awaiting ADR amendment approval.
 Post-rebase integration: normal commit 5ffd78a967125c024a2741829aa548b28342f5c4 rebased cleanly onto dev922440b93e83b4dd7086086de21b1276c477fc8e as70152bb3dc534cb278b8f84b755248ed9dfbbccc. All23 final reviewed files remained byte-identical (/private/tmp/backup-followup-rebase-2ddydqpv/summary.json). The finite current-dev phase /private/tmp/backup-followup-dev-integration-65ec4aj9/summary.json verified7611 tracked Python/SQL source bytes stable and707 actual cases PASS,0 failures/errors/skips, including the original config/DB/environment selection, complete benchmark module with original CLIprivacy/budget assertion,46Personas, admission runtime, new v74 migration and actual ChaChaNotes schema-policy check. Network guard and Null keyring were enabled before app imports. No full suite or repeated native matrix; original native backup evidence retains its original identities. Status remains In Progress pending PR integration.
 Independent latest-dev rebase assessment /private/tmp/backup-followup-rebase-independent-review-er5zsq_e/report.md passed with no actionable findings. All 23 reviewed source pins match exact 70152 HEAD; the reviewer independently counted current JUnit at 707 PASS, including 72 benchmark, 46 Personas and 18 v74 cases. No application/native tests were run by that reviewer. Only Task tracking text changes after the qualified application/test bytes.
 Draft PR #2955: https://github.com/rmusser01/tldw_chatbook/pull/2955, against dev 922440b93e83b4dd7086086de21b1276c477fc8e. Published evidence head 7fef82e2f0fbc165487673bbda19dfdfc7ef8927 changes only Task records after tested runtime 70152bb3dc534cb278b8f84b755248ed9dfbbccc; all 7611 tested Python/SQL bytes remain identical. Pending current-head CI and PR integration. The admission-performance proposal remains unapproved and has no implementation in this PR.
-<!-- SECTION:NOTES:END -->
-
+Latest logging-dev rebase source d18e990586a8b193a3fbf12248bf1b266e6eca85 on dev92a95170: the actual finite phase /private/tmp/backup-followup-check-01o7b3nc/summary.json collected106, passed94, failed12,0errors/skips/undrainednetwork. All72 original benchmark cases PASS including original CLI host-state/redaction/budget assertions; new logging17, adapted config3 and installed ChaChaNotes schema1 PASS. All12 distinct failures are worker-event tests refused at real app construction before assertions with raw_source_selection_changed; TASK-33370 owns their scoped source-lifetime diagnosis/correction. Prior720-case717/3 and corrected3-case phases retain original identities, not one all-green phase. No production/admission/deadline changes or original native reruns. The admission performance design is now requester-approved and proceeds separately.
+<!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
-Validation imports and every measured benchmark group share one private HOME/USERPROFILE/config/data lifetime. Direct callers must select it before work. Latest-dev finite integration passed all 707 cases, including the original CLI host-snapshot, redaction and unchanged performance-budget assertions. Earlier budget misses remain documented without an invented timing cause. Independent code and rebase reviews passed. Pending PR integration; status remains In Progress.
+Validation imports and every measured benchmark group share one private HOME/USERPROFILE/config/data lifetime. Direct callers must select it before work. On latest logging dev92a, all72 original benchmark cases pass, including the unchanged CLI host-snapshot, redaction and budget assertions. The combined106-case phase has94PASS/12 distinct worker setup refusals owned by TASK-33370; it is not all green. Earlier707-pass evidence and budget misses retain their original identities. Production admission and deadlines remain unchanged. Pending scoped rebase review, current-head required CI and PR integration.
 <!-- SECTION:FINAL_SUMMARY:END -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-
-<!-- SECTION:FINAL_SUMMARY:END -->
-
 ## Definition of Done
 <!-- DOD:BEGIN -->
 <!-- DOD:END -->
