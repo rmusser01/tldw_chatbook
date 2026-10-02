@@ -27,16 +27,26 @@ These tests pin the repair:
 from __future__ import annotations
 
 import inspect
+import os
 import statistics
 import sys
 import threading
 import time
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 import tldw_chatbook.config as config_module
 from Tests.Backup_Recovery.config_test_support import select_config_source
+
+COLLECTION_CONFIG_PATH = Path(os.environ["TLDW_CONFIG_PATH"])
+
+
+@pytest.fixture(autouse=True)
+def independent_config_source(isolate_test_environment, tmp_path, monkeypatch):
+    """Select an owned source before lock counters, cache warmup or writers."""
+    select_config_source(monkeypatch, tmp_path / "config.toml", globals())
 
 
 @pytest.fixture
@@ -102,12 +112,14 @@ def test_force_reload_still_takes_the_lock(counting_file_lock):
 
 def test_read_after_write_sees_the_new_value():
     """The fast path must not serve a stale cache after a published write."""
+    collection_contents = COLLECTION_CONFIG_PATH.read_bytes()
     _warm_cache()
     for value in ("first", "second", "third"):
         assert config_module.save_setting_to_cli_config(
             "task21124_probe", "freshness", value
         )
         assert config_module.get_cli_setting("task21124_probe", "freshness") == value
+    assert COLLECTION_CONFIG_PATH.read_bytes() == collection_contents
 
 
 def test_write_path_is_coalesced_to_one_disk_parse(monkeypatch):

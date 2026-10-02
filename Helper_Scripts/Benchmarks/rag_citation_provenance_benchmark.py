@@ -1931,6 +1931,21 @@ async def run_benchmark(
 
     The CLI selects that profile before importing application modules. Direct
     callers must do the same; changing HOME mid-run invalidates config custody.
+
+    Args:
+        mode: Baseline measurements or qualification against the local budgets.
+        samples: Positive number of measured iterations per group.
+        warmups: Non-negative number of unmeasured iterations per group.
+        scratch_root: Owned group workspaces, or None for a temporary directory.
+        baseline: Optional baseline report used for qualification comparisons.
+
+    Returns:
+        Metrics, workload identity, environment and local budget results.
+
+    Raises:
+        ValueError: If the mode/counts are invalid or HOME, USERPROFILE, config
+            and data paths are not selected inside one private test profile.
+        AssertionError: If a measured group violates its workload contract.
     """
 
     if mode not in {"baseline", "qualification"}:
