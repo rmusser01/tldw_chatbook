@@ -16,6 +16,7 @@ import stat
 import contextlib
 import threading
 import time
+import traceback
 from contextlib import nullcontext
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
@@ -14720,6 +14721,12 @@ class ConsoleChatController:
                 isinstance(exc, Exception)
                 and session_id in self._failed_session_close_generations
             ):
+                frames = traceback.extract_tb(exc.__traceback__)
+                logger.warning(
+                    "close_session provisional failure (error_type={}, origin={})",
+                    type(exc).__name__,
+                    frames[-1].name if frames else "unknown",
+                )
                 raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
             raise
         self._session_close_generations[session_id] = generation

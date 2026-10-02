@@ -3,11 +3,11 @@ id: TASK-33260
 title: >-
   PERF-01: Perf guards that count admissions, helper spawns and pre-import
   payload
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 18:57'
+updated_date: '2026-10-02 21:03'
 labels:
   - performance
   - ci
@@ -33,6 +33,7 @@ The two biggest regressions since the 09-04 perf review shipped with every perf 
 - [x] #3 run_console_mount_profile.py produces a profile against the reusable Console route
 - [x] #4 Startup/footer guards previously masked by RecoveryRequired('raw_source_selection_changed') run and report real results
 - [x] #5 The stale CSS-source meta-test matches the current source count
+- [ ] #6 Resend execution stays off first paint and broken-row action projection; the unchanged UI-ready module ceiling holds, and existing Resend click/key, refusal and partial-output behavior passes.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -50,6 +51,8 @@ AC adjustment (controller directive, 2026-09-28): a guard that fails on today's 
 PR2953 CI follow-up (2026-10-02): ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md; existing ADR-125/126 real admission seams. Reason: test-only correction of the existing settled-idle census, with no runtime, authority or ceiling change. Reproduce the cold pending migration counting17 admissions over8 ticks; run and assert its real one-time completion outside the measured phase; retain8 warm ticks, every real counter and anti-vacuity canary; run the exact plain guard and relevant trace completion/parking checks, lint and artifact preflight, then require all final-head PR gates and resolved Qodo before normal merge.
 
 PR2953 typing-fixture follow-up: ADR required: no; existing ADR-097/125/126 apply. Call-through diagnostics found the five-second media startup helper finishing within milliseconds of the first measured key; it is a plain asyncio task outside the Textual worker drain. Hold only this private fixture startup schedule and await the same real cleanup once before counting. Retain all measured operations, ticks, counters, canaries and ceilings; run the exact plain guard plus the existing census canaries and inspect actual cleanup evidence. The original aggregate typing-helper failure was not directly attributed; this removes the confirmed unowned setup window, without claiming production cost reduction.
+
+PR2953 latest-dev UI-ready follow-up: ADR required: no. ADR path: backlog/decisions/097-boot-budget-ratchets.md. Reason: mechanically place existing pure eligibility in the already-resident message-action owner and defer execution to its existing first-use paths; preserve public exports and behavior, with no new runtime boundary or budget exception. Upstream dev and this PR both fail at 1034 modules against unchanged 1033. Add a fresh-process guard proving broken-row action projection does not import execution, and pin execution absent in the real warm UI-ready census. Move the three existing pure helpers into console_message_actions, keep compatibility re-exports, and defer the two execution imports until explicit Resend. Adjust the defining-module monkeypatch. Verify real warm census, full affected Resend shape/action/click/key tests and boot guard neighbors; peer review, artifact/lint checks and current-source native qualification; require fresh final-head Qodo/all four CI gates before normal merge. No ceiling or snapshot refresh.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -74,6 +77,10 @@ Files: .github/workflows/perf-guard.yml, Tests/Performance/{test_console_keystro
 PR2953 CI follow-up (2026-10-02): settled-idle setup now completes and asserts the real fresh trace migration before its eight measured batches. Diagnostic RED counted3+7*2 admissions (17/8); plain GREEN and four actual cold-completion/read-only/parking/wake contracts pass without errors/skips. Runtime, real seams, anti-vacuity canaries and ceilings unchanged. Ruff adds zero diagnostics against dev in22 modified Python files; census retains inherited import/format diagnostics. Read-only independent review clear; incident added to lessons-testing-evidence.md. Existing ADR-097/125/126 apply; no new ADR. QA: settled_idle_census_followup in Docs/superpowers/qa/2026-10-01-console-tool-ux-config-integration.json. PR2953 still requires fresh final-head CI/Qodo before normal merge.
 
 The private settled-typing fixture holds its media startup timer and awaits the same real cleanup before measuring keys. Two frozen call-through diagnostics observed the media helper finishing 116ms/508ms before the first key; neither captured the original aggregate helper1 failure, so this is setup-race prevention, not exact failure attribution or production cost reduction. The exact ordinary guard now passes with all admission/helper/open seams, eight idle batches, canaries and ceilings unchanged. Independent source review clear; current Ruff delta and artifact preflight pass. Existing ADR-097/125/126 apply; final PR2953 CI/review/merge checkpoint remains.
+
+Reopened for exact final-head UI latency failure: PR run37060344703 and pure latest-dev run37058139830 both measure1034>1033. Three eager Resend imports load execution from first-paint consumers. Existing budget and snapshot will remain unchanged.
+
+Latest-dev Resend correction: the three pure eligibility helpers now live in the already-resident message-action owner, with compatibility exports preserved; execution imports only on explicit Resend. Both new startup regressions fail before and pass after; real warm census1033/1033, unchanged limit/snapshot. All64 Resend core cases,11 actual UI/click/key/timer cases and22 boot neighbors pass. Other action logic is AST-identical to dev. Broader action-file run has120 passes/10 unchanged Canvas or legacy-label failures, exactly reproduced with the dev action owner in an otherwise combined-tree private process (not a pure full-dev checkout); initial pre-bootstrap comparison error retained. This follow-up introduces production import deferral, unlike the original test-only guard work. Artifact preflight and zero-new Ruff33 pass. Native approval25 qualifies the preceding bb865 combined candidate; newly advanced dev185c845 requires rebase/current-source verification before Done or merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

@@ -7,6 +7,7 @@ import weakref
 from dataclasses import replace
 
 import pytest
+from loguru import logger
 
 from Tests.Chat.test_console_chat_controller import StreamingGateway
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
@@ -421,36 +422,92 @@ def test_session_close_fences_late_wakes_before_cancelling_children():
     assert runtime.chat_controller is controller
 
 
-def test_failed_stop_settlement_aborts_the_provisional_fleet_fence():
+@pytest.mark.parametrize("rollback", ("success", "refused", "raises"))
+def test_failed_stop_settlement_aborts_the_provisional_fleet_fence(
+    rollback: str,
+) -> None:
+    """Keep primary failure metadata when an exact provisional abort is uncertain.
+
+    Args:
+        rollback: Whether the fleet abort succeeds, refuses or raises.
+    """
     _runtime, controller, bridge, store, session = _runtime_with_fleet()
     controller._chat_create_session_grants[session.id] = {"fork_chat"}
     assistant = store.append_message(
         session.id,
         role=ConsoleMessageRole.ASSISTANT,
-        content="partial",
+        content="private partial answer",
     )
     controller._active_assistant_message_ids[session.id] = assistant.id
+    private_failure = f"private durable stop {session.id} {assistant.id}"
+    private_rollback = "private rollback body secret@example.com"
 
     def refuse_stop(*_args, **_kwargs):
-        raise ConsoleDispatchSettlementError("durable stop refused")
+        raise ConsoleDispatchSettlementError(private_failure)
 
+    original_abort = bridge.abort_fleet_fence
+
+    def abort(*args, **kwargs):
+        original_abort(*args, **kwargs)
+        if rollback == "raises":
+            raise ValueError(private_rollback)
+        return rollback == "success"
+
+    bridge.abort_fleet_fence = abort
     controller._mark_stream_stopped = refuse_stop
     controller._restore_dispatch_recovery_after_settlement_failure = (
         lambda *_args, **_kwargs: None
     )
     revision = controller.lifecycle_impact(session_id=session.id).revision
-
-    with pytest.raises(ConsoleDispatchSettlementError, match="durable stop refused"):
-        controller.begin_session_close(
-            session.id,
-            expected_revision=revision,
+    records = []
+    sink = logger.add(records.append, level="WARNING", format="{message}")
+    try:
+        expected = (
+            ConsoleDispatchSettlementError if rollback == "success" else RuntimeError
         )
+        with pytest.raises(expected) as caught:
+            controller.begin_session_close(
+                session.id,
+                expected_revision=revision,
+            )
+        if rollback == "success":
+            assert str(caught.value) == private_failure
+            assert session.id not in controller._failed_session_close_generations
+        else:
+            assert str(caught.value) == CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL
+            assert caught.value.__cause__ is None
+            assert caught.value.__suppress_context__ is True
+            assert controller._failed_session_close_generations == {session.id: 1}
+            with pytest.raises(
+                RuntimeError, match=CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL
+            ):
+                controller.begin_session_close(session.id, expected_revision=revision)
+            assert controller._session_close_generation == 1
+            primary = [
+                record for record in records if "provisional failure" in str(record)
+            ]
+            assert len(primary) == 1
+            assert "error_type=ConsoleDispatchSettlementError" in str(primary[0])
+            assert "origin=refuse_stop" in str(primary[0])
+        rendered = "".join(str(record) for record in records)
+        for private in (
+            private_failure,
+            private_rollback,
+            session.id,
+            assistant.id,
+            assistant.content,
+        ):
+            assert private not in rendered
+        assert all(record.record["exception"] is None for record in records)
+    finally:
+        logger.remove(sink)
 
     assert bridge.events == [
         f"fleet-fence:{session.id}",
         f"fleet-abort:{session.id}",
     ]
     assert session.id not in controller._session_close_generations
+    assert [item.id for item in store.sessions()] == [session.id]
     assert controller._chat_create_session_grants[session.id] == {"fork_chat"}
 
 
