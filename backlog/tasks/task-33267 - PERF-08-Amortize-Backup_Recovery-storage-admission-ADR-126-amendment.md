@@ -15,6 +15,7 @@ priority: high
 references:
 - qa/perf-structural-audit-2026-09-27/report.md
 - qa/perf-structural-audit-2026-09-27/appendix-issues-by-pr.md
+updated_date: 2026-10-02 15:01
 ---
 
 ## Description
@@ -96,8 +97,8 @@ Every outermost guarded call re-derives admission evidence from disk. It walks d
   Reuse must match the derivation exactly, and five mutations are pinned as refusals.
 - A macOS dependency-completeness trace: every path the derivation reads is stamped. It fails when registry.json is dropped.
 - Engagement, settle-margin, epoch and concurrency tests.
+2026-10-02 integration reconciliation: dev113e435 merged PR2911 (ADR amendment) and PR2919 (ordinary acquire_storage evidence reuse) while the separate approved backup followup/performance work was being prepared. Preserve this Task's upstream Done/part1 acceptance record and all prior measurements; they are not the reconstructed complete-transaction probe. The requester approved the retained-source/full-byte/native-hold amortization design on2026-10-01. Its reconstructed Task1 probe and independently reviewed signal-failure fix retain separate original identities. Remaining approved monitor/MCP/raw/current-byte/native-platform work will build on the merged implementation under existing TASK-33560; do not duplicate it or relabel old receipts as dev113 qualification. The proposed design doc added by PR2955 is historical input and must be reconciled with the already accepted ADR before further production edits.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
-
 ## Final Summary
 
 <!-- SECTION:FINAL_SUMMARY:BEGIN -->
