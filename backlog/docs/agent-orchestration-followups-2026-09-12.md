@@ -29,6 +29,11 @@ reviewed: 145 affected messaging/schema checks, 147 lifecycle/UI checks and
 focused real-gateway wake/refund checks pass. Selections overlap and are not
 summed. Exact tool inventory, canonical timestamps, real query-plan pins, table
 allowlist and audited diagnostic inventory are qualified.
+Qodo's four findings are also corrected and independently re-reviewed: strict
+peer arguments, public docs/type hints and immutable close membership. The
+boot CSS breach is repaid with one scoped shared editor class, preserving actual
+paint and the original 608090 B ratchet (measured 608088 B). Fresh targeted
+checks and final 76-file changed-code/diagnostic checks pass; all 13 tasks are Done.
 Delivery is through [PR #2918](https://github.com/rmusser01/tldw_chatbook/pull/2918)
 against dev; remote checks must rerun on the published head. No merge is claimed.
 

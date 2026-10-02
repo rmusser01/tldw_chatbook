@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-29 18:10'
-updated_date: '2026-10-02 00:42'
+updated_date: '2026-10-02 01:08'
 labels:
   - agents
   - console
@@ -32,6 +32,8 @@ Preserve pending child reports across saved-chat closure and application restart
 1. Trace saved binding and explicit Save through native identity and the existing Console transaction contribution. 2. Add a bounded chat-owned SQLite progress table and leaf repository, retaining process-local sending capability and memory-only temporary reports. 3. Prepare durable loading outside native identity locks and bind only after exact-owner revalidation; commit enqueue and whole-report collection before receipts. 4. Reuse caller-owned Save contribution for atomic pending-report promotion, preserve old queues on rollback/cancel, and add focused reopen, FIFO, limits, owner replacement and privacy checks. 5. Update installed recovery schema and documentation, run targeted/static checks and independent review. ADR required: yes; ADR path: backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; reason: durable report data with atomic chat Save and separate live authority.
 
 CI addendum 2026-10-01: use existing ADR-173 timestamp writer for persisted progress; pin the real bounded FIFO query plan without sqlite_stat1 and register its index in the existing census; run targeted durable/schema checks after latest-dev rebase. ADR required: no; direct corrections under ADR-173/199.
+
+Qodo addendum 2026-10-01: audit global begin_close and deferred physical cleanup callers, verify immutable published membership suffices for deny-only revocation after the global fence, and reproduce a forced interleaving before the minimal snapshot repair. Check real admitted-writer and mounted dispose paths. ADR required: no; preserves ADR-199 authority/owned cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -72,4 +74,8 @@ Only the callback import block was normalized after that behavioral run. Final s
 Final root closure — 2026-09-29: supersedes the historical In Progress holds above. All four acceptance criteria are qualified and independently approved. Final combined affected selection passed 247 checks; after repairing all four confirmed new worker cache leaks, the native/modal/hydration selection passed 82 checks and the durable/threaded-report/tool/queue selection passed 74 checks. Final independent cache/caller review passed 13 checks, including actual physical participant drain, with no remaining actionable findings. Root changed-code verification passes fatal checks for 72 Python files, full lint/format for all 10 new Python files, zero added-line/new-file lint findings and clean whitespace. ADR-199 governs the delivered storage and lifecycle contracts. Existing source lint/format and size-ratchet debt, the unclassified earlier aggregate FD sentinel, stale pytest cleanup warnings, and targeted-only qualification remain disclosed in the root review. No full-suite, live-provider or Windows result is claimed.
 
 October 1 CI/integration closeout: ProgressMessage now reuses utc_now_iso under ADR-173, preserving FIFO sequence and legacy timestamps. The real reopen/FIFO test checks canonical millisecond-Z timestamps, traces actual populated repository SQL without statistics and proves indexed search plus a scan negative control. Registered idx_fleet_progress_conversation_sequence and added fleet_progress_messages to the existing Chat SQL allowlist. The exact three-case CI selection passes 5.73s; the affected 145-case selection passes 58.50s and saved-close/hydration/mounted progress in the 147-case selection passes 271.09s. Independent worker/recovery overlap review approves. Audited the changed exception-type-only diagnostics before refreshing the inventory; its final guard passes. Final changed-code static and whitespace checks pass. Docs plan/review/ledger and lessons-testing-evidence record the incident and limits. Existing ADR-173/199; no new decision. Criteria satisfied; Done, with targeted evidence only.
+
+October 1 Qodo review: validate global close membership capture against deferred inbox cleanup; reuse existing immutable published membership if required while preserving the global authority fence and nonblocking revocation under admitted SQL work. Existing ADR-199; no new lifecycle contract.
+
+October 1 Qodo close-membership follow-up complete: begin_close sets the global deny-only latch, then revokes through existing immutable published inbox membership instead of copying the mutable authoritative dictionary. It takes no writer lock. The global latch fences unpublished inboxes; final physical close still settles/drains authoritative membership under its existing lock. Forced yielding-iteration scheduling reproduced RuntimeError during real finish_close_inbox before the change; this does not claim a naturally reproduced CPython3.12/GIL race. All 44 queue cases and 4 actual mounted SQLite disposal/cancelled-disposal/replacement-disposal/durable-reopen checks pass, with independent controlled close/replacement/revocation verification and final 22-check review approval. Final 76-file changed-code static, format, diagnostics and whitespace checks pass. Existing ADR-199; no new snapshot, owner, lock or dependency. Done.
 <!-- SECTION:NOTES:END -->

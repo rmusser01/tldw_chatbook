@@ -63,3 +63,13 @@ Rebased PR #2918 onto dev `31d4f9b76492120706ba8e3ad7d355f1aa4e0273`. Reopened T
 - [x] Independently review overlapping runtime/routing/recovery boundaries and run final targeted checks.
 
 Affected messaging/schema checks pass 145 cases; fallback/sampling/saved-close/hydration/mounted progress/token/guide checks pass 147 cases. The exact CI correction selection passes three cases. Hook repair passes six authority/real-gateway cases and three existing ledger guards; independent review passes both real provider paths and three ledger guards. The upstream MCP click correction passes all four focused cases. These selections overlap and are not summed. Final static qualification covers 75 changed Python files and ten new files with zero added-line/new-file findings. Delivery remains PR #2918 against dev; no merge is claimed.
+
+## October 1 Qodo and boot CSS follow-up
+
+- [x] Preserve the existing boot CSS ratchet by consolidating the two preset editor selectors into one scoped class and qualifying actual painted fields at standard/narrow widths.
+- [x] Complete public peer documentation and provider-error annotations.
+- [x] Add strict Pydantic peer argument validation through the existing text validator; preserve refusal codes, quotas, privacy and capability custody.
+- [x] Replace global-close mutable membership traversal with existing immutable published membership after the global authority fence; qualify controlled removal and actual mounted disposal.
+- [x] Independently re-review all four Qodo findings and close the reopened tasks after fresh targeted/static/diagnostic checks.
+
+ADR required: no; direct qualification and mechanical repairs under ADR-097/150/173/199/200. All 13 tasks are Done. Fresh evidence:17 CSS/authoring/token/bundle cases, 88 peer/inventory/fallback cases, 2 startup guards, 44 queue cases and 4 mounted lifecycle cases. Independent final review approves 22 focused cases; selections overlap and are not summed. Final static scan covers 76 changed Python files and ten new files with zero added-line/new-file findings; diagnostics match the audited inventory. Publish the follow-up to ready PR #2918 and require fresh checks on that head. No merge is claimed.

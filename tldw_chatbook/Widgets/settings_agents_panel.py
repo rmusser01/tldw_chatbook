@@ -176,7 +176,7 @@ class AgentsSettingsPanel(Vertical):
                 "Instructions (appended to the sub-agent prompt)",
                 classes="settings-input-label",
             )
-            yield TextArea(id="agents-instructions-area")
+            yield TextArea(id="agents-instructions-area", classes="agents-area")
             with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Model override", classes="settings-input-label")
                 yield Input(
@@ -206,7 +206,7 @@ class AgentsSettingsPanel(Vertical):
                 "Used only before any proposed tool activity; continued children keep their active target.",
                 classes="settings-input-label",
             )
-            yield TextArea(id="agents-fallback-models-area")
+            yield TextArea(id="agents-fallback-models-area", classes="agents-area")
             with Horizontal(classes="settings-input-row agents-field-row"):
                 yield Static("Child time cap (seconds)", classes="settings-input-label")
                 yield Input(

@@ -455,3 +455,64 @@ def test_begin_store_close_revokes_all_capabilities_without_waiting_for_writer()
             operation()
     store.close()
     assert store._pending_count == store._pending_chars == 0
+
+
+def test_begin_store_close_uses_published_membership_during_physical_removal(
+    monkeypatch,
+):
+    store, inbox, sender, reader = setup_queue()
+    remaining = store.open_inbox("conversation-b")
+    remaining_sender = remaining.sender(identity(1))
+    sender.send("closing report")
+    remaining_sender.send("remaining report")
+    exact = store.begin_close_inbox("conversation-a")
+    cleanup_requested = threading.Event()
+    cleanup_finished = threading.Event()
+    closing_thread = threading.current_thread()
+
+    def allow_physical_cleanup():
+        cleanup_requested.set()
+        assert cleanup_finished.wait(5), "physical cleanup did not settle"
+
+    class YieldingInboxes(dict):
+        def values(self):
+            # Force removal during mutable snapshot construction. CPython's
+            # GIL may otherwise hide this interleaving inside tuple(values).
+            values = iter(super().values())
+            yield next(values)
+            allow_physical_cleanup()
+            yield from values
+
+    with store._lock:
+        store._inboxes = YieldingInboxes(store._inboxes)
+    original_revoke = inbox._revoked.set
+
+    def revoke_and_allow_cleanup():
+        original_revoke()
+        if threading.current_thread() is closing_thread:
+            allow_physical_cleanup()
+
+    monkeypatch.setattr(inbox._revoked, "set", revoke_and_allow_cleanup)
+
+    def finish_cleanup():
+        assert cleanup_requested.wait(5), "close did not permit cleanup"
+        store.finish_close_inbox("conversation-a", exact)
+        cleanup_finished.set()
+
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        cleanup = executor.submit(finish_cleanup)
+        store.begin_close()
+        cleanup.result(timeout=5)
+    assert store._inboxes.get("conversation-a") is None
+    assert remaining._revoked.is_set()
+    assert store.pending_counts() == {}
+    assert store.get_inbox("conversation-b") is None
+    for operation in (
+        lambda: sender.send("late"),
+        lambda: remaining_sender.send("late"),
+        reader.collect,
+        remaining.snapshot,
+    ):
+        assert_refusal("unavailable", operation)
+    store.close()
+    assert store._pending_count == store._pending_chars == 0
