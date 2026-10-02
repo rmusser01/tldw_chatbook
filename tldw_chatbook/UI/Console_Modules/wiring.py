@@ -2298,6 +2298,12 @@ def build_console_controllers(
         notify=lambda text, severity: screen.app_instance.notify(
             text, severity=severity
         ),
+        # TASK-33621.28: a Send from a handler or Enter's app.call_later
+        # callback reviews hooks here, never on the pump that must deliver
+        # the review's keys.
+        start_worker=lambda continuation: screen.run_worker(
+            continuation, group="console-hook-send-review"
+        ),
     )
     screen._review_selection = ConsoleReviewSelectionController(
         store_accessor=lambda: screen._ensure_console_chat_store(),

@@ -19,6 +19,7 @@ from tldw_chatbook.Chat.console_ephemeral import blocked_reason
 
 if TYPE_CHECKING:
     from tldw_chatbook.Canvas.compiler import CanvasCompileError
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
 
 ConsoleActionStatus = Literal[
     "completed",
@@ -47,6 +48,9 @@ class ConsoleMessageAction:
     label: str
     enabled: bool = True
     disabled_reason: str = ""
+    #: TASK-33628.2: a legend that replaces the row guide while this action
+    #: is on screen (a pending delete's scoped question).
+    guide: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -351,6 +355,9 @@ def action_row_guide(actions: list[ConsoleMessageAction]) -> str:
         e Edit · r ♻ Regenerate · ---> Continue · 👍/👎 Rate · 🗑 Delete ·
         Esc clear``.
     """
+    override = next((action.guide for action in actions if action.guide), "")
+    if override:
+        return override
     segments_by_id = dict(ACTION_GUIDE_SEGMENTS)
     parts: list[str] = []
     for action in actions:
@@ -744,6 +751,7 @@ class ConsoleMessageActionService:
         ephemeral: bool = False,
         video_file_available: bool = False,
         fork_eligibility: ConsoleForkEligibility = ConsoleForkEligibility(True),
+        pending_delete: ConsoleDeleteScope | None = None,
     ) -> ConsoleMessageActionGroups:
         """Resolve the row once, then split direct, overflow, and media actions.
 
@@ -756,6 +764,9 @@ class ConsoleMessageActionService:
             ephemeral: Whether disk-writing media actions must be blocked.
             video_file_available: Whether the ephemeral video bytes still exist.
             fork_eligibility: Store-derived active-prefix durability result.
+            pending_delete: The armed delete scope; on its own message the
+                direct row becomes ``[Delete N messages] [Cancel]`` with the
+                scoped question as the legend (TASK-33628.2).
 
         Returns:
             Immutable primary, overflow, and media action tuples.
@@ -821,6 +832,16 @@ class ConsoleMessageActionService:
                 or generation_variant_count > 0
             )
         )
+        if pending_delete is not None and pending_delete.message_id == message.id:
+            primary = (
+                ConsoleMessageAction(
+                    "delete-confirm",
+                    pending_delete.confirm_label,
+                    guide=pending_delete.guide,
+                ),
+                ConsoleMessageAction("delete-cancel", "Cancel"),
+            )
+            overflow = ()
         return ConsoleMessageActionGroups(
             primary=primary,
             overflow=overflow,

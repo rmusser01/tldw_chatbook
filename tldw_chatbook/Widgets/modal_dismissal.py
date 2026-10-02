@@ -8,8 +8,10 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol, cast
 from weakref import ReferenceType, ref
 
+from loguru import logger
 from textual import events
 from textual.app import App
+from textual.await_complete import AwaitComplete
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import Footer
@@ -305,6 +307,40 @@ class SafeModalDismissMixin:
             return
         self._safe_cancel_effect_committed = True
         await effect()
+
+    def dismiss(self, result: Any = None) -> AwaitComplete:
+        """Dismiss this modal -- but only while it is the app's top screen.
+
+        TASK-33622.10 (ADR-031: async cancellation may dismiss only the
+        active top screen). Textual 8.2.8's ``Screen.dismiss`` delivers THIS
+        screen's result and then pops whatever is on TOP. Called while another
+        screen covers this one -- a timer, poll or worker deciding the modal
+        is done -- it popped that other screen instead (the quit prompt, under
+        the priority Ctrl+Q) and left this one on the stack with its result
+        already spent, so its next close raised ``InvalidStateError`` and
+        exited the app. Covered, or already popped, it is now refused before
+        anything is delivered: the screen above stays, and a periodic caller
+        (the video player's time box) simply closes on its next tick on top;
+        a one-shot caller must keep its close for ``ScreenResume`` itself (the
+        video player's failure close does). With no running app, Textual's
+        own path decides, as before.
+
+        Args:
+            result: The result for the opener's callback.
+
+        Returns:
+            Textual's pop awaitable, or an already-complete one when refused.
+        """
+        try:
+            covered = cast("_SafeModalHost", self).app.screen is not self
+        except Exception:  # no active app or an empty stack: Textual decides
+            covered = False
+        if covered:
+            logger.debug(
+                "{} refused a dismiss while not the top screen", type(self).__name__
+            )
+            return AwaitComplete.nothing()
+        return super().dismiss(result)  # type: ignore[misc]
 
     def dismiss_safe_once(self, result: object) -> bool:
         """Dismiss only this mounted, topmost modal and restore opener focus."""

@@ -59,7 +59,7 @@ def test_fresh_database_has_the_failure_reason_column(tmp_path: Path) -> None:
     db = CharactersRAGDB(tmp_path / "fresh.db", client_id="fresh")
     try:
         connection = db.get_connection()
-        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 74
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION == 75
         assert "failure_reason" in _columns(connection)
     finally:
         db.close_connection()
@@ -89,7 +89,7 @@ def test_v73_database_upgrades_and_keeps_its_ledger(tmp_path: Path) -> None:
     upgraded = CharactersRAGDB(path, client_id="v74-open")
     try:
         connection = upgraded.get_connection()
-        assert _version(connection) == 74
+        assert _version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert "failure_reason" in _columns(connection)
         repository = ConsoleContextRepository(upgraded)
         old = repository.get_auxiliary_attempt("old-op")

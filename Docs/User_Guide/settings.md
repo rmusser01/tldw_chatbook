@@ -1118,8 +1118,8 @@ feedback.
 default), any key pressed while the splash is up dismisses it and boot
 continues immediately. That key is consumed by the splash and does nothing
 else — pressing `F4` mid-splash skips to the app's normal startup screen
-rather than jumping to Settings, and `ctrl+q` mid-splash dismisses the splash,
-so quitting takes a second press. Turn the setting off and the splash always
+rather than jumping to Settings. The one exception is `ctrl+q`: it quits
+straight away, splash or not. Turn the setting off and the splash always
 runs its full **Duration (s)**, with keys routed exactly as before. Before the
 fix the setting was inert: the splash was never focused, so it never saw a key.
 

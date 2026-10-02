@@ -426,6 +426,25 @@ class ReminderForm(ModalScreen):
             )
         )
 
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards this form's edits (TASK-33622.10).
+
+        The app's quit flow asks the open modal first; without this hook,
+        quitting would skip the discard guard Escape honours.
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        if not self._dirty:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self, "You have unsaved changes in this form."
+        )
+
     def compose(self) -> ComposeResult:
         """Build the form layout.
 

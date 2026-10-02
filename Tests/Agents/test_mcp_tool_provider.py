@@ -1658,7 +1658,8 @@ def test_invoke_execute_exception_from_coroutine_returns_error(running_loop):
     result = provider.invoke(tool_id, {})
 
     assert result.ok is False
-    assert "boom from execute_hub_tool" in result.error
+    assert result.error == "mcp_execution_failed"
+    assert "boom from execute_hub_tool" not in result.error
 
 
 @pytest.mark.filterwarnings("error::pytest.PytestUnraisableExceptionWarning")

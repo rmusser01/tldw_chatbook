@@ -147,9 +147,12 @@ try:
   nodes=[ConsoleChatMessage(role=ConsoleMessageRole.USER,content=row['content'],persisted_message_id=row['id'],parent_message_id=row['parent_message_id']) for row in db.get_messages_for_conversation(conversation)]
   session=store.restore_persisted_session(title='Reference lifecycle',workspace_id=None,persisted_conversation_id=conversation,all_nodes=nodes,active_leaf_persisted_id=child)
   selected=next(node for node in store.messages_for_session(session.id) if node.persisted_message_id==first)
-  notices=[]
+  notices=[];receipts=[]
   async def sync():pass
-  host=SimpleNamespace(_console_speech_states={},_ensure_console_chat_store=lambda:store,_console_message_presentation=lambda message:message,_console_message_action_service=ConsoleMessageActionService(),_pending_console_delete_message_id=selected.id,_ensure_console_chat_controller=lambda:SimpleNamespace(clear_original_attempts_for_session=lambda session:None),_console_original_attempt_previews={},_invalidate_console_persisted_rows_cache=lambda:None,_sync_native_console_chat_ui=sync,app_instance=SimpleNamespace(notify=lambda message,**kwargs:notices.append((message,kwargs))))
+  async def push_screen(screen,callback=None):
+   # TASK-33628.2: the receipt's Done makes the delete final (and releases).
+   receipts.append(screen);await callback(None)
+  host=SimpleNamespace(_console_speech_states={},_ensure_console_chat_store=lambda:store,_console_message_presentation=lambda message:message,_console_message_action_service=ConsoleMessageActionService(),_pending_console_delete_message_id=selected.id,_ensure_console_chat_controller=lambda:SimpleNamespace(clear_original_attempts_for_session=lambda session:None),_console_original_attempt_previews={},_invalidate_console_persisted_rows_cache=lambda:None,_invalidate_console_fork_image_selections=lambda ids:None,_sync_native_console_chat_ui=sync,push_screen=push_screen,app_instance=SimpleNamespace(notify=lambda message,**kwargs:notices.append((message,kwargs))))
   button=Button('Delete');button.console_action_id='delete';button.console_message_id=selected.id
   original=owner.release_message_references
   def fail(*args,**kwargs):raise RuntimeError('owner unavailable')
@@ -158,10 +161,41 @@ try:
   finally:owner.release_message_references=original
   assert {row['message_id'] for row in db.get_message_tombstones([first,child])}=={first,child}
   assert not gone() and service.recovered_media_cleanup_pending
+  assert len(receipts)==1
   assert any(text==service.recovered_media_cleanup_warning and options['severity']=='warning' for text,options in notices),notices
   try:store.get_message(selected.id)
   except KeyError:pass
   else:raise AssertionError('committed deletion remained visible')
+ elif mode=='held_release':
+  with service.hold_recovered_media_release() as held:
+   rows=service.delete_message_subtree(message_id=first)
+  assert {r['message_id'] for r in rows}=={first,child} and set(held)=={first,child}
+  assert not gone() and not service.recovered_media_cleanup_pending
+  restored=service.restore_message_subtree(tombstones=tuple((r['message_id'],r['version']) for r in rows))
+  assert {r['message_id'] for r in restored}=={first,child}
+  assert not db.get_message_tombstones([first,child]) and not gone()
+  service.delete_message_subtree(message_id=first)
+  assert gone() and not service.recovered_media_cleanup_pending
+ elif mode=='unbound_unreferenced':
+  from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+  other=CharactersRAGDB(root/'foreign.sqlite',client_id='fixture')
+  try:
+   cid=other.add_conversation({'title':'other'})
+   plain=other.add_message({'conversation_id':cid,'sender':'User','content':'no media'})
+   foreign=ConsoleRuntime(SimpleNamespace(chachanotes_db=other)).ensure_chat_store().persistence
+   # Unbound source: THIS delete names no referenced message, so its own
+   # release reports nothing pending (the Console warns per delete).
+   with foreign.hold_recovered_media_release() as held:
+    foreign.delete_message_subtree(message_id=plain)
+   assert held==[plain]
+   assert foreign.release_recovered_media_references(held) is False
+   # Control: an id the catalog DOES reference stays pending when unbound.
+   other.add_message({'id':first,'conversation_id':cid,'sender':'User','content':'referenced'})
+   with foreign.hold_recovered_media_release() as held:
+    foreign.delete_message_subtree(message_id=first)
+   assert foreign.release_recovered_media_references(held) is True
+   assert not gone(),refs()
+  finally:other.close()
  elif mode=='foreign_db':
   from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
   other=CharactersRAGDB(root/'foreign.sqlite',client_id='fixture')
@@ -227,6 +261,8 @@ finally:db.close()
         "native_pause",
         "ui_warning",
         "no_catalog",
+        "held_release",
+        "unbound_unreferenced",
         "varied_refs",
         "process_failure",
     ],

@@ -560,9 +560,10 @@ provider-internal framing and prompt-cache markers. The llama.cpp capture is the
 literal wire payload. Missing captures can reflect capture being off, a failed
 capture, or purged history; the modal does not reconstruct missing requests.
 
-**View: Safe/Full** controls local disclosure in both historical views. Changing
-it clears both readers and their cached bodies; switching to Full requires the
-existing confirmation. **Capture settings** applies to future capture and is a
+**View: Safe/Full** (or **v**) controls local disclosure in both historical
+views. Changing it clears both readers and their cached bodies; switching to
+Full requires the existing confirmation, and **Keep Safe** or **Esc** leaves it
+on Safe. **Capture settings** applies to future capture and is a
 separate choice. **Export selected call…** opens the existing governed export
 dialog. If the conversation, profile, or capture authority changes, stale content
 cannot return through a delayed load or export.
@@ -601,9 +602,29 @@ The Inspector places a one-line **Project** status above **Sources**:
 row to open this viewer's metadata-only **Project Instructions** section. It
 shows whether the feature is enabled, the selected binding and locator match,
 override/standard precedence, relative source paths, scopes, byte counts,
-active or omitted outcomes, and deduplicated warning codes. Removed or
-retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
-**Enable**. There is no automatic-file editor or second settings surface.
+active or omitted outcomes, and deduplicated warning codes. When no folder is
+selected yet (**Choose folder**) or a binding was removed or retargeted
+(**Warning**), the section offers **Choose folder** and **Disable**; **Off**
+offers **Enable**. There is no automatic-file editor or second settings
+surface.
+
+**Choose folder** and **Enable** open a picker titled "Project instructions
+need a folder" that lists the folders bound to this conversation's workspace.
+Pick one to select it: you return to the Inspector, its state updates, and the
+Inspect rail's **Project** row stops reading **Choose folder**. **Esc** or
+**Cancel** returns to the Inspector with the selection unchanged, and
+**Disable** turns project instructions off. The Default workspace cannot bind
+folders, so there the picker shows only "No eligible folders"; bind one in a
+named workspace first.
+
+The choice is stored with the conversation and kept after a restart. In a new
+chat with no messages yet, it is saved in the same step as your first
+message, so it is kept even if that send then stops before a reply (for
+example, when the chat shows **Blocked**). Choosing again while the first
+message is still being saved, or while the chat is stopped like that, is
+stored too. A new chat where you never chose a folder reopens the way you
+left it — project instructions on, no folder (**Choose folder**) — not
+**Off**.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of

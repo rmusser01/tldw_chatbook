@@ -461,6 +461,22 @@ class ConsoleLibraryAccessModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         self.dismiss_safe_once(None)
 
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards unsaved policy choices (TASK-33622.10).
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        if not self._dirty:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self, "Your Library access choices are not saved."
+        )
+
     @on(Button.Pressed)
     async def _button_pressed(self, event: Button.Pressed) -> None:
         button_id = event.button.id

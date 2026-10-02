@@ -194,7 +194,10 @@ from tldw_chatbook.Utils.instance_lock import (
 )
 from tldw_chatbook.Utils.persistent_diagnostics import persist_event
 from tldw_chatbook.Utils.text_selection_crash_guard import TextualAppGuards
-from tldw_chatbook.Utils.ui_responsiveness import UIResponsivenessMonitor
+from tldw_chatbook.Utils.ui_responsiveness import (
+    UIResponsivenessMonitor,
+    freeze_long_lived_heap,
+)
 
 #
 # --- Local API library Imports ---
@@ -208,7 +211,10 @@ from .config import (
     get_user_data_dir,
     save_setting_to_cli_config,
 )
-from .Logging_Config import configure_application_logging
+from .Logging_Config import (
+    configure_application_logging,
+    sync_loguru_forward_level,
+)
 
 # TASK-21108: `TTS/voice_bundle_service` (1,857 lines) is imported
 # function-locally in `_ensure_tts_voice_bundle_service` -- the only place
@@ -923,7 +929,7 @@ class TldwCli(
     # Shell shortcuts are keyed by stable destination ID so inserting a new
     # destination cannot transfer an existing shortcut to another screen.
     BINDINGS = [
-        Binding("ctrl+q", "quit", "Quit App", show=True),
+        Binding("ctrl+q", "quit", "Quit App", show=True, priority=True),  # ADR-031
         Binding("ctrl+p", "command_palette", "Palette Menu", show=True),
         Binding("f1", "show_workbench_help", "Help", show=True),
         Binding("f6", "focus_next_workbench_pane", "Next Pane", show=True),
@@ -1047,6 +1053,9 @@ class TldwCli(
             )  # Reduce to INFO level in production
             # Disable debug logging for performance
             logging.getLogger("tldw_chatbook").setLevel(logging.INFO)
+            # ...which reaches loguru only once its forwarder is re-levelled:
+            # at TRACE every dropped debug call still cost ~7-8 us (PERF-03).
+            sync_loguru_forward_level()
 
         # Log initial memory usage only in debug mode
         if os.environ.get("TLDW_DEBUG"):
@@ -2171,8 +2180,8 @@ class TldwCli(
         """
         from collections import deque
 
+        from tldw_chatbook.Logging_Config import LogsBufferHandler
         from tldw_chatbook.UI.Logs_Window import MAX_LOG_RECORDS
-        from tldw_chatbook.Utils.log_sanitizer import redact_log_line
 
         # The clipboard payload for "Copy all". Bounded (TASK-19555): an
         # unbounded session buffer is a memory leak and a disclosure surface,
@@ -2186,59 +2195,18 @@ class TldwCli(
         if not hasattr(self, "_log_records"):
             self._log_records = deque(maxlen=MAX_LOG_RECORDS)
 
-        # Create a custom handler that stores logs in the buffer
-        class PersistentLogHandler(logging.Handler):
-            def __init__(self, buffer, app):
-                super().__init__()
-                self.buffer = buffer
-                self.app = app
-
-            def emit(self, record):
-                try:
-                    formatted = self.format(record)
-                    msg = redact_log_line(formatted)
-                    self.buffer.append(msg)
-                    self.app._log_records.append((record.levelname, record.name, msg))
-
-                    # Preferred live path: the Logs screen's LogsWindow applies
-                    # the user's active filters as records arrive.
-                    logs_window = getattr(self.app, "_current_logs_window", None)
-                    if logs_window is not None:
-                        try:
-                            logs_window.append_record(
-                                record.levelname, record.name, msg
-                            )
-                            return
-                        except Exception:
-                            pass  # Widget might not be mounted
-
-                    # Legacy fallback: write straight to the RichLog widget.
-                    if (
-                        hasattr(self.app, "_current_log_widget")
-                        and self.app._current_log_widget
-                    ):
-                        try:
-                            self.app._current_log_widget.write(msg)
-                        except Exception:
-                            pass  # Widget might not be mounted
-                except Exception:
-                    self.handleError(record)
-
-        # Add the persistent handler to the root logger
+        # Add the persistent handler to the root logger. It shares the private
+        # file's single redaction pass (PERF-03; see LogsBufferHandler).
         if not hasattr(self, "_persistent_log_handler"):
-            self._persistent_log_handler = PersistentLogHandler(self._log_buffer, self)
-            formatter = logging.Formatter(
-                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-            )
-            self._persistent_log_handler.setFormatter(formatter)
+            self._persistent_log_handler = LogsBufferHandler(self)
             logging.getLogger().addHandler(self._persistent_log_handler)
             logger.info("Persistent logging handler set up for screen navigation")
 
         # The app logs via loguru and the persistent handler is stdlib-only,
         # but NO bridge is installed here: `Logging_Config._setup_logging`
         # already forwards every loguru record into stdlib logging
-        # (`_forward_loguru_to_standard`, level TRACE, diagnose=False per
-        # task-2119), and it runs before this method on every boot path —
+        # (`_forward_loguru_to_standard`, diagnose=False per task-2119), and
+        # it runs before this method on every boot path —
         # either early at process start or via `configure_application_
         # logging` in `_setup_logging`. A second sink here made every loguru
         # record reach the root logger twice, so the Logs screen showed each
@@ -4413,6 +4381,7 @@ class TldwCli(
         # CRITICAL: Set UI ready state after all bindings and initializations
         self._ui_ready = True
         ui_ready_time = time.perf_counter()
+        freeze_long_lived_heap("ui_ready")  # ADR-198: keep the boot heap out of gen-2 scans
 
         self.loguru_logger.info("App _post_mount_setup: Post-mount setup completed.")
 
@@ -5285,6 +5254,7 @@ class TldwCli(
                     type(exc).__name__,
                 )
             previous_cost = time.monotonic() - started
+        freeze_long_lived_heap("screen_preimport")  # ADR-198: imported screens are long-lived
 
     def _screen_preimport_pacing(self) -> tuple[float, float]:
         """``(yield_ratio, max_gap_seconds)`` for the between-route pause.

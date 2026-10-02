@@ -40,7 +40,7 @@ def assert_console_reopened(runtime):
 class WorkflowQuitHarness(_ConfirmationHarness):
     _shutdown_workflow_session = TldwCli._shutdown_workflow_session
 
-    async def push_screen_wait(self, dialog):
+    async def _await_quit_prompt(self, dialog):
         return self.decision
 
     def __init__(self, session):
@@ -236,7 +236,7 @@ async def test_confirmation_changes_do_not_cancel_newer_review(harness):
             return True
         return False
 
-    app.push_screen_wait = respond
+    app._await_quit_prompt = respond
     await app._confirm_and_quit()
     assert len(calls) == 2
     assert app.cleanup_calls == 0

@@ -8,6 +8,7 @@ from collections.abc import Awaitable, Callable, Collection
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from loguru import logger
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
@@ -16,12 +17,14 @@ from textual.screen import ModalScreen, Screen
 from textual.widgets import Button, Checkbox, Static
 
 from tldw_chatbook.Constants import TAB_SETTINGS
-from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult
+from tldw_chatbook.UI.Console_Modules.hooks import HookReviewResult, in_worker_task
 from tldw_chatbook.UI.Navigation.main_navigation import NavigateToScreen
 from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
 from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 
 if TYPE_CHECKING:
+    from textual.await_complete import AwaitComplete
+
     from tldw_chatbook.Agents.hook_permissions import (
         HookPermissions,
         HookReviewSnapshot,
@@ -67,6 +70,49 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._selected: set[str] = set()
         self._busy = False
         self._generation = 0
+        self._answer: asyncio.Future[HookReviewResult] | None = None
+
+    def answer(self) -> asyncio.Future[HookReviewResult]:
+        """This review's result, settled by the modal itself.
+
+        TASK-33621.28: not a ``push_screen`` result callback. Textual runs
+        that through the requester pump's ``call_next``, and a requester that
+        awaits the answer is that very pump, blocked -- the callback never
+        ran and the Console's Send never settled. ``dismiss`` settles this
+        future synchronously instead, and leaving the DOM without a dismissal
+        settles it as a cancel, so a waiting caller always resumes.
+
+        Returns:
+            The same future on every call, created on first use. It resolves
+            to the ``HookReviewResult`` the modal was dismissed with --
+            ``HookReviewResult("cancel")`` for a bare dismissal or an unmount
+            without one -- and is never cancelled or failed by the modal.
+        """
+        if self._answer is None:
+            self._answer = asyncio.get_running_loop().create_future()
+        return self._answer
+
+    def _settle(self, result: HookReviewResult) -> None:
+        answer = self.answer()
+        if not answer.done():
+            answer.set_result(result)
+
+    def dismiss(self, result: HookReviewResult | None = None) -> AwaitComplete:
+        """Settle ``answer()`` first, then dismiss as Textual does.
+
+        Settling here, synchronously, is the TASK-33621.28 fix: a waiting
+        caller resumes without any pump flushing a result callback.
+
+        Args:
+            result: The review outcome; ``None`` settles the answer as
+                ``HookReviewResult("cancel")``. Passed on to Textual unchanged.
+
+        Returns:
+            Textual's ``Screen.dismiss`` awaitable, which completes once the
+            modal has been popped.
+        """
+        self._settle(result or HookReviewResult("cancel"))
+        return super().dismiss(result)
 
     def compose(self) -> ComposeResult:
         with Vertical(id="console-hooks-review"):
@@ -165,16 +211,26 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                     )
                     continue
                 raw_rows = (
-                    self.snapshot.config.section.get("hook", [])
+                    self.snapshot.config.section.get(entry.source, [])
                     if isinstance(self.snapshot.config.section, dict)
                     else []
                 )
-                raw = raw_rows[entry.index] if entry.index < len(raw_rows) else {}
+                raw = (
+                    raw_rows[entry.index]
+                    if isinstance(raw_rows, list) and entry.index < len(raw_rows)
+                    else {}
+                )
                 title = raw.get("name") if isinstance(raw, dict) else None
                 title = (
                     title
                     if isinstance(title, str)
-                    else entry.spec.event + " / " + Path(entry.spec.command[0]).name
+                    else entry.spec.event
+                    + " / "
+                    + (
+                        entry.spec.id
+                        if entry.source == "handler"
+                        else Path(entry.spec.command[0]).name
+                    )
                     if entry.spec
                     else "Invalid hook"
                 )
@@ -182,7 +238,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 title = json.dumps(title, ensure_ascii=True)[1:-1][:48]
                 with Horizontal(classes="hook-review-heading"):
                     yield Checkbox(
-                        Text(f"{entry.index + 1} - {title}"),
+                        Text(f"{index + 1} - {title}"),
                         id=f"hook-review-select-{index}",
                         classes="hook-review-select",
                         disabled=row.state != "pending",
@@ -199,7 +255,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 )
                 if entry.error:
                     yield Static(
-                        entry.error + " Repair in Settings or disable this saved row.",
+                        entry.error + " Repair in Settings or disable Console hooks.",
                         markup=False,
                     )
                 with Horizontal(classes="hook-review-controls"):
@@ -209,7 +265,11 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                             id=f"hook-review-revoke-{index}",
                             classes="hook-review-action",
                         )
-                    if entry.enabled is not False and isinstance(raw, dict):
+                    if (
+                        entry.source == "hook"
+                        and entry.enabled is not False
+                        and isinstance(raw, dict)
+                    ):
                         yield Button(
                             "Disable now",
                             id=f"hook-review-disable-{index}",
@@ -297,7 +357,12 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
                 entry = self.snapshot.rows[index].entry
                 if entry and entry.spec:
                     spec = entry.spec
-                    details = f"Source: User config\nEvent: {spec.event}\nCommand (argv):\n{command_json(spec)}\nMatcher: {json.dumps(spec.matcher)}\nTimeout: {spec.timeout_s:g}s"
+                    if entry.source == "handler":
+                        details = "Source: User config · v2\n" + json.dumps(
+                            spec.model_dump(mode="json"), ensure_ascii=True, indent=2
+                        )
+                    else:
+                        details = f"Source: User config\nEvent: {spec.event}\nCommand (argv):\n{command_json(spec)}\nMatcher: {json.dumps(spec.matcher)}\nTimeout: {spec.timeout_s:g}s"
                 else:
                     details = "Invalid definition. Open Settings to inspect and repair the saved entry."
                 detail = Static(details, classes="hook-review-detail", markup=False)
@@ -408,6 +473,7 @@ class ConsoleHooksReviewModal(SafeModalDismissMixin, ModalScreen[HookReviewResul
         self._generation += 1
         if not self._safe_dismiss_committed:
             self._cancel()
+        self._settle(HookReviewResult("cancel"))
 
 
 async def request_hook_review(
@@ -417,13 +483,27 @@ async def request_hook_review(
     waiting: bool,
     on_cancel: Callable[[], None],
 ) -> HookReviewResult:
-    """Present the shared modal without requiring a Textual worker caller."""
-    answer = asyncio.get_running_loop().create_future()
+    """Present the shared modal and wait for the modal's own answer.
 
-    def completed(result: HookReviewResult | None) -> None:
-        if not answer.done():
-            answer.set_result(result or HookReviewResult("cancel"))
-
+    Await this from a worker. The answer does not depend on any pump's
+    ``call_next`` (see ``ConsoleHooksReviewModal.answer``), but the APP pump
+    delivers every key and click the modal needs, so awaiting it on the app
+    pump -- a handler or an ``app.call_later`` callback -- still freezes the
+    whole app (TASK-33621.28). ``ConsoleHooksController.dispatch`` hands the
+    review of a Send made off a worker's own task to a worker for exactly
+    this reason.
+    """
+    if not in_worker_task():
+        # W003 cannot see this await (the modal settles its own answer), so
+        # a new caller on a pump is reported here rather than found frozen.
+        # Class and widget id, and a bool: no permission content is logged.
+        logger.error(
+            "Hook review awaited outside a worker task (screen={}, "
+            "waiting_for_send={}): the caller's message pump is blocked until "
+            "the review closes (TASK-33621.28).",
+            type(screen).__name__ + (f"#{screen.id}" if screen.id else ""),
+            waiting,
+        )
     modal = ConsoleHooksReviewModal(
         snapshot=snapshot,
         waiting_for_send=waiting,
@@ -434,7 +514,8 @@ async def request_hook_review(
         reset=lambda saved: asyncio.to_thread(owner.reset_invalid_state, saved),
         on_cancel=on_cancel,
     )
-    screen.app.push_screen(modal, callback=completed)
+    answer = modal.answer()
+    screen.app.push_screen(modal)
     try:
         result = await answer
     except asyncio.CancelledError:

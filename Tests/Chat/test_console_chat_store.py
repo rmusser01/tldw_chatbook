@@ -2031,7 +2031,6 @@ def _populate_native_owned_cleanup_state(
     store._character_emote_feed_by_session[session.id] = object()
     store._unresolved_promotion_operations[session.id] = "promotion"
     store._pending_workspace_projections[session.id] = "conv-restored"
-    store._deferred_project_instruction_state_session_ids.add(session.id)
     store._session_turn_ids[session.id] = "turn-restored"
     store._payload_revisions[session.id] = 11
 
@@ -2090,10 +2089,7 @@ def _assert_native_owned_cleanup_state_absent(
         store._session_turn_ids,
         store._payload_revisions,
     )
-    session_sets = (
-        store._dispatch_recovery_queue_hydration_pending,
-        store._deferred_project_instruction_state_session_ids,
-    )
+    session_sets = (store._dispatch_recovery_queue_hydration_pending,)
     assert all(session_id not in owner for owner in (*session_maps, *session_sets))
     assert all(owner != session_id for owner in store._message_session_index.values())
     assert all(

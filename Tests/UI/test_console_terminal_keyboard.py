@@ -7,6 +7,7 @@ import pytest
 from textual.app import ComposeResult
 
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
+from tldw_chatbook.app import TldwCli
 from tldw_chatbook.Terminal.screen_model import (
     SafeTerminalCell,
     SafeTerminalLine,
@@ -153,6 +154,48 @@ def test_input_mode_bubbles_chatbook_globals_without_forwarding(
     assert event.stopped is False
     assert event.default_prevented is False
     assert posted == []
+
+
+class _AppQuitViewportApp(_ViewportApp):
+    """The viewport host carrying the real app's Ctrl+Q binding."""
+
+    BINDINGS = [binding for binding in TldwCli.BINDINGS if binding.key == "ctrl+q"]
+
+    def __init__(self, viewport: TerminalViewport) -> None:
+        super().__init__(viewport)
+        self.quit_requests = 0
+
+    def action_quit(self) -> None:
+        self.quit_requests += 1
+
+
+@pytest.mark.asyncio
+async def test_ctrl_q_from_a_focused_terminal_reaches_app_quit_not_the_pty() -> None:
+    """TASK-33622.10 made the app's Ctrl+Q a priority binding, so Textual runs
+    it before the focused viewport's ``on_key`` ever sees the key. The pty must
+    still never receive 0x11, and the quit must still happen exactly once."""
+    viewport = TerminalViewport()
+    app = _AppQuitViewportApp(viewport)
+    async with app.run_test(size=(80, 24)) as pilot:
+        viewport.project(
+            session_id="one",
+            snapshot=TerminalScreenSnapshot(
+                lines=(_line("live-1"),), scrollback=(), generation=1
+            ),
+        )
+        viewport.focus_input()
+        await pilot.pause()
+        assert app.focused is viewport and viewport.input_focused is True
+
+        # Control: an ordinary key on the same real dispatch path is forwarded.
+        await pilot.press("a")
+        await pilot.pause()
+        assert app.inputs == [b"a"]
+
+        await pilot.press("ctrl+q")
+        await pilot.pause()
+        assert app.quit_requests == 1
+        assert app.inputs == [b"a"]
 
 
 @pytest.mark.asyncio

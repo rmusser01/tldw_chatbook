@@ -742,13 +742,14 @@ def test_inventory_has_stable_unique_connection_and_backup_ids() -> None:
         # C56 is schema-independent, read-only legacy Collections recovery.
         # C57 discovers native fleet results at launch without migration (ADR-135).
         # C92 owns local workflow definitions and recoverable authoring drafts.
+        # C93/C94 own plugin registry and in-memory schema validation.
         # Every id from C16
         # on is one lower than it would otherwise be.)
         f"C{number:02d}"
         # C89 validates recovered-media restore edges against staged catalog
         # rows and archive-relative payload topology under the existing owner.
         # C90 checks only disposable Chroma candidate metadata, retaining WAL visibility.
-        for number in range(1, 93) if number not in {10, 75}
+        for number in range(1, 95) if number not in {10, 75}
     ]
     assert [row["id"] for row in backup_rows] == [
         f"B{number:02d}" for number in range(1, 39) if number not in {10, 11, 12, 16, 34}
@@ -1826,3 +1827,24 @@ def test_file_notes_core_read_requires_exact_selected_authority(tmp_path, damage
     candidate.write_text(source)
     _, violations = _private_sqlite_seam_violations(candidate, "tldw_chatbook/Notes/recovery")
     assert any("non-literal owner_id" in value for value in violations)
+
+
+def test_plugins_registry_is_private_readonly_and_memory_without_backup() -> None:
+    policy = SQLITE_OWNER_REGISTRY["plugins.registry"]
+    assert policy.production_module == "tldw_chatbook/Plugins/registry"
+    assert policy.allowed_target_kinds == frozenset(
+        {
+            SQLiteTargetKind.PRIVATE_FILE,
+            SQLiteTargetKind.MEMORY,
+            SQLiteTargetKind.READ_ONLY_URI,
+        }
+    )
+    assert not policy.centralized_backup_allowed
+    assert not policy.preserve_read_only_source_mode
+    rows = [
+        row for row in _inventory_rows("C") if row["owner_id"] == "plugins.registry"
+    ]
+    assert {row["symbol"] for row in rows} == {
+        "PluginRegistry.__init__",
+        "PluginRegistry._reference_schema",
+    }

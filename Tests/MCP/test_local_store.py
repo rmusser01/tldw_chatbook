@@ -4,6 +4,8 @@ import json
 
 import pytest
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 from tldw_chatbook.MCP.local_store import (
     LocalApprovalRequest,
     LocalExternalMCPProfile,
@@ -617,3 +619,202 @@ def test_local_store_rejects_secret_smuggled_in_url_or_query_param(tmp_path):
         )
     )
     assert saved.env_literals["ENDPOINT"] == "https://host.example/v1/hunts?limit=50"
+
+
+def test_legacy_schema_migrates_durably_and_reopens(tmp_path):
+    path = tmp_path / "local_mcp_store.json"
+    path.write_text(
+        json.dumps(
+            {
+                "profiles": [
+                    {
+                        "profile_id": "old",
+                        "command": "python",
+                        "args": [" spaced ", ""],
+                        "env": {"MODE": "debug"},
+                    }
+                ]
+            }
+        )
+    )
+    store = LocalMCPStore(path)
+    profile = store.get_profile("old")
+    assert profile.transport == "stdio"
+    assert profile.protocol_version == "2025-03-26"
+    assert profile.args == (
+        "spaced",
+    )  # Explicit historical manual-profile normalization.
+    migrated = path.read_bytes()
+    assert json.loads(migrated)["schema_version"] == 4
+    assert LocalMCPStore(path).get_profile("old") == profile
+    assert path.read_bytes() == migrated
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"schema_version": 99, "profiles": []},
+        {"profiles": "broken"},
+        {"profiles": [{"profile_id": "broken"}]},
+    ],
+)
+def test_unknown_or_malformed_schema_is_not_rewritten(tmp_path, payload):
+    path = tmp_path / "local_mcp_store.json"
+    original = json.dumps(payload)
+    path.write_text(original)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == original
+
+
+def test_http_profile_reopens_and_endpoint_change_invalidates_discovery(tmp_path):
+    store = LocalMCPStore(tmp_path / "local_mcp_store.json")
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="http",
+            transport="streamable_http",
+            url="https://example.invalid/mcp",
+            protocol_version="2026-07-28",
+        )
+    )
+    store.save_discovery_snapshot("http", {"tools": [{"name": "old"}]})
+    profile = LocalMCPStore(store.path).get_profile("http")
+    assert profile.transport == "streamable_http" and profile.command == ""
+    store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="http",
+            transport="streamable_http",
+            url="https://different.invalid/mcp",
+            protocol_version="2026-07-28",
+        )
+    )
+    assert store.get_discovery_snapshot("http") is None
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        [],
+        {"profiles": [], "governance_rules": "broken"},
+        {"profiles": [], "schema_version": "2"},
+    ],
+)
+def test_migration_refuses_malformed_authoritative_sections(tmp_path, payload):
+    path = tmp_path / "local_mcp_store.json"
+    original = json.dumps(payload)
+    path.write_text(original)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == original
+
+
+@pytest.mark.parametrize("field", ["headers", "auth", "credentials"])
+def test_http_profile_never_silently_drops_unowned_authentication(field):
+    with pytest.raises(ValueError, match="mcp_authentication_unsupported"):
+        LocalExternalMCPProfile.from_input_dict(
+            {
+                "profile_id": "http",
+                "transport": "streamable_http",
+                "url": "https://example.invalid/mcp",
+                field: {"token": "sentinel"},
+            }
+        )
+
+
+def test_literal_endpoint_query_survives_reopen_and_changes_invalidate_discovery(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("M2_ENDPOINT_ROUTE", "host-value-must-not-appear")
+    endpoint = "https://example.invalid/mcp?route=${M2_ENDPOINT_ROUTE}&tag=one&tag=two&empty=&encoded=a%2Fb%26c%3Dd"
+    path = tmp_path / "local_mcp_store.json"
+    store = LocalMCPStore(path)
+    saved = store.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="query",
+            transport="streamable_http",
+            protocol_version="2026-07-28",
+            url=endpoint,
+        )
+    )
+    assert saved.url == endpoint
+    store.save_discovery_snapshot("query", {"tools": [{"name": "prior"}]})
+    reopened = LocalMCPStore(path)
+    assert reopened.get_profile("query").url == endpoint
+    assert reopened.get_discovery_snapshot("query")["tools"] == [{"name": "prior"}]
+    assert json.loads(path.read_text())["profiles"][0]["url"] == endpoint
+    assert "host-value-must-not-appear" not in path.read_text()
+    changed = endpoint.replace("tag=one&tag=two", "tag=two&tag=one")
+    reopened.save_profile(
+        LocalExternalMCPProfile(
+            profile_id="query",
+            transport="streamable_http",
+            protocol_version="2026-07-28",
+            url=changed,
+        )
+    )
+    assert LocalMCPStore(path).get_profile("query").url == changed
+    assert reopened.get_discovery_snapshot("query") is None
+
+
+def _owned_record():
+    return {
+        "profile_id": "plugin-test",
+        "command": "/usr/bin/true",
+        "args": ["", " padded "],
+        "cwd": "/tmp",
+        "plugin_owner": {
+            "installation_id": "installation",
+            "revision_digest": "a" * 64,
+            "component_id": "mcp:test",
+            "definition_digest": "b" * 64,
+            "environment": {"PLUGIN_ROOT": "/tmp"},
+            "data_root": None,
+            "session_isolation": "separate",
+            "literal_headers": {},
+        },
+    }
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [("args", "text"), ("args", [1]), ("cwd", "relative"), ("command", 1)],
+)
+def test_malformed_owned_profile_preserves_source_bytes(tmp_path, field, value):
+    record = _owned_record()
+    record[field] = value
+    path = tmp_path / "owned.json"
+    raw = json.dumps({"schema_version": 4, "profiles": [record]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw
+
+
+@pytest.mark.parametrize("version", [1, 2, 3])
+def test_legacy_schema_cannot_import_owned_authority(tmp_path, version):
+    path = tmp_path / "legacy.json"
+    raw = json.dumps({"schema_version": version, "profiles": [_owned_record()]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw
+
+
+def test_owned_profile_roundtrip_preserves_literal_argv(tmp_path):
+    store = LocalMCPStore(tmp_path / "owned.json")
+    store.save_profile(LocalExternalMCPProfile.from_input_dict(_owned_record()))
+    assert store.get_profile("plugin-test").args == ("", " padded ")
+
+
+@pytest.mark.parametrize(
+    "headers", [{"X-Dup": "a", "x-dup": "b"}, {"Bad Name": "a"}, {"X-Test": "a\nb"}]
+)
+def test_malformed_owned_literal_headers_preserve_source(tmp_path, headers):
+    record = _owned_record()
+    record["plugin_owner"]["literal_headers"] = headers
+    path = tmp_path / "headers.json"
+    raw = json.dumps({"schema_version": 4, "profiles": [record]})
+    path.write_text(raw)
+    with pytest.raises(LocalMCPStoreLoadError):
+        LocalMCPStore(path).load()
+    assert path.read_text() == raw

@@ -132,10 +132,7 @@ from ..Console_Modules.agent import (
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
 )
-from ..Console_Modules.prompt_queue import (
-    ConsolePromptDispatchStatus,
-    ConsolePromptQueueRegion,
-)
+from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
@@ -14820,7 +14817,7 @@ class ChatScreen(BaseAppScreen):
             rows.append(
                 ConsoleDisplayRow(
                     "Delete confirmation",
-                    "Press Delete again to remove this message.",
+                    self._message.console_pending_delete_copy,
                     status="blocked",
                 )
             )
@@ -14984,7 +14981,11 @@ class ChatScreen(BaseAppScreen):
             is not None
         )
         can_stop = image_edit_active or bool(
-            getattr(run_state, "is_stop_allowed", False)
+            getattr(
+                controller,
+                "is_stop_allowed",
+                getattr(run_state, "is_stop_allowed", False),
+            )
         )
         run_allows_send = (
             bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
@@ -16549,13 +16550,13 @@ class ChatScreen(BaseAppScreen):
                 id="console-prompt-queue",
                 on_manage_requested=self._open_console_prompt_queue,
                 on_primary_requested=(
-                    lambda session_id, revision, action: self.run_worker(
+                    lambda session_id, revision, action: self.app.run_worker(
                         self._prompt_queue.handle_primary_intent(
                             session_id,
                             action=action,
                             expected_revision=revision,
                         ),
-                        exclusive=True,
+                        # TASK-33621.19: never exclusive -- Pause must not kill a Resume's drain.
                         group="console-prompt-queue-shelf",
                     )
                 ),
@@ -18925,10 +18926,10 @@ class ChatScreen(BaseAppScreen):
                 as a real one.
 
         Returns:
-            Whether the draft was actually queued as a user turn. The button
-            path discards this; the spoken-command path (`Console, send.`)
-            needs it, because every refusal below returns without sending and
-            an ack that says otherwise is simply wrong.
+            Whether the draft was queued as a user turn: False on a refusal,
+            and while a worker owns the Send's hook review (TASK-33621.28). The
+            button path discards this; the spoken path (`Console, send.`) runs
+            in a worker, so it waits for that review and acks the real outcome.
         """
         event.stop()
         return await self._send_console_message_from_visible_action(
@@ -18960,7 +18961,8 @@ class ChatScreen(BaseAppScreen):
             sent = await self._send_console_message_from_visible_action_observed(
                 session_id=session_id, pending_send_token=pending_send_token
             )
-            diagnostic.outcome = "dispatched" if sent else "not_dispatched"
+            if sent or diagnostic.outcome != "awaiting_review":  # TASK-33621.28
+                diagnostic.outcome = "dispatched" if sent else "not_dispatched"
             return sent
 
     async def _send_console_message_from_visible_action_observed(
@@ -18972,11 +18974,11 @@ class ChatScreen(BaseAppScreen):
         """Route the visible Console send action through the native controller.
 
         Returns:
-            True once the draft has been queued as a user turn; False on every
-            refusal -- an empty draft with no attachment, a `/`-command or
-            unknown-command dispatch (which never sends by design), and every
-            gate inside `_dispatch_console_draft_send`. Each refusal has
-            already shown its own toast or system row.
+            True once the draft has been queued as a user turn. False on every
+            refusal (an empty draft with no attachment, a `/`-command or
+            unknown-command dispatch, any `_dispatch_console_draft_send` gate),
+            each with its own toast or system row, and while a worker owns the
+            Send's hook review (TASK-33621.28).
         """
         # A scheduled Enter callback may consume only its own capture.
         # Mouse/Workbench sends have no token and always read the live draft.
@@ -19174,7 +19176,7 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             diagnostic.outcome = result.status.value
-            return result.status is not ConsolePromptDispatchStatus.REFUSED
+            return result.accepted
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -22119,11 +22121,8 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Refresh Console composer action priority from draft, run, and artifact state.
 
-        F1 (task-9 review): the composer bar's own Save Chatbook button is a
-        second door onto the same write the workbench action already gates
-        -- reads ``_console_active_session_is_ephemeral()`` directly here so
-        both doors consult the same accessor without a caller having to
-        remember to thread it through.
+        Both composer and workbench Save Chatbook actions consult the same
+        ephemeral-session accessor (task-9 review F1).
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -22145,12 +22144,9 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
-                # TASK-22000 (owner decision, 2026-08-24): for a session with
-                # a live queue projection the PRESENTATION is the authority on
-                # whether Send accepts a draft -- not the raw run state. That
-                # was ADR-098's original shape (an assignment here, not an
-                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
-                # alongside the new recovery predicate, and since
+                # TASK-22000/ADR-098: queue presentation owns Send availability.
+                # Recombining it with raw run status regressed live-turn Queue:
+                # since
                 # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
                 # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
                 # presentation` already reads as `occupies_slot`, the only
@@ -22226,6 +22222,8 @@ class ChatScreen(BaseAppScreen):
         composer.sync_action_state(
             has_draft=bool(composer.draft_text().strip()) or pending is not None,
             run_active=run_active,
+            stop_available=run_active
+            or bool(getattr(controller, "is_stop_allowed", False)),
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
@@ -22699,9 +22697,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_pending_send = None
                 return
             # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot
-            # while app-owned runtime custody, not a screen worker or timer,
-            # owns accepted work.
+            # Scheduling it on the app pump preserves the keypress snapshot;
+            # app-owned runtime custody owns accepted work, except that a Send
+            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
             self.app.call_later(
                 partial(
                     self._send_console_message_from_visible_action,

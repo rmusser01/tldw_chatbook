@@ -1130,3 +1130,1017 @@ async def test_multi_entry_queue_chain_publishes_one_final_durable_outcome(tmp_p
     assert receipts[0].logical_outcome_id.startswith("queue-chain:")
     assert receipts[0].status == "done"
     assert receipts[0].session_id == queued_session.id
+
+
+# ---------------------------------------------------------------------------
+# TASK-33621.19 (review findings GAP1-04 / GAP5-09): a persisted Console chat
+# takes the durable path, where every queued turn is acknowledged by the
+# post-commit ``queue_acknowledgement`` effect. That acknowledgement used to
+# pause the queue as FAILED whenever later prompts were still waiting -- even
+# while the live chain that claimed the entry was draining -- so a queue of
+# three halted after one successful turn under a false "Turn failed". The
+# joined tests above all ran db-less (ephemeral) sessions, which never reach
+# the durable acknowledgement; these drive a real SQLite-backed store.
+# ---------------------------------------------------------------------------
+
+
+def _durable_controller(tmp_path, gateway: SequencedGateway):
+    from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+    db = CharactersRAGDB(tmp_path / "durable-queue.sqlite", client_id="task-33621-19")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(session_id="durable-queue", title="Durable queue")
+    assert session.ephemeral is False
+    controller = ConsoleChatController(
+        store=store,
+        provider_gateway=gateway,
+        provider="llama_cpp",
+        model="test-model",
+    )
+    return db, store, controller, session.id
+
+
+def _observe_durable_acknowledgements(
+    monkeypatch, controller
+) -> list[tuple[str, bool]]:
+    """Record each REAL durable acknowledgement and whether a live chain owned it."""
+
+    coordinator = controller.prompt_queue_coordinator
+    original = coordinator.acknowledge_durable_acceptance
+    observed: list[tuple[str, bool]] = []
+
+    def observe(session_id: str, **kwargs):
+        chain = coordinator._chains.get(session_id)
+        observed.append(
+            (
+                kwargs["entry_id"],
+                chain is not None and chain.current_entry_id == kwargs["entry_id"],
+            )
+        )
+        return original(session_id, **kwargs)
+
+    monkeypatch.setattr(coordinator, "acknowledge_durable_acceptance", observe)
+    return observed
+
+
+async def _release_all(gateway: SequencedGateway, task: asyncio.Task) -> None:
+    for release in gateway.release:
+        release.set()
+    if not task.done():
+        task.cancel()
+    try:
+        await task
+    except BaseException:  # noqa: BLE001 - teardown of a failed assertion path
+        pass
+
+
+@pytest.mark.asyncio
+async def test_durable_queue_drains_three_entries_through_live_postcommit_ack(
+    tmp_path, monkeypatch
+):
+    """AC#1/#4/#6: every queued entry is durably acknowledged and all drain."""
+
+    gateway = SequencedGateway()
+    db, store, controller, session_id = _durable_controller(tmp_path, gateway)
+    registry = controller.prompt_queue_registry
+    coordinator = controller.prompt_queue_coordinator
+    acknowledgements = _observe_durable_acknowledgements(monkeypatch, controller)
+    terminals: list[ConsoleRunStatus] = []
+    publish_terminal = coordinator.on_chain_terminal
+
+    def observe_terminal(sid, status, outcome_id):
+        terminals.append(status)
+        publish_terminal(sid, status, outcome_id)
+
+    coordinator.on_chain_terminal = observe_terminal
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        queued_ids = [
+            await _queue(controller, session_id, text)
+            for text in ("two", "three", "four")
+        ]
+        # The owner is viewed elsewhere, so a chain terminal lands on the
+        # rail as an unvisited outcome marker -- the surface that showed a
+        # failure glyph after every turn had succeeded.
+        viewed = store.create_session(title="Viewed elsewhere", ephemeral=True)
+        store.switch_session(viewed.id)
+
+        for index in (1, 2, 3):
+            gateway.release[index - 1].set()
+            await asyncio.wait_for(gateway.started[index].wait(), timeout=10)
+            # Provider entry runs AFTER the post-commit acknowledgement of
+            # this queued entry, so the queue state here is the one the
+            # shelf painted while the reply was generating.
+            snapshot = registry.snapshot(session_id)
+            assert snapshot.mode is PromptQueueMode.DRAINING, (
+                index,
+                snapshot.mode,
+                snapshot.pause_reason,
+            )
+            assert snapshot.pause_reason is None
+            assert snapshot.reservation is PromptQueueReservation.HELD
+            assert snapshot.claimed_count == 0
+            assert snapshot.waiting_count == 3 - index
+            assert controller.activity_for(session_id).queue_paused is False
+        gateway.release[3].set()
+        result = await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+
+    assert result.terminal_status is ConsoleRunStatus.COMPLETED
+    assert gateway.user_turns == ["one", "two", "three", "four"]
+    assert acknowledgements == [(entry_id, True) for entry_id in queued_ids]
+    final = registry.snapshot(session_id)
+    assert final.total_count == 0
+    assert final.mode is PromptQueueMode.DRAINING
+    assert final.pause_reason is None
+    assert final.reservation is PromptQueueReservation.RELEASED
+    assert terminals == [ConsoleRunStatus.COMPLETED]
+    assert controller.run_marker_for(session_id) is ConsoleRunMarker.FINISHED_OK
+    attention = {
+        fact.kind for fact in controller.conversation_attention_for(session_id)
+    }
+    assert "failed" not in attention
+    assert "paused" not in attention
+    messages = store.messages_for_session(session_id)
+    assert [m.content for m in messages if m.role is ConsoleMessageRole.USER] == [
+        "one",
+        "two",
+        "three",
+        "four",
+    ]
+    assert [m.status for m in messages if m.role is ConsoleMessageRole.ASSISTANT] == [
+        "complete"
+    ] * 4
+    persisted_users = (
+        db.get_connection()
+        .execute("SELECT COUNT(*) FROM messages WHERE sender = 'user'")
+        .fetchone()[0]
+    )
+    assert persisted_users == 4
+
+
+def test_live_chain_durable_ack_settles_its_claim_without_pausing_later_work():
+    """The exact live owner keeps draining; the detached case still pauses."""
+
+    from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
+    from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
+        ConsolePromptQueueCoordinator,
+        _PromptChain,
+    )
+
+    registry = ConsolePromptQueueRegistry(
+        id_factory=iter(("accepted-entry", "later-entry", "last-entry")).__next__
+    )
+    coordinator = ConsolePromptQueueCoordinator(
+        registry=registry,
+        context_epoch=lambda _session_id: 0,
+        run_status=lambda _session_id: ConsoleRunStatus.STREAMING,
+        submit_queued=lambda *_args, **_kwargs: None,  # type: ignore[arg-type]
+    )
+    snapshot = registry.begin_chain(
+        "session-1", context_epoch=0, expected_revision=0
+    ).snapshot
+    for text in ("accepted body", "later body", "last body"):
+        snapshot = registry.admit(
+            "session-1", text=text, expected_revision=snapshot.revision
+        ).snapshot
+    claimed = registry.claim_next("session-1", expected_revision=snapshot.revision)
+    assert claimed.claim is not None
+    assert registry.bind_claimed_preparation(
+        "session-1", entry_id="accepted-entry", preparation_id="preparation-1"
+    ).applied
+    chain = _PromptChain(current_entry_id="accepted-entry")
+    coordinator._chains["session-1"] = chain
+
+    assert coordinator.acknowledge_durable_acceptance(
+        "session-1",
+        entry_id="accepted-entry",
+        preparation_id="preparation-1",
+        context_epoch=0,
+    )
+
+    settled = registry.snapshot("session-1")
+    assert settled.claimed_count == 0
+    assert [entry.entry_id for entry in settled.entries] == [
+        "later-entry",
+        "last-entry",
+    ]
+    assert settled.mode is PromptQueueMode.DRAINING
+    assert settled.pause_reason is None
+    assert settled.reservation is PromptQueueReservation.HELD
+    # The live owner keeps its exact entry (as the ephemeral turn_accepted
+    # path does) so its own post-turn step -- the drain loop, or
+    # finish_recovered_entry for a reclaimed preparation -- still owns the
+    # advance; clearing it stranded reclaimed durable chains.
+    assert chain.current_entry_id == "accepted-entry"
+    assert chain.accepted_live_turn is True
+    # Re-delivery of the same committed acknowledgement stays idempotent.
+    assert coordinator.acknowledge_durable_acceptance(
+        "session-1",
+        entry_id="accepted-entry",
+        preparation_id="preparation-1",
+        context_epoch=0,
+    )
+    assert registry.snapshot("session-1") == settled
+    # And the live chain claims the next entry normally.
+    assert (
+        registry.claim_next("session-1", expected_revision=settled.revision).entry_id
+        == "later-entry"
+    )
+
+
+def _queue_ui(controller, notices: list[tuple[str, str]]):
+    from tldw_chatbook.UI.Console_Modules.prompt_queue import (
+        ConsolePromptQueueUIController,
+    )
+
+    async def sync_ui() -> None:
+        return None
+
+    async def append_system(_text: str) -> None:
+        return None
+
+    return ConsolePromptQueueUIController(
+        chat_controller_accessor=lambda: controller,
+        capture_configuration=lambda _session_id: None,
+        ensure_active_session=lambda: None,
+        blocked_reason_accessor=lambda: "",
+        setup_blocked_reason_accessor=lambda: "",
+        append_system_message=append_system,
+        notify=lambda text, severity: notices.append((text, severity)),
+        focus_composer=lambda: None,
+        note_follow_intent=lambda: None,
+        launch_chain=lambda _draft, _session_id: "unused",
+        commit_captured_draft=lambda _session_id, _stash: None,
+        commit_queued_draft=lambda _session_id, _stash: None,
+        turn_recovery_ids=lambda _session_id: (),
+        restore_turn_recovery=lambda _turn_id: None,
+        discard_turn_recovery=lambda _turn_id: False,
+        load_recovered_turn=lambda _session_id: None,
+        edit_refusal=lambda _text: "",
+        sync_ui=sync_ui,
+    )
+
+
+@pytest.mark.asyncio
+async def test_real_failed_queued_turn_is_named_and_retry_reruns_it_then_drains(
+    tmp_path,
+):
+    """AC#2: 'Turn failed' names the failed queued turn; Retry re-runs it."""
+
+    gateway = SequencedGateway(fail_call=1)
+    _db, store, controller, session_id = _durable_controller(tmp_path, gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        for text in ("two", "three", "four"):
+            await _queue(controller, session_id, text)
+        gateway.release[0].set()
+        await asyncio.wait_for(gateway.started[1].wait(), timeout=10)
+        # While the first queued turn is generating nothing has failed yet.
+        assert registry.snapshot(session_id).mode is PromptQueueMode.DRAINING
+        gateway.release[1].set()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+
+    paused = registry.snapshot(session_id)
+    assert paused.mode is PromptQueueMode.PAUSED
+    assert paused.pause_reason is PromptQueuePauseReason.FAILED
+    failed = next(
+        m
+        for m in reversed(store.messages_for_session(session_id))
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert failed.status == "failed"
+    presentation = ui.presentation_for(session_id)
+    assert presentation.state_label == 'Turn failed: "two"'
+    assert presentation.pause_label == "Retry"
+    assert presentation.next_preview == "three"
+
+    gateway2 = SequencedGateway()
+    controller.provider_gateway = gateway2
+    retry = asyncio.create_task(
+        ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        )
+    )
+    try:
+        for index in range(3):
+            await asyncio.wait_for(gateway2.started[index].wait(), timeout=10)
+            gateway2.release[index].set()
+        await asyncio.wait_for(retry, timeout=10)
+    finally:
+        await _release_all(gateway2, retry)
+
+    assert gateway2.user_turns == ["two", "three", "four"]
+    assert notices == []
+    assert store.get_message(failed.id).status == "complete"
+    final = registry.snapshot(session_id)
+    assert final.total_count == 0
+    assert final.mode is PromptQueueMode.DRAINING
+    assert ui.presentation_for(session_id).shelf_visible is False
+
+
+@pytest.mark.asyncio
+async def test_real_paused_queue_without_failed_turn_offers_resume_that_drains(
+    tmp_path,
+):
+    """AC#3: a FAILED pause with no failed message offers a working Resume."""
+
+    gateway = SequencedGateway()
+    _db, store, controller, session_id = _durable_controller(tmp_path, gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        for text in ("two", "three"):
+            await _queue(controller, session_id, text)
+        snapshot = registry.snapshot(session_id)
+        assert controller.pause_prompt_queue_after_turn(
+            session_id, expected_revision=snapshot.revision
+        ).applied
+        gateway.release[0].set()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+    # The shape a detached durable acknowledgement leaves behind: paused as
+    # FAILED although every turn in the transcript succeeded.
+    snapshot = registry.snapshot(session_id)
+    assert registry.pause(
+        session_id,
+        reason=PromptQueuePauseReason.FAILED,
+        expected_revision=snapshot.revision,
+    ).applied
+    assert all(
+        m.status == "complete"
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+
+    presentation = ui.presentation_for(session_id)
+    assert presentation.state_label == "Paused"
+    assert presentation.pause_label == "Resume"
+
+    gateway2 = SequencedGateway()
+    controller.provider_gateway = gateway2
+    resume = asyncio.create_task(
+        ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        )
+    )
+    try:
+        for index in range(2):
+            await asyncio.wait_for(gateway2.started[index].wait(), timeout=10)
+            gateway2.release[index].set()
+        await asyncio.wait_for(resume, timeout=10)
+    finally:
+        await _release_all(gateway2, resume)
+
+    assert gateway2.user_turns == ["two", "three"]
+    assert notices == []
+    assert registry.snapshot(session_id).total_count == 0
+
+
+# ---------------------------------------------------------------------------
+# TASK-33621.19 review (PR #2943): the shelf's "Paused | Resume" crashed in
+# the two states where this PR makes it the primary action. A failed queue
+# retry-stopped regeneration and a deleted failed turn both advance the
+# conversation context epoch past the queue's baseline. resume() then
+# re-pauses the queue as CONTEXT_CHANGED -- a real change, so the registry
+# reports it APPLIED -- and resume_and_drain read that as "resumed" and
+# drained a chain resume() never created: KeyError in _drain_waiting. The
+# shelf runs that press in an app worker, so by code reading (not checked in
+# the live app) the error would exit the app.
+#
+# Round 3 found the Retry twin: recover_and_drain read the same re-pause as
+# "resumed", ran the retry under an authorization the controller refuses (no
+# chain), dropped the refusal and wrote the FAILED/STOPPED pause back. The
+# shelf kept "Turn failed | Retry", nothing was sent, and nothing said why.
+# A Resume or Retry that lands on the review now says so in one notice.
+# These drive the real controller, coordinator and store: no stubbed resume
+# or retry.
+# ---------------------------------------------------------------------------
+
+CONTEXT_CHANGED_NOTICE = (
+    "The conversation has changed. Review it before the queue continues."
+)
+
+
+class FailBeforeReplyGateway(SequencedGateway):
+    """A provider that refuses call ``fail_call`` before streaming anything."""
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        call = len(self.user_turns)
+        self.user_turns.append(
+            next(
+                message["content"]
+                for message in reversed(messages)
+                if message.get("role") == "user"
+            )
+        )
+        self.started[call].set()
+        await self.release[call].wait()
+        if call == self.fail_call:
+            raise RuntimeError("planned provider refusal")
+        yield f"reply-{call + 1}"
+
+
+def _compact(store, session_id: str) -> None:
+    """Move the context epoch the way a compaction does, adding no message."""
+
+    first_prompt = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.USER
+    )
+    before = store.conversation_context_epoch(session_id)
+    store.set_session_context_summary(
+        session_id, "Earlier turns, summarized.", first_prompt.id
+    )
+    assert store.conversation_context_epoch(session_id) != before
+
+
+async def _press_lands_on_context_review(controller, ui, gateway, session_id, press):
+    """Run one real press; it must send nothing and leave Context changed."""
+
+    registry = controller.prompt_queue_registry
+    paused = registry.snapshot(session_id)
+    assert paused.mode is PromptQueueMode.PAUSED
+    assert controller.store.conversation_context_epoch(session_id) != (
+        paused.expected_context_epoch
+    )
+    turns_before = list(gateway.user_turns)
+
+    await asyncio.wait_for(press(), timeout=10)
+
+    # Nothing was dispatched under the changed context, and the queue now
+    # asks for an explicit review instead of keeping a press that does
+    # nothing (Retry) or that raised (Resume).
+    assert gateway.user_turns == turns_before
+    repaused = registry.snapshot(session_id)
+    assert (repaused.mode, repaused.pause_reason) == (
+        PromptQueueMode.PAUSED,
+        PromptQueuePauseReason.CONTEXT_CHANGED,
+    )
+    assert [entry.preview for entry in repaused.entries] == ["two"]
+    review = ui.presentation_for(session_id)
+    assert (review.state_label, review.pause_label, review.primary_action) == (
+        "Context changed",
+        "Review",
+        "review",
+    )
+    return review
+
+
+async def _use_current_context_drains_two(
+    controller, ui, gateway, session_id: str, review, *, next_call: int
+) -> None:
+    """Drive the review state's real action: Manage's Use current context."""
+
+    turns_before = list(gateway.user_turns)
+    _baseline, current_epoch = ui.context_review(session_id)
+    drain = asyncio.create_task(
+        ui.recover(
+            session_id,
+            action="use-current-context",
+            expected_revision=review.revision,
+            reviewed_context_epoch=current_epoch,
+        )
+    )
+    try:
+        await asyncio.wait_for(gateway.started[next_call].wait(), timeout=10)
+        gateway.release[next_call].set()
+        result = await asyncio.wait_for(drain, timeout=10)
+    finally:
+        await _release_all(gateway, drain)
+    assert result.applied
+    assert gateway.user_turns == [*turns_before, "two"]
+    assert controller.prompt_queue_registry.snapshot(session_id).total_count == 0
+
+
+async def _press_resume_then_use_current_context(
+    controller, ui, notices, gateway, session_id: str, *, next_call: int
+) -> None:
+    """Press the shelf's Resume, then its follow-up Review, both for real."""
+
+    presentation = ui.presentation_for(session_id)
+    assert (presentation.state_label, presentation.pause_label) == (
+        "Paused",
+        "Resume",
+    )
+    paused = controller.prompt_queue_registry.snapshot(session_id)
+    assert paused.pause_reason is PromptQueuePauseReason.FAILED
+
+    # The press must not raise (it did: KeyError in _drain_waiting).
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        ),
+    )
+    # The press explains itself instead of just changing the label.
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=next_call
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+
+@pytest.mark.asyncio
+async def test_resume_after_a_failed_stopped_turn_regeneration_does_not_raise():
+    """Shape 1: Retry stopped regenerates a stopped queued turn and it fails.
+
+    regenerate_message keeps the failed sibling off-path and restores the
+    stopped original as the active leaf, so the shelf has no failed turn to
+    name and offers Resume.
+    """
+
+    gateway = FailBeforeReplyGateway(fail_call=1)
+    controller, store, session_id = _arm_controller(gateway)
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        assert controller.stop_active_run()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+    stopped = ui.presentation_for(session_id)
+    assert stopped.state_label == "Turn stopped"
+
+    regenerate = asyncio.create_task(
+        ui.recover(
+            session_id,
+            action="retry-stopped",
+            expected_revision=stopped.revision,
+        )
+    )
+    try:
+        await asyncio.wait_for(gateway.started[1].wait(), timeout=10)
+        gateway.release[1].set()
+        await asyncio.wait_for(regenerate, timeout=10)
+    finally:
+        await _release_all(gateway, regenerate)
+    assert gateway.user_turns == ["one", "one"]
+    newest = next(
+        m
+        for m in store.iter_messages_newest_first(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert newest.status == "stopped"  # the failed sibling is off-path
+    assert ui.recovery_turn(session_id, action="retry-failed") is None
+
+    await _press_resume_then_use_current_context(
+        controller, ui, notices, gateway, session_id, next_call=2
+    )
+
+
+@pytest.mark.asyncio
+async def test_resume_after_deleting_the_failed_queued_turn_does_not_raise():
+    """Shape 2: the PR's documented fallback -- delete the failed turn."""
+
+    gateway = SequencedGateway(fail_call=0)
+    controller, store, session_id = _arm_controller(gateway)
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        gateway.release[0].set()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+    assert ui.presentation_for(session_id).state_label == 'Turn failed: "one"'
+    failed = next(
+        m
+        for m in store.messages_for_session(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT and m.status == "failed"
+    )
+
+    store.delete_message(failed.id)
+
+    await _press_resume_then_use_current_context(
+        controller, ui, notices, gateway, session_id, next_call=1
+    )
+
+
+@pytest.mark.asyncio
+async def test_shelf_retry_after_a_compaction_under_a_failed_pause_asks_for_review():
+    """Retry after a context change: it used to do nothing, silently.
+
+    A queued turn fails, then the conversation is compacted while that
+    failed turn is still the newest reply, so the shelf still names it.
+    Before the fix, pressing Retry sent nothing, said nothing and left
+    'Turn failed | Retry' in place. It now lands on Context changed with a
+    notice. Re-running the failed turn after that review is TASK-33621.39:
+    Use current context sends the next prompt and leaves the failed turn.
+    """
+
+    gateway = SequencedGateway(fail_call=0)
+    controller, store, session_id = _arm_controller(gateway)
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        gateway.release[0].set()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        await _release_all(gateway, task)
+    failed = next(
+        m
+        for m in store.iter_messages_newest_first(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert failed.status == "failed"
+
+    _compact(store, session_id)
+
+    presentation = ui.presentation_for(session_id)
+    assert (presentation.state_label, presentation.pause_label) == (
+        'Turn failed: "one"',
+        "Retry",
+    )
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action=presentation.primary_action,
+            expected_revision=presentation.revision,
+        ),
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+    assert store.get_message(failed.id).status == "failed"
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=1
+    )
+    assert store.get_message(failed.id).status == "failed"
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+
+@pytest.mark.asyncio
+async def test_manager_retry_stopped_after_a_compaction_asks_for_review():
+    """The Manage modal's Retry stopped under a STOPPED pause, end to end.
+
+    The real modal drives the real queue UI controller, chat controller,
+    coordinator and store. Before the fix the press sent nothing, put the
+    STOPPED pause back and cleared the modal's feedback line, so it looked
+    dead. It now lands on Context changed, says why on the feedback line,
+    and the modal's own Review then Use current sends the next prompt.
+    """
+
+    from textual.app import App
+    from textual.widgets import Static
+
+    from tldw_chatbook.Widgets.Console.console_prompt_queue_modal import (
+        ConsolePromptQueueModal,
+    )
+
+    gateway = SequencedGateway()
+    controller, store, session_id = _arm_controller(gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    task = asyncio.create_task(
+        controller.run_prompt_chain("one", session_id=session_id)
+    )
+    try:
+        await asyncio.wait_for(gateway.started[0].wait(), timeout=10)
+        await _queue(controller, session_id, "two")
+        assert controller.stop_active_run()
+        await asyncio.wait_for(task, timeout=10)
+    finally:
+        # Every later provider call returns at once.
+        await _release_all(gateway, task)
+    stopped = next(
+        m
+        for m in store.iter_messages_newest_first(session_id)
+        if m.role is ConsoleMessageRole.ASSISTANT
+    )
+    assert stopped.status == "stopped"
+
+    _compact(store, session_id)
+
+    assert ui.presentation_for(session_id).state_label == "Turn stopped"
+    assert ui.recovery_turn(session_id, action="retry-stopped") is not None
+    turns_before = list(gateway.user_turns)
+
+    def text(modal, selector: str) -> str:
+        return str(modal.query_one(selector, Static).renderable)
+
+    app = App()
+    async with app.run_test(size=(100, 30)) as pilot:
+        modal = ConsolePromptQueueModal(
+            session_id=session_id,
+            revision=registry.snapshot(session_id).revision,
+            queue_controller=ui,
+        )
+        app.push_screen(modal)
+        await pilot.pause()
+        assert text(modal, "#console-prompt-queue-manager-state").endswith(
+            "Paused · Turn stopped"
+        )
+
+        await pilot.click("#console-prompt-queue-retry-stopped")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=10)
+        await pilot.pause()
+
+        assert gateway.user_turns == turns_before
+        repaused = registry.snapshot(session_id)
+        assert repaused.pause_reason is PromptQueuePauseReason.CONTEXT_CHANGED
+        assert text(modal, "#console-prompt-queue-manager-state").endswith(
+            "Paused · Context changed"
+        )
+        feedback = modal.query_one("#console-prompt-queue-manager-feedback", Static)
+        assert str(feedback.renderable) == CONTEXT_CHANGED_NOTICE
+        assert feedback.has_class("-warning")
+
+        await pilot.click("#console-prompt-queue-review-context")
+        await pilot.click("#console-prompt-queue-use-context")
+        await asyncio.wait_for(app.workers.wait_for_complete(), timeout=10)
+        await pilot.pause()
+
+    assert gateway.user_turns == [*turns_before, "two"]
+    assert registry.snapshot(session_id).total_count == 0
+    # Not re-run: regenerating the stopped turn after review is TASK-33621.39.
+    assert store.get_message(stopped.id).status == "stopped"
+    assert notices == []
+
+
+# ---------------------------------------------------------------------------
+# Round 4: settle_dispatch_recovery_and_drain is the third caller that drains
+# after resume(). A pending response's Retry or Discard settles the queued
+# turn that owned it, then resumes the prompts waiting behind it. If the
+# conversation context moved while that response waited, resume() re-pauses
+# as CONTEXT_CHANGED with no chain, and the drain raised KeyError in
+# _drain_waiting. Live reachability is not established: it needs a pending
+# response with prompts waiting behind it, plus a context change before the
+# press. These tests put the real registry, coordinator, controller and store
+# in that state directly.
+# ---------------------------------------------------------------------------
+
+
+def _begin_queue_owner(registry, session_id: str, *, context_epoch: int) -> str:
+    """Start a chain whose first entry, 'one', will own the pending response."""
+
+    snapshot = registry.snapshot(session_id)
+    begun = registry.begin_chain(
+        session_id, context_epoch=context_epoch, expected_revision=snapshot.revision
+    )
+    first = registry.admit(
+        session_id, text="one", expected_revision=begun.snapshot.revision
+    )
+    assert first.applied
+    return first.entry_id
+
+
+def _retire_queue_owner(registry, session_id: str, owner_id: str) -> None:
+    """'one' crosses durable acceptance and retires; later prompts wait."""
+
+    snapshot = registry.snapshot(session_id)
+    claimed = registry.claim_next(session_id, expected_revision=snapshot.revision)
+    assert claimed.entry_id == owner_id
+    assert registry.bind_claimed_preparation(
+        session_id, entry_id=owner_id, preparation_id="preparation-1"
+    ).applied
+    assert registry.settle_durable_acceptance(
+        session_id, entry_id=owner_id, preparation_id="preparation-1"
+    ).applied
+
+
+@pytest.mark.asyncio
+async def test_pending_response_settlement_after_a_context_change_asks_for_review():
+    """Coordinator level: settling the owner must not drain a chain never made."""
+
+    import itertools
+
+    from tldw_chatbook.Chat.console_prompt_queue import ConsolePromptQueueRegistry
+    from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
+        ConsolePromptQueueCoordinator,
+    )
+
+    registry = ConsolePromptQueueRegistry(
+        id_factory=iter(("accepted-entry", "later-entry")).__next__,
+        monotonic=itertools.count(1.0).__next__,
+    )
+    session_id = "session-1"
+    epoch = [0]
+    submitted: list[str] = []
+
+    async def submit(prompt, *, session_id, entry_id, authorization):
+        assert authorization.session_id == session_id
+        submitted.append(entry_id)
+        coordinator.turn_accepted(
+            session_id,
+            origin=ConsoleSubmissionOrigin.QUEUED,
+            context_epoch=epoch[0],
+            entry_id=entry_id,
+        )
+        return SimpleNamespace(
+            accepted=True, terminal_status=ConsoleRunStatus.COMPLETED
+        )
+
+    coordinator = ConsolePromptQueueCoordinator(
+        registry=registry,
+        context_epoch=lambda _session_id: epoch[0],
+        run_status=lambda _session_id: ConsoleRunStatus.COMPLETED,
+        submit_queued=submit,
+    )
+    accepted_id = _begin_queue_owner(registry, session_id, context_epoch=0)
+    later_id = registry.admit(
+        session_id,
+        text="two",
+        expected_revision=registry.snapshot(session_id).revision,
+    ).entry_id
+    _retire_queue_owner(registry, session_id, accepted_id)
+    assert coordinator.hydrate_dispatch_recovery(
+        session_id,
+        queue_entry_id=accepted_id,
+        preparation_id="preparation-1",
+        checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+    )
+    assert registry.snapshot(session_id).mode is PromptQueueMode.PAUSED
+
+    epoch[0] = 1  # the conversation changed while the response was pending
+
+    settled = await coordinator.settle_dispatch_recovery_and_drain(
+        session_id,
+        queue_entry_id=accepted_id,
+        preparation_id="preparation-1",
+        terminal_status=ConsoleRunStatus.COMPLETED,
+    )
+
+    assert submitted == []
+    review = registry.snapshot(session_id)
+    assert (review.mode, review.pause_reason, review.reservation) == (
+        PromptQueueMode.PAUSED,
+        PromptQueuePauseReason.CONTEXT_CHANGED,
+        PromptQueueReservation.RELEASED,
+    )
+    assert [entry.entry_id for entry in review.entries] == [later_id]
+    assert settled.detail == CONTEXT_CHANGED_NOTICE
+    assert coordinator.dispatch_recovery_blocks_queue(session_id) is False
+    assert coordinator.activity(session_id).occupies_slot is False
+
+    # Nothing is stranded: Use current context drains the waiting prompt.
+    resumed = await coordinator.use_current_context_and_resume(
+        session_id,
+        expected_revision=review.revision,
+        reviewed_context_epoch=1,
+    )
+    assert resumed.applied
+    assert submitted == [later_id]
+    assert registry.snapshot(session_id).total_count == 0
+
+
+@pytest.mark.asyncio
+async def test_pending_response_discard_after_a_context_change_says_why():
+    """The real Discard press: no KeyError, nothing sent, and a notice."""
+
+    from tldw_chatbook.Chat.console_dispatch_checkpoint import (
+        ConsoleDispatchReconstructability,
+        ConsoleLibraryItemScopeSnapshot,
+        ConsoleProviderIntent,
+        ConsoleTurnLibraryAuthority,
+    )
+    from tldw_chatbook.Chat.console_library_policy import (
+        ConsoleAssistantLibraryAccess,
+        ConsoleAutoRetrieve,
+    )
+
+    gateway = SequencedGateway()
+    controller, store, session_id = _arm_controller(gateway)
+    registry = controller.prompt_queue_registry
+    notices: list[tuple[str, str]] = []
+    ui = _queue_ui(controller, notices)
+    user = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="one", persist=False
+    )
+    pending = store.append_message(
+        session_id, role=ConsoleMessageRole.ASSISTANT, content="", persist=False
+    )
+    accepted_id = _begin_queue_owner(
+        registry,
+        session_id,
+        context_epoch=store.conversation_context_epoch(session_id),
+    )
+    # The real admission path, so 'two' carries its frozen custody request.
+    await _queue(controller, session_id, "two")
+    _retire_queue_owner(registry, session_id, accepted_id)
+    store.register_ephemeral_dispatch_recovery(
+        session_id,
+        user_message_id=user.id,
+        assistant_message_id=pending.id,
+        preparation_id="preparation-1",
+        attempt_id="attempt-1",
+        checkpoint_state=ConsoleDispatchCheckpointState.ACCEPTED,
+        origin="queued",
+        queue_entry_id=accepted_id,
+        frozen_authority=ConsoleTurnLibraryAuthority(
+            policy=ConsoleLibraryPolicySnapshot(
+                auto_retrieve=ConsoleAutoRetrieve.NEVER,
+                assistant_access=ConsoleAssistantLibraryAccess.BLOCKED,
+                policy_revision=None,
+                source="temporary",
+            ),
+            direct_library_tools=False,
+            source_types=("notes", "media", "conversations"),
+            scope_snapshot=ConsoleLibraryItemScopeSnapshot(
+                note_ids=(), media_ids=(), conversations_allowed=True
+            ),
+            provider_intent=ConsoleProviderIntent(
+                provider="llama_cpp",
+                model="test-model",
+                endpoint="http://127.0.0.1:9099",
+            ),
+            attempt_id="attempt-1",
+        ),
+        resolved_destination=ConsoleResolvedDestination(
+            provider="llama_cpp",
+            model="test-model",
+            endpoint_identity="http://127.0.0.1:9099",
+            egress_class=ConsoleEgressClass.ON_DEVICE,
+        ),
+        reconstructability=ConsoleDispatchReconstructability(
+            attachments_reconstructable=True,
+            evidence_reconstructable=True,
+            prefill_reconstructable=True,
+            opaque_reference="opaque:ephemeral-1",
+        ),
+    )
+    # The in-process path that leaves a queued owner pending with prompts
+    # waiting behind it: its settlement failed, so the response is restored
+    # as unresolved recovery and projected onto the queue.
+    controller._restore_dispatch_recovery_after_settlement_failure(
+        session_id, pending.id
+    )
+    assert controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+        session_id
+    )
+
+    _compact(store, session_id)
+
+    completed: list[bool] = []
+    review = await _press_lands_on_context_review(
+        controller,
+        ui,
+        gateway,
+        session_id,
+        lambda: ui.handle_primary_intent(
+            session_id,
+            action="discard",
+            expected_revision=registry.snapshot(session_id).revision,
+            on_recovery_complete=lambda: completed.append(True),
+        ),
+    )
+    assert completed == [True]
+    assert store.dispatch_recovery_for_session(session_id) is None
+    assert store.get_message(pending.id).status == "discarded"
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]
+
+    await _use_current_context_drains_two(
+        controller, ui, gateway, session_id, review, next_call=0
+    )
+    assert notices == [(CONTEXT_CHANGED_NOTICE, "warning")]

@@ -20,6 +20,8 @@ from tldw_chatbook.Chat.console_turn_preparation import (
     preparation_actions,
 )
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 
 @pytest.mark.parametrize(
     ("owner_body", "contender_body"),

@@ -123,9 +123,13 @@ class _ConnectSession:
 def _bare_connection(
     process: object | None = None,
 ) -> client_module._StdioJSONRPCConnection:
+    from tldw_chatbook.MCP.protocol_profiles import protocol_profile
+
     connection = client_module._StdioJSONRPCConnection.__new__(
         client_module._StdioJSONRPCConnection
     )
+    connection.profile = protocol_profile(client_module._MCP_PROTOCOL_VERSION)
+    connection._producer_lifetime = client_module.ProducerLifetime()
     connection.process = process or _Process()
     connection._request_ids = count(1)
     connection._pending_requests = {}
@@ -160,9 +164,7 @@ def _item(item_key: str, value: str) -> dict[str, Any]:
 def _scripted_connection(
     responder: Callable[[int, str, dict[str, Any]], dict[str, Any]],
 ) -> tuple[client_module._StdioJSONRPCConnection, list[tuple[str, dict[str, Any]]]]:
-    connection = client_module._StdioJSONRPCConnection.__new__(
-        client_module._StdioJSONRPCConnection
-    )
+    connection = _bare_connection()
     requests: list[tuple[str, dict[str, Any]]] = []
 
     async def request(
@@ -209,9 +211,7 @@ def _assert_client_error(error: BaseException, expected_message: str) -> None:
 async def test_initialize_rejects_unexpected_protocol_version_without_payload_leakage(
     protocol_version: object,
 ) -> None:
-    connection = client_module._StdioJSONRPCConnection.__new__(
-        client_module._StdioJSONRPCConnection
-    )
+    connection = _bare_connection()
     connection.client_name = "test-client"
 
     async def request(_method: str, _params: dict[str, Any]) -> dict[str, Any]:
@@ -3104,7 +3104,7 @@ async def test_high_level_resource_read_preserves_exact_metadata_key_and_copies_
                 _meta=metadata,
             )
 
-    client = client_module.MCPClient.__new__(client_module.MCPClient)
+    client = client_module.MCPClient()
     client.sessions = {"server": Session()}  # type: ignore[dict-item]
 
     result = await client.read_resource("server", "note://1")
@@ -3131,7 +3131,7 @@ async def test_high_level_resource_read_rejects_invalid_metadata_without_payload
             assert resource_uri == "note://1"
             return SimpleNamespace(contents=[], _meta="private-metadata")
 
-    client = client_module.MCPClient.__new__(client_module.MCPClient)
+    client = client_module.MCPClient()
     client.sessions = {"server": Session()}  # type: ignore[dict-item]
 
     result = await client.read_resource("server", "note://1")

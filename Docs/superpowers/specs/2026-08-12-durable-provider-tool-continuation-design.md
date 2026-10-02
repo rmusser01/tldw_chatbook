@@ -471,3 +471,22 @@ TASK-15676 opts Moonshot/Kimi and Z.ai/GLM into that contract while hardening
 their Chat-Completions providers. TASK-15677 adds DeepSeek dual mode and its
 stricter later-turn replay. Neither dependent task may duplicate storage or
 resume ownership inside an adapter.
+
+## Managed continuation V2 amendment (2026-09-16, ADR-063/ADR-162)
+
+R38 adds a closed, local namespace/owner-bound `managed_resume` envelope in the existing
+checkpoint TEXT field; no SQL migration or second transcript owner is required. The
+host captures all actual admitted plugin capabilities, seals every store-resolved event
+before write/dispatch, and authenticates the entire neutral checkpoint plus durable
+conversation/assistant owner with the purpose `archive-pin-v1`. Providers remain neutral
+candidate producers. MAC validity constrains a fresh admission and never grants authority.
+The managed-plugin specification defines closed pin fields and simultaneous caps.
+
+Exact Resume verifies current revision/definitions/closure, scope authority and qualified
+data compatibility before context injection and again under the lifecycle lock at fresh
+admission. V1/pinless checkpoints use a zero-managed ceiling across every managed path;
+standalone continuation stays usable. Invalid V2, foreign namespace, changed data or
+remapped owner refuses exact managed resume while preserving historical text and an
+explicit new-run path. Transport/import preserves the complete private field and never
+strips pins to pass validation. Existing executing-call ambiguity, fresh approvals,
+whole-record Sync conflict and visible/private history budgeting remain unchanged.

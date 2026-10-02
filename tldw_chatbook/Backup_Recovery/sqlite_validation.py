@@ -511,7 +511,7 @@ def _check(connection, owner, policy, restrictions):
             and connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            != (74,)
+            != (75,)
         ):
             return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)

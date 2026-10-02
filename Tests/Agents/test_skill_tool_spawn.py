@@ -1,11 +1,16 @@
 import json
+
+import pytest
+
+from Tests.Agents.conftest import join_fleet_children, pin_max_live_subagents
+from Tests.Agents.test_agent_service import FleetChat, verbatim
 from tldw_chatbook.Agents.agent_models import (
-    AgentConfig,
-    AgentDefinition,
     LOAD_TOOLS_NAME,
     RUN_DONE,
-    RunBudget,
     SPAWN_TOOL_NAME,
+    AgentConfig,
+    AgentDefinition,
+    RunBudget,
     ToolCatalogEntry,
     ToolResult,
     ToolSchema,
@@ -13,16 +18,15 @@ from tldw_chatbook.Agents.agent_models import (
 from tldw_chatbook.Agents.agent_runtime import FENCE_OPEN
 from tldw_chatbook.Agents.agent_service import AgentService, FirstRequestSchemaPlan
 from tldw_chatbook.Agents.tool_catalog import (
-    BuiltinToolProvider,
     FIND_TOOLS_SCHEMA,
     LOAD_TOOLS_SCHEMA,
+    BuiltinToolProvider,
     SkillToolProvider,
     ToolCatalogRegistry,
 )
 from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 
-from Tests.Agents.conftest import join_fleet_children, pin_max_live_subagents
-from Tests.Agents.test_agent_service import FleetChat, verbatim
+pytestmark = pytest.mark.bootstrap_profile
 
 
 def _fence(name, args):

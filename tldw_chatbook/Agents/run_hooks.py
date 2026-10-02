@@ -22,7 +22,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from contextlib import AbstractContextManager, ExitStack
 from dataclasses import dataclass, field
-from typing import Any, get_args
+from typing import TYPE_CHECKING, Any, get_args
 
 from loguru import logger
 from pydantic import ValidationError
@@ -39,6 +39,9 @@ from tldw_chatbook.Utils.input_validation import (
     ConsoleHookInput,
 )
 from tldw_chatbook.Utils.path_validation import validate_existing_absolute_directory
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Agents.hooks_v2.models import HookHandler
 
 HOOK_EVENTS: frozenset[str] = frozenset(get_args(ConsoleHookEvent))
 TOOL_NAME_EVENTS: frozenset[str] = CONSOLE_HOOK_TOOL_EVENTS
@@ -95,7 +98,7 @@ class HookTarget:
     config_scope: str
     key: str
     fingerprint: str
-    spec: HookSpec = field(repr=False)
+    spec: HookSpec | HookHandler = field(repr=False)
     approval_token: str | None
 
 
@@ -109,6 +112,27 @@ class HookLaunchRefused(Exception):
 
 
 @dataclass(frozen=True)
+class V2InvalidAdmission:
+    """Bounded metadata for a rejected v2 batch entry, never its raw body.
+
+    `policy` is explicit_required, event_control, optional or unresolved.
+    `event` is None when no supported event can be trusted. H2 must refuse
+    activation of the rejected v2 set; it uses these records to retain each
+    possible controlling event scope, not as a global run-denial boolean.
+    """
+
+    index: int | None
+    event: str | None
+    policy: str
+
+
+_V2_EVENT_CONTROL_EFFECTS = {
+    "PreToolUse": frozenset({"deny", "updated_input"}),
+    "SubagentStart": frozenset({"deny", "child_limits"}),
+}
+
+
+@dataclass(frozen=True)
 class RunHooksConfig:
     """Validated user configuration.
 
@@ -119,6 +143,68 @@ class RunHooksConfig:
 
     enabled: bool = True
     hooks: tuple[HookSpec, ...] = ()
+    v2_handlers: tuple[HookHandler, ...] = ()
+    v2_invalid: bool = False
+    v2_invalid_required: bool = False
+    v2_invalid_admissions: tuple[V2InvalidAdmission, ...] = ()
+
+    @property
+    def v2_requirements_unsatisfied(self) -> bool:
+        """Whether configuration alone prevents required v2 satisfaction.
+
+        Execution/success remains the later runtime owner's responsibility.
+        """
+        return self.v2_invalid_required or (
+            not self.enabled and any(handler.required for handler in self.v2_handlers)
+        )
+
+
+def _invalid_v2_admissions(raw: object) -> tuple[V2InvalidAdmission, ...]:
+    """Retain bounded, body-free scope hints when a whole batch is rejected."""
+    from tldw_chatbook.Agents.hooks_v2.validation import EFFECTS
+
+    if not isinstance(raw, list):
+        return (V2InvalidAdmission(None, None, "unresolved"),)
+    records: list[V2InvalidAdmission] = []
+    for index, item in enumerate(raw[:256]):
+        if type(item) is not dict:
+            records.append(V2InvalidAdmission(index, None, "unresolved"))
+            continue
+        proposed_event = item.get("event")
+        event = (
+            proposed_event
+            if type(proposed_event) is str and proposed_event in EFFECTS
+            else None
+        )
+        required = item.get("required", False)
+        effects = item.get("effects")
+        if required is True:
+            policy = "explicit_required"
+        elif (
+            required is not False
+            or event is None
+            or not isinstance(effects, list)
+            or len(effects) > 6
+        ):
+            policy = "unresolved"
+        elif any(
+            effect in _V2_EVENT_CONTROL_EFFECTS.get(event, ())
+            for effect in effects
+            if type(effect) is str
+        ):
+            policy = "event_control"
+        elif (
+            any(type(effect) is not str for effect in effects)
+            or len(set(effects)) != len(effects)
+            or not set(effects) <= EFFECTS[event]
+        ):
+            policy = "unresolved"
+        else:
+            policy = "optional"
+        records.append(V2InvalidAdmission(index, event, policy))
+    if len(raw) > 256:
+        records.append(V2InvalidAdmission(None, None, "unresolved"))
+    return tuple(records)
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,9 +213,10 @@ class HookInventoryRow:
 
     index: int
     key: str
-    spec: HookSpec | None
+    spec: HookSpec | HookHandler | None
     enabled: bool | None
     error: str | None
+    source: str = "hook"
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +226,12 @@ class HookInventory:
     master_enabled: bool | None
     container_error: str | None
     rows: tuple[HookInventoryRow, ...] = ()
+    v2_rows: tuple[HookInventoryRow, ...] = ()
+
+    @property
+    def review_rows(self) -> tuple[HookInventoryRow, ...]:
+        """Both schemas share consent while legacy editor indices stay stable."""
+        return self.rows + self.v2_rows
 
     @property
     def requires_authority(self) -> bool:
@@ -146,11 +239,12 @@ class HookInventory:
         if self.master_enabled is False:
             return False
         return bool(
-            self.container_error or any(row.enabled is not False for row in self.rows)
+            self.container_error
+            or any(row.enabled is not False for row in self.review_rows)
         )
 
 
-def fingerprint_hook(spec: HookSpec) -> str:
+def fingerprint_hook(spec: HookSpec | HookHandler) -> str:
     """Hash an exact normalized execution definition, without enable switches.
 
     Args:
@@ -159,14 +253,19 @@ def fingerprint_hook(spec: HookSpec) -> str:
     Returns:
         Versioned SHA-256 identity of the execution definition.
     """
-    encoded = json.dumps(
+    definition = (
         {
             "version": 1,
             "event": spec.event,
             "command": list(spec.command),
             "matcher": spec.matcher,
             "timeout_s": float(spec.timeout_s),
-        },
+        }
+        if isinstance(spec, HookSpec)
+        else {"version": 2, **spec.model_dump(mode="json")}
+    )
+    encoded = json.dumps(
+        definition,
         ensure_ascii=True,
         sort_keys=True,
         separators=(",", ":"),
@@ -281,7 +380,47 @@ def inspect_hooks_config(config: Mapping[str, object]) -> HookInventory:
             occurrences[fingerprint] = occurrence + 1
             key = f"legacy:{fingerprint}:{occurrence}"
         rows.append(HookInventoryRow(index, key, spec, enabled, error))
-    return HookInventory(master, container_error, tuple(rows))
+    raw_v2 = section.get("handler", [])
+    v2_rows = ()
+    if raw_v2 or not isinstance(raw_v2, list):
+        from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+        try:
+            handlers = parse_handlers(raw_v2)
+        except ValueError:
+            # The schema rejects the whole batch. Never approve a valid-looking
+            # prefix or retain an unbounded malformed body in review metadata.
+            indices = range(min(len(raw_v2), 256)) if isinstance(raw_v2, list) else (0,)
+            v2_rows = tuple(
+                HookInventoryRow(
+                    index,
+                    f"v2:invalid:{index}",
+                    None,
+                    True,
+                    "Invalid v2 handler batch; repair in Advanced Config.",
+                    "handler",
+                )
+                for index in indices
+            )
+            if not v2_rows:
+                v2_rows = (
+                    HookInventoryRow(
+                        0,
+                        "v2:invalid:0",
+                        None,
+                        True,
+                        "Invalid v2 handler batch; repair in Advanced Config.",
+                        "handler",
+                    ),
+                )
+        else:
+            v2_rows = tuple(
+                HookInventoryRow(
+                    index, "v2:id:" + handler.id, handler, True, None, "handler"
+                )
+                for index, handler in enumerate(handlers)
+            )
+    return HookInventory(master, container_error, tuple(rows), v2_rows)
 
 
 def load_hooks_config(config: Mapping) -> RunHooksConfig:
@@ -292,7 +431,9 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
 
     Returns:
         Master switch and valid enabled execution definitions. Invalid raw
-        rows remain in the separate consent inventory for repair.
+        rows remain in the separate consent inventory for repair. V2 batches
+        are independently validated; rejected batches retain body-free
+        requirement metadata for the later v2 execution owner.
     """
     inventory = inspect_hooks_config(config)
     if inventory.container_error:
@@ -300,14 +441,37 @@ def load_hooks_config(config: Mapping) -> RunHooksConfig:
     for row in inventory.rows:
         if row.error:
             logger.warning("run-hooks: {}; hook disabled", row.error)
-    return RunHooksConfig(
-        enabled=inventory.master_enabled is True,
-        hooks=tuple(
-            row.spec
-            for row in inventory.rows
-            if row.spec is not None and row.enabled is True
-        ),
+    enabled = inventory.master_enabled is True
+    hooks = tuple(
+        row.spec
+        for row in inventory.rows
+        if row.spec is not None and row.enabled is True
     )
+    section = config.get("hooks", {}) if isinstance(config, Mapping) else {}
+    raw_v2 = section.get("handler", []) if isinstance(section, Mapping) else []
+    try:
+        # Keep the v2 import out of default startup and all legacy-only loads.
+        if raw_v2:
+            from tldw_chatbook.Agents.hooks_v2.validation import parse_handlers
+
+            v2_handlers = parse_handlers(raw_v2)
+        else:
+            v2_handlers = ()
+            if not isinstance(raw_v2, list):
+                raise ValueError("handlers must be a list")
+    except ValueError:
+        logger.warning("run-hooks: invalid v2 handler batch; activation refused")
+        invalid_admissions = _invalid_v2_admissions(raw_v2)
+        return RunHooksConfig(
+            enabled=enabled,
+            hooks=hooks,
+            v2_invalid=True,
+            v2_invalid_required=any(
+                item.policy == "explicit_required" for item in invalid_admissions
+            ),
+            v2_invalid_admissions=invalid_admissions,
+        )
+    return RunHooksConfig(enabled=enabled, hooks=hooks, v2_handlers=v2_handlers)
 
 
 # ---------------------------------------------------------------------------

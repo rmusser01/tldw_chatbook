@@ -194,6 +194,218 @@ class TestLoadHooksConfig:
         )
         assert result.hooks == ()
 
+    def test_v2_required_state_survives_master_disable(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "enabled": False,
+                    "handler": [
+                        {
+                            "id": "guard",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": ["guard"],
+                            "effects": ["deny"],
+                            "required": True,
+                        }
+                    ],
+                }
+            }
+        )
+        assert len(result.v2_handlers) == 1
+        assert result.v2_requirements_unsatisfied
+        assert not result.v2_invalid
+
+    def test_invalid_required_v2_batch_is_not_silently_omitted(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "enabled": False,
+                    "handler": [
+                        {
+                            "id": "guard",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": [],
+                            "effects": ["deny"],
+                            "required": True,
+                        }
+                    ],
+                }
+            }
+        )
+        assert result.v2_handlers == ()
+        assert result.v2_invalid_required
+        assert result.v2_requirements_unsatisfied
+
+    def test_invalid_optional_v2_batch_does_not_invent_requirement(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "handler": [
+                        {
+                            "id": "observer",
+                            "event": "Stop",
+                            "type": "command",
+                            "argv": [],
+                            "effects": [],
+                        }
+                    ]
+                }
+            }
+        )
+        assert result.v2_invalid
+        assert not result.v2_invalid_required
+        assert not result.v2_requirements_unsatisfied
+
+    def test_invalid_optional_context_does_not_become_required(self):
+        valid = {
+            "id": "context",
+            "event": "PostToolUse",
+            "type": "command",
+            "argv": ["context"],
+            "effects": ["context"],
+            "require_context": True,
+        }
+        assert not load_hooks_config(
+            {"hooks": {"handler": [valid]}}
+        ).v2_requirements_unsatisfied
+        invalid = {**valid, "argv": []}
+        result = load_hooks_config({"hooks": {"handler": [invalid]}})
+        assert result.v2_invalid
+        assert not result.v2_invalid_required
+        assert not result.v2_requirements_unsatisfied
+        assert [(item.event, item.policy) for item in result.v2_invalid_admissions] == [
+            ("PostToolUse", "optional")
+        ]
+
+    def test_invalid_event_policy_controls_keep_their_owning_event(self):
+        candidates = [
+            ("PreToolUse", ["updated_input"]),
+            ("PreToolUse", ["deny"]),
+            ("SubagentStart", ["child_limits"]),
+        ]
+        for event, effects in candidates:
+            result = load_hooks_config(
+                {
+                    "hooks": {
+                        "handler": [
+                            {
+                                "id": "guard",
+                                "event": event,
+                                "type": "command",
+                                "argv": [],
+                                "effects": effects,
+                            }
+                        ]
+                    }
+                }
+            )
+            assert result.v2_invalid
+            assert not result.v2_invalid_required
+            assert [
+                (item.event, item.policy) for item in result.v2_invalid_admissions
+            ] == [(event, "event_control")]
+
+    @pytest.mark.parametrize(
+        ("effects", "expected_policy"),
+        [
+            ([], "optional"),
+            (["context"], "optional"),
+            ([None], "unresolved"),
+            (["typo"], "unresolved"),
+            ([{"deny": True}], "unresolved"),
+            (["context", "context"], "unresolved"),
+            (["child_limits"], "unresolved"),
+            (["deny", "typo"], "event_control"),
+            (["deny", "deny"], "event_control"),
+        ],
+    )
+    def test_rejected_effect_array_keeps_supported_scope(
+        self, effects, expected_policy
+    ):
+        base = {
+            "id": "review",
+            "event": "PreToolUse",
+            "type": "command",
+            "effects": effects,
+        }
+        valid = load_hooks_config(
+            {"hooks": {"handler": [{**base, "argv": ["review"], "effects": []}]}}
+        )
+        assert len(valid.v2_handlers) == 1
+        result = load_hooks_config({"hooks": {"handler": [{**base, "argv": []}]}})
+        assert result.v2_invalid
+        assert result.v2_invalid_admissions == (
+            run_hooks.V2InvalidAdmission(0, "PreToolUse", expected_policy),
+        )
+
+    def test_invalid_optional_entry_retains_another_required_entry(self):
+        result = load_hooks_config(
+            {
+                "hooks": {
+                    "handler": [
+                        {
+                            "id": "required",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": ["guard"],
+                            "effects": ["deny"],
+                            "required": True,
+                        },
+                        {
+                            "id": "optional",
+                            "event": "Stop",
+                            "type": "command",
+                            "argv": [],
+                            "effects": [],
+                        },
+                    ]
+                }
+            }
+        )
+        assert result.v2_handlers == ()
+        assert result.v2_invalid_required
+        assert result.v2_requirements_unsatisfied
+        assert [(item.event, item.policy) for item in result.v2_invalid_admissions] == [
+            ("PreToolUse", "explicit_required"),
+            ("Stop", "optional"),
+        ]
+
+    def test_integer_overflow_is_retained_as_invalid_v2_state(self):
+        valid = {
+            "id": "guard",
+            "event": "PreToolUse",
+            "type": "command",
+            "argv": ["guard"],
+            "effects": ["deny"],
+            "required": True,
+        }
+        assert len(load_hooks_config({"hooks": {"handler": [valid]}}).v2_handlers) == 1
+        result = load_hooks_config(
+            {"hooks": {"handler": [{**valid, "timeout_seconds": 10**1000}]}}
+        )
+        assert result.v2_invalid
+        assert result.v2_invalid_required
+        assert result.v2_invalid_admissions[0].event == "PreToolUse"
+
+    def test_rejected_metadata_is_bounded_and_marks_uninspected_tail(self):
+        handlers = [
+            {
+                "id": f"observer{index}",
+                "event": "Stop",
+                "type": "command",
+                "argv": ["ok"],
+                "effects": [],
+            }
+            for index in range(257)
+        ]
+        result = load_hooks_config({"hooks": {"handler": handlers}})
+        assert result.v2_invalid
+        assert len(result.v2_invalid_admissions) == 257
+        assert result.v2_invalid_admissions[-1].index is None
+        assert result.v2_invalid_admissions[-1].policy == "unresolved"
+
 
 # ---------------------------------------------------------------------------
 # Task 2: engine execution core
@@ -1155,4 +1367,59 @@ class TestEngineHardening:
             "session_id=closed-session" in r.getMessage()
             and "run_id=closed-run" in r.getMessage()
             for r in caplog.records
+        )
+
+
+class TestV2ConfigProjection:
+    def test_required_v2_definition_survives_master_disable(self):
+        loaded = load_hooks_config(
+            {
+                "hooks": {
+                    "enabled": False,
+                    "handler": [
+                        {
+                            "id": "initialize",
+                            "event": "SessionStart",
+                            "type": "command",
+                            "argv": ["/bin/true"],
+                            "effects": ["context"],
+                            "required": True,
+                        }
+                    ],
+                }
+            }
+        )
+        assert loaded.enabled is False
+        handlers = getattr(loaded, "v2_handlers", ())
+        assert len(handlers) == 1
+        assert handlers[0].id == "initialize" and handlers[0].required
+        assert loaded.v2_requirements_unsatisfied
+
+    def test_malformed_required_v2_batch_retains_requirement(self):
+        loaded = load_hooks_config(
+            {
+                "hooks": {
+                    "handler": [
+                        {
+                            "id": "guard",
+                            "event": "PreToolUse",
+                            "type": "command",
+                            "argv": [],
+                            "effects": ["deny"],
+                            "required": True,
+                        }
+                    ]
+                }
+            }
+        )
+        assert getattr(loaded, "v2_invalid", False)
+        assert loaded.v2_requirements_unsatisfied
+        assert loaded.v2_invalid_admissions[0].policy == "explicit_required"
+
+    def test_v2_definition_does_not_enable_disabled_legacy_row(self):
+        legacy = {"event": "Stop", "command": ["/bin/true"], "enabled": False}
+        loaded = load_hooks_config({"hooks": {"hook": [legacy], "handler": []}})
+        assert loaded.hooks == ()
+        assert (
+            run_hooks.inspect_hooks_config({"hooks": {"hook": [legacy]}}).rows[0].spec
         )

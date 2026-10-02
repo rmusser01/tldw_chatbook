@@ -635,9 +635,7 @@ def test_wake_release_failure_keeps_the_stronger_fleet_fence_latched():
     _runtime, controller, bridge, _store, session = _runtime_with_fleet()
 
     class _WakeReleaseRefusal:
-        def fence_conversation(
-            self, _conversation_id: str, *, generation: int
-        ) -> None:
+        def fence_conversation(self, _conversation_id: str, *, generation: int) -> None:
             assert generation >= 1
 
         def release_conversation_fence(
@@ -753,3 +751,180 @@ async def test_runtime_dispose_bounds_an_uncooperative_gateway_close():
 
     assert close_started.is_set()
     assert close_cancelled.is_set()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_v2_hooks_share_app_loop_viewless_and_seal_before_drain():
+    from Tests.Agents.test_hooks_v2_execution import command, event
+
+    runtime = ConsoleRuntime(app=None)
+    assert command().argv
+    assert callable(getattr(runtime, "ensure_hooks_v2", None))
+    first = runtime.ensure_hooks_v2("a", (command(),), lambda *_: True)
+    second = runtime.ensure_hooks_v2("b", (command(),), lambda *_: True)
+    assert first.budget_owner is second.budget_owner
+    assert first.loop is asyncio.get_running_loop()
+    assert (await first.fire_async(event(runtime="a"))).succeeded
+    first.begin_close()
+    assert (await second.fire_async(event(runtime="b"))).succeeded
+    runtime.begin_dispose()
+    assert not (await second.fire_async(event(runtime="b"))).succeeded
+    with pytest.raises(RuntimeError):
+        runtime.ensure_hooks_v2("c", (command(),), lambda *_: True)
+    await runtime.dispose()
+    assert not first.processes.records and not second.processes.records
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_v2_dispose_cancellation_retains_cleanup_and_reaps_child():
+    from Tests.Agents.test_hooks_v2_execution import command, event
+
+    runtime = ConsoleRuntime(app=None)
+    engine = runtime.ensure_hooks_v2(
+        "a", (command("import time;time.sleep(30)", effects=["deny"]),), lambda *_: True
+    )
+    caller = asyncio.create_task(engine.fire_async(event(runtime="a")))
+    for _ in range(200):
+        jobs = tuple(engine.processes.records.values())
+        if jobs and jobs[0].capture and jobs[0].capture.transport:
+            break
+        await asyncio.sleep(0.01)
+    assert jobs[0].capture.transport is not None
+    disposing = asyncio.create_task(runtime.dispose())
+    await asyncio.sleep(0)
+    disposing.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await disposing
+    await runtime.close_hooks_v2()
+    await caller
+    assert jobs[0].capture.transport.get_returncode() is not None
+    assert not engine.processes.records
+    assert engine.budget_owner.snapshot()["tickets"] == 0
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_session_close_clears_grants_only_after_valid_ticket():
+    from dataclasses import replace
+
+    runtime, controller, _bridge, _store, session = _runtime_with_fleet()
+    controller._chat_create_session_grants[session.id] = {"remembered"}
+    ticket = controller.begin_session_close(
+        session.id,
+        expected_revision=controller.lifecycle_impact(session_id=session.id).revision,
+    )
+    with pytest.raises(RuntimeError, match="stale"):
+        controller.finalize_session_close(replace(ticket, close_id="not-owned"))
+    assert controller._chat_create_session_grants[session.id] == {"remembered"}
+    controller.finalize_session_close(ticket)
+    assert session.id not in controller._chat_create_session_grants
+    await runtime.dispose()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+async def test_cancelled_session_hook_drain_still_finalizes_exact_close():
+    import threading
+
+    from Tests.Agents.test_hooks_v2_execution import command, event
+    from tldw_chatbook.Agents.hooks_v2.ownership import HostProcessOwner
+
+    runtime, controller, bridge, store, session = _runtime_with_fleet()
+    settling = threading.Event()
+    release = threading.Event()
+
+    class HeldTerminal(HostProcessOwner):
+        def settle_process(self, token, confirmed):
+            settling.set()
+            release.wait(3)
+            super().settle_process(token, confirmed)
+
+    engine = runtime.ensure_hooks_v2(
+        session.id,
+        (command(effects=["deny"]),),
+        lambda *_: True,
+        process_owner=HeldTerminal(),
+    )
+    caller = asyncio.create_task(engine.fire_async(event(runtime=session.id)))
+    assert await asyncio.to_thread(settling.wait, 2)
+    bridge.release.set()
+    closing = asyncio.create_task(
+        runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+    )
+    await asyncio.sleep(0.05)
+    try:
+        closing.cancel()
+        await asyncio.sleep(0.01)
+        assert not closing.done()
+    finally:
+        release.set()
+        with pytest.raises(asyncio.CancelledError):
+            await closing
+        await caller
+    assert session.id not in {item.id for item in store.sessions()}
+    assert not engine.processes.records
+    await runtime.dispose()
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refuse_terminal", [True, False])
+async def test_session_fences_include_exact_hook_custody(refuse_terminal):
+    from Tests.Agents.test_hooks_v2_execution import command, event
+    from tldw_chatbook.Agents.hooks_v2.ownership import HostProcessOwner
+
+    class TerminalOwner(HostProcessOwner):
+        refuse = refuse_terminal
+
+        def settle_process(self, token, confirmed):
+            if self.refuse:
+                raise RuntimeError("terminal settlement unavailable")
+            super().settle_process(token, confirmed)
+
+    runtime, controller, bridge, store, session = _runtime_with_fleet()
+    other = store.create_session(ephemeral=True)
+    owner = TerminalOwner()
+    engine = runtime.ensure_hooks_v2(
+        session.id, (command(effects=["deny"]),), lambda *_: True, process_owner=owner
+    )
+    second = runtime.ensure_hooks_v2(
+        other.id, (command(effects=["deny"]),), lambda *_: True
+    )
+    await engine.fire_async(event(runtime=session.id))
+    bridge.release.set()
+    try:
+        await runtime.close_session(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+        assert engine.cleanup_pending == refuse_terminal
+        assert (session.id in bridge.released) == (not refuse_terminal)
+        assert (
+            session.id in controller.fleet_wake._conversation_fences
+        ) == refuse_terminal
+        assert engine.budget_owner.snapshot(session.id)["tickets"] == int(
+            refuse_terminal
+        )
+        assert (await second.fire_async(event(runtime=other.id))).succeeded
+        await runtime.close_session(
+            other.id,
+            expected_revision=controller.lifecycle_impact(session_id=other.id).revision,
+        )
+        assert other.id in bridge.released
+    finally:
+        owner.refuse = False
+        await engine.processes.reap_pending()
+        await runtime.close_hooks_v2(session.id)
+        await runtime.dispose()
+    assert not engine.cleanup_pending and not any(
+        engine.budget_owner.snapshot().values()
+    )

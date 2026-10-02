@@ -1,8 +1,27 @@
 """Real Console controller intake and queue maintenance boundaries."""
 
+import subprocess
+
 import pytest
 
-from Tests.Backup_Recovery.test_home_citation_retirement import _run
+from Tests.hooks_v2_process_support import child_argv
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
+
+def _run(tmp_path, case, outcome, *, script):
+    """Run the real controller against the exact checkout and private profile."""
+    del tmp_path
+    result = subprocess.run(
+        child_argv(script) + [case, outcome],
+        capture_output=True,
+        text=True,
+        timeout=45,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr[-6000:] + result.stdout[-1000:]
+    assert "retired and reopened" in result.stdout
+
 
 _SCRIPT = r"""
 import asyncio, sys, time

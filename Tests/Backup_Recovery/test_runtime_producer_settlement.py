@@ -422,16 +422,18 @@ print('retired and reopened')
 _MCP_UPPER = (
     _MCP.split("async def run():")[0]
     + r"""
+# Explicit profiles inspect only advertised capabilities.
+server=server.replace("'capabilities':{}", "'capabilities':{'tools':{},'resources':{},'prompts':{}}")
 async def run():
  local_store.save_profile(LocalExternalMCPProfile(profile_id='real',command=sys.executable,args=('-u','-c',server,'ok')))
  await plane.connect_local_profile('real')
  session=client.sessions['real']
  entered,release=asyncio.Event(),asyncio.Event()
  send=session._send_message
- async def held_send(payload):
+ async def held_send(payload, *, _dispatch=None):
   if payload.get('method')=='tools/call':
    entered.set(); await release.wait()
-  await send(payload)
+  await send(payload, _dispatch=_dispatch)
  session._send_message=held_send
  accepted=asyncio.create_task(plane.execute_hub_tool('local:real','sentinel',{}))
  await entered.wait()

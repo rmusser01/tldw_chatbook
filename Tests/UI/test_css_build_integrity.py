@@ -1136,6 +1136,8 @@ def test_screen_owned_sheets_are_wired_to_app_routes(request) -> None:
             assert (_CSS_ROOT / sheet_name).is_file(), (
                 f"{sheet_name} missing from css/"
             )
+            if sheet_name in css_builder.MODAL_OWNED_SPLIT_SHEETS:
+                continue  # its modal's CSS_PATH loads it (test below)
             assert sheet_name in app_loaded, (
                 f"{sheet_name} is split off the bundle but no route in "
                 "TldwCli._SCREEN_OWNED_ROUTE_CSS loads it -- the moved "
@@ -1154,6 +1156,47 @@ def test_screen_owned_sheets_are_wired_to_app_routes(request) -> None:
             assert name in emitted, (
                 f"_SCREEN_OWNED_ROUTE_CSS names {name}, which no split emits"
             )
+
+
+@private_profile_test
+def test_modal_owned_sheets_are_loaded_by_their_modal(request) -> None:
+    """Each modal-owned split sheet is emitted, and its modal loads it.
+
+    TASK-33628.2 / ADR-097: a rarely opened modal's rules can leave the boot
+    bundle for a split sheet the modal's own ``CSS_PATH`` parses on first
+    open. If that modal stopped loading the sheet, the moved rules would
+    never parse and the modal would open unstyled -- the same dead-CSS
+    failure the route-wiring test above guards for route sheets. A route
+    must not load a modal's sheet either: that would parse it on a visit
+    whether or not the modal ever opens.
+    """
+    import importlib
+
+    from tldw_chatbook.app import TldwCli
+
+    emitted = {
+        filename
+        for split in css_builder.SCREEN_OWNED_SPLITS
+        for filename in split.sheets.values()
+    }
+    route_loaded = {
+        name for names in TldwCli._SCREEN_OWNED_ROUTE_CSS.values() for name in names
+    }
+    assert css_builder.MODAL_OWNED_SPLIT_SHEETS, "registry unexpectedly empty"
+    for sheet_name, (module, class_name) in (
+        css_builder.MODAL_OWNED_SPLIT_SHEETS.items()
+    ):
+        assert sheet_name in emitted, f"{sheet_name}: no split emits it"
+        assert sheet_name not in route_loaded, (
+            f"{sheet_name} is modal-owned but a route loads it"
+        )
+        modal = getattr(importlib.import_module(module), class_name)
+        css_path = modal.CSS_PATH
+        entries = [css_path] if isinstance(css_path, (str, Path)) else list(css_path)
+        assert _CSS_ROOT / sheet_name in {Path(entry) for entry in entries}, (
+            f"{class_name}.CSS_PATH does not load {sheet_name}; its moved "
+            "rules would never parse"
+        )
 
 
 @private_profile_test

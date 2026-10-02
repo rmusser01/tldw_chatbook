@@ -114,6 +114,11 @@ _PRIVATE_MEMORY_AND_READ_ONLY = frozenset(
 )
 
 _SQLITE_OWNER_POLICIES = {
+    "plugins.registry": SQLiteOwnerPolicy(
+        "tldw_chatbook/Plugins/registry",
+        _PRIVATE_MEMORY_AND_READ_ONLY,
+        "Private plugin intent and process recovery metadata; disk mutation requires the runtime owner.",
+    ),
     "recovery.credentials": SQLiteOwnerPolicy(
         "tldw_chatbook/Backup_Recovery/credentials",
         _PRIVATE_FILE,

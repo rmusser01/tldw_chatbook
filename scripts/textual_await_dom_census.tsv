@@ -16,7 +16,11 @@
 # Rows are keyed by ENCLOSING FUNCTION, not by line number, so an edit
 # elsewhere in the file does not churn the census.
 #
-# path::async def	unguarded lookups in it
+# A third column is a REVIEWED row's note -- its verdict, evidence and
+# follow-up. --write carries a note forward for as long as its row
+# survives, so a re-pin never erases a review.
+#
+# path::async def	unguarded lookups in it[	note]
 tldw_chatbook/UI/ChatbookCreationWindow.py::on_mount	1
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::_load_chatbook_details	2
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::on_mount	3
@@ -140,7 +144,6 @@ tldw_chatbook/Widgets/Console/console_agent_history_modal.py::_read_page	5
 tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py::refresh_full_count	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_rows	1
 tldw_chatbook/Widgets/Console/console_citation_sources_modal.py::_show_unavailable	1
-tldw_chatbook/Widgets/Console/console_conversation_inspector.py::_recover_project_instructions	1
 tldw_chatbook/Widgets/Console/console_exchange_export_dialog.py::export_selected	1
 tldw_chatbook/Widgets/Console/console_fork_chat_modal.py::_perform_safe_cancel	1
 tldw_chatbook/Widgets/Console/console_prompt_queue_modal.py::handle_button	1

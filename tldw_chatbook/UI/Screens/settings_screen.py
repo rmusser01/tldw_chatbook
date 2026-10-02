@@ -163,7 +163,11 @@ from ...Workspaces.registry_service import (
     WorkspaceRegistryServiceError,
     binding_exclusion_entries,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
+from ...Widgets.confirmation_dialog import (
+    QUIT_CANCELLED_NOTICE,
+    ConfirmationDialog,
+    await_quit_prompt,
+)
 from ...Widgets.Console.console_endpoint_template_modal import (
     ConsoleEndpointTemplateModal,
 )
@@ -24911,7 +24915,7 @@ class SettingsScreen(BaseAppScreen):
             self._speech_tts_leave_bypass = False
             self._speech_tts_leave_in_progress = False
 
-    async def confirm_navigation(self) -> bool:
+    async def confirm_navigation(self, *, quitting: bool = False) -> bool:
         """Save / Discard / Stay before leaving Settings with an edited theme.
 
         TASK-32949: the app awaits this before every screen switch -- tab
@@ -24920,10 +24924,21 @@ class SettingsScreen(BaseAppScreen):
         reusable route, so leaving drops the editor's unsaved palette. Same
         prompt and outcomes as a category switch (TASK-32941).
 
+        The prompt is awaited through ``await_quit_prompt`` (TASK-33622.10):
+        if a covered modal's own ``dismiss()`` pops it unanswered, this
+        answers Stay instead of waiting forever with the one-prompt latch
+        below still set.
+
+        Args:
+            quitting: True when the app's quit flow asks (``confirm_quit``);
+                a prompt that vanished unanswered then says the quit was
+                cancelled.
+
         Returns:
             True to let navigation proceed; False to stay on Settings ▸ Theme
             (Stay, a Save that was refused or waits on its overwrite
-            confirmation, or a theme leave prompt that is already open).
+            confirmation, a theme leave prompt that is already open, or one
+            that vanished unanswered).
         """
         try:
             editor = self.query_one("#settings-theme-editor", SettingsThemeEditor)
@@ -24943,14 +24958,21 @@ class SettingsScreen(BaseAppScreen):
             return False
         self._theme_leave_in_progress = True
         try:
-            choice = await self.app.push_screen_wait(ThemeLeaveModal())
+            choice = await await_quit_prompt(
+                self.app,
+                ThemeLeaveModal(),
+                no_answer="cancel",
+                vanished_notice=QUIT_CANCELLED_NOTICE if quitting else None,
+            )
         finally:
             self._theme_leave_in_progress = False
-        if choice == "cancel":
-            return False
         if choice == "save":
             await editor.save_theme()
             return not editor.is_modified
+        if choice != "discard":
+            # Stay -- and fail closed: a prompt closed with no answer keeps
+            # the edits rather than dropping them (TASK-33622.10 review).
+            return False
         # TASK-33060: Discard undoes the Try before the leave/quit proceeds;
         # a clean leave relies on the editor's unmount (review I-1).
         editor.discard_try()
@@ -24965,7 +24987,7 @@ class SettingsScreen(BaseAppScreen):
         Returns:
             True to let the quit proceed; False to stay.
         """
-        return await self.confirm_navigation()
+        return await self.confirm_navigation(quitting=True)
 
     def _theme_editor_shown(self) -> bool:
         try:

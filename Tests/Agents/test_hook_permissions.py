@@ -751,7 +751,11 @@ def test_backup_recognizes_but_never_imports_hook_permission_authority(hook_file
         "hook_permissions.json",
         "hook_permissions.json.lock",
     }
-    assert all(item.status == "intentionally_excluded" for item in items)
+    # Unsupported host metadata is also a restrictive, nonportable result.
+    # Neither classification may include device-local grant authority.
+    assert all(
+        item.status in {"intentionally_excluded", "unsupported"} for item in items
+    )
     assert adapter.validate(owner.snapshot().store_path)
     with pytest.raises(
         ValueError, match="device_local_hook_permissions_not_restorable"
@@ -871,3 +875,152 @@ def test_failed_disable_stays_fenced_until_explicit_review(hook_file, monkeypatc
     assert owner.notification_targets("PostToolUse", None) == ()
     assert owner.approve(owner.snapshot(), [key]).ready
     assert owner.notification_targets("PostToolUse", None)
+
+
+def test_v2_review_is_persistent_and_legacy_targets_remain_separate(hook_file):
+    def add(section):
+        section["handler"] = [
+            {
+                "id": "one",
+                "event": "SessionStart",
+                "type": "command",
+                "argv": [sys.executable, "-c", "pass"],
+                "effects": [],
+            }
+        ]
+
+    _edit(hook_file, add)
+    owner = _owner()
+    pending = owner.snapshot()
+    assert len(pending.rows) == 2
+    assert not pending.ready
+    assert pending.rows[0].entry.key == "id:one"
+    assert pending.rows[1].entry.key == "v2:id:one"
+    assert _approve(owner).ready
+    assert _owner().snapshot().ready
+    assert len(owner.targets("PostToolUse", None)) == 1
+    assert owner.targets("SessionStart", None) == ()
+    assert "argv" not in pending.store_path.read_text()
+
+
+def test_changed_v2_policy_and_revoke_retire_exact_epoch(hook_file):
+    from tldw_chatbook.Agents.run_hooks import HookLaunchRefused
+
+    _edit(
+        hook_file,
+        lambda section: section.update(
+            handler=[
+                {
+                    "id": "v2",
+                    "event": "SessionStart",
+                    "type": "command",
+                    "argv": [sys.executable, "-c", "pass"],
+                    "effects": [],
+                }
+            ]
+        ),
+    )
+    owner = _owner()
+    assert _approve(owner).ready
+    snapshot, targets = owner.v2_configuration()
+    assert snapshot.ready and len(targets) == 1
+    old = targets[0]
+    _edit(hook_file, lambda section: section["handler"][0].update(required=True))
+    assert not owner.snapshot().ready
+    with pytest.raises(HookLaunchRefused), owner.launch_guard(old, tool_name=None):
+        pytest.fail("changed policy launched")
+    assert _approve(owner).ready
+    _, targets = owner.v2_configuration()
+    assert targets[0] != old
+    owner.revoke(owner.snapshot(), targets[0].key)
+    assert not owner.target_current(targets[0])
+    assert _approve(owner).ready
+    assert not owner.target_current(targets[0])
+
+
+@pytest.mark.asyncio
+async def test_v2_actual_process_creation_serializes_revoke_and_rejects_late_result(
+    hook_file, tmp_path, monkeypatch
+):
+    import threading
+
+    from Tests.Agents.test_hooks_v2_execution import event
+    from Tests.hooks_v2_process_support import child_argv
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+
+    marker = tmp_path / "started"
+    release_child = tmp_path / "child-release"
+    argv = child_argv(
+        "from pathlib import Path;import time;"
+        f'Path({str(marker)!r}).write_text("started");'
+        f"exec({f'while not Path({str(release_child)!r}).exists(): time.sleep(0.01)'!r});"
+        'print(\'{"version":2,"decision":"pass"}\')'
+    )
+    _edit(
+        hook_file,
+        lambda section: section.update(
+            handler=[
+                {
+                    "id": "guarded-v2",
+                    "event": "PreToolUse",
+                    "type": "command",
+                    "argv": argv,
+                    "effects": ["deny"],
+                    "timeout_seconds": 30,
+                }
+            ]
+        ),
+    )
+    owner = _owner()
+    expected = _approve(owner)
+    _, targets = owner.v2_configuration()
+    target = targets[0]
+    loop = asyncio.get_running_loop()
+    entered = asyncio.Event()
+    release_launch = asyncio.Event()
+    original = loop.subprocess_exec
+
+    async def paused_launch(*args, **kwargs):
+        entered.set()
+        await release_launch.wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(loop, "subprocess_exec", paused_launch)
+    engine = HookEngine(
+        (target.spec,),
+        lambda *_: owner.target_current(target),
+        HookBudgetOwner(),
+        launch_guard=lambda *_: owner.launch_guard(target, tool_name=None),
+        effect_authority_check=lambda *_: owner.target_current(target, refresh=False),
+    )
+    firing = asyncio.create_task(engine.fire_async(event()))
+    revoke_entered = threading.Event()
+
+    def revoke():
+        revoke_entered.set()
+        return owner.revoke(expected, target.key)
+
+    revoking = None
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        revoking = asyncio.create_task(asyncio.to_thread(revoke))
+        assert await asyncio.to_thread(revoke_entered.wait, 5)
+        await asyncio.sleep(0.05)
+        assert not revoking.done(), "revoke passed an in-flight launch transaction"
+        release_launch.set()
+        assert not (await asyncio.wait_for(revoking, 5)).ready
+        async with asyncio.timeout(10):
+            while not marker.exists():
+                await asyncio.sleep(0.01)
+        release_child.write_text("release")
+        outcome = await asyncio.wait_for(firing, 10)
+        assert not outcome.allowed and not outcome.accepted
+        assert not engine.processes.records
+    finally:
+        release_launch.set()
+        release_child.write_text("release")
+        await engine.close()
+        await asyncio.gather(
+            firing, *([revoking] if revoking else []), return_exceptions=True
+        )

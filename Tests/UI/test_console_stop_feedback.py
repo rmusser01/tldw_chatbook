@@ -23,6 +23,8 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Widgets.Console import ConsoleComposerBar
 
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
+
 
 async def _start_held_stream(console, pilot, gateway):
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
@@ -121,8 +123,17 @@ async def test_stop_click_acknowledges_synchronously_and_records_stop_row():
         await pilot.pause()
 
         # AC3: an explicit stopped-by-user record exists in the transcript.
-        messages = store.messages_for_session(store.active_session_id)
+        for _ in range(60):
+            messages = store.messages_for_session(store.active_session_id)
+            if any(
+                m.role is ConsoleMessageRole.SYSTEM
+                and "stopped by user" in m.content.lower()
+                for m in messages
+            ):
+                break
+            await pilot.pause(0.05)
         assert any(
-            m.role is ConsoleMessageRole.SYSTEM and "stopped by user" in m.content.lower()
+            m.role is ConsoleMessageRole.SYSTEM
+            and "stopped by user" in m.content.lower()
             for m in messages
         ), "no explicit stopped-by-user transcript record"

@@ -143,6 +143,7 @@ from tldw_chatbook.Widgets.diff_widgets import make_diff
 from tldw_chatbook.Widgets.recompose_capture_guard import RecomposeCaptureGuard
 
 if TYPE_CHECKING:  # pragma: no cover - typing only
+    from tldw_chatbook.Chat.console_message_delete import ConsoleDeleteScope
     from tldw_chatbook.Widgets.Console.console_voice_preview import (
         ConsoleVoicePreview,
         VoicePreviewProjection,
@@ -416,7 +417,7 @@ _ACTION_TOOLTIPS = {
     "continue": "Continue and extend the selected message.",
     "feedback-up": "Mark this response as helpful.",
     "feedback-down": "Mark this response as not helpful.",
-    "delete": "Delete this message from the Console transcript.",
+    "delete": "Delete this message and every later message under it (asks first).",
     "variant-previous": "Show the previous regenerated variant.",
     "variant-next": "Show the next regenerated variant.",
     "keep": "Keep the browsed variant as this message's canonical image.",
@@ -3091,6 +3092,7 @@ class ConsoleTranscript(VerticalScroll):
         self._generation_card_specs: dict[str, ConsoleGenerationCardSpec] = {}
         self._video_card_specs: dict[str, ConsoleVideoCardSpec] = {}
         self._fork_eligibility_by_message_id: dict[str, ConsoleForkEligibility] = {}
+        self._delete_scope: ConsoleDeleteScope | None = None
         self._original_attempt_previews: dict[str, str] = {}
         self._citation_counts: dict[str, int] = {}
         self._library_activity_counts: dict[str, int] = {}
@@ -6653,6 +6655,8 @@ class ConsoleTranscript(VerticalScroll):
 
     def _flat_transcript_rows(self) -> list[_TranscriptRow]:
         """Plan the legacy per-message rows reused by standalone and nested UI."""
+        if self._delete_scope and self._delete_scope.message_id != self.selected_message_id:
+            self._delete_scope = None  # moving the selection away cancels it
         rows: list[_TranscriptRow] = []
         banner = self.memory_banner_presentation
         banner_anchor = None
@@ -8279,6 +8283,7 @@ class ConsoleTranscript(VerticalScroll):
             fork_eligibility=self._fork_eligibility_by_message_id.get(
                 message.id, ConsoleForkEligibility(True)
             ),
+            pending_delete=self._delete_scope,
             **self._generation_action_kwargs(message),
         )
 
@@ -8363,7 +8368,9 @@ class ConsoleTranscript(VerticalScroll):
         button = ConsoleTranscriptActionButton(
             action.label,
             id=f"console-message-action-{action.action_id}-{message.id}",
-            classes="console-transcript-action-button",
+            # A pending delete's confirm reads as danger (bundle utility class).
+            classes="console-transcript-action-button"
+            + (" ds-text-error" if action.action_id == "delete-confirm" else ""),
             disabled=not action.enabled,
         )
         if action.disabled_reason:

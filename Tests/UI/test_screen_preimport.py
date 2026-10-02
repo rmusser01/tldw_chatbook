@@ -201,6 +201,38 @@ def test_preimport_screens_warms_every_target_module():
         assert route.module_path in sys.modules
 
 
+@pytest.mark.bootstrap_profile  # builds a real app; see Tests/conftest.py (TASK-32873)
+def test_preimport_freezes_the_heap_after_the_routes_load(monkeypatch):
+    """ADR-198: the imported screen modules are long-lived, so the pass ends
+    with a heap freeze -- after every route has loaded, not before.
+
+    Args:
+        monkeypatch: Records the freeze instead of freezing the test process.
+    """
+    import tldw_chatbook.app as app_module
+
+    app = _build_test_app()
+    targets = [
+        r
+        for r in app._screen_preimport_route_order()
+        if r.screen_name in ("acp", "stats", "logs")
+    ]
+    for route in targets:
+        sys.modules.pop(route.module_path, None)
+    freezes: list[tuple[str, bool]] = []
+    monkeypatch.setattr(
+        app_module,
+        "freeze_long_lived_heap",
+        lambda reason: freezes.append(
+            (reason, all(r.module_path in sys.modules for r in targets))
+        ),
+    )
+
+    app._preimport_screens(targets)
+
+    assert freezes == [("screen_preimport", True)]
+
+
 # --- AC #3: a failing pre-import changes nothing about nav-time behavior -----
 
 
