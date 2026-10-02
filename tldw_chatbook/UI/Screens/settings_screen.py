@@ -1031,6 +1031,17 @@ PROVIDER_TEST_GUIDANCE = (
 )
 #: Providers whose 't' is the local probe (or a local check), never a key check.
 _LOCAL_TEST_PROVIDER_KEYS = URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+#: Cloud handlers the Console gateway leaves unpinned, which read only
+#: ``api_base_url`` from their own table (TASK-2117 open); proven against the
+#: real handlers in Tests/UI/test_settings_provider_key_check.py.
+_SEND_READS_ONLY_API_BASE_URL = frozenset(
+    {"openai", "cohere", "google", "groq", "openrouter", "deepseek"}
+)
+#: TASK-30014 AC#1's wording, for a key check that would prove nothing.
+_NO_KEY_CHECK_COPY = (
+    "No non-billable key check is available for {name} at this endpoint; "
+    "the configuration was checked locally."
+)
 
 
 def _listed_models_copy(model_ids: tuple[str, ...]) -> str:
@@ -16291,8 +16302,8 @@ class SettingsScreen(BaseAppScreen):
         """Return the endpoint to live-probe after a passing readiness test.
 
         task-191: only URL-based/local providers with a concrete endpoint
-        (unsaved widget value first, then saved config) are probed; cloud and
-        key-based providers keep the local-only Test behavior.
+        (unsaved widget value first, then saved config) are probed here; a
+        cloud provider's 't' is the key-check listing (TASK-33005.4).
 
         Returns:
             The endpoint base URL, or ``""`` when no live probe applies.
@@ -16347,7 +16358,15 @@ class SettingsScreen(BaseAppScreen):
                 self._update_provider_test_result()
             raise
         except Exception:  # noqa: BLE001 - probe failures must settle as bounded UI state.
-            outcome = self._provider_probe_connection_error_outcome()
+            # The discovery client turns every transport failure into a
+            # result, so a key check that raised (e.g. a runtime-policy
+            # denial in server mode) learned nothing -- never a send blocker.
+            outcome = (
+                "Key not checked: the model listing could not run for "
+                f"{self._provider_display_name(provider)}."
+                if key_check
+                else self._provider_probe_connection_error_outcome()
+            )
         if isinstance(outcome, str):
             # Nothing was sent, so nothing was learned (TASK-33005.4 AC#8).
             if token is not None:
@@ -16410,6 +16429,17 @@ class SettingsScreen(BaseAppScreen):
                 f"Key not checked: {name}'s API key is missing or a placeholder — "
                 "enter one in the API key field."
             )
+        provider_key = provider_config_key(provider)
+        if provider_key == "huggingface" or (
+            provider_key in _SEND_READS_ONLY_API_BASE_URL
+            and self._provider_endpoint_setting_key(provider) != "api_base_url"
+        ):
+            # ADR-012 "same destination" (AC#10): a send would not use the
+            # endpoint this listing resolves -- Hugging Face sends read the
+            # legacy [API] table, and these handlers no other spelling.
+            # ponytail: an `api_endpoint`-only table slips past; TASK-2117
+            # pinning api_base_url in the gateway retires this whole guard.
+            return _NO_KEY_CHECK_COPY.format(name=name)
         return None
 
     def _show_provider_key_check_unavailable(self, note: str) -> None:
@@ -16463,11 +16493,7 @@ class SettingsScreen(BaseAppScreen):
             return probe
         kind = getattr(getattr(result, "error", None), "kind", "")
         if kind in {"unsupported_endpoint", "malformed_endpoint"}:
-            # TASK-30014 AC#1's wording.
-            return (
-                f"No non-billable key check is available for {name} at this "
-                "endpoint; the configuration was checked locally."
-            )
+            return _NO_KEY_CHECK_COPY.format(name=name)
         no_list = getattr(result, "provider_list_key", "") is None
         if kind == "missing_endpoint" and no_list:
             return (

@@ -1,7 +1,7 @@
          ╭──────────────╮
  ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Console — Chat, source handoffs, live runs, and control actions.                                                                                   Speak replies   ▌   Hands-free   ▌     Ready · verified 22:47
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                   Speak replies   ▌   Hands-free   ▌     Ready · verified 23:50
    New tab     Settings     ⚓      Context rail     Search Library     Help
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
                                     │ Conversation | Chat 1                                                                                                                                             │
@@ -20,25 +20,25 @@
   ▊  Filter visible     ▎           │                                                                                                                                                                   │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │◂ Inspect
-   New conversation                 │                                                                         No messages yet.                                                                          │
-  Chats                        ▾    │                                                                                                                                                                   │
-   Chat 1                     💬 ▇  │                                                                                                                                                                   │
+  Chats                        ▾    │                                                                 Ready — type a message to begin.                                                                  │
+   Chat 1                     💬    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
  Character · No chats          ▸    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
- Model                         ▾    │                                                                                                                                                                   │
-  Temperature 0.60                  │                                                                                                                                                                   │
-  Max tokens  4096                  │                                                                                                                                                                   │
-  Streaming   Off                   │                                                                                                                                                                   │
-  Ready · verified 22:47            │                                                                                                                                                                   │
-  System: none ▸                  ▅ │                                                                                                                                                                   │
-   Change  Alt+M                    │                                                                                                                                                                   │
+ Model                         ▸    │                                                                                                                                                                   │
  ─────────────────────────────────  │                                                                                                                                                                   │
- ▼ Details                          │                                                                                                                                                                   │
+ Agent                         ▸    │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
- Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-4o     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 · On ne
+ Status ▾   Library · Auto off · Agent blocked     Provider: OpenAI     Model: gpt-5.6-terra     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context unknown · Current $
 
-│  Composer ▾  Menu  Ask, command, or paste task...                                                                                               Send disabled: type a message       Send         Dictate
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                              Send disabled: type a message       Send         Dictate
 
-  Esc composer · F6 panes | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

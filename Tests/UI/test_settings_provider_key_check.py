@@ -375,8 +375,32 @@ async def test_settings_t_sends_nothing_without_a_usable_key(
             {"Google": ["gemini-2.5-flash"]},
             "no model list is configured for OpenAI in [providers]",
         ),
+        # AC#10 (fix round 1): a send would not go where the listing would.
+        (
+            "huggingface",
+            {
+                "api_key": "hf_saved_test_key",
+                "api_base_url": "https://hf-gateway.example.test/v1",
+            },
+            {"HuggingFace": ["gemini-2.5-flash"]},
+            "No non-billable key check is available for",
+        ),
+        (
+            "openai",
+            {
+                "api_key": "sk-saved-test-key",
+                "base_url": "https://gateway.example.test/v1",
+            },
+            None,
+            "No non-billable key check is available for OpenAI",
+        ),
     ],
-    ids=["no-supported-listing", "no-listing-configured"],
+    ids=[
+        "no-supported-listing",
+        "no-listing-configured",
+        "send-ignores-huggingface-endpoint",
+        "send-ignores-endpoint-alias",
+    ],
 )
 @private_profile_test
 async def test_settings_t_says_when_no_key_check_exists_and_sends_nothing(
@@ -404,6 +428,126 @@ async def test_settings_t_says_when_no_key_check_exists_and_sends_nothing(
         assert rows["Readiness"] == "Ready · not tested"
         identity = screen._provider_current_draft_identity()
         assert provider_connection_evidence(host).evidence_for(identity) is None
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_key_check_the_runtime_policy_refuses_records_nothing(
+    request, monkeypatch
+):
+    """Fix round 1: in server mode the real runtime policy denies the local
+    listing before any request (wrong_source). 't' says the key was not
+    checked and publishes nothing -- never a 'connection error' the Console
+    would treat as a send blocker (TASK-30011 AC#2)."""
+    from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
+    from tldw_chatbook.runtime_policy.types import RuntimeSourceState
+
+    provider = _Provider(httpx.Response(200, json=LISTING))
+    _route_discovery_to(monkeypatch, provider)
+    server_mode = RuntimeSourceState(
+        active_source="server", server_configured=True, active_server_id="srv"
+    )
+    app = _cloud_app("openai", {"api_key": "sk-saved-test-key"})
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, PROVIDERS_MODELS)
+        screen = _active_destination_screen(host)
+        monkeypatch.setattr(
+            app.llm_provider_catalog_scope_service,
+            "policy_enforcer",
+            ServicePolicyEnforcer(state_provider=lambda: server_mode),
+        )
+        toasts: list[str] = []
+        host.notify = lambda message, **_kwargs: toasts.append(str(message))
+
+        rows = await _test_and_settle(screen, pilot)
+
+        assert provider.requests == []
+        assert rows["Key check"].startswith("Key not checked"), rows
+        assert toasts[-1] == rows["Key check"]
+        assert "connection error" not in _result(screen)
+        identity = screen._provider_current_draft_identity()
+        assert provider_connection_evidence(host).evidence_for(identity) is None
+        assert _console_word(app, host, "openai", "gpt-4o") == "Ready · not tested"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider_key",
+    ["openai", "cohere", "google", "groq", "openrouter", "deepseek", "huggingface"],
+)
+@private_profile_test
+async def test_key_check_only_lists_where_a_send_would_go(
+    provider_key, request, monkeypatch
+):
+    """AC#10 (fix round 1), proven on the real handlers and the real config
+    loader: each is called as the Console gateway calls it (no pinned
+    ``api_base_url``), so the saved table alone picks the URL. These six read
+    ``api_base_url`` and no other spelling; Hugging Face reads neither (its
+    legacy ``[API]`` table, TASK-2117). Settings refuses the key check for
+    exactly the cases a send would skip. Gateway-pinned providers (Anthropic,
+    Mistral, Moonshot, Z.AI, engine presets) send to the same resolver 't'
+    lists through, so they need no row here."""
+    import contextlib
+
+    import requests
+    import toml
+
+    from tldw_chatbook import config as config_mod
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls, deepseek, groq, openrouter
+    from tldw_chatbook.UI.Screens import settings_screen
+
+    sent: list[str] = []
+
+    class _Captured(Exception):
+        pass
+
+    def capture(url) -> None:
+        sent.append(str(url))
+        raise _Captured
+
+    monkeypatch.setattr(
+        requests.Session, "post", lambda _self, url, *_a, **_k: capture(url)
+    )
+    for module in (deepseek, groq, openrouter):
+        monkeypatch.setattr(
+            module,
+            "hosted_chat_request",
+            lambda *, config, **_k: capture(config.base_url),
+        )
+    handler = {
+        "openai": LLM_API_Calls.chat_with_openai,
+        "cohere": LLM_API_Calls.chat_with_cohere,
+        "google": LLM_API_Calls.chat_with_google,
+        "huggingface": LLM_API_Calls.chat_with_huggingface,
+        "groq": groq.chat_with_groq,
+        "openrouter": openrouter.chat_with_openrouter,
+        "deepseek": deepseek.chat_with_deepseek,
+    }[provider_key]
+
+    def send_with(table: dict) -> str:
+        document = toml.loads(config_mod.CONFIG_TOML_CONTENT)
+        document["api_settings"][provider_key] = {"api_key": "sk-fake-test", **table}
+        Path(os.environ["TLDW_CONFIG_PATH"]).write_text(toml.dumps(document))
+        config_mod.load_settings(force_reload=True)
+        config_mod.get_runtime_config_snapshot(force_reload=True)
+        sent.clear()
+        with contextlib.suppress(Exception):
+            handler(
+                [{"role": "user", "content": "hi"}],
+                model="m",
+                api_key="sk-fake-test",
+                streaming=False,
+            )
+        assert len(sent) == 1, sent
+        return sent[0]
+
+    honours = provider_key in settings_screen._SEND_READS_ONLY_API_BASE_URL
+    assert honours is (provider_key != "huggingface")
+    saved = send_with({"api_base_url": "https://saved.example.test/v1"})
+    assert saved.startswith("https://saved.example.test/v1") is honours, saved
+    alias = send_with({"base_url": "https://alias.example.test/v1"})
+    assert "alias.example.test" not in alias, alias
 
 
 @pytest.mark.asyncio

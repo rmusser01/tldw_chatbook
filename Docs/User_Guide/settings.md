@@ -258,8 +258,13 @@ cases are not key checks. OpenRouter's model list is public, so it reads
 "models listed; key not checked" and stays "Ready · not tested". A provider
 with no non-billable listing (for example Google) says "No non-billable key
 check is available" and sends nothing, as does a provider with no model list
-in `[providers]`. A missing, placeholder or blank key is reported as missing
-and nothing is sent. The result leads with a **Readiness** row in the same
+in `[providers]`. The same holds when a send would not go where the listing
+would: Hugging Face (its sends still take the endpoint from the legacy `[API]`
+section) and a provider whose endpoint is saved under a key other than
+`api_base_url`. A missing, placeholder or blank key is reported as missing
+and nothing is sent. If the listing cannot run at all (for example while
+Chatbook uses a server), the result says "Key not checked" and records
+nothing. The result leads with a **Readiness** row in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
 \<reason\>", see [Console](console.md); with no model chosen it reads "Not
