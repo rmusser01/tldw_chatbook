@@ -14,8 +14,10 @@ reader-visible message write moves) beside the exact ``message_total``. Once
 per list read, a loaded transcript is re-checked with a one-message,
 one-character read of those two values. When either moved, the reader's
 existing fenced pipeline reloads it in place, keeping Read/Info and the Find
-query. A load started during this list read is not re-checked: it is already
-current. The mark is ``(list request generation, reader generation)``, and a
+query. A load started during this list read is normally not re-checked: it is
+already current. (One narrow exception: a row press that lands while a version
+bootstrap is still pending sits below that bootstrap's +2 mark, so it costs one
+extra bounded re-check and no reload when nothing moved.) The mark is ``(list request generation, reader generation)``, and a
 loaded generation at or past the mark's covers loads this module started and
 loads a row press started straight through the reader pipeline alike. A load
 already in flight when the list read applies may have read its pages before
@@ -89,9 +91,11 @@ def ensure_reader_current(controller: Any, conversation_id: str) -> None:
 def recheck_settled_load(controller: Any) -> None:
     """Re-check a just-settled load that predates the current list read.
 
-    The reader pipeline calls this when a load completes. Only a load the
-    current list read found already in flight sits below its mark; every
-    other load is at or past it and needs nothing.
+    The reader pipeline calls this when a load completes. A load the current
+    list read found already in flight sits below its mark; so does a row press
+    that lands while a version bootstrap is still pending (the +2 mark), which
+    costs one extra bounded re-check and no reload when nothing moved. Every
+    other load is at or past the mark and needs nothing.
 
     Args:
         controller: The ``LibraryConversationReaderController``.
