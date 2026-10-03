@@ -99,6 +99,7 @@ from .task_detail import (
     _was_missed_while_away,
     transfer_row_dict,
 )
+
 # schedules-redesign PR-2, Task 2: the pure row adapter -- see that
 # module's docstring for why it is a standalone, Textual-free file.
 from .unified_rows import (
@@ -150,8 +151,7 @@ AUTOMATIONS_LOAD_MAX_ROWS = 500
 #: `SyncEngine._pull_results`'s "This server does not provide the results
 #: inbox (server too old)." for the analogous missing-route case.
 _RUN_NOW_UNSUPPORTED_COPY = (
-    "This server does not support running automations on demand "
-    "(server too old)."
+    "This server does not support running automations on demand (server too old)."
 )
 
 #: Debounce before acting on a notification-triggered results pull
@@ -227,8 +227,7 @@ def _cancel_toast_text(name: str) -> str:
     out -- which is what this now says.
     """
     return (
-        f"Transfer cancelled for '{name}' — nothing further will be sent "
-        "to the server."
+        f"Transfer cancelled for '{name}' — nothing further will be sent to the server."
     )
 
 
@@ -772,9 +771,7 @@ class SchedulesWorkbench(BaseAppScreen):
                         # family instead of adding a bespoke opt-out.
                         compact=True,
                     )
-                    yield DataTable(
-                        id="scheduling-task-table", cursor_type="row"
-                    )
+                    yield DataTable(id="scheduling-task-table", cursor_type="row")
                     yield Static("", id="scheduling-pane-notice")
                 with Vertical(id="scheduling-detail-pane"):
                     yield TaskDetail(id="scheduling-task-detail")
@@ -1388,7 +1385,9 @@ class SchedulesWorkbench(BaseAppScreen):
                     "queue). Check the scheduling service and retry."
                 )
             else:
-                message = "Could not load tasks. Check the scheduling service and retry."
+                message = (
+                    "Could not load tasks. Check the scheduling service and retry."
+                )
             self.app_instance.notify(message, severity="error")
             await self._refresh_console_context()
             return
@@ -1748,9 +1747,7 @@ class SchedulesWorkbench(BaseAppScreen):
         the four names here -- one source for the chip vocabulary.
         """
         try:
-            chip_button = self.query_one(
-                f"#scheduling-chip-{self._chip}", Button
-            )
+            chip_button = self.query_one(f"#scheduling-chip-{self._chip}", Button)
             cycle = self.query_one("#scheduling-chip-cycle", Button)
         except Exception:  # noqa: BLE001 - not mounted yet
             return
@@ -2465,9 +2462,7 @@ class SchedulesWorkbench(BaseAppScreen):
             )
             return
 
-        def _query() -> tuple[
-            list[dict[str, Any]], dict[str, dict[str, Any]], int
-        ]:
+        def _query() -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], int]:
             if definition is None:
                 results = service.db.list_automation_results(
                     owner_id=None, limit=RESULTS_INBOX_LIMIT
@@ -2679,8 +2674,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot duplicate this "
-                "automation.",
+                "Scheduling service is unavailable; cannot duplicate this automation.",
                 severity="warning",
             )
             return
@@ -2703,20 +2697,21 @@ class SchedulesWorkbench(BaseAppScreen):
             try:
                 outcome = await service.save_definition(payload, owner_id="local")
             except Exception:  # noqa: BLE001
-                logger.exception(
-                    "Failed to duplicate automation definition {}", name
-                )
+                logger.exception("Failed to duplicate automation definition {}", name)
                 self.app_instance.notify(
                     f"Failed to duplicate '{name}'.", severity="error"
                 )
                 self._request_tasks_refresh()
                 return
             if outcome.status != "saved":
-                message = "; ".join(
-                    str(err.get("message") or "")
-                    for err in outcome.errors
-                    if err.get("message")
-                ) or "This automation could not be duplicated."
+                message = (
+                    "; ".join(
+                        str(err.get("message") or "")
+                        for err in outcome.errors
+                        if err.get("message")
+                    )
+                    or "This automation could not be duplicated."
+                )
                 self.app_instance.notify(
                     f"Could not duplicate '{name}': {message}", severity="error"
                 )
@@ -2836,7 +2831,9 @@ class SchedulesWorkbench(BaseAppScreen):
         options: list[tuple[str, str]] = [("This device", "local")]
         active_server_id = self._active_server_id()
         if self._server_available(service, active_server_id):
-            options.append((f"Server ({active_server_id})", f"server:{active_server_id}"))
+            options.append(
+                (f"Server ({active_server_id})", f"server:{active_server_id}")
+            )
         if owner_id not in {value for _, value in options}:
             options.append((owner_id, owner_id))
         return options, owner_id
@@ -2967,9 +2964,9 @@ class SchedulesWorkbench(BaseAppScreen):
         # made it span owners (final review F7, spec §4: the cross-owner
         # list "dissolves" that wart). The row appears here immediately
         # whatever owner it was created under.
-        owner_label = {
-            value: label for label, value in self._runs_on_options()[0]
-        }.get(target_owner, target_owner)
+        owner_label = {value: label for label, value in self._runs_on_options()[0]}.get(
+            target_owner, target_owner
+        )
         created_message = (
             "Scheduled task created."
             if target_owner == service.owner_id
@@ -3092,9 +3089,7 @@ class SchedulesWorkbench(BaseAppScreen):
         """
         service = self._scheduling_service
         if service is None:
-            row.show_error(
-                "Scheduling service is unavailable; cannot save this edit."
-            )
+            row.show_error("Scheduling service is unavailable; cannot save this edit.")
             return
 
         async def _edit_and_refresh() -> None:
@@ -3112,11 +3107,14 @@ class SchedulesWorkbench(BaseAppScreen):
                 row.show_error("Failed to save this edit.")
                 return
             if outcome.status != "saved":
-                message = "; ".join(
-                    str(err.get("message") or "")
-                    for err in outcome.errors
-                    if err.get("message")
-                ) or "This edit could not be saved."
+                message = (
+                    "; ".join(
+                        str(err.get("message") or "")
+                        for err in outcome.errors
+                        if err.get("message")
+                    )
+                    or "This edit could not be saved."
+                )
                 row.show_error(message)
                 return
             row.clear_error()
@@ -3177,9 +3175,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         definition_id = str(definition.get("id") or "")
         if service is None:
-            row.show_error(
-                "Scheduling service is unavailable; cannot save this edit."
-            )
+            row.show_error("Scheduling service is unavailable; cannot save this edit.")
             return
 
         # Per-DEFINITION serialization (Qodo finding 7, narrowing final
@@ -3237,19 +3233,21 @@ class SchedulesWorkbench(BaseAppScreen):
                 # Qodo finding 2: which automation, and which of its
                 # fields -- never the value, which is the user's own
                 # question/model text.
-                "Failed to edit automation definition {definition_id} field "
-                "{field}",
+                "Failed to edit automation definition {definition_id} field {field}",
                 definition_id=local_id,
                 field=row.row_key,
             )
             self._show_definition_row_error(row, painted, "Failed to save this edit.")
             return
         if outcome.status not in ("saved", "queued"):
-            message = "; ".join(
-                str(err.get("message") or "")
-                for err in outcome.errors
-                if err.get("message")
-            ) or "This edit could not be saved."
+            message = (
+                "; ".join(
+                    str(err.get("message") or "")
+                    for err in outcome.errors
+                    if err.get("message")
+                )
+                or "This edit could not be saved."
+            )
             self._show_definition_row_error(row, painted, message)
             return
         row.clear_error()
@@ -3318,9 +3316,7 @@ class SchedulesWorkbench(BaseAppScreen):
             f"definition:{definition.get('id') or ''}",
         }:
             return
-        fresh = await asyncio.to_thread(
-            service.db.get_automation_definition, local_id
-        )
+        fresh = await asyncio.to_thread(service.db.get_automation_definition, local_id)
         if fresh is None:
             return
         await self._load_queue_definition_detail(self._selected_row_id, fresh)
@@ -3353,8 +3349,7 @@ class SchedulesWorkbench(BaseAppScreen):
         service = self._scheduling_service
         if service is None:
             self.app_instance.notify(
-                "Scheduling service is unavailable; cannot update the "
-                "automation.",
+                "Scheduling service is unavailable; cannot update the automation.",
                 severity="warning",
             )
             return
@@ -3540,6 +3535,7 @@ class SchedulesWorkbench(BaseAppScreen):
             self._request_tasks_refresh(refresh_definitions=False)
 
         if action == "cancel":
+
             async def _do() -> None:
                 await self._run_owner_cancel(
                     table_kind="reminder_task",
@@ -3605,8 +3601,7 @@ class SchedulesWorkbench(BaseAppScreen):
             local_id = await self._resolve_local_definition_id(service, definition)
             if local_id is None:
                 row.show_error(
-                    "Could not prepare this automation for transfer — see "
-                    "the log."
+                    "Could not prepare this automation for transfer — see the log."
                 )
                 return
             if action == "cancel":
@@ -3720,8 +3715,7 @@ class SchedulesWorkbench(BaseAppScreen):
             service = self._scheduling_service
             if service is None:
                 self.app_instance.notify(
-                    "Scheduling service is unavailable; cannot update the "
-                    "automation.",
+                    "Scheduling service is unavailable; cannot update the automation.",
                     severity="warning",
                 )
                 return
@@ -3782,9 +3776,7 @@ class SchedulesWorkbench(BaseAppScreen):
         else:
             row = None
         if row is None:
-            self.app_instance.notify(
-                self._no_task_notice("move"), severity="warning"
-            )
+            self.app_instance.notify(self._no_task_notice("move"), severity="warning")
             return
         row.post_message(DetailValueRow.Activated(row))
 
@@ -3823,9 +3815,7 @@ class SchedulesWorkbench(BaseAppScreen):
         async def _mark() -> None:
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
-        self.run_worker(
-            _mark, exclusive=True, group="schedules-mark-all-read"
-        )  # type: ignore[arg-type]
+        self.run_worker(_mark, exclusive=True, group="schedules-mark-all-read")  # type: ignore[arg-type]
 
     def _run_reminder_now(self, task: ReminderTask) -> None:
         """Dispatch one reminder through the scheduler's own path (task-18938)."""
@@ -4053,10 +4043,13 @@ class SchedulesWorkbench(BaseAppScreen):
                     detail.set_lifecycle_lock(None)
                     detail.set_runs_on_transfer_errors([])
             return
-        run_count, last_run, unread_count, history_error = (
-            await self._fetch_definition_detail_counts(
-                service, definition, definition_id
-            )
+        (
+            run_count,
+            last_run,
+            unread_count,
+            history_error,
+        ) = await self._fetch_definition_detail_counts(
+            service, definition, definition_id
         )
         # A newer selection may have won the race with this worker; render
         # nothing for a stale row (same guard `_load_automation_detail` uses).
@@ -4134,9 +4127,7 @@ class SchedulesWorkbench(BaseAppScreen):
                     "Local automation run-now failed for definition {}",
                     definition_id,
                 )
-                self.app_instance.notify(
-                    f"Failed to run '{name}'.", severity="error"
-                )
+                self.app_instance.notify(f"Failed to run '{name}'.", severity="error")
                 return
             if result is None:
                 self.app_instance.notify(
@@ -4194,25 +4185,19 @@ class SchedulesWorkbench(BaseAppScreen):
             if sync_engine is not None and not (
                 await sync_engine._automation_capabilities_available()
             ):
-                self.app_instance.notify(
-                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
-                )
+                self.app_instance.notify(_RUN_NOW_UNSUPPORTED_COPY, severity="warning")
                 return
             try:
                 result = await server_client.run_automation_definition_now(
                     definition_id
                 )
             except ServerClientNotFoundError:
-                self.app_instance.notify(
-                    _RUN_NOW_UNSUPPORTED_COPY, severity="warning"
-                )
+                self.app_instance.notify(_RUN_NOW_UNSUPPORTED_COPY, severity="warning")
                 return
             except ServerClientValidationError as exc:
                 # Lifecycle refusals (paused/archived) and policy denials
                 # arrive here with the server's own reason text.
-                self.app_instance.notify(
-                    f"'{name}' refused: {exc}", severity="warning"
-                )
+                self.app_instance.notify(f"'{name}' refused: {exc}", severity="warning")
                 return
             except ServerClientError as exc:
                 logger.opt(exception=True).warning(
@@ -4254,9 +4239,7 @@ class SchedulesWorkbench(BaseAppScreen):
             group="schedules-run-automation-now",
         )  # type: ignore[arg-type]
 
-    def _edit_selected_automation(
-        self, definition: dict[str, Any] | None
-    ) -> None:
+    def _edit_selected_automation(self, definition: dict[str, Any] | None) -> None:
         """Open an automation definition for editing (e key).
 
         `agent_task` rows are excluded -- only `recurring_question`
@@ -4293,13 +4276,10 @@ class SchedulesWorkbench(BaseAppScreen):
             return
 
         async def _open() -> None:
-            definition_id = await self._resolve_local_definition_id(
-                service, definition
-            )
+            definition_id = await self._resolve_local_definition_id(service, definition)
             if definition_id is None:
                 self.app_instance.notify(
-                    "Could not prepare this automation for editing — see "
-                    "the log.",
+                    "Could not prepare this automation for editing — see the log.",
                     severity="error",
                 )
                 return
@@ -4532,9 +4512,7 @@ class SchedulesWorkbench(BaseAppScreen):
         async def _mark_all() -> None:
             await self._dispatch_mark_all_results_read(service, unread_ids)
 
-        self.run_worker(
-            _mark_all, exclusive=True, group="schedules-mark-all-read"
-        )  # type: ignore[arg-type]
+        self.run_worker(_mark_all, exclusive=True, group="schedules-mark-all-read")  # type: ignore[arg-type]
 
     def _set_reminder_enabled(self, task: ReminderTask, enabled: bool) -> None:
         """Update a reminder's enabled state and refresh the queue."""
@@ -4617,9 +4595,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # dishonesty ruling 4 targeted, inverted, root-causes.md #5) /
             # "configured, confirmed unreachable".
             if not active_server_id:
-                self._sync_header_status(
-                    "empty", "Local only — no server connection"
-                )
+                self._sync_header_status("empty", "Local only — no server connection")
             elif getattr(service, "server_reachable", True) is None:
                 # task-31798: `server_reachable` stays `None` ONLY after the
                 # mount-time probe hit `ServerClientPolicyError` -- the local
@@ -4640,9 +4616,7 @@ class SchedulesWorkbench(BaseAppScreen):
                 else:
                     self._sync_header_status("loading", "Checking sync status…")
             else:
-                self._sync_header_status(
-                    "empty", "Server configured but not reachable"
-                )
+                self._sync_header_status("empty", "Server configured but not reachable")
         elif service.owner_id.startswith("server:"):
             self._sync_header_status("ready", "Synced with server")
         else:
@@ -4740,9 +4714,7 @@ class SchedulesWorkbench(BaseAppScreen):
             await probe()
             self._refresh_owner_select()
 
-        self.run_worker(
-            _probe, exclusive=True, group="schedules-server-reachability"
-        )
+        self.run_worker(_probe, exclusive=True, group="schedules-server-reachability")
 
     @staticmethod
     async def _reprobe_server_reachability(service: Any) -> None:
@@ -4845,9 +4817,7 @@ class SchedulesWorkbench(BaseAppScreen):
     def _inspector_hidden(self) -> bool:
         """True when `on_resize` has hidden the inspector pane."""
         try:
-            return self.query_one("#scheduling-inspector-pane").has_class(
-                "pane-hidden"
-            )
+            return self.query_one("#scheduling-inspector-pane").has_class("pane-hidden")
         except Exception:  # noqa: BLE001 - not mounted yet
             return False
 
@@ -5118,9 +5088,7 @@ class SchedulesWorkbench(BaseAppScreen):
             # `d` on a definition row therefore opened a confirmation for
             # whichever reminder was highlighted before it (final review
             # F8's silent-refusal finding, in its sharpest form).
-            self.app_instance.notify(
-                self._no_task_notice("delete"), severity="warning"
-            )
+            self.app_instance.notify(self._no_task_notice("delete"), severity="warning")
             return
         if self._refuse_if_transfer_locked(task, "delete this task"):
             return
@@ -5346,9 +5314,14 @@ class SchedulesWorkbench(BaseAppScreen):
                     # reasoning as the bulk delete above. `owner_id` is
                     # the ROW's own (final review F4), same as the
                     # single-row toggle.
-                    if await service.update_reminder(
-                        task.id, {"enabled": not task.enabled}, owner_id=task.owner_id
-                    ) is None:
+                    if (
+                        await service.update_reminder(
+                            task.id,
+                            {"enabled": not task.enabled},
+                            owner_id=task.owner_id,
+                        )
+                        is None
+                    ):
                         errors += 1
                 except Exception:  # noqa: BLE001
                     logger.exception("Failed to toggle reminder {}", task.id)

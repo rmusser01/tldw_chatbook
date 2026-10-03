@@ -183,7 +183,9 @@ class MockSchedulingDB:
             ]
         )
 
-    def upsert_automation_definitions_from_server(self, owner_id: str, items: list[dict]):
+    def upsert_automation_definitions_from_server(
+        self, owner_id: str, items: list[dict]
+    ):
         inserted = 0
         updated = 0
         for item in items:
@@ -194,7 +196,8 @@ class MockSchedulingDB:
                 (
                     row
                     for row in self._automation_definitions
-                    if row.get("owner_id") == owner_id and row.get("server_id") == server_id
+                    if row.get("owner_id") == owner_id
+                    and row.get("server_id") == server_id
                 ),
                 None,
             )
@@ -314,9 +317,7 @@ def assert_painted_at_own_region(host, widget) -> None:
     try:
         hit_widget, _hit_region = host.get_widget_at(region.x + 1, region.y)
     except Exception as exc:  # textual.errors.NoWidget
-        pytest.fail(
-            f"nothing is painted at {widget!r}'s own region {region!r}: {exc}"
-        )
+        pytest.fail(f"nothing is painted at {widget!r}'s own region {region!r}: {exc}")
     assert hit_widget is widget, (
         f"the compositor paints {hit_widget!r} at {region!r}, not {widget!r} "
         "itself -- the widget's display chain is all-True but it is not "
