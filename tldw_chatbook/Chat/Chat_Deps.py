@@ -11,6 +11,8 @@ class ChatAPIError(Exception):
         self.message = message
         self.status_code = status_code  # Suggested HTTP status code for the endpoint
         self.provider = provider
+        # Sanitized Console presentation is separate from diagnostic str/message.
+        self.console_copy: str | None = None
         super().__init__(self.message)
 
 

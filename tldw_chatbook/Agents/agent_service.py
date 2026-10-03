@@ -8994,6 +8994,7 @@ class AgentService:
                     steps=[self._service_error_step(run_id, str(error))],
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
+                from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
                 from tldw_chatbook.Chat.provider_failures import (
                     FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
@@ -9021,6 +9022,9 @@ class AgentService:
                             describe_stream_failure(exc)[:FAILURE_SUMMARY_MAX_CHARS],
                         )
                     ],
+                    console_copy=(
+                        exc.console_copy if isinstance(exc, ChatAPIError) else None
+                    ),
                 )
         finally:
             # A BaseException still owns its normal control-flow semantics, but
