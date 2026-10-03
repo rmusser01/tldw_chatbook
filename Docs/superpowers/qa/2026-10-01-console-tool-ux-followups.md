@@ -1000,3 +1000,44 @@ QA legacy_approval_test_typing_followup records the exact new test pin and
 proof. Complete mounted24/host99/Perf37/preflight receipts remain at their
 original19 source/fixture identities; no fresh broad/native replay is claimed.
 Task remains In Progress pending fresh final-head review/all four hosted gates.
+
+
+Latest runtime-dev integration and hosted UI limit (2026-10-03 UTC)
+
+GitHub's UI Fast Lane annotation on reviewed 8a confirms the 20-minute job
+limit. No pytest failure was reported before cancellation at 90%. Every
+derived-artifact reproduction step passed; its required gate failed solely
+because UI Fast Lane did not finish. No current-head job was manually cancelled,
+and no CI budget, timeout, gate or protection is changed.
+
+Rebase all 41 patches unchanged onto dev 3c439d606e. All 18 inherited production
+paths match dev exactly, all owned production bytes retain reviewed identity.
+Thirteen preceding source pins change through dev, 226 stay exact; 10 upstream
+source/snapshot dependencies join the pins (249 current). Inherited work includes
+hook visit/preimport paydown, durable recovery and legacy flat deletion, provider
+copy/support and the Voice-step extraction. Existing ADR-067/094/097/150/195
+continue to govern our unchanged implementation; no new ADR is required.
+
+Fresh combined-tree checks pass: 24 fresh-app journeys in the same five ordinary
+private wrappers, six count boundary controls and 13 inherited hook UI cases
+(24 top-level cases, zero failures/errors/skips; 307.34 seconds). Maximum wrapper 86.446 seconds,
+child 76.041 seconds; the 180-second cap and every original journey remain unchanged.
+All 170 host/consent/relaunch/Resend cases and all 37 exact Perf Guards pass. The
+stricter upstream hook/preimport ratchets remain intact. Full artifact preflight
+passes in 105.96 seconds with all 249 source pins stable; zero-new Ruff across 35 files and diff checks
+pass. No additional production fix was needed.
+
+Additional question/shutdown/hook qualification preserves both modes: the
+unqualified 130-case run has 121 passes and nine question setup failures at
+raw_source_selection_changed, before the awaited question round can arm. The
+previously documented temporary collection plugin supplies the existing real
+bootstrap_profile owner to the question module. All 130 pass under that owner;
+no getter/admission bypass, production patch, assertion change or timeout raise.
+This is conditional fixture evidence, not a claim that the unmarked command
+is green. Original native 27/29 and queue 17 receipts retain their historical
+identities; none is replayed for this rebase.
+
+QA oct03_runtime_dev_integration records exact pins, patch equivalence, gate
+cause, both fixture modes and fresh receipts. TASK-32367 stays In Progress
+until exact published-head review and all four hosted gates pass; then final
+metadata-head checks/review and verified protected normal merge remain required.

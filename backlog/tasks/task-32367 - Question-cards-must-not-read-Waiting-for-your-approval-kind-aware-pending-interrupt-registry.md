@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-03 07:31'
+updated_date: '2026-10-03 14:24'
 labels:
   - console
   - approvals
@@ -133,4 +133,6 @@ Latest-dev PR2964 queue-button integration: all 38 Console patches replay unchan
 Qodo62959751 legacy approval count: fixed only ChatScreen._console_pending_approval_count so a real mounted no-session tool card counts one when the kind registry is empty. Positive queued counts remain exact; finishing cards and unrelated global/question metadata do not count. Older-controller fallback and all other screen AST remain unchanged. Six boundary controls, all24 mounted app journeys/five ordinary private wrappers, all99 host/consent cases and exact37 Perf Guards pass; fresh artifact preflight, zero-new Ruff across 35 files, range format/diff and independent review are clean. Guide/incident lesson/QA updated; no fresh native replay. Existing ADR-067/094/195 apply, no new ADR. Mixed legacy+registered behavior intentionally preserves the registered maximum, not a deduplicated additive total. Keep In Progress until final published-head Qodo/all four hosted gates pass; normal merge remains required.
 
 Qodo324cc873 typing follow-up: annotate only the new public boundary-test parameters as int, dict[str, object] | None and int, with -> None. All six cases re-pass; normalized full-module AST outside those annotations and all238 other source pins/production bytes are unchanged. Range format, zero-new Ruff35, diff/backlog checks and unchanged124-file UI census pass. QA preserves complete mounted24/host99/Perf37/preflight receipts at their original19 identities; no fresh broad/native replay claim. ADR required: no; ADR path: N/A (test-only typing). Keep In Progress pending fresh final-head Qodo/all four gates.
+
+Latest-dev qualification (2026-10-03): all 41 patches rebase unchanged onto 3c439d606edc13db20c692acdb4e6a25563d9071; all 18 inherited production paths match dev, all owned production remains reviewed. Fresh 24 app journeys/five ordinary wrappers plus six boundary controls and 13 hook UI cases pass (24 top-level cases, 307.34 seconds, maximum wrapper 86.446 seconds under unchanged 180-second cap). All 170 consent/relaunch/Resend and 37 exact Perf Guards pass, with stricter inherited hook/preimport limits. Artifact preflight passes in 105.96 seconds; all 249 pins stable; zero-new Ruff across 35 files. Extra 130 question/shutdown/hook cases pass with the documented bootstrap_profile collection owner; preserve initial 121 passes/nine raw_source_selection_changed setup failures and conditional mode. Native and queue evidence stays historical, no new replay/full local sweep. Reviewed 8a hosted UI exceeded 20 minutes with no test failure; all derived reproduction steps passed, the gate failed only its UI prerequisite. No CI/cap/budget bypass. Existing ADR-067/094/097/150/195, no new ADR (unchanged patches/boundaries). Require fresh published-head review/all four hosted gates/latest dev; keep In Progress until verified, then final task-metadata-head review/checks and normal protected merge.
 <!-- SECTION:NOTES:END -->
