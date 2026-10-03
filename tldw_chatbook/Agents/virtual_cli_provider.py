@@ -45,6 +45,7 @@ from .local_tool_provider import (
     LOCAL_ROOT_CHANGED_REFUSAL,
     LOCAL_TIMEOUT_REFUSAL,
     LOCAL_USER_DENY_REFUSAL,
+    LOCAL_WORKER_FAILED_REFUSAL,
     RunAdmittedWorkspaceRoot,
 )
 from .mcp_tool_provider import MCPPendingCall, approval_effects_for_tool
@@ -232,6 +233,21 @@ class VirtualCliProvider:
         )
         self._stamps: dict[tuple[str, str], ApprovalStamp] = {}
         self._stamps_lock = threading.Lock()
+
+    def path_root_aliases(self) -> tuple[str, ...] | None:
+        """Return the ``root_alias`` values ``virtual_cli`` accepts this run.
+
+        Mirrors ``LocalToolProvider.path_root_aliases`` (TASK-33940.1): the
+        workspace-context note offers exactly these aliases.
+
+        Returns:
+            The sorted aliases of the usable admitted roots (``()`` when none
+            survived construction), or ``None`` for a legacy provider rooted at
+            ``workspace_root`` with no alias routing.
+        """
+        if self._admitted_roots is None:
+            return None
+        return tuple(sorted(self._admitted_roots))
 
     def list_catalog(self) -> list[ToolCatalogEntry]:
         return [
@@ -558,7 +574,7 @@ class VirtualCliProvider:
                 if exc.code == "root_pin_failed":
                     return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
                 if exc.code not in {"invalid_request", "tool_failure"}:
-                    return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+                    return ToolResult.blocked(LOCAL_WORKER_FAILED_REFUSAL)
                 error = redact_root_locator(
                     str(exc),
                     self._error_redaction_root(authority),

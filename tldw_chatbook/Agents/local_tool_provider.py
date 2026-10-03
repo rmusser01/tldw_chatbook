@@ -203,6 +203,14 @@ LOCAL_ROOT_CHANGED_REFUSAL = (
 LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
     "Private scratch space is unavailable; the tool was not run."
 )
+#: TASK-33940.2: executor-level failures (worker_crashed, worker_timed_out,
+#: spawn_failed, protocol_failure, ...) used to reuse the scratch refusal above
+#: even when the failing root was an admitted WORKSPACE folder, pointing the
+#: agent at the wrong thing. Some of these codes can arrive after the operation
+#: started, so the copy does not claim the tool never ran.
+LOCAL_WORKER_FAILED_REFUSAL = (
+    "The local file-tool worker failed before returning a result."
+)
 # TASK-28238 phase 1: fs_write CAS-injection stale-write guard (Task 3).
 # {old}/{new} are sha256[:8]/size, or the word "absent".
 LOCAL_STALE_WRITE_REFUSAL = (
@@ -334,6 +342,9 @@ _PATH_AUTHORITY_LOCAL_NAMES = frozenset(
         "git_branches",
     }
 )
+#: Public name for the tools routed by ``root_alias`` (TASK-33940.1: the
+#: Console first-request plan checks which of them the model is offered).
+PATH_AUTHORITY_TOOL_NAMES: frozenset[str] = _PATH_AUTHORITY_LOCAL_NAMES
 
 _MAX_RESULT_BYTES = 32 * 1024
 _MAX_ERROR_CHARS = 300
@@ -684,7 +695,7 @@ def _workspace_execution_error_result(
     if reason is LocalToolInvocationReason.ROOT_CHANGED:
         return ToolResult.blocked(LOCAL_ROOT_CHANGED_REFUSAL)
     if reason is LocalToolInvocationReason.AUTHORITY_UNAVAILABLE:
-        return ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL)
+        return ToolResult.blocked(LOCAL_WORKER_FAILED_REFUSAL)
     text = redact_root_locator(str(error), redaction_root)
     return ToolResult(ok=False, error=text[:_MAX_ERROR_CHARS])
 
@@ -1113,6 +1124,25 @@ class LocalToolProvider:
 
     def _tool_id(self, name: str) -> str:
         return f"{SOURCE}:{name}"
+
+    def path_root_aliases(self) -> tuple[str, ...] | None:
+        """Return the ``root_alias`` values this run's path tools accept.
+
+        TASK-33940.1: the workspace-context note names folders by these
+        aliases, so it must offer exactly what the fs_*/git_* schemas
+        advertise -- no more (a narrowed working-folder run), no less.
+
+        Returns:
+            The sorted aliases of the admitted roots whose path tools survived
+            construction; ``()`` when the run admits roots but offers no path
+            tool; ``None`` for a legacy standalone provider rooted at
+            ``workspace_root`` with no alias routing.
+        """
+        if self._admitted_roots is None:
+            return None
+        if not any(name in self._specs for name in _PATH_AUTHORITY_LOCAL_NAMES):
+            return ()
+        return tuple(sorted(self._admitted_roots))
 
     @property
     def workspace_root(self) -> Path:

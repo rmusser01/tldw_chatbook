@@ -494,10 +494,15 @@ def get_table_model_token_limit(model: str, provider: str = "openai") -> int | N
 
 SYSTEM_CONTEXT_WINDOW = 32000
 MAX_CONTEXT_WINDOW = 2**31 - 1
+#: Provider-level fallbacks for models with no catalog/table entry. There is
+#: deliberately no "openai" row (TASK-33940.5): the old 4096 was a GPT-3.5-era
+#: value, and with the shipped 4,096-token response reservation it left zero
+#: input capacity, so a fresh profile could not send with the shipped default
+#: model at all. Unlisted OpenAI models take ADR-052's 32,000-token final
+#: fallback instead, still reported as unverified.
 PROVIDER_CONTEXT_WINDOWS = {
     "anthropic": 200000,
     "google": 30720,
-    "openai": 4096,
     "mistral": 32000,
     "mistralai": 32000,
 }

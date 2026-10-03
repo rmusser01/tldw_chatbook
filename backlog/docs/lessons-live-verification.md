@@ -1,5 +1,19 @@
 # Lessons: verifying against the real thing
 
+## An isolated (`python -I`) worker ignores cwd, so a stale editable install breaks it alone
+
+**TASK-33940, 2026-10-02.** Every Console fs_*/git_* call on the owner's machine failed with
+"Private scratch space is unavailable; the tool was not run." while the app itself started fine.
+The workspace tool worker runs `sys.executable -I -m tldw_chatbook.Tools.workspace_tool_worker`;
+`-I` drops cwd and PYTHONPATH, so it imports the package only through site-packages -- and the
+shared `.venv`'s editable install pointed at a deleted worktree. The app process imported fine
+because it is launched from the repo root. The error copy (since fixed) blamed scratch.
+
+**What to do.** Before a live file-tool run, check `<venv>/bin/python -I -c "import
+tldw_chatbook; print(tldw_chatbook.__file__)"` from OUTSIDE the repo. For a worktree, build the
+worktree its own venv (`uv venv` + `uv pip install -e ".[dev,...]"`) so the worker imports the
+code under test; a shared venv's editable install points at whichever checkout installed it last.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container

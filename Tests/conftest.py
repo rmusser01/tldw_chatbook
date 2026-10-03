@@ -179,6 +179,15 @@ network_guard.install()
 # collection instead.
 importlib.import_module("tldw_chatbook.Chunking")
 
+# TASK-33940.6: the same trap, second module. RAG_Search/simplified/rag_service.py
+# calls load_settings() at import, and Utils.sensitive_paths imports it lazily
+# (via RAG_Search.config_profiles) the first time a workspace folder is bound.
+# A test that binds a folder first in its process therefore failed with
+# RecoveryRequired("raw_source_selection_changed") -- on dev,
+# Tests/Tools/test_file_tools_workspace_roots.py::test_read_allowed_in_bound_folder
+# errored whenever it ran alone. ~0.45 s once per process.
+importlib.import_module("tldw_chatbook.RAG_Search.config_profiles")
+
 # TASK-33003.6: the app stylesheets reference $tldw-boundary and
 # $tldw-focus-fill, which no tcss defines. Production gets them from TldwCli's
 # ThemeVariableDefaultsMixin and from this module's import-time guard over

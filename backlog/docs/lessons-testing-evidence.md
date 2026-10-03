@@ -1,5 +1,20 @@
 # Lessons: what counts as evidence a change works
 
+## A prompt that tells the model where things are must be tested by doing what it says
+
+**TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
+to the launch directory". It was correct when it shipped (08067c54ac: fs_* tools were rooted at
+the launch cwd). Two later changes re-rooted the tools -- private scratch (180fefc29d) and
+per-binding `root_alias` roots (e62ae7c6dc) -- and every note test stayed green, because each one
+asserted the note's TEXT for folders inside the launch directory and none ever called a tool with
+a path the note produced. Live, gpt-4.1-mini's first calls were `fs_list "myproj"` -> "not a
+directory: myproj"; users reported chats that could not see their workspace files.
+
+**What to do.** For any model-facing text that names a location, alias, command or argument,
+the test must take what the text says and execute it through the real tool or route (here: build
+the real first-request plan, read each alias the note names, call `fs_list` with it). A
+text-shape assertion cannot notice that the thing it describes moved.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889

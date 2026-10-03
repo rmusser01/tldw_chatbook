@@ -1693,11 +1693,10 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
         ) == (sandbox,)
         initial_note = roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
-        assert "  - a (read-only)" in initial_note
+        assert "  - binding-a → a [read-only]" in initial_note
         assert roots_module.frozen_workspace_roots(
             "workspace-a", frozen_authority, registry=registry
         ) == (root_a,)
@@ -1717,9 +1716,8 @@ def test_frozen_workspace_binding_maximum_excludes_later_roots(
             write=True,
             sandbox_root=sandbox,
         ) == (sandbox,)
-        assert "  - b" not in roots_module.workspace_context_note(
+        assert "binding-b" not in roots_module.workspace_context_note(
             "workspace-a",
-            launch_cwd=tmp_path,
             registry=registry,
             binding_authority=frozen_authority,
         )
