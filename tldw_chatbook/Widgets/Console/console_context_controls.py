@@ -402,6 +402,7 @@ def build_console_context_cost_state(
     context: ConsoleContextControlState,
     cost: ConsoleCostState,
     next_send: ConsoleNextSendSpendState | None = None,
+    rate_limit_line: str | None = None,
 ) -> ConsoleCostState:
     """Combine context fullness with current and next-send spend states.
 
@@ -409,6 +410,9 @@ def build_console_context_cost_state(
         context: Estimated request occupancy and model capacity.
         cost: Current settled spend and cache presentation.
         next_send: Additional input-charge forecast, if available.
+        rate_limit_line: The provider's remaining rate limit from its last
+            response, shown last among the info lines; ``None`` when the
+            provider reported none (TASK-28229).
 
     Returns:
         Full and compact labels with detailed context and spend tooltips.
@@ -471,6 +475,7 @@ def build_console_context_cost_state(
                 compaction_line,
                 cost.tooltip,
                 next_send.tooltip,
+                *((rate_limit_line,) if rate_limit_line else ()),
                 "Open Conversation Inspector for Costs, Exchange, and Next Send.",
             )
         ),

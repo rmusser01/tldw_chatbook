@@ -11760,6 +11760,7 @@ class ChatScreen(BaseAppScreen):
                 bool(store.pending_attachments(session_id)),
                 pricing.input_per_mtok if pricing is not None else None,
                 composer.draft_text() if composer is not None else "",
+                spend.console_rate_limit_line(provider_key),
             )
         except Exception:
             logger.opt(exception=True).warning("cost_chip_state_failed")
