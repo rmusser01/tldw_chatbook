@@ -1,0 +1,151 @@
+Thread 0x00000003450f7000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00000003440eb000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00000003430df000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00000003420d3000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x00000003400bb000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033f0af000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033e0a3000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033d097000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033c08b000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033b07f000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033a073000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x0000000339067000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033805b000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033704f000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 359 in wait
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/queue.py", line 180 in get
+  File "<worktree>/tldw_chatbook/Utils/ui_responsiveness.py", line 126 in _drain_stalls
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x0000000336043000 (most recent call first):
+  File "<worktree>/tldw_chatbook/Utils/ui_responsiveness.py", line 313 in _watch_loop
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x0000000335037000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033402b000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000033301f000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x0000000332013000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 90 in _worker
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x0000000331007000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/selectors.py", line 323 in select
+  File "<repo>/.venv/lib/python3.12/site-packages/textual/drivers/linux_driver.py", line 458 in run_input_thread
+  File "<repo>/.venv/lib/python3.12/site-packages/textual/drivers/linux_driver.py", line 409 in _run_input_thread
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000016f4ff000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 355 in wait
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/queue.py", line 171 in get
+  File "<repo>/.venv/lib/python3.12/site-packages/textual/drivers/_writer_thread.py", line 57 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Thread 0x000000016e4f3000 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 355 in wait
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 655 in wait
+  File "<worktree>/tldw_chatbook/Backup_Recovery/storage_admission.py", line 518 in _run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1012 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1075 in _bootstrap_inner
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/threading.py", line 1032 in _bootstrap
+
+Current thread 0x00000001f039a0c0 (most recent call first):
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/selectors.py", line 566 in select
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 1961 in _run_once
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 645 in run_forever
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/base_events.py", line 678 in run_until_complete
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 118 in run
+  File "~/.local/share/uv/python/cpython-3.12.11-macos-aarch64-none/lib/python3.12/asyncio/runners.py", line 195 in run
+  File "<repo>/.venv/lib/python3.12/site-packages/textual/app.py", line 2350 in run
+  File "<worktree>/tldw_chatbook/app_entry.py", line 611 in _run_module_main
+  File "<worktree>/tldw_chatbook/app.py", line 5679 in <module>
+  File "<frozen runpy>", line 88 in _run_code
+  File "<frozen runpy>", line 198 in _run_module_as_main

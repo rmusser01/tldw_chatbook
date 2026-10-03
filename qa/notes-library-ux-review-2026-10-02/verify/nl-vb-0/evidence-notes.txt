@@ -1,0 +1,58 @@
+## N-20 bundle note file (nl-vb-0-1, Selected notes export)
+---
+id: 5a13a9cb-ae08-424e-adac-fcefb424b550
+title: Trip planning: Lisbon
+created_at: 2026-09-17T02:47:56+00:00
+updated_at: 2026-09-17T02:47:56+00:00
+---
+
+
+## single-note Export Markdown file
+---
+title: Trip planning: Lisbon
+date: 2026-10-03 00:25:22
+keywords: travel
+note_id: 5a13a9cb-ae08-424e-adac-fcefb424b550
+---
+
+## yaml.safe_load on both: ScannerError mapping values are not allowed here (line title: Trip planning: Lisbon)
+## re-import via Add from files > Import once: bundle file previewed as 'Create 1 new note: Lisbon, 3 days'; both imported bodies keep the raw --- block; single export keyword 'travel' not restored
+
+## L-18 everything export (nl-vb-0-3) unzip -l
+Archive:  /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/nlrev/runs/nl-vb-0-3/home/Library export 2026-10-03.zip
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      642  10-03-2026 00:31   README.md
+    62068  10-03-2026 00:31   manifest.json
+      265  10-03-2026 00:31   content/notes/Daily log 2026-09-04.md
+      244  10-03-2026 00:31   content/notes/Daily log 2026-07-07.md
+      258  10-03-2026 00:31   content/notes/Daily log 2026-09-20.md
+      275  10-03-2026 00:31   content/notes/Daily log 2026-07-23.md
+      241  10-03-2026 00:31   content/notes/Daily log 2026-07-17.md
+      243  10-03-2026 00:31   content/notes/Daily log 2026-09-14.md
+      403  10-03-2026 00:31   content/notes/Rust ownership cheatsheet.md
+    45745  10-03-2026 00:31   content/notes/Literature review RAG for education.md
+      703  10-03-2026 00:31   content/notes/Experiment log chunk size sweep.md
+      235  10-03-2026 00:31   content/notes/Reading list.md
+      261  10-03-2026 00:31   content/notes/Meeting Notes 2026-09-30.md
+      253  10-03-2026 00:31   content/notes/Daily log 2026-09-10.md
+      285  10-03-2026 00:31   content/notes/ä¸?æ??ç¬?è®°ï¼?æ?ºå?¨å?¦ä¹ å?ºç¡?.md
+      264  10-03-2026 00:31   content/notes/Daily log 2026-07-13.md
+      248  10-03-2026 00:31   content/notes/Daily log 2026-07-27.md
+      290  10-03-2026 00:31   content/notes/Home network setup.md
+      253  10-03-2026 00:31   content/notes/Daily log 2026-09-01.md
+      246  10-03-2026 00:31   content/notes/Daily log 2026-09-11.md
+      265  10-03-2026 00:31   content/notes/Daily log 2026-07-12.md
+      299  10-03-2026 00:31   content/notes/Trip planning Lisbon.md
+      330  10-03-2026 00:31   content/notes/Ù?Ù?Ø§Ø?Ø¸Ø§Øª Ø§Ù?Ø§Ø¬ØªÙ?Ø§Ø¹ â?? Ù?Ø±Ø§Ø¬Ø¹Ø© Ø§Ù?Ù?Ø´Ø±Ù?Ø¹.md
+      260  10-03-2026 00:31   content/notes/Daily log 2026-07-26.md
+      255  10-03-2026 00:31   content/notes/ð??? Reading queue 2026 â?¨.md
+      331  10-03-2026 00:31   content/notes/A very long note title that keeps going so we can test truncation in the notes list, the editor heading, the tab strip and every other place that a ti.md
+      321  10-03-2026 00:31   content/notes/Recipe cardamom buns.md
+   473221                     190 files
+binary originals in zip: 
+
+## L-18 file types in everything bundle: 46 json, 121 md (incl README), 23 txt; 0 pdf/docx/audio/video
+## SIDE (not L-18): manifest lists 122 notes but only 120 content/notes/*.md -- 'Reading list' x2 and 'Meeting notes 2026-09-30'/'Meeting Notes 2026-09-30' collide on sanitize_filename(title) (+ case-insensitive APFS); chatbook_creator.py:1460
+## SIDE: Media list 'Exportâ€¦' froze the app 2/2 (nl-vb-0-1 after notes work, nl-vb-0-2 fresh; C-q dead) -- matches j2 F1
+## L-18 receipt after run: 'Last export: <path> Â· just now' (no count/size); consequence line still 'size known once it runs'; 2nd export: FileSave default 'Library export 2026-10-03.zip', canvas 'Overwrites Library export 2026-10-03.zip' in muted #a7abaf, Export overwrote silently (mtime changed)
