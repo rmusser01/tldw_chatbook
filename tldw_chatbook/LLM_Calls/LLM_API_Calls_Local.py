@@ -24,7 +24,11 @@ from tldw_chatbook.Chat.console_provider_support import (
     build_local_thinking_payload_fields,
 )
 import logging
-from tldw_chatbook.config import get_runtime_config_snapshot, load_settings
+from tldw_chatbook.config import (
+    get_runtime_config_snapshot,
+    load_settings,
+    resolve_provider_api_key,
+)
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.sensitive_llm_logging import (
@@ -813,7 +817,9 @@ def chat_with_llama(
 
     api_base_url = normalize_llamacpp_base_url(api_base_url)
     current_api_key = (
-        api_key if api_key_resolved else api_key or llama_config.get("api_key")
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(llama_config.get("api_key"))
     )
     current_model = model or llama_config.get("model")
     if (
@@ -967,7 +973,7 @@ def chat_with_kobold(
             provider="koboldcpp",  # Consistent with the key used for cfg
             message="KoboldCpp API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         logging.info(
@@ -1277,7 +1283,7 @@ def chat_with_oobabooga(
             provider="ooba_api",
             message="Ooba API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1394,7 +1400,7 @@ def chat_with_tabbyapi(
             provider="tabbyapi",
             message="Tabby_API API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1543,7 +1549,11 @@ def chat_with_vllm(
             provider=vllm_config_key,
             message="vLLM API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1679,7 +1689,7 @@ def chat_with_aphrodite(
             provider="aphrodite",
             message="Aphrodite API URL (api_url) is required and could not be determined from arguments or configuration.",
         )
-    current_api_key = api_key or cfg.get("api_key")
+    current_api_key = api_key or resolve_provider_api_key(cfg.get("api_key"))
     current_model = model or cfg.get("model")
     if not current_model:
         raise ChatConfigurationError(
@@ -1820,7 +1830,11 @@ def chat_with_ollama(
 
     # API Key: function argument takes precedence, then config.
     # For Ollama, cfg.get('api_key') will likely be None as it's not standard.
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
 
     # Model: function argument takes precedence, then config.
     # config.py's CONFIG_TOML_CONTENT provides a default for [api_settings.ollama].model
@@ -2230,7 +2244,11 @@ def chat_with_custom_openai_2(
             provider=cfg_section, message=f"{cfg_section} API URL (api_ip) required."
         )
 
-    current_api_key = api_key if api_key_resolved else api_key or cfg.get("api_key")
+    current_api_key = (
+        api_key
+        if api_key_resolved
+        else api_key or resolve_provider_api_key(cfg.get("api_key"))
+    )
     if not current_api_key and not api_key_resolved:
         raise ChatConfigurationError(
             provider=cfg_section, message=f"{cfg_section} API Key required."

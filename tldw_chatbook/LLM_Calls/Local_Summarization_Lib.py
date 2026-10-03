@@ -35,7 +35,7 @@ import logging
 from tldw_chatbook.Utils.Utils import extract_text_from_segments
 from tldw_chatbook.Utils.egress import create_default_session
 from tldw_chatbook.Utils.persistent_diagnostics import safe_metadata_token
-from tldw_chatbook.config import get_cli_setting, load_settings
+from tldw_chatbook.config import get_cli_setting, load_settings, without_ciphertext
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 
 #
@@ -219,6 +219,9 @@ def _resolve_provider_credential(parameter_key, modern: dict, legacy: dict):
             # an Authorization header for a configured empty string.
             continue
         declared = True
+        # TASK-34100.4: still-encrypted `enc:` ciphertext (a locked session)
+        # is a configured key that cannot be read -- BLANK, never sent.
+        candidate = without_ciphertext(candidate, absent="")
         if str(candidate).strip():
             return str(candidate).strip()
     env_name = str(modern.get("api_key_env_var") or "").strip()
@@ -264,7 +267,8 @@ def summarize_with_llama(
                 logging.info("Llama.cpp: Using API key provided as parameter")
             else:
                 # If no parameter is provided, use the key from the config
-                llama_api_key = llama_config.get("api_key")
+                # TASK-34100.4: ciphertext is never a credential.
+                llama_api_key = without_ciphertext(llama_config.get("api_key"))
                 if llama_api_key:
                     logging.info("Llama.cpp: Using API key from config file")
                 else:
@@ -809,7 +813,9 @@ def summarize_with_oobabooga(
                 logging.info("Oobabooga: Using API key provided as parameter")
             else:
                 # If no parameter is provided, use the key from the config
-                ooba_api_key = loaded_config_data["ooba_api"]["api_key"]
+                ooba_api_key = without_ciphertext(
+                    loaded_config_data["ooba_api"]["api_key"]
+                )
                 if ooba_api_key:
                     logging.info("Oobabooga: Using API key from config file")
                 else:
@@ -1288,7 +1294,9 @@ def summarize_with_vllm(
         if not api_key or api_key.strip() == "":
             logging.info("vLLM Summarize: API key not provided as parameter")
             logging.info("vLLM Summarize: Attempting to use API key from config file")
-            api_key = loaded_config_data.get("vllm_api", {}).get("api_key", "")
+            api_key = without_ciphertext(
+                loaded_config_data.get("vllm_api", {}).get("api_key", ""), absent=""
+            )
             logging.debug("vLLM Summarize: Credential config lookup completed")
 
         if not api_key or api_key.strip() == "":
@@ -1544,7 +1552,7 @@ def summarize_with_ollama(
     try:
         if not api_key or not api_key.strip():
             # Use config if parameter not given
-            api_key = ollama_config.get("api_key", "")
+            api_key = without_ciphertext(ollama_config.get("api_key", ""), absent="")
             if not api_key:
                 logging.warning("Ollama: No API key found in config or param.")
         else:
@@ -1777,7 +1785,9 @@ def summarize_with_custom_openai(
             logging.info(
                 "Custom OpenAI API: Attempting to use API key from config file"
             )
-            custom_openai_api_key = loaded_config_data["custom_openai_api"]["api_key"]
+            custom_openai_api_key = without_ciphertext(
+                loaded_config_data["custom_openai_api"]["api_key"]
+            )
 
         if not custom_openai_api_key:
             logging.error("Custom OpenAI API: API key not found or is empty")
@@ -2026,7 +2036,9 @@ def summarize_with_custom_openai_2(
             logging.info(
                 "Custom OpenAI API-2: Attempting to use API key from config file"
             )
-            custom_openai_api_key = loaded_config_data["custom_openai_api_2"]["api_key"]
+            custom_openai_api_key = without_ciphertext(
+                loaded_config_data["custom_openai_api_2"]["api_key"]
+            )
 
         if not custom_openai_api_key:
             logging.error("Custom OpenAI API-2: API key not found or is empty")
