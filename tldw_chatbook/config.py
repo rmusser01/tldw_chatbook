@@ -1546,6 +1546,30 @@ PROVIDER_API_KEY_PLACEHOLDERS = frozenset(
 ENCRYPTED_CONFIG_VALUE_PREFIX = "enc:"
 
 
+def is_encrypted_config_value(value: object) -> bool:
+    """Whether ``value`` is still-encrypted ``enc:`` config ciphertext.
+
+    TASK-34100.4 (new-protect-summary-03): ciphertext is never a credential.
+    A locked session (encryption on, no password) or a value that did not
+    decrypt keeps its ``enc:`` form in the loaded config, so every code path
+    that reads a key straight from config must treat it as unusable.
+    """
+    return isinstance(value, str) and value.strip().startswith(
+        ENCRYPTED_CONFIG_VALUE_PREFIX
+    )
+
+
+def without_ciphertext(value: Any, absent: Any = None) -> Any:
+    """Return ``value`` unchanged, or ``absent`` when it is ``enc:`` ciphertext.
+
+    For key reads that must keep their own blank/placeholder semantics (the
+    summarizers distinguish a configured-blank key from a missing one) but
+    must never send ciphertext. Provider handlers use
+    `resolve_provider_api_key` instead.
+    """
+    return absent if is_encrypted_config_value(value) else value
+
+
 def resolve_provider_api_key(value: object) -> Optional[str]:
     """Return `value` stripped, or `None` if it is not a usable provider API
     key (not a string, blank, one of `PROVIDER_API_KEY_PLACEHOLDERS`, or
@@ -1561,7 +1585,7 @@ def resolve_provider_api_key(value: object) -> Optional[str]:
     stripped = value.strip()
     if stripped in PROVIDER_API_KEY_PLACEHOLDERS:
         return None
-    if stripped.startswith(ENCRYPTED_CONFIG_VALUE_PREFIX):
+    if is_encrypted_config_value(stripped):
         return None
     return stripped or None
 
@@ -9828,18 +9852,24 @@ def _strip_encrypted_values(config_data: Mapping[str, Any]) -> Dict[str, Any]:
     return stripped
 
 
-def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+def _encrypted_value_paths(
+    config_data: Mapping[str, Any], prefix: tuple[str, ...] = ()
+) -> list[str]:
+    """Dotted paths of every ``enc:`` value outside the ``[encryption]`` table."""
+
+    paths: list[str] = []
     for key, value in config_data.items():
-        if key == "encryption":
+        if not prefix and key == "encryption":
             continue
         if isinstance(value, Mapping):
-            if _contains_encrypted_value(value):
-                return True
-        elif isinstance(value, str) and value.strip().startswith(
-            ENCRYPTED_CONFIG_VALUE_PREFIX
-        ):
-            return True
-    return False
+            paths.extend(_encrypted_value_paths(value, prefix + (str(key),)))
+        elif is_encrypted_config_value(value):
+            paths.append(".".join(prefix + (str(key),)))
+    return paths
+
+
+def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
+    return bool(_encrypted_value_paths(config_data))
 
 
 def _restore_previous_config_unlocked(
@@ -9860,6 +9890,24 @@ def _restore_previous_config_unlocked(
         previous_serialized,
         _prepare_config_parent(config_path),
     )
+
+
+def _session_password_for_file(
+    config_path: Path,
+    previous_serialized: Optional[str],
+    *,
+    previous_password: Optional[str],
+    written_password: Optional[str],
+) -> Optional[str]:
+    """The password that reads the file as it is after a rollback attempt."""
+
+    try:
+        current = _try_read_cli_config_serialized_unlocked(config_path)
+    except Exception:
+        return None
+    if current == previous_serialized:
+        return previous_password
+    return written_password
 
 
 def _commit_encryption_change_unlocked(
@@ -9897,7 +9945,19 @@ def _commit_encryption_change_unlocked(
             action,
             type(restore_error).__name__,
         )
-    _set_session_encryption_password(previous_password)
+    # The session password must match what the file holds NOW (review round
+    # 1, F7): the previous one after a restore, the new one when the restore
+    # failed and the new document stayed. Reverting it then would encrypt the
+    # next save under the old password beside the new verifier -- the
+    # stranded state. An unreadable file locks the session rather than guess.
+    _set_session_encryption_password(
+        _session_password_for_file(
+            config_path,
+            previous_serialized,
+            previous_password=previous_password,
+            written_password=session_password,
+        )
+    )
     try:
         _publish_runtime_config_unlocked()
     except Exception as publish_error:
@@ -9928,6 +9988,27 @@ def config_encryption_enabled_on_disk() -> Optional[bool]:
             type(error).__name__,
         )
         return None
+
+
+def encrypted_value_paths_on_disk() -> list[str]:
+    """Dotted paths of the ``enc:`` values in the selected config file.
+
+    Used to name a value that is still encrypted under an earlier password
+    when encrypting is refused over it. Empty when there are none or the file
+    cannot be read.
+    """
+
+    try:
+        config_path = get_cli_config_path()
+        with _config_write_lock(config_path):
+            serialized = _try_read_cli_config_serialized_unlocked(config_path)
+        return _encrypted_value_paths(_parse_raw_cli_config_text(serialized))
+    except Exception as error:
+        logger.warning(
+            "Listing encrypted config values failed (error_type={}).",
+            type(error).__name__,
+        )
+        return []
 
 
 def verify_config_encryption_password(password: str) -> bool:

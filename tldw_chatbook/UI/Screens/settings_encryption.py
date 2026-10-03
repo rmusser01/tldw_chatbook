@@ -61,6 +61,19 @@ RESULT_ENABLED = (
 )
 RESULT_ALREADY_ON = "Encryption is already on. Use Change password instead."
 RESULT_ENABLE_FAILED = "Encrypting failed; config.toml was left as it was."
+#: Encryption is off but a value is still `enc:` ciphertext under an earlier
+#: password; encrypting over it would strand it again, so enable refuses.
+RESULT_ENABLE_STRANDED = (
+    "Encrypting failed: {path} is still encrypted with an earlier password "
+    "and can't be read. Re-enter or clear that key in Providers & Models, "
+    "then try again. config.toml was left as it was."
+)
+#: The change failed AND putting the old file back failed: the file may hold
+#: the new document. The state line shows what the file holds now.
+RESULT_FILE_CHANGED = (
+    "Something went wrong and undoing it failed, so config.toml may have "
+    "changed. The state above is what the file holds now; see the log."
+)
 RESULT_WRONG_PASSWORD = "That password didn't match. Nothing was changed."
 RESULT_CHANGED = "Done: master password changed. Use the new one at next start."
 RESULT_CHANGE_FAILED = "Changing the password failed; nothing was changed."
@@ -114,17 +127,32 @@ def _current_state(assumed_enabled: bool) -> tuple[bool, bool]:
     )
 
 
+def _enable_refused_message(config) -> str:
+    """Why an enable on an encryption-off file was refused, in plain words."""
+    stranded = config.encrypted_value_paths_on_disk()
+    if not stranded:
+        return RESULT_ENABLE_FAILED
+    path = stranded[0]
+    if len(stranded) > 1:
+        path += f" (and {len(stranded) - 1} more)"
+    return RESULT_ENABLE_STRANDED.format(path=path)
+
+
 def run_enable(password: str) -> EncryptionActionOutcome:
     """Encrypt the saved keys (refused when encryption is already on)."""
     config = _config()
+    was_enabled = config.config_encryption_enabled_on_disk()
     succeeded = bool(config.enable_config_encryption(password))
     enabled, unlocked = _current_state(assumed_enabled=succeeded)
     if succeeded:
         message = RESULT_ENABLED
-    elif enabled:
-        message = RESULT_ALREADY_ON
+    elif not enabled:
+        message = _enable_refused_message(config)
+    elif was_enabled is False:
+        # Off before, on now, and still refused: the rollback failed.
+        message = RESULT_FILE_CHANGED
     else:
-        message = RESULT_ENABLE_FAILED
+        message = RESULT_ALREADY_ON
     return EncryptionActionOutcome(message, succeeded, enabled, unlocked)
 
 
@@ -138,7 +166,15 @@ def run_change(change: PasswordChange) -> EncryptionActionOutcome:
         )
     succeeded = bool(config.change_encryption_password(change.current, change.new))
     enabled, unlocked = _current_state(assumed_enabled=True)
-    message = RESULT_CHANGED if succeeded else RESULT_CHANGE_FAILED
+    if succeeded:
+        message = RESULT_CHANGED
+    elif change.new != change.current and config.verify_config_encryption_password(
+        change.new
+    ):
+        # Refused, yet the file answers to the NEW password: the rollback failed.
+        message = RESULT_FILE_CHANGED
+    else:
+        message = RESULT_CHANGE_FAILED
     return EncryptionActionOutcome(message, succeeded, enabled, unlocked)
 
 
@@ -152,7 +188,13 @@ def run_disable(password: str) -> EncryptionActionOutcome:
         )
     succeeded = bool(config.disable_config_encryption(password))
     enabled, unlocked = _current_state(assumed_enabled=not succeeded)
-    message = RESULT_DISABLED if succeeded else RESULT_DISABLE_FAILED
+    if succeeded:
+        message = RESULT_DISABLED
+    elif not enabled:
+        # Refused, yet the file is now decrypted: the rollback failed.
+        message = RESULT_FILE_CHANGED
+    else:
+        message = RESULT_DISABLE_FAILED
     return EncryptionActionOutcome(message, succeeded, enabled, unlocked)
 
 

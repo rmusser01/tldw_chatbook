@@ -193,3 +193,77 @@ async def test_cancelling_the_dialog_changes_nothing(cfg) -> None:
 
 def test_enable_dialog_warns_about_comment_loss() -> None:
     assert card_module.COMMENT_LOSS_WARNING in card_module.ENABLE_DIALOG_MESSAGE
+
+
+def _stranded_off_document() -> str:
+    """Encryption off, but one key still encrypted under PASSWORD_A."""
+    import toml
+
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    return toml.dumps(
+        {
+            "api_settings": {
+                "openai": {
+                    "api_key": ConfigEncryption().encrypt_value(
+                        PLAINTEXT_KEY, PASSWORD_A
+                    )
+                }
+            }
+        }
+    )
+
+
+def test_encrypt_over_a_stranded_value_names_it_and_the_way_out(cfg) -> None:
+    # Review round 1 (G4-R1-F5): "Encrypting failed" alone gave no reason and
+    # no next step when a value is still encrypted under an earlier password.
+    path = cfg.card_test_path
+    path.write_text(_stranded_off_document())
+    before = path.read_bytes()
+
+    outcome = card_module.run_enable(PASSWORD_B)
+
+    assert outcome.succeeded is False
+    assert "api_settings.openai.api_key" in outcome.message
+    assert "earlier password" in outcome.message
+    assert "Providers & Models" in outcome.message
+    assert "left as it was" in outcome.message
+    assert path.read_bytes() == before
+
+
+def _double_fault(cfg, monkeypatch) -> None:
+    def failing_publish(*_args, **_kwargs):
+        raise ValueError("Configuration runtime reload failed")
+
+    def failing_restore(*_args, **_kwargs):
+        raise OSError("restore refused")
+
+    monkeypatch.setattr(cfg, "_publish_runtime_config_unlocked", failing_publish)
+    monkeypatch.setattr(cfg, "_restore_previous_config_unlocked", failing_restore)
+
+
+def test_a_failed_rollback_never_claims_nothing_changed(cfg, monkeypatch) -> None:
+    # Review round 1 (F7): publish failed, then restoring the old bytes
+    # failed too -- the file holds the NEW document. "config.toml was left
+    # as it was" would be false.
+    from tldw_chatbook.Widgets.password_dialog import PasswordChange
+
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    _double_fault(cfg, monkeypatch)
+
+    changed = card_module.run_change(PasswordChange(PASSWORD_A, PASSWORD_B))
+
+    assert changed.succeeded is False
+    assert changed.message == card_module.RESULT_FILE_CHANGED
+    assert changed.enabled is True and changed.unlocked is True
+    assert cfg.verify_config_encryption_password(PASSWORD_B) is True
+
+    disabled = card_module.run_disable(PASSWORD_B)
+
+    assert disabled.message == card_module.RESULT_FILE_CHANGED
+    assert disabled.enabled is False
+
+    enabled = card_module.run_enable(PASSWORD_A)
+
+    assert enabled.message == card_module.RESULT_FILE_CHANGED
+    assert enabled.enabled is True
