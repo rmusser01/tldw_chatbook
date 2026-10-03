@@ -1045,6 +1045,65 @@ MAX_VISIT_STORAGE_UNITS = {
 }
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
+#: TASK-33643: os.open ceilings on the Linux perf-guard runner, where path
+#: depth (and so opens per admission) differs from macOS -- the dicts above
+#: hold macOS values. Pinned 2026-10-03 from three perf-guard runs (six
+#: census lines, both evidence variants) at the highest value seen; the
+#: shared jitter slack applies on top. Observed ranges: typing burst 54-81,
+#: typing pause 153-206, credential poll 3.375-6.75 per tick, trace
+#: maintenance 16.5-23.125 per tick, trace GC pass 26, visit 1,913-1,926.
+LINUX_OS_OPENS_CEILINGS = {
+    "typing (whole burst)": 81,
+    "typing pause": 206,
+    "credential poll (per tick)": 6.75,
+    "trace maintenance (per tick)": 23.125,
+    "trace GC pass": 26,
+    "visit": 1_926,
+}
+
+
+def _ceiling(phase: str, unit: str, ceilings: dict[str, float]) -> float | None:
+    """The ceiling one census unit is gated on here, or None if ungated.
+
+    Admissions and helper spawns count logic, so they gate everywhere.
+    os.open counts depend on path depth, so each platform has its own:
+    macOS uses the per-phase dicts, Linux ``LINUX_OS_OPENS_CEILINGS``, and
+    any other platform is not gated on them.
+
+    Args:
+        phase: The census phase, a key of ``LINUX_OS_OPENS_CEILINGS``.
+        unit: One of ``IO_UNITS``.
+        ceilings: That phase's macOS ceilings.
+
+    Returns:
+        The ceiling, or None when this platform has no os.open pin.
+    """
+    if unit != "os_opens":
+        return ceilings[unit]
+    if sys.platform == "darwin":
+        return ceilings[unit]
+    if sys.platform.startswith("linux"):
+        return LINUX_OS_OPENS_CEILINGS[phase]
+    return None
+
+
+def test_each_platform_gates_os_opens_on_its_own_ceilings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33643: macOS and Linux each gate os.open on their own pins.
+
+    Args:
+        monkeypatch: Switches ``sys.platform``.
+    """
+    macos = {"config_admissions": 8, "os_opens": 2_000}
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert _ceiling("visit", "os_opens", macos) == 2_000
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _ceiling("visit", "os_opens", macos) == LINUX_OS_OPENS_CEILINGS["visit"]
+    assert _ceiling("visit", "config_admissions", macos) == 8
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _ceiling("visit", "os_opens", macos) is None
+    assert _ceiling("visit", "config_admissions", macos) == 8
 
 
 def test_the_census_log_stays_inside_the_runner_temp_dir(
@@ -1167,16 +1226,13 @@ async def test_console_storage_units_stay_within_their_ratchets(
             "path, so every ceiling below would pass vacuously."
         )
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
-    # The os.open ceilings are macOS measurements (path depth differs per OS),
-    # so elsewhere -- the Linux perf-guard runner -- only the logic-level
-    # admission and helper counts gate.
-    gated = set(IO_UNITS) if sys.platform == "darwin" else set(IO_UNITS) - {"os_opens"}
     over = [
-        f"{phase} {unit}: {value} > ceiling {ceilings[unit]}"
+        f"{phase} {unit}: {value} > ceiling {ceiling}"
         f"{' x ' + str(slack[unit]) if unit in slack else ''}"
         for phase, (values, ceilings) in measured.items()
         for unit, value in values.items()
-        if unit in gated and value > ceilings[unit] * slack.get(unit, 1)
+        if (ceiling := _ceiling(phase, unit, ceilings)) is not None
+        and value > ceiling * slack.get(unit, 1)
     ]
     callers = (
         " Typing-burst callers: " + " | ".join(_TYPING_BURST_CALLERS) + "."
