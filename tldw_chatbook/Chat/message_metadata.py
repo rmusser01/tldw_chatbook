@@ -305,6 +305,14 @@ class MessageMetadata:
             machine-injected auto-wake notice row, ``"hook"`` for a
             run-hooks row (block reason / injected context), ``""``
             otherwise.
+        root_fork: True on a root-level row the Console forked beside a
+            ROOT message (Edit and resend of a conversation's first
+            message). Stored as ``"root_fork": true``; it is what tells the
+            legacy flat-row repair
+            (:mod:`tldw_chatbook.Chat.console_legacy_flat_roots`) that this
+            parentless row is a branch, not a pre-branching flat row. Like
+            every field here it is local-only: a row synced to, exported
+            from or rewritten by an older build arrives without it.
 
     Raises:
         ValueError: If ``transcript_status`` or ``origin`` is outside its
@@ -323,6 +331,7 @@ class MessageMetadata:
     character_emote: CharacterEmoteMetadata | None = None
     canvas_cards: tuple[CanvasCardMetadata, ...] = ()
     terminal_receipt_id: str = ""
+    root_fork: bool = False
 
     def __post_init__(self) -> None:
         if self.transcript_status not in TRANSCRIPT_STATUSES:
@@ -450,6 +459,7 @@ class MessageMetadata:
                 terminal_receipt_id=_as_terminal_receipt_id(
                     data.get("terminal_receipt_id")
                 ),
+                root_fork=_as_bool(data.get("root_fork")),
             )
         except ValueError:
             # Direct construction remains strict. Stored data is an untrusted

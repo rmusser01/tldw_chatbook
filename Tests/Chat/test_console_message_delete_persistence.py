@@ -187,7 +187,11 @@ def _visible(store, session_id: str) -> list[tuple[str, str]]:
     ]
 
 
-def _seed(db: CharactersRAGDB, rows: list[tuple[str, str, str | None]]) -> str:
+def _seed(
+    db: CharactersRAGDB,
+    rows: list[tuple[str, str, str | None]],
+    metadata: dict[str, str] | None = None,
+) -> str:
     conversation_id = db.add_conversation({"title": "Delete undo"})
     for index, (message_id, role, parent) in enumerate(rows):
         db.add_message(
@@ -199,6 +203,7 @@ def _seed(db: CharactersRAGDB, rows: list[tuple[str, str, str | None]]) -> str:
                 "content": f"{message_id} text",
                 "parent_message_id": parent,
                 "timestamp": f"2026-09-30T00:00:{index:02d}.000000+00:00",
+                "metadata_json": (metadata or {}).get(message_id),
             }
         )
     db.set_conversation_active_cursor(
@@ -699,14 +704,22 @@ def test_subtree_delete_descends_by_parent_link_without_statistics():
             assert detail.endswith("(parent_message_id=?)"), plan
 
 
-# --- TASK-33628.6 review: a first-message edit fork is not flat data ----------
+# --- TASK-33628.6: a NEW root-level edit fork is marked, not guessed ----------
 #
 # Editing and resending a conversation's FIRST message forks a new root-level
 # USER row (the fork takes the first message's parent: none), and its reply
-# hangs under it by a real parent link. In a legacy flat conversation the
-# store chained that fork after the flat rows, so the transcript showed it as
-# later messages of the flat chain and Delete on an earlier flat row counted
-# it -- and, once Delete followed the in-memory chain, tombstoned it.
+# hangs under it by a real parent link. The saved tree alone cannot tell that
+# fork from a legacy flat run whose last flat USER row was answered later:
+# Resend on a broken last turn appends the reply directly under that flat row.
+# So the store does not guess from shape. A fork of a root message records
+# ``root_fork`` in its local ``metadata_json`` when it is created, the flat
+# repair chains every unmarked root exactly as before, and a marked root stays
+# its own branch beside the first message. Forks saved before the marker
+# existed are unmarked and keep the chained reading.
+
+#: The durable marker, spelled out rather than built with ``MessageMetadata``
+#: so a renamed field cannot silently stop reading rows already on disk.
+_ROOT_FORK_METADATA = '{"root_fork": true}'
 
 #: Flat rows, then an edit-and-resend of ``f0`` saved after branching shipped.
 _FLAT_THEN_FORK = [
@@ -720,10 +733,55 @@ _FLAT_IDS = ["f0", "f1", "f2", "f3"]
 _FORK_IDS = ["e0", "e1", "e2", "e3"]
 
 
-def test_first_message_edit_fork_reloads_as_its_own_root_branch():
-    """The fork is a sibling of the first message, not a later flat row."""
+class _RecordingGateway:
+    """A ready provider that records each request and streams one reply."""
+
+    def __init__(self) -> None:
+        self.requests: list[list[dict]] = []
+
+    async def resolve_for_send(self, selection):
+        from Tests.console_provider_doubles import provider_resolution
+
+        return provider_resolution(base_url="http://127.0.0.1:9099")
+
+    async def stream_chat(self, resolution, messages, **kwargs):
+        self.requests.append([dict(message) for message in messages])
+        yield f"reply {len(self.requests)}"
+
+
+async def _open_console(db: CharactersRAGDB, conversation_id: str):
+    """The real controller over the real store, persistence service and DB.
+
+    A conversation saved before Console Library policy existed got its policy
+    row from the schema step that added the table; seed the same row (the
+    step's own values) so a send can commit, then hydrate it as resume does.
+    """
+    with db.transaction() as cursor:
+        cursor.execute(
+            "INSERT OR IGNORE INTO console_conversation_library_policy("
+            "conversation_id, auto_retrieve_on_send, assistant_library_access"
+            ") VALUES (?, 0, 1)",
+            (conversation_id,),
+        )
+    store, session_id, native = _open_store(db, conversation_id)
+    await store.hydrate_session_library_policy(session_id)
+    gateway = _RecordingGateway()
+    controller = ConsoleChatController(store=store, provider_gateway=gateway)
+    return controller, gateway, store, session_id, native
+
+
+def _transcript(store, session_id: str) -> list[tuple[str, str]]:
+    return [(m.role.value, m.content) for m in store.messages_for_session(session_id)]
+
+
+def _root_count(store, session_id: str) -> int:
+    return len(store._children_by_parent[session_id][None])
+
+
+def test_marked_first_message_fork_reloads_as_its_own_root_branch():
+    """A marked fork is a sibling of the first message, not a later flat row."""
     db = CharactersRAGDB(":memory:", "flat-delete")
-    conversation_id = _seed(db, _FLAT_THEN_FORK)
+    conversation_id = _seed(db, _FLAT_THEN_FORK, {"e0": _ROOT_FORK_METADATA})
     store, session_id, native = _open_store(db, conversation_id)
 
     # The saved cursor sits in the fork, so the fork alone is the transcript.
@@ -740,7 +798,7 @@ def test_first_message_edit_fork_reloads_as_its_own_root_branch():
 
 
 @pytest.mark.parametrize("shown", ["flat", "fork"])
-def test_flat_delete_leaves_a_first_message_edit_fork_live(shown):
+def test_flat_delete_leaves_a_marked_first_message_fork_live(shown):
     """Prompt, receipt, transcript and the durable delete all skip the fork."""
     from tldw_chatbook.Chat.console_message_delete import (
         console_delete_receipt_copy,
@@ -750,7 +808,7 @@ def test_flat_delete_leaves_a_first_message_edit_fork_live(shown):
 
     ids = _FLAT_IDS + _FORK_IDS
     db = CharactersRAGDB(":memory:", "flat-delete")
-    conversation_id = _seed(db, _FLAT_THEN_FORK)
+    conversation_id = _seed(db, _FLAT_THEN_FORK, {"e0": _ROOT_FORK_METADATA})
     store, session_id, native = _open_store(db, conversation_id)
     if shown == "flat":
         store.set_active_leaf(session_id, native["f3"])
@@ -779,18 +837,57 @@ def test_flat_delete_leaves_a_first_message_edit_fork_live(shown):
     assert [m for m, _role in _visible(reopened, reopened_session)] == _FORK_IDS
 
 
+def test_an_unmarked_root_fork_keeps_the_chained_reading():
+    """A fork saved before the marker existed reads, deletes and undoes as before.
+
+    Nothing on disk tells it apart from a flat row answered later, so it chains
+    after the flat rows: Delete on an earlier flat row counts it, tombstones it
+    with its replies, and Undo puts every row back.
+    """
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    ids = _FLAT_IDS + _FORK_IDS
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT_THEN_FORK)
+    store, session_id, native = _open_store(db, conversation_id)
+    assert [m for m, _role in _visible(store, session_id)] == ids
+    assert _root_count(store, session_id) == 1
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 7
+    assert scope.prompt.startswith("Delete this message and 6 later messages")
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == (
+        sorted(ids[1:])
+    )
+    assert _deleted(db, ids) == [0, 1, 1, 1, 1, 1, 1, 1]
+    assert [m for m, _role in _visible(store, session_id)] == ["f0"]
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, ids) == [0] * len(ids)
+    assert [m for m, _role in _visible(store, session_id)] == ids
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert [m for m, _role in _visible(reopened, reopened_session)] == ids
+
+
 @pytest.mark.parametrize(
     ("rows", "shown"),
     [
         # A reply regenerated mid-run hangs under a flat USER row that an
-        # ASSISTANT flat row still follows: that row is flat data, not a fork.
+        # ASSISTANT flat row still follows.
         pytest.param(
             [*_FLAT, ("r3", "assistant", "f2")],
             ["f0", "f1", "f2", "r3"],
             id="regenerated-mid-run-reply",
         ),
         # Two unanswered flat turns; the last was edited and resent, so its
-        # fork hangs under the turn before it -- a USER child, not a reply.
+        # fork hangs under the turn before it.
         pytest.param(
             [
                 ("f0", "user", None),
@@ -803,16 +900,189 @@ def test_flat_delete_leaves_a_first_message_edit_fork_live(shown):
             ["f0", "f1", "f2", "g3", "h3"],
             id="edited-unanswered-turn",
         ),
+        # Resend answered the last flat turn in place, and the chat went on.
+        # Same shape as a first-message fork; unmarked, so it is flat data.
+        pytest.param(
+            [
+                ("f0", "user", None),
+                ("f1", "assistant", None),
+                ("f2", "user", None),
+                ("a2", "assistant", "f2"),
+                ("u3", "user", "a2"),
+                ("a3", "assistant", "u3"),
+            ],
+            ["f0", "f1", "f2", "a2", "u3", "a3"],
+            id="resent-last-flat-turn",
+        ),
+        pytest.param(
+            [*_FLAT, ("f4", "user", None), ("a4", "assistant", "f4")],
+            ["f0", "f1", "f2", "f3", "f4", "a4"],
+            id="resent-after-a-full-flat-run",
+        ),
     ],
 )
 def test_flat_rows_with_later_children_still_chain(rows, shown):
-    """Only a root edit fork leaves the flat chain; flat rows stay chained."""
+    """Every unmarked root chains, whatever hangs under it."""
     db = CharactersRAGDB(":memory:", "flat-delete")
     conversation_id = _seed(db, rows)
     store, session_id, _native = _open_store(db, conversation_id)
 
     assert [m for m, _role in _visible(store, session_id)] == shown
-    assert len(store._children_by_parent[session_id][None]) == 1
+    assert _root_count(store, session_id) == 1
+
+
+async def test_resend_on_a_legacy_flat_turn_reloads_with_its_whole_history():
+    """Resend answers a flat USER row in place; the rows above it stay in view.
+
+    The reply hangs under the NULL-parent flat row by a real parent link -- the
+    shape of a first-message edit fork. Reading that shape as a fork showed only
+    the rows from the resent turn down after every reopen, and the next send
+    built the model's context from that path, so the earlier history silently
+    dropped out of what the model saw.
+    """
+    from tldw_chatbook.Chat.console_turn_resend import resend_target_id, resend_turn
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(
+        db,
+        [("f0", "user", None), ("f1", "assistant", None), ("f2", "user", None)],
+    )
+    controller, _gateway, store, session_id, native = await _open_console(
+        db, conversation_id
+    )
+    assert resend_target_id(store.messages_for_session(session_id)) == native["f2"]
+
+    assert (await resend_turn(controller, native["f2"])).accepted
+    assert (await controller.submit_draft("u3 text")).accepted
+
+    history = [
+        ("user", "f0 text"),
+        ("assistant", "f1 text"),
+        ("user", "f2 text"),
+        ("assistant", "reply 1"),
+        ("user", "u3 text"),
+        ("assistant", "reply 2"),
+    ]
+    assert _transcript(store, session_id) == history
+    reply = store.messages_for_session(session_id)[3]
+    assert db.get_message_by_id(reply.persisted_message_id)["parent_message_id"] == (
+        "f2"
+    )
+    assert db.get_message_by_id("f2")["metadata_json"] is None
+
+    controller, gateway, store, session_id, _native = await _open_console(
+        db, conversation_id
+    )
+    assert _transcript(store, session_id) == history
+    assert _root_count(store, session_id) == 1
+    # The next send carries the whole history to the model.
+    assert (await controller.submit_draft("next")).accepted
+    sent = [
+        (message["role"], message["content"])
+        for message in gateway.requests[-1]
+        if message["role"] in {"user", "assistant"}
+    ]
+    assert sent == [*history, ("user", "next")]
+
+
+@pytest.mark.parametrize("shown", ["flat", "fork"])
+async def test_a_new_first_message_edit_fork_is_marked_and_outlives_a_flat_delete(
+    shown,
+):
+    """Edit and resend of the first message marks the fork it saves.
+
+    After a reopen the fork is its own branch beside the first message, and
+    Delete on an earlier flat row neither counts nor removes it.
+    """
+    import json
+
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    controller, _gateway, store, session_id, native = await _open_console(
+        db, conversation_id
+    )
+    assert [m for m, _role in _visible(store, session_id)] == _FLAT_IDS
+
+    assert (await controller.edit_and_resend_message(native["f0"], "edited")).accepted
+
+    fork = [m.persisted_message_id for m in store.messages_for_session(session_id)]
+    assert _transcript(store, session_id) == [
+        ("user", "edited"),
+        ("assistant", "reply 1"),
+    ]
+    edited = db.get_message_by_id(fork[0])
+    assert edited["parent_message_id"] is None
+    assert json.loads(edited["metadata_json"] or "{}").get("root_fork") is True
+    assert db.get_message_by_id(fork[1])["parent_message_id"] == fork[0]
+    for message_id in _FLAT_IDS:
+        assert db.get_message_by_id(message_id)["metadata_json"] is None
+
+    store, session_id, native = _open_store(db, conversation_id)
+    assert [m for m, _role in _visible(store, session_id)] == fork
+    siblings, index, count = store.siblings_at(native[fork[0]])
+    assert [sibling.persisted_message_id for sibling in siblings] == ["f0", fork[0]]
+    assert (index, count) == (1, 2)
+    if shown == "flat":
+        store.set_active_leaf(session_id, native["f3"])
+        assert [m for m, _role in _visible(store, session_id)] == _FLAT_IDS
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 3
+    assert scope.prompt.startswith("Delete this message and 2 later messages")
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == [
+        "f1",
+        "f2",
+        "f3",
+    ]
+    assert _deleted(db, [*_FLAT_IDS, *fork]) == [0, 1, 1, 1, 0, 0]
+    reopened, reopened_session, reopened_native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", *fork}
+    reopened.set_active_leaf(reopened_session, reopened_native[fork[1]])
+    assert [m for m, _role in _visible(reopened, reopened_session)] == fork
+
+
+def test_the_root_fork_marker_survives_an_edit_and_keeps_other_metadata():
+    """An in-place edit rewrites the row's metadata from the store's copy.
+
+    The marker has to be part of that copy, or the first edit of a fork would
+    erase it and the next reopen would chain the fork into the flat rows. The
+    row's other metadata rides along unchanged.
+    """
+    import json
+
+    other = {
+        "engine": "realtime",
+        "provider": "openai",
+        "model": "gpt-realtime",
+        "transcript_status": "final",
+    }
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(
+        db, _FLAT_THEN_FORK, {"e0": json.dumps({**other, "root_fork": True})}
+    )
+    store, _session_id, native = _open_store(db, conversation_id)
+
+    store.update_message_content(native["e0"], "e0 edited")
+
+    stored = json.loads(db.get_message_by_id("e0")["metadata_json"])
+    assert stored["root_fork"] is True
+    assert {key: stored[key] for key in other} == other
+    # Reopen: the edited fork is still its own root beside the first message.
+    reopened, reopened_session, reopened_native = _open_store(db, conversation_id)
+    assert reopened.get_message(reopened_native["e0"]).content == "e0 edited"
+    assert _root_count(reopened, reopened_session) == 2
+    siblings, _index, _count = reopened.siblings_at(reopened_native["e0"])
+    assert [sibling.persisted_message_id for sibling in siblings] == ["f0", "e0"]
+    assert reopened.subtree_message_ids(reopened_native["f0"]) == tuple(
+        reopened_native[message_id] for message_id in _FLAT_IDS
+    )
 
 
 def test_flat_delete_and_undo_past_the_sqlite_variable_limit():
@@ -859,3 +1129,44 @@ def test_flat_delete_and_undo_past_the_sqlite_variable_limit():
     assert _visible(store, session_id) == before
     reopened, reopened_session, _native = _open_store(db, conversation_id)
     assert _visible(reopened, reopened_session) == before
+
+
+@pytest.mark.parametrize("fork_projection", [False, True], ids=["temporary", "fork"])
+def test_a_temporary_chat_with_an_edited_first_message_still_saves(fork_projection):
+    """Saving a temporary chat keeps working after its first message is resent.
+
+    A forked chat's save stores fork-only facts (here the carried image's label)
+    in the same local column and refuses a row that also carries other
+    metadata, so a fork projection never marks a root fork. Its rows are all
+    parent-linked, so it holds no flat row to tell a fork from. An ordinary
+    temporary chat keeps the marker through the save.
+    """
+    import json
+
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleMessageRole,
+        MessageAttachment,
+    )
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(title="Temporary", ephemeral=True)
+    session.fork_projection = fork_projection
+    image = (MessageAttachment(b"\x89PNG\r\n\x1a\n", "image/png", "chart.png", 0),)
+    user, assistant = ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT
+    first = store.append_message(
+        session.id, role=user, content="first", attachments=image
+    )
+    store.append_message(session.id, role=assistant, content="first reply")
+    edited = store.create_sibling(
+        first.id, role=user, content="edited", attachments=image
+    )
+    store.append_message(session.id, role=assistant, content="edited reply")
+
+    assert store.promote_ephemeral_session(session.id) is not None
+
+    row = db.get_message_by_id(store.get_message(edited.id).persisted_message_id)
+    assert row["parent_message_id"] is None
+    marker = json.loads(row["metadata_json"] or "{}").get("root_fork", False)
+    assert marker is (not fork_projection)

@@ -397,3 +397,41 @@ def test_character_emote_payload_has_no_content_or_path_fields() -> None:
         "server_id",
     ):
         assert forbidden not in payload
+
+
+# ---------------------------------------------------------------------------
+# TASK-33628.6: the root-level edit-fork marker.
+# ---------------------------------------------------------------------------
+
+
+def test_root_fork_marker_round_trips_beside_other_fields() -> None:
+    """The marker is a field, so every rewrite from the dataclass keeps it.
+
+    Writers replace a row's ``metadata_json`` with ``to_json()`` of the store's
+    copy (an in-place edit, a receipt attach). A marker kept outside the
+    dataclass would be dropped by the first of them.
+    """
+    from dataclasses import replace
+
+    metadata = MessageMetadata(
+        engine="realtime", transcript_status="final", root_fork=True
+    )
+
+    assert MessageMetadata().root_fork is False
+    assert MessageMetadata(root_fork=True).is_empty is False
+    assert json.loads(metadata.to_json())["root_fork"] is True
+    assert MessageMetadata.from_json(metadata.to_json()) == metadata
+    receipt = replace(
+        metadata, terminal_receipt_id="0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51"
+    )
+    assert MessageMetadata.from_json(receipt.to_json()) == receipt
+
+
+@pytest.mark.parametrize(
+    ("stored", "expected"), [(True, True), ("false", False), (None, False)]
+)
+def test_root_fork_marker_reads_without_inverting(stored, expected) -> None:
+    restored = MessageMetadata.from_json(json.dumps({"root_fork": stored}))
+
+    assert restored is not None
+    assert restored.root_fork is expected

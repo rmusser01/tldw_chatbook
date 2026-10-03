@@ -146,7 +146,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     snapshot_from_session_settings,
 )
-from tldw_chatbook.Chat.console_legacy_flat_roots import legacy_flat_chain
+from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
 from tldw_chatbook.Chat.console_library_activity_buffer import (
     ConsoleLibraryActivityBuffer,
     LibraryActivityFlushResult,
@@ -11122,21 +11122,23 @@ class ConsoleChatStore:
         """
         self._message_or_raise(anchor_message_id)
         session_id = self._message_session_index[anchor_message_id]
+        session = self._sessions[session_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
+            metadata=flat_roots.root_fork_metadata(parent_native_id, session),
         )
         # task-573: a fork can carry the anchor's attachments (Edit & resend
         # of an image-bearing user turn); same seam ``append_message`` uses.
         self._set_message_attachments(message, tuple(attachments))
-        previous_updated_at = self._sessions[session_id].updated_at
+        previous_updated_at = session.updated_at
         previous_active_leaf = self._active_leaf_by_session[session_id]
         try:
             with self._dispatch_branch_mutation(session_id):
-                self._sessions[session_id].updated_at = _utc_now_iso()
+                session.updated_at = _utc_now_iso()
                 self._register_tree_node(
                     session_id, message, parent_native_id=parent_native_id
                 )
@@ -21913,10 +21915,9 @@ class ConsoleChatStore:
         """Chain legacy flat root-level rows into one linear spine (C1 repair).
 
         :func:`~tldw_chatbook.Chat.console_legacy_flat_roots.legacy_flat_chain`
-        picks which roots are legacy flat rows (its module docstring has the
-        fingerprints and their residual edges); every other root -- a genuine
-        root-level edit fork -- stays independently navigable via
-        ``siblings_at``/``set_active_leaf``.
+        picks the roots to chain: every unmarked root that is legacy flat data.
+        A root ``_create_sibling`` marked as a fork stays an independent root
+        (that module's docstring has the rule and its residual edges).
 
         Roots are chained in their existing insertion order, which is the DB's
         timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
@@ -21930,16 +21931,15 @@ class ConsoleChatStore:
         fork, and the active-leaf ancestry walk traverses the full spine plus
         any subtrees.
 
-        This is an IN-MEMORY reconstruction only; durable ``parent_message_id``
-        rows are never rewritten (the active-leaf pointer repair on resume is
-        the durable fix).
+        This is an IN-MEMORY reconstruction only: durable ``parent_message_id``
+        rows are never rewritten (resume's active-leaf repair is the durable fix).
         """
         children = self._children_by_parent.get(session_id)
         if children is None:
             return
         roots = children.get(None, [])
         nodes = self._nodes_by_session.get(session_id, {})
-        chain = legacy_flat_chain(roots, children, nodes)
+        chain = flat_roots.legacy_flat_chain(roots, children, nodes)
         if len(chain) <= 1:
             return
         chained = set(chain[1:])

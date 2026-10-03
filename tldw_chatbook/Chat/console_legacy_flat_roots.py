@@ -11,52 +11,90 @@ transcript to its final message. ``ConsoleChatStore._chain_legacy_flat_roots``
 applies the answer. This decision lives here because the store is under a size
 ratchet (``Tests/Architecture/test_module_size_ratchet.py``).
 
-Historically a GENUINE Console branch was ALWAYS a set of siblings under a
-shared *non-None* parent (regenerate / create-sibling parent the new node at
-the anchor's parent), NEVER two separate root threads. Phase B's
-``edit_and_resend_message`` broke that on purpose: editing-and-resending the
-conversation's very FIRST user message forks a NEW root-level USER sibling
-(``create_sibling`` parents the fork at the anchor's own parent, ``None``),
-with the resend's ASSISTANT reply appended directly under it. An ASSISTANT
-node's native parent is never ``None``, so an all-USER root set with a reply
-subtree is a genuine Phase-B branch and is left alone (chaining it would splice
-the newer branch onto the older as a fake parent-child link).
+A genuine root-level branch exists too: Edit and resend of a conversation's
+FIRST message forks a new USER row beside it, parented at the first message's
+own parent -- none -- with the resend's reply under it. The saved tree alone
+cannot tell that fork from legacy flat data: a flat run whose last USER row was
+answered later (Resend on a broken last turn appends the reply directly under
+that flat row) has the same shape, a parentless USER row with a reply subtree
+after the other flat rows. Guessing from shape hides one or the other: chain
+the fork and it reads as later flat messages; split the answered flat row and
+every reopen shows -- and sends the model -- only the rows from it down.
 
-task-572: a DEGENERATE legacy conversation whose 2+ user turns each got NO
-assistant reply (repeated failed/blocked sends in the flat era) also loads as
-all-USER roots, but ALL CHILDLESS, so an all-USER root set is chained when
-every root is childless. RESIDUAL EDGE: a genuine first-message fork whose
-both branches ended up childless is indistinguishable from that and chains.
-Non-data-loss (both user rows stay visible, linearly).
+So the store does not guess. When the Console creates a sibling of a ROOT
+message it records ``MessageMetadata.root_fork`` (stored as
+``"root_fork": true`` in the row's local ``metadata_json``) on the new row
+(:func:`root_fork_metadata`), and :func:`legacy_flat_chain`:
 
-A role-MIXED root set (USER and ASSISTANT roots) is legacy flat data -- but it
-can ALSO hold genuine forks (TASK-33628.6 review). Editing-and-resending a
-legacy flat conversation's first message (the chained spine's root) saves the
-fork as one more NULL-parent USER row after every flat row. Chaining it showed
-the fork as later messages of the flat transcript, and since Delete follows
-the in-memory subtree, deleting an earlier flat row durably tombstoned the
-fork and its replies. So in a mixed set a USER root that comes AFTER the last
-ASSISTANT root (every flat row predates the fork) and has an ASSISTANT child
-of its own stays an independent root; every other root chains. The position
-test keeps a flat USER row that gained a regenerated reply mid-run chained (a
-flat ASSISTANT row still follows it); the ASSISTANT-child test keeps a trailing
-unanswered flat turn chained when it only gained an edited USER turn.
-RESIDUAL EDGE, also indistinguishable from the persisted tree alone: a flat run
-whose LAST flat row is a USER turn that later gained an ASSISTANT child (its
-flat reply was regenerated and the old one deleted) loads as such a fork --
-its own root branch, navigable beside the first message. Non-data-loss:
-Delete, its prompt and its receipt all follow the same in-memory tree, so
-nothing is removed that was not shown and counted.
+* leaves every MARKED root out of the chain: it stays an independent root, a
+  sibling of the first root, navigable via ``siblings_at``/``set_active_leaf``;
+* decides about the UNMARKED roots exactly as the repair did before the marker
+  existed. A role-MIXED set (USER and ASSISTANT roots) is legacy flat data and
+  chains: the Console never creates an ASSISTANT root beside another root (a
+  greeting root is the only root of its chat, and replies always have parents).
+  An all-USER set chains only when every root is childless (task-572: repeated
+  failed or blocked sends in the flat era); an all-USER set with a reply
+  subtree is a genuine first-message fork of a post-branching conversation and
+  is left alone.
+
+A fork projection (a forked chat, saved or temporary) is never marked: its rows
+are always parent-linked, so it holds no flat rows to tell a fork from, and its
+save path stores fork-only facts in the same column instead.
+
+RESIDUAL EDGES. None loses data: the transcript, the Delete prompt's count, its
+receipt and the durable delete all follow the same in-memory tree, so whatever
+chains is shown, counted, deleted and restored by Undo together.
+
+* A root fork saved before the marker existed is unmarked and keeps the
+  unmarked reading: in a legacy flat conversation it chains after the flat
+  rows, and Delete on an earlier flat row also deletes it -- the prompt counts
+  it and Undo restores it. The same holds for a fork whose row arrives without
+  the marker: ``metadata_json`` is local-only, so another synced device, an
+  export/import, or a rewrite by an older build does not carry it.
+* An unmarked all-USER set whose fork has no reply on either branch chains.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from typing import Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
     ConsoleMessageRole,
 )
+from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+
+class _ForkProjectionFlag(Protocol):
+    fork_projection: bool
+
+
+def root_fork_metadata(
+    parent_native_id: str | None, session: _ForkProjectionFlag
+) -> MessageMetadata | None:
+    """Return the metadata a new sibling starts with.
+
+    Args:
+        parent_native_id: The native parent the sibling is created under --
+            its anchor's own parent; ``None`` when the anchor is a root.
+        session: The session the sibling is created in.
+
+    Returns:
+        ``MessageMetadata(root_fork=True)`` for a new root outside a fork
+        projection, otherwise ``None`` (no metadata, as before).
+    """
+    if parent_native_id is not None or session.fork_projection:
+        return None
+    return MessageMetadata(root_fork=True)
+
+
+def _is_marked(message: ConsoleChatMessage | None) -> bool:
+    return (
+        message is not None
+        and message.metadata is not None
+        and message.metadata.root_fork
+    )
 
 
 def legacy_flat_chain(
@@ -72,28 +110,18 @@ def legacy_flat_chain(
         nodes: The session's tree nodes by native id.
 
     Returns:
-        The roots to link, each onto the one before it. Every root NOT
-        returned stays an independent root beside the first. Fewer than two
-        ids means nothing chains.
+        The unmarked roots to link, each onto the one before it, or an empty
+        list when they do not chain. Every root NOT returned stays an
+        independent root beside the first.
     """
-    if len(roots) <= 1:
+    flat = [root for root in roots if not _is_marked(nodes.get(root))]
+    if len(flat) <= 1:
         return []
-    roles = [nodes[root].role if root in nodes else None for root in roots]
-    if ConsoleMessageRole.ASSISTANT not in roles:
-        # All-USER roots: chain only the degenerate all-childless shape.
-        return [] if any(children.get(root) for root in roots) else list(roots)
-    last_assistant = max(
-        index
-        for index, role in enumerate(roles)
-        if role is ConsoleMessageRole.ASSISTANT
+    has_assistant_root = any(
+        nodes[root].role is ConsoleMessageRole.ASSISTANT
+        for root in flat
+        if root in nodes
     )
-    return [
-        root
-        for index, root in enumerate(roots)
-        if index <= last_assistant
-        or roles[index] is not ConsoleMessageRole.USER
-        or not any(
-            child in nodes and nodes[child].role is ConsoleMessageRole.ASSISTANT
-            for child in children.get(root, ())
-        )
-    ]
+    if not has_assistant_root and any(children.get(root) for root in flat):
+        return []
+    return flat
