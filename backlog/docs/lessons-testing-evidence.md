@@ -17731,7 +17731,7 @@ build inputs; the existing presence check caught this drift before publication.
 read 36 in every run, and once 73. A temporary trace of every billed `os.open`
 with its caller showed neither number is noise. Each private-SQLite helper start
 walks the profile directory chain, one open per path component plus `/` and
-`/dev/null`, so the pass costs `2 x (components + 2)`. The 34 had been measured
+`/dev/null`, so that pass (two helpers) cost `2 x (components + 2)`. The 34 had been measured
 under a scratch `--basetemp` one component shallower than macOS's default
 pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 1 Hz backup-maintenance probe's own ~37-open walk landing inside the short

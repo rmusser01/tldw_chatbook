@@ -685,23 +685,21 @@ async def _census_idle_and_visit(
             await run_owned_db_call(database, maintenance.run_batch)
 
     async def gc_pass() -> None:
-        """Bill one eligible GC interval of the real maintenance loop.
+        """Bill the maintenance loop's first GC pass, collection included.
 
-        The loop's first pass collects at once (uncounted); the moment it
-        returns, the GC interval becomes too long to reach, so the loop parks
-        and stays parked. The graph epoch is then advanced with no exchange
-        signal -- so the next pass is eligible whether or not a collection is
-        still pending -- and billing is armed; only then does the interval
-        drop to zero, so the next park poll wakes exactly one GC pass. On the
-        census's small database the first compaction defers
-        (``database_threshold``, a retryable reason), so the loop keeps that
-        collection pending and the billed pass is the epoch read plus the
-        compaction retry -- the steady state of an idle small profile. That pass
-        is billed from its epoch read through compaction; it fails the census
-        if compaction raises or the collection is unusable. The 1 Hz backup-
-        maintenance probe is held still for the whole phase: it walks every
-        registered root (~37 opens) on its own thread, and landing inside the
-        short billed window it doubled the pass's opens about one run in ten.
+        The census holds the loop back until here, so its first pass is the
+        first GC of the profile: the graph-epoch read, the collection and the
+        compaction attempt. On the census's small database compaction defers
+        (``database_threshold``, a retryable reason) and the loop keeps that
+        collection pending, so later passes are the epoch read plus a
+        compaction retry with no collection -- the first pass is the superset,
+        and the census asserts it ran exactly those three calls. It is billed
+        from its epoch read through compaction (the batch normalization before
+        it is the per-tick row above) and fails the census if a call raises or
+        the collection is unusable. The 1 Hz backup-maintenance probe is held
+        still for the whole phase: it walks every registered root (~37 opens)
+        on its own thread, and landing inside the short billed window it
+        doubled the pass's opens about one run in ten.
         """
         from tldw_chatbook.Backup_Recovery import runtime_maintenance
         from tldw_chatbook.Chat import console_runtime as runtime_module
@@ -711,54 +709,41 @@ async def _census_idle_and_visit(
 
         async def held_pause_poll() -> bool:
             return False
-        boot_passes: list[str] = []
-        window: dict[str, Any] = {"armed": False, "started": False, "error": None}
+
+        window: dict[str, Any] = {"calls": [], "error": None}
         billed = asyncio.Event()
 
         async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
             name = getattr(operation, "__name__", "")
-            if name == "current_graph_epoch" and window["armed"] and not window["started"]:
-                window["started"] = True
+            if name == "current_graph_epoch" and not window["calls"]:
                 for unit in IO_UNITS:
                     counts[unit] = 0
                 counting["on"] = True
+            if counting["on"] and not billed.is_set():
+                window["calls"].append(name)
             try:
                 result = await real_owned(database_, operation, *args, **kwargs)
             except BaseException as error:
                 # Any call in the billed pass -- epoch read, collection or
                 # compaction -- ends the census with its name, not a timeout.
-                if window["started"] and not billed.is_set():
+                if window["calls"] and not billed.is_set():
                     counting["on"] = False
                     window["error"] = f"{name or 'an owned call'} raised {type(error).__name__}"
                     billed.set()
                 raise
-            if name == "run_after_gc":
-                if not window["started"]:
-                    boot_passes.append(name)
-                    # Hold the loop parked until the billed pass is armed.
-                    monkeypatch.setattr(
-                        runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 1e9
-                    )
-                elif not billed.is_set():
-                    counting["on"] = False
-                    # A deferral (e.g. database_threshold on the small census
-                    # database) is a whole pass: all three calls ran. Only a
-                    # pass whose collection was unusable is not.
-                    if getattr(result, "reason_code", "") == "logical_gc_unavailable":
-                        window["error"] = "the billed pass found no usable collection"
-                    phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
-                    billed.set()
+            if name == "run_after_gc" and window["calls"] and not billed.is_set():
+                counting["on"] = False
+                # A deferral (e.g. database_threshold on the small census
+                # database) is a whole pass: all three calls ran. Only a pass
+                # whose collection was unusable is not.
+                if getattr(result, "reason_code", "") == "logical_gc_unavailable":
+                    window["error"] = "the billed pass found no usable collection"
+                phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
+                billed.set()
             return result
 
-        def advance_graph_epoch() -> None:
-            with database.transaction() as cursor:
-                cursor.execute(
-                    "UPDATE console_trace_graph_epoch SET epoch = epoch + 1"
-                    " WHERE singleton_id = 1"
-                )
-
-        # Patched before the boot pass, so a probe already in flight has
-        # finished long before billing is armed.
+        # A probe already in flight finishes during the pass's unbilled batch
+        # normalization, before the epoch read starts billing.
         monkeypatch.setattr(
             runtime_maintenance, "_poll_local_pause_requested", held_pause_poll
         )
@@ -766,23 +751,13 @@ async def _census_idle_and_visit(
         monkeypatch.setattr(
             runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
         )
-        monkeypatch.setattr(
-            runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 0.0
-        )
         real_schedule(runtime, database, normalizer_factory)
         try:
-            for _ in range(600):
-                if boot_passes:
-                    break
-                await asyncio.sleep(0.05)
-            assert boot_passes, "the maintenance loop never ran its first GC pass"
-            await real_owned(database, advance_graph_epoch)
-            window["armed"] = True
-            monkeypatch.setattr(
-                runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 0.0
-            )
             await asyncio.wait_for(billed.wait(), 60)
             assert window["error"] is None, window["error"]
+            assert window["calls"] == ["current_graph_epoch", "collect", "run_after_gc"], (
+                f"the billed GC pass ran {window['calls']}"
+            )
         finally:
             task = runtime._legacy_trace_maintenance_task
             if task is not None:
@@ -1067,21 +1042,21 @@ MAX_VISIT_STORAGE_UNITS = {
     "helper_spawns": 9,
     "os_opens": 35_351,
 }
-#: TASK-33644: one eligible GC interval of the production maintenance loop
-#: after it parked, billed on its own (on the census's small database: the
-#: graph-epoch read and the retried compaction of the pending collection). Pinned
-#: 2026-10-03 at dev 420b53a63d: 0 / 5 / 2 / 36 -- three owned database calls,
-#: two of them on a fresh helper. ``os_opens`` is exact, not jitter: each
-#: helper start walks the profile directory chain (one open per component,
-#: plus ``/`` and ``/dev/null``), so it is ``2 x (components + 2)``: 36 under
-#: macOS's default pytest temp dir (16 components), 26 on the Linux runner
-#: (11). A deeper ``--basetemp`` adds 2 per component; a helper reused from a
-#: live connection reads 18.
+#: TASK-33644: the maintenance loop's first GC pass, billed on its own: the
+#: graph-epoch read, the collection and the compaction attempt (deferred on
+#: the census's small database). Pinned 2026-10-03 at dev 0409592a2d:
+#: 0 / 9 / 3 / 54 in every run -- three owned database calls, each on a fresh
+#: helper. ``os_opens`` is exact, not jitter: each helper start walks the
+#: profile directory chain (one open per component, plus ``/`` and
+#: ``/dev/null``), so it is ``3 x (components + 2)``: 54 under macOS's default
+#: pytest temp dir (16 components), 39 on the Linux runner (11). A deeper
+#: ``--basetemp`` adds 3 per component; a helper reused from a live
+#: connection reads 18 fewer.
 MAX_TRACE_GC_PASS_STORAGE_UNITS = {
     "config_admissions": 0,
-    "storage_admissions": 5,
-    "helper_spawns": 2,
-    "os_opens": 36,
+    "storage_admissions": 9,
+    "helper_spawns": 3,
+    "os_opens": 54,
 }
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
@@ -1092,12 +1067,14 @@ OS_OPENS_JITTER_SLACK = 1.05
 #: shared jitter slack applies on top. Observed ranges: typing burst 54-81,
 #: typing pause 153-206, credential poll 3.375-6.75 per tick, trace
 #: maintenance 16.5-23.125 per tick, trace GC pass 26, visit 1,913-1,926.
+#: The GC-pass row was re-pinned 26 -> 39 when the census started billing
+#: the first pass (collection included): 3 helpers x (11 components + 2).
 LINUX_OS_OPENS_CEILINGS = {
     "typing (whole burst)": 81,
     "typing pause": 206,
     "credential poll (per tick)": 6.75,
     "trace maintenance (per tick)": 23.125,
-    "trace GC pass": 26,
+    "trace GC pass": 39,
     "visit": 1_926,
 }
 
