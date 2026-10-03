@@ -17,6 +17,7 @@ from tldw_chatbook.UI.Navigation.screen_state_store import (
 from tldw_chatbook.Chat.console_context_policy import ConsoleContextPolicyOverrides
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+from tldw_chatbook.Chat.console_runtime import ConsoleRuntime, _ConsoleStagedEvidenceState
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.UI.Screens.chat_screen_state import TaskResumeState
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
@@ -103,6 +104,20 @@ def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives
     assert ConsoleSettingsDraftSnapshot.from_mapping(malformed) is None
 
 
+class _BareRuntime(SimpleNamespace):
+    """A bare runtime whose staged-evidence seam is the real one.
+
+    ChatScreen's ``_pending_console_launch_context`` setter stages through
+    the runtime (b7dd8e53f2), so the bare screen needs these methods; they
+    are ConsoleRuntime's own, not stand-ins (TASK-33006.8 AC#2).
+    """
+
+    snapshot_console_staged_evidence = ConsoleRuntime.snapshot_console_staged_evidence
+    stage_console_staged_evidence = ConsoleRuntime.stage_console_staged_evidence
+    set_console_staged_evidence_notice = ConsoleRuntime.set_console_staged_evidence_notice
+    restore_console_staged_evidence = ConsoleRuntime.restore_console_staged_evidence
+
+
 def test_native_console_state_keeps_suspended_settings_draft_process_local() -> None:
     """The screen snapshot, not a handoff or route, owns raw draft content."""
     snapshot = ConsoleSettingsDraftSnapshot(
@@ -130,11 +145,12 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
             serialize=lambda: {},
             restore=lambda _value: None,
         )
-        screen._console_runtime_ref = SimpleNamespace(
+        screen._console_runtime_ref = _BareRuntime(
             chat_store=store,
             set_chat_store=lambda value: setattr(
                 screen._console_runtime_ref, "chat_store", value
             ),
+            _staged_evidence=_ConsoleStagedEvidenceState(),
         )
         screen._session = SimpleNamespace(_console_visible_draft_session_id=None)
         screen._stash_console_pending_attachments = lambda _store: None

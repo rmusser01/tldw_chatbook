@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 from textual import events
-from textual.widgets import Button, Input, Select
+from textual.widgets import Button, Input, Select, Static
 
 from Tests.UI.test_console_settings_core_first import (
     CoreFirstHarness,
@@ -38,7 +38,10 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     SAMPLING_DISCLOSURE_ID,
     field_control_id,
 )
-from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+from tldw_chatbook.Widgets.Console.console_settings_modal import (
+    MODEL_DISCOVER_STATUS_ID,
+    ConsoleSettingsModal,
+)
 
 # Census-gated (scripts/ui_pr_gate_census.txt): Tests/UI/conftest.py imports
 # tldw_chatbook.app per test, which fails closed with
@@ -527,6 +530,111 @@ async def test_new_endpoint_lands_on_a_pair_never_on_a_provider_alone() -> None:
             "custom-ep:gpu-box",
             "served-x",
         )
+
+
+@pytest.mark.asyncio
+async def test_a_created_entry_says_it_is_listing_and_opens_pick_mode_even_if_that_fails(
+    monkeypatch,
+) -> None:
+    """Final review I7: while a created entry is listed, the status line says
+    so; when resolving its connection raises, pick mode still opens on it,
+    so the entry is never left behind without a word."""
+    import asyncio
+
+    import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+
+    release = asyncio.Event()
+
+    async def slow_listing(_identity):
+        await release.wait()
+        return ProviderProbeResult("reachable", ("served-x",))
+
+    def status(modal) -> str:
+        line = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
+        return str(line.content) if line.display else ""
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), connection_tester=slow_listing)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal.pick_created_endpoint("custom-ep:gpu-box")
+        for _ in range(4):
+            await pilot.pause()
+        assert status(modal) == "Listing the models GPU box serves…"
+        release.set()
+        await settle(pilot, app)
+        assert isinstance(app.screen, ConsoleModelPopover)
+        await pilot.press("escape")
+        await settle(pilot, app)
+        assert status(modal) == ""
+
+        def broken(*_args, **_kwargs):
+            raise RuntimeError("identity resolve failed")
+
+        monkeypatch.setattr(field_row, "console_send_connection", broken)
+        modal.pick_created_endpoint("custom-ep:gpu-box")
+        await settle(pilot, app)
+        switcher = app.screen
+        assert isinstance(switcher, ConsoleModelPopover) and switcher._pick_only
+        assert switcher.query_one("#console-popover-find", Input).value == "GPU box "
+
+
+@pytest.mark.asyncio
+async def test_a_pick_during_the_paid_test_cancels_it_and_keeps_the_billing_warning() -> None:
+    """TASK-33006.8 AC#1: a model change made the user's way (Change, type in
+    pick mode's Find, Enter) while the paid generation test runs cancels the
+    test, keeps the billing warning and fences the late result. The tester
+    ignores cancellation, so this waits on pauses, never on the workers."""
+    import asyncio
+
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderGenerationProbeResult
+
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    async def cancellation_resistant_tester(_request):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            await release.wait()
+        return ProviderGenerationProbeResult("succeeded")
+
+    async def pause(pilot) -> None:
+        for _ in range(6):
+            await pilot.pause()
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), generation_tester=cancellation_resistant_tester)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal)
+        await pause(pilot)
+        modal.query_one("#console-settings-test-generation", Button).press()
+        modal.query_one("#console-settings-confirm-generation", Button).press()
+        await asyncio.wait_for(entered.wait(), 1)
+
+        modal.query_one(f"#{MODEL_CHANGE_ID}", Button).focus()
+        await pilot.press("enter")
+        await pause(pilot)
+        assert isinstance(app.screen, ConsoleModelPopover)
+        await pilot.press(*"model-b")
+        await pause(pilot)
+        await pilot.press("enter")
+        await pause(pilot)
+        assert app.screen is modal
+        assert modal._current_model_value() == "model-b"
+        button = modal.query_one("#console-settings-test-generation", Button)
+        assert str(button.label) == "Test generation" and not button.disabled
+        status = str(
+            modal.query_one("#console-settings-generation-test-status", Static).content
+        )
+        assert "Stopped waiting" in status and "may still be billed" in status
+
+        release.set()
+        await pause(pilot)
+        readiness = str(modal.query_one("#console-settings-readiness", Static).content)
+        assert "Generation · Succeeded" not in readiness
 
 
 @pytest.mark.asyncio

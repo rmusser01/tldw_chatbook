@@ -77,8 +77,10 @@ ConsoleSettingsModal Collapsible > Contents {
     background: $ds-surface-panel;
 }
 
-/* TASK-33006.2: a disclosure title spans its row and wraps, so the Sampling
-   line naming the hidden fields ends inside the frame, not under it. */
+/* TASK-33006.2: a disclosure title spans its row. A title set after mount
+   (Sampling, Connection, Request estimate, name) keeps an auto width's first
+   measure and paints cut short; each builder keeps it to one row (141 cells,
+   owner ruling 2026-10-02), so nothing wraps. */
 #console-settings-provider-model-section,
 #console-settings-connection,
 ConsoleSettingsModal CollapsibleTitle {
@@ -182,11 +184,9 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
+/* Final review I6: 12 fits a blank choice's "default" prompt too. */
 #console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
-}
-
+#console-settings-thinking-effort,
 #console-settings-reasoning-effort,
 #console-context-thinking-history-policy {
     width: $ds-size-12;

@@ -6,6 +6,11 @@ Spec rule 2: supported fields come from the one shared support decision
 controls, whose "unknown" stays visible, TASK-30012 AC#3). Hidden fields are
 named on the Sampling disclosure's one summary line. Every test mounts the
 real modal under the production stylesheets and reads what was painted.
+
+Owner ruling (2026-10-02): every closed disclosure title stays one row. The
+Sampling title names the hidden fields only when the whole title fits
+``DISCLOSURE_TITLE_CELLS``; otherwise it counts them, and the opened
+disclosure lists every one by its field-table label.
 """
 
 from __future__ import annotations
@@ -13,6 +18,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from rich.cells import cell_len
 from textual.containers import ScrollableContainer
 from textual.widgets import Button, Collapsible, Static
 from textual.widgets._collapsible import CollapsibleTitle
@@ -33,12 +39,15 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CORE_FIELDS,
+    DISCLOSURE_TITLE_CELLS,
     FIELD_ROW_FIELDS,
     GENERATION_CONTROL_UNKNOWN_COPY,
-    HIDDEN_FIELDS_REASON,
     SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS,
+    SAMPLING_HIDDEN_LIST_ID,
     field_control_id,
+    generation_field_support,
+    hidden_fields_line,
 )
 
 # Census-gated (scripts/ui_pr_gate_census.txt): Tests/UI/conftest.py imports
@@ -67,15 +76,15 @@ _ANTHROPIC_HIDDEN = (
 )
 
 
-def _expected_line(provider: str, hidden: tuple[str, ...]) -> str:
-    """The Sampling title, built from the field table's labels (R3)."""
-    if not hidden:
-        return "Sampling"
-    names = ", ".join(MODEL_FIELD_LABELS[name] for name in hidden)
-    return (
-        f"Sampling · hidden for {provider_display_name(provider)}: {names} "
-        f"{HIDDEN_FIELDS_REASON}"
-    )
+def _expected_line(
+    provider: str, hidden: tuple[str, ...], name: str | None = None
+) -> str:
+    """The one-row Sampling title for ``hidden``, under ``name`` if given.
+
+    The form itself is pinned by literals in
+    ``test_the_sampling_title_names_what_fits_and_counts_the_rest``.
+    """
+    return hidden_fields_line(name or provider_display_name(provider), hidden)
 
 
 def _shared_hidden(app_config, provider: str, model: str) -> tuple[str, ...]:
@@ -106,13 +115,12 @@ def _sampling_title(modal) -> str:
 
 
 def _painted_title(app, modal) -> str:
-    """The Sampling title as painted, its wrapped rows joined by one space."""
+    """The Sampling title as painted; it must be one row (owner ruling)."""
     title = modal.query_one(f"#{SAMPLING_DISCLOSURE_ID}").query_one(CollapsibleTitle)
     region = title.content_region
-    rows = _painted(app.screen)[region.y : region.y + region.height]
-    return " ".join(
-        " ".join(row[region.x : region.x + region.width].split()) for row in rows
-    )
+    assert region.height == 1, region
+    row = _painted(app.screen)[region.y]
+    return " ".join(row[region.x : region.x + region.width].split())
 
 
 def _real_rebase(state, **kwargs):
@@ -126,20 +134,17 @@ def _real_rebase(state, **kwargs):
 
 @pytest.mark.asyncio
 async def test_anthropic_hides_unaccepted_fields_behind_the_sampling_line() -> None:
-    """AC#1/#2: Min P, Seed, the penalties and the reasoning controls
-    Anthropic does not accept are not rendered and never take focus; the
-    Sampling title names them all, by their field-table labels."""
+    """AC#1/#2 as amended by the owner ruling: Min P, Seed, the penalties and
+    the reasoning controls Anthropic does not accept are not rendered and
+    never take focus; the one-row Sampling title counts them, because their
+    labels do not fit one row, and the opened disclosure names them all."""
     app = CoreFirstHarness()
     modal = _modal(app, _settings("anthropic", "claude-sonnet-4-5", temperature=0.7))
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         assert _hidden_rows(modal) == _ANTHROPIC_HIDDEN
-        expected = _expected_line("anthropic", _ANTHROPIC_HIDDEN)
-        assert expected.startswith(
-            "Sampling · hidden for Anthropic: Min P, Seed, Presence penalty, "
-            "Frequency penalty, Reasoning effort"
-        )
-        assert expected.endswith("(this provider does not accept them)")
+        expected = "Sampling · Anthropic does not accept 7 fields (open to list them)"
+        assert _expected_line("anthropic", _ANTHROPIC_HIDDEN) == expected
         assert _sampling_title(modal) == expected
         assert _painted_title(app, modal).endswith(expected)
         # The line does not cost the footer its place (T1 AC#9).
@@ -206,12 +211,9 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
         await _open(pilot, app, modal)
         hidden = _shared_hidden(app.app_config, provider, model)
         assert _hidden_rows(modal) == hidden
-        expected = _expected_line(provider, hidden)
-        if provider.startswith("custom-ep:"):
-            expected = expected.replace(
-                provider_display_name(provider),
-                provider_display_name(provider, app.app_config),
-            )
+        expected = _expected_line(
+            provider, hidden, provider_display_name(provider, app.app_config)
+        )
         assert _sampling_title(modal) == expected
         assert _painted_title(app, modal).endswith(expected)
         # Invariant, not a mirror: a shown row is one Apply keeps, unless its
@@ -244,8 +246,8 @@ async def test_a_registry_endpoint_hides_what_its_family_hides() -> None:
             "custom-ep:gpu-box", "model-a", app.app_config
         )
         assert _sampling_title(modal) == _expected_line(
-            "llama_cpp", family_hidden
-        ).replace(provider_display_name("llama_cpp"), "GPU box")
+            "llama_cpp", family_hidden, "GPU box"
+        )
 
 
 @pytest.mark.parametrize("name", ["Lab [gpu]", "Lab [/b] box"])
@@ -264,12 +266,92 @@ async def test_a_bracketed_endpoint_name_paints_literally(name) -> None:
         await _open(pilot, app, modal)
         hidden = _hidden_rows(modal)
         assert hidden, "an ollama entry hides something to name"
-        expected = _expected_line("ollama", hidden).replace(
-            provider_display_name("ollama"), name
-        )
-        assert f"hidden for {name}: " in expected
+        expected = _expected_line("ollama", hidden, name)
+        assert name in expected
         assert _sampling_title(modal) == expected
         assert _painted_title(app, modal).endswith(expected)
+
+
+#: Long enough to need the count form, short enough to name one field.
+_ONE_FIELD = ("min_p",)
+
+
+def test_the_sampling_title_names_what_fits_and_counts_the_rest() -> None:
+    """Owner ruling (2026-10-02), amending AC#1-2: the closed title names the
+    hidden fields only when the whole title fits one row; otherwise it
+    counts them; a name too wide for even that is shortened."""
+    assert hidden_fields_line("Ollama", ()) == "Sampling"
+    assert hidden_fields_line("Ollama", _ONE_FIELD) == (
+        "Sampling · hidden for Ollama: Min P (this provider does not accept them)"
+    )
+    assert hidden_fields_line("Together", SAMPLING_FIELDS + CORE_FIELDS[3:]) == (
+        "Sampling · Together does not accept 11 fields (open to list them)"
+    )
+    wide = "実験" * 40  # 80 characters, the registry's display-name cap, 160 cells
+    title = hidden_fields_line(wide, _ONE_FIELD)
+    assert cell_len(title) == DISCLOSURE_TITLE_CELLS
+    assert title.startswith("Sampling · 実験") and "…" in title
+    assert title.endswith(" does not accept 1 field (open to list them)")
+
+
+def test_every_closed_sampling_title_fits_one_row() -> None:
+    """Owner ruling census: for every PROVIDER_PARAM_MAP provider, with its
+    shipped default model and with every field hidden (any model's worst
+    case), the closed Sampling title measures at most 141 cells."""
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+    from tldw_chatbook.config import DEFAULT_CONFIG_FROM_TOML as config
+
+    over: list[tuple[str, int]] = []
+    for provider in PROVIDER_PARAM_MAP:
+        model = (config.get("api_settings", {}).get(provider) or {}).get("model")
+        name = provider_display_name(provider, config)
+        hidden, _unknown = generation_field_support(provider, model, config)
+        for fields in (hidden, FIELD_ROW_FIELDS):
+            width = cell_len(hidden_fields_line(name, fields))
+            if width > DISCLOSURE_TITLE_CELLS:
+                over.append((provider, width))
+    assert len(PROVIDER_PARAM_MAP) > 50
+    assert over == []
+
+
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("anthropic", "claude-sonnet-4-5"),
+        ("google", "gemini-2.5-pro"),
+        ("custom-ep:gpu-box", "model-a"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_the_opened_sampling_disclosure_names_every_hidden_field(
+    provider, model
+) -> None:
+    """Owner ruling: opened with real keys, Sampling lists every hidden field
+    by its field-table label, the ones its closed title only counts too."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(provider, model, temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        hidden = _hidden_rows(modal)
+        assert hidden
+        listing = modal.query_one(f"#{SAMPLING_HIDDEN_LIST_ID}", Static)
+        assert not listing.region.area  # closed: nothing below the title
+        modal.query_one(f"#{SAMPLING_DISCLOSURE_ID}").query_one(
+            CollapsibleTitle
+        ).focus()
+        await pilot.press("enter")
+        for _ in range(3):
+            await pilot.pause()
+        region = listing.region
+        assert region.area
+        painted = " ".join(
+            " ".join(row[region.x : region.right].split())
+            for row in _painted(app.screen)[region.y : region.bottom]
+        )
+        name = provider_display_name(provider, app.app_config)
+        assert painted.startswith(f"{name} does not accept: ")
+        for field in hidden:
+            assert MODEL_FIELD_LABELS[field] in painted, field
 
 
 @pytest.mark.asyncio
@@ -338,6 +420,7 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
         if provider not in PROVIDER_PARAM_MAP:
             assert _hidden_rows(modal) == ()
             assert _sampling_title(modal) == "Sampling"
+            assert not modal.query_one(f"#{SAMPLING_HIDDEN_LIST_ID}").display
         painted = _painted(app.screen)
         for name in unknown:
             row = modal.query_one(f"#{field_control_id(name)}-row")

@@ -35,6 +35,8 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
 
+from .console_settings_field_row import REQUIRED_FIELDS, field_row_names
+
 USE_SAVED_DEFAULTS_ID = "console-settings-use-saved-defaults"
 USE_SAVED_DEFAULTS_LABEL = "Use saved defaults"
 #: The disabled button's label is its reason (AC#6 of TASK-33006.5).
@@ -48,8 +50,6 @@ _USE_TOOLTIP = (
 )
 _MATCH_TOOLTIP = "This draft already equals the saved defaults for this model."
 _NO_MODEL_TOOLTIP = "Choose a model first."
-#: Fields whose blank the draft replaces with the opened value.
-_REQUIRED = frozenset({"temperature", "top_p"})
 
 
 class ConsoleSettingsSavedDefaultsMixin:
@@ -87,28 +87,35 @@ class ConsoleSettingsSavedDefaultsMixin:
             self._saved_defaults_cache = (pair, {**values, "base_url": defaults.base_url})
         return replace(self._draft.settings, **self._saved_defaults_cache[1])
 
-    def _saved_defaults_differ(self) -> bool:
+    def _saved_defaults_differ(self, *, endpoint: bool = True) -> bool:
         """Return whether Use saved defaults would change a shown value.
 
         A hidden field is left out: Apply commits it blank either way. A
         cleared Temperature or Top P counts as blank, as the unsaved guard
-        counts it, although the draft falls back to the opened value.
+        counts it, although the draft falls back to the opened value. Save
+        as model default shows on the same answer without the endpoint
+        (it writes no endpoint), so the two footer actions never contradict
+        each other (review I5).
+
+        Args:
+            endpoint: Whether a differing endpoint counts.
 
         Returns:
-            True when a shown field or the endpoint differs from the defaults.
+            True when a shown field (or the endpoint) differs from the defaults.
         """
         defaults = self._saved_defaults()
         draft = self._build_draft()
         for row in self.query(".console-settings-field-row"):
             if not row.display:
                 continue
-            control_id = str(row.id).removesuffix("-row")
-            name = control_id.removeprefix("console-settings-").replace("-", "_")
+            control_id, name = field_row_names(row)
             control = row.get_child_by_id(control_id)
             cleared = isinstance(control, Input) and not control.value.strip()
-            value = None if cleared and name in _REQUIRED else getattr(draft, name)
+            value = None if cleared and name in REQUIRED_FIELDS else getattr(draft, name)
             if value != getattr(defaults, name):
                 return True
+        if not endpoint:
+            return False
         provider = self._active_provider
         shown = self._current_base_url_value(provider)
         if shown is None:
@@ -170,6 +177,10 @@ class ConsoleSettingsSavedDefaultsMixin:
             self._use_saved_defaults()
 
     def action_make_new_chat_default(self) -> None:
-        """Ctrl+N: the footer's Default for new chats, while it is offered."""
+        """Ctrl+N: the footer's Default for new chats, while it is offered.
+
+        Nothing happens while the close guard shows (``press`` already
+        refuses a hidden or disabled button).
+        """
         if not self.query_one("#console-settings-close-guard").display:
             self.query_one("#console-settings-make-default", Button).press()

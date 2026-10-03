@@ -14145,8 +14145,9 @@ async def test_console_settings_modal_default_action_only_tracks_changed_persist
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_default_action_names_provider_scope() -> None:
-    """Provider/model persistence must name both its action and impact scope."""
+async def test_console_settings_modal_model_default_action_names_its_scope() -> None:
+    """Save as model default names its action and impact scope (renamed by
+    the final review: it writes the model profile, not provider defaults)."""
     app = ModalHarness()
     app.app_config["api_settings"]["llama_cpp"]["model"] = "model-a"
     app.app_config["chat_defaults"] = {
@@ -14154,10 +14155,13 @@ async def test_console_settings_modal_provider_default_action_names_provider_sco
         "model": "model-a",
         "streaming": True,
     }
+    # A value the saved chain lacks: the action shows only while a save
+    # would change the defaults (final review I5).
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
         model="model-b",
         base_url="http://127.0.0.1:9099",
+        temperature=0.9,
     )
     modal = _basic_modal(
         settings,

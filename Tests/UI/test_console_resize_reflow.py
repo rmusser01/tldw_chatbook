@@ -143,7 +143,12 @@ def _resize_full_settings(
     focus_context: bool = False,
     transfer: ConsoleSettingsTransfer | None = None,
 ) -> ConsoleSettingsModal:
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
+    # A Temperature the saved chain lacks, so the footer offers every action:
+    # Save as model default shows only while a save would change the
+    # defaults (Phase 6 final review I5).
+    settings = ConsoleSessionSettings(
+        provider="llama_cpp", model="model-a", temperature=0.9
+    )
     return ConsoleSettingsModal(
         settings=settings,
         transfer=transfer,

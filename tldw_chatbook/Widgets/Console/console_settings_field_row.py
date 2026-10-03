@@ -33,6 +33,7 @@ from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
+from rich.cells import cell_len, set_cell_size
 from textual import events
 from textual.app import RenderResult
 from textual.containers import Horizontal
@@ -64,7 +65,7 @@ from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
-from .console_model_popover import _context_copy
+from .console_model_popover import context_copy
 from .console_settings_summary import build_console_readiness_presentation
 
 if TYPE_CHECKING:
@@ -113,6 +114,7 @@ SAMPLING_DISCLOSURE_ID = "console-settings-sampling"
 CONNECTION_DISCLOSURE_ID = "console-settings-connection-disclosure"
 REQUEST_ESTIMATE_DISCLOSURE_ID = "console-settings-request-estimate"
 NAME_DISCLOSURE_ID = "console-settings-identity-advanced"
+NAME_INPUT_ID = "console-settings-user-display-name"
 #: The Endpoint row: label, Base URL input and New endpoint….
 ENDPOINT_ROW_ID = "console-settings-endpoint-row"
 CONNECTION_TITLE = "Connection"
@@ -121,10 +123,11 @@ NAME_TITLE = "Your name in this chat"
 #: Ends the Connection summary (spec §7 mock (b)): credentials and provider
 #: defaults live in Settings, and Console only surfaces recovery (ADR-012).
 SETTINGS_POINTER = "change it in Settings ▸ Providers & Models"
-#: Cells for the Connection summary in the 150-column frame: 150 - 2 border
-#: - 2 padding - 2 title padding - 2 symbol - 1 scrollbar. A longer summary
-#: shortens the host, so the closed disclosure stays one row (AC#6).
-CONNECTION_SUMMARY_CELLS = 141
+#: Cells for a closed disclosure title in the 150-column frame: 150 - 2
+#: border - 2 padding - 2 title padding - 2 symbol - 1 scrollbar. Every
+#: closed title stays one row (owner ruling of 2026-10-02): Connection
+#: shortens its host, Sampling counts the fields it cannot name.
+DISCLOSURE_TITLE_CELLS = 141
 #: The host part for an endpoint that cannot be parsed (a half-typed URL).
 INVALID_ENDPOINT_HOST = "invalid endpoint"
 MODEL_ROW_LABEL = "Model"
@@ -141,15 +144,23 @@ BLANK_FIELD_HELP = "blank = provider default"
 GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
 #: Ends the Sampling line that names the hidden fields (TASK-33006.2).
 HIDDEN_FIELDS_REASON = "(this provider does not accept them)"
+#: Ends the Sampling line that counts them when the names do not fit.
+HIDDEN_FIELDS_OPEN_HINT = "(open to list them)"
 SAMPLING_TITLE = "Sampling"
+#: Inside the opened Sampling disclosure: every hidden field, by its label.
+SAMPLING_HIDDEN_LIST_ID = "console-settings-sampling-hidden"
+#: A blank choice Select shows the value it inherits, not "Select" (spec
+#: §6); its Source word says the provider's (``_field_source``).
+BLANK_CHOICE_PROMPT = "default"
 _CHOICE_FIELDS = frozenset(
     {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
 )
 #: Hidden only on an authoritative "unsupported"; "unknown" stays visible.
 _SUPPORT_CONTROL_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
 #: Apply refuses these blank while the provider accepts them
-#: (``_required_sampling_errors``), in error order.
-_REQUIRED_FIELDS = ("temperature", "top_p")
+#: (``_required_sampling_errors``), in error order; a cleared one counts as
+#: blank for Use saved defaults too.
+REQUIRED_FIELDS = ("temperature", "top_p")
 #: Recovery actions that are not a connection blocker: tuning opens first.
 _TUNING_RECOVERY_ACTIONS = frozenset({None, "wait_for_active_run"})
 #: A missing model is fixed by the MODEL row's Change, which takes focus.
@@ -174,29 +185,104 @@ def field_control_id(name: str) -> str:
     return "console-settings-" + name.replace("_", "-")
 
 
+def field_row_names(row: Widget) -> tuple[str, str]:
+    """Return a field row's control id and field-table name.
+
+    Args:
+        row: A ``.console-settings-field-row``, id ``<control id>-row``.
+
+    Returns:
+        For example ``("console-settings-top-p", "top_p")``.
+    """
+    control_id = str(row.id).removesuffix("-row")
+    return control_id, control_id.removeprefix("console-settings-").replace("-", "_")
+
+
 SAMPLING_FOCUS_IDS = frozenset(field_control_id(name) for name in SAMPLING_FIELDS)
 #: Restorable focus targets that live inside the Connection disclosure.
 CONNECTION_FOCUS_IDS = frozenset({"console-settings-base-url"})
 
 
 def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
-    """Return the Sampling title, naming the fields the provider rejects.
+    """Return the one-row Sampling title for the fields the provider rejects.
 
     Args:
         provider_name: The provider's display name.
         hidden: Field-table names of the hidden fields, in line order.
 
     Returns:
-        ``"Sampling"`` when nothing is hidden, else for example
-        ``"Sampling · hidden for Anthropic: Min P, Seed (this provider does
-        not accept them)"``, using the field table's labels.
+        ``"Sampling"`` when nothing is hidden; ``"Sampling · hidden for
+        Anthropic: Min P, Seed (this provider does not accept them)"`` when
+        the labels fit ``DISCLOSURE_TITLE_CELLS``; else ``"Sampling · Together
+        does not accept 10 fields (open to list them)"``, the name shortened
+        with ``…`` if even that is too wide.
     """
-    names = ", ".join(MODEL_FIELD_LABELS[name] for name in hidden)
-    if not names:
+    labels = [MODEL_FIELD_LABELS[name] for name in hidden]
+    if not labels:
         return SAMPLING_TITLE
-    return (
-        f"{SAMPLING_TITLE} · hidden for {provider_name}: {names} {HIDDEN_FIELDS_REASON}"
+    named = (
+        f"{SAMPLING_TITLE} · hidden for {provider_name}: "
+        f"{', '.join(labels)} {HIDDEN_FIELDS_REASON}"
     )
+    if cell_len(named) <= DISCLOSURE_TITLE_CELLS:
+        return named
+    noun = "field" if len(labels) == 1 else "fields"
+    tail = f" does not accept {len(labels)} {noun} {HIDDEN_FIELDS_OPEN_HINT}"
+    room = DISCLOSURE_TITLE_CELLS - cell_len(f"{SAMPLING_TITLE} · {tail}")
+    if cell_len(provider_name) > room:
+        provider_name = set_cell_size(provider_name, room - 1) + "…"
+    return f"{SAMPLING_TITLE} · {provider_name}{tail}"
+
+
+def hidden_fields_list(provider_name: str, hidden: Iterable[str]) -> str:
+    """Return the opened Sampling disclosure's list of the hidden fields.
+
+    Args:
+        provider_name: The provider's display name.
+        hidden: Field-table names of the hidden fields, in line order.
+
+    Returns:
+        For example ``"Anthropic does not accept: Min P, Seed."``; ``""``
+        when nothing is hidden.
+    """
+    labels = ", ".join(MODEL_FIELD_LABELS[name] for name in hidden)
+    return f"{provider_name} does not accept: {labels}." if labels else ""
+
+
+def generation_field_support(
+    provider: str | None, model: str | None, app_config: Mapping[str, Any]
+) -> tuple[tuple[str, ...], frozenset[str]]:
+    """Decide which field rows a provider·model pair hides (spec rule 2).
+
+    Samplers follow the shared ``supported_generation_fields``; the reasoning
+    and thinking controls hide only on an authoritative "unsupported", and an
+    "unknown" one stays visible (TASK-30012 AC#3).
+
+    Args:
+        provider: The draft's provider.
+        model: The draft's model.
+        app_config: The configuration a registry endpoint's family comes from.
+
+    Returns:
+        ``(hidden, unknown)``: the hidden field names in Sampling-line order,
+        and the shown controls whose support is unknown.
+    """
+    supported = supported_generation_fields(provider, model, app_config)
+    hidden: list[str] = []
+    unknown: set[str] = set()
+    for name in SAMPLING_FIELDS + CORE_FIELDS:
+        if name in _SUPPORT_CONTROL_FIELDS:
+            support = console_generation_control_support(
+                provider, model, name, app_config
+            )
+            shown = support != "unsupported"
+            if support == "unknown":
+                unknown.add(name)
+        else:
+            shown = name in supported
+        if not shown:
+            hidden.append(name)
+    return tuple(hidden), frozenset(unknown)
 
 
 def connection_blocked(readiness: Any) -> bool:
@@ -247,9 +333,9 @@ def key_source_phrase(readiness: Any, env_var: str | None) -> str:
         env_var: The variable an environment key is read from.
 
     Returns:
-        ``key from env <VAR>``, ``key saved``, ``key missing``,
-        ``no key needed``, ``Claude subscription``, or ``key not checked``
-        while another blocker hides the credential.
+        ``key from env <VAR>``, ``key saved``, ``unsaved key`` (typed, not
+        saved), ``key missing``, ``no key needed``, ``Claude subscription``,
+        or ``key not checked`` while another blocker hides the credential.
     """
     if readiness.subscription_status is not None:
         return "Claude subscription"
@@ -257,8 +343,10 @@ def key_source_phrase(readiness: Any, env_var: str | None) -> str:
         return "no key needed"
     if readiness.credential_source == "environment":
         return f"key from env {env_var}" if env_var else "key from env"
-    if readiness.credential_source != "none":
+    if readiness.credential_source == "stored":
         return "key saved"
+    if readiness.credential_source == "draft":
+        return "unsaved key"
     if readiness.configuration_issue in (None, "credential_missing"):
         return "key missing"
     return "key not checked"
@@ -274,13 +362,20 @@ def connection_summary(host: str, key_phrase: str) -> str:
     Returns:
         ``"Connection · <host> · <key> · change it in Settings ▸ Providers &
         Models"``, the host ending in ``…`` when the whole would pass
-        ``CONNECTION_SUMMARY_CELLS``.
+        ``DISCLOSURE_TITLE_CELLS``.
     """
     parts = [CONNECTION_TITLE, host or "no endpoint set", key_phrase, SETTINGS_POINTER]
-    overflow = len(" · ".join(parts)) - CONNECTION_SUMMARY_CELLS
+    overflow = cell_len(" · ".join(parts)) - DISCLOSURE_TITLE_CELLS
     if overflow > 0 and host:
-        parts[1] = host[: max(len(host) - overflow - 1, 0)] + "…"
+        parts[1] = set_cell_size(host, max(cell_len(host) - overflow - 1, 0)) + "…"
     return " · ".join(parts)
+
+
+def _is_blank(control: Widget) -> bool:
+    """Whether a field row's control holds no value (a blank Input or Select)."""
+    if isinstance(control, Select):
+        return control.value is Select.NULL
+    return isinstance(control, Input) and not control.value.strip()
 
 
 def _show(widget: Static, text: str) -> None:
@@ -307,8 +402,8 @@ class ModelPairSummary(Static):
             layout), else the id shortened in the middle.
         """
         model, provider = self.pair
-        room = self.size.width - len(provider) - 3
-        if not self.size.width or len(model) <= room:
+        room = self.size.width - cell_len(provider) - 3
+        if not self.size.width or cell_len(model) <= room:
             return super().render()
         keep = max(room, 8) - 1
         return f"{model[: keep - keep // 2]}…{model[-(keep // 2):]} · {provider}"
@@ -380,6 +475,24 @@ class ConsoleSettingsFieldRowsMixin:
             classes="console-settings-modal-row console-settings-field-row",
         )
 
+    def _sampling_rows(self) -> Iterable[Widget]:
+        """Yield the Sampling disclosure's contents: the hidden-field list, then rows.
+
+        Yields:
+            The list ``_sync_generation_control_support`` fills (hidden while
+            nothing is hidden), then each Sampling field row.
+        """
+        hidden_list = Static(
+            "",
+            id=SAMPLING_HIDDEN_LIST_ID,
+            classes="console-settings-modal-row",
+            markup=False,
+        )
+        hidden_list.display = False
+        yield hidden_list
+        for name in SAMPLING_FIELDS:
+            yield self._field_row(name)
+
     def _model_row(self) -> Horizontal:
         """Build the MODEL row: model · provider | Source | readiness · context | Change.
 
@@ -442,7 +555,7 @@ class ConsoleSettingsFieldRowsMixin:
         estimate = self._context_estimate
         context = ""
         if estimate.token_limit:
-            size = _context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
+            size = context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
             context = f" · {size} context"
         status = self.query_one("#console-settings-model-status", Static)
         _show(status, f"{self._model_row_word}{context}")
@@ -453,10 +566,18 @@ class ConsoleSettingsFieldRowsMixin:
         Pick mode lists the models this modal's listings found beside the
         saved ones; a listing never picks one (spec rule 1).
 
+        Nothing opens while the close guard or a default recovery holds the
+        modal: its Tab trap would lose focus to Change (review I4).
+
         Args:
             query: Text Find opens with; New endpoint… names the new entry.
         """
-        if self._model_picker is None or not self.is_current:
+        if (
+            self._model_picker is None
+            or not self.is_current
+            or self.query_one("#console-settings-close-guard").display
+            or self._default_recovery_layout_phase is not None
+        ):
             return
         self._model_picker(
             self._origin, self._draft, query, self._model_picked, self._served_models
@@ -490,15 +611,17 @@ class ConsoleSettingsFieldRowsMixin:
             provider_id: The created ``custom-ep:<slug>`` id.
             name: Its display name, which Find opens with.
         """
-        identity = await asyncio.to_thread(
-            console_send_connection,
-            ConsoleSessionSettings(provider=provider_id, model=None),
-            app_config=self._app_config,
-        )
+        self._set_model_discover_status(f"Listing the models {name} serves…")
         try:  # the connection a send onto the entry uses; nothing is recorded
+            identity = await asyncio.to_thread(
+                console_send_connection,
+                ConsoleSessionSettings(provider=provider_id, model=None),
+                app_config=self._app_config,
+            )
             result = await self._connection_tester(identity) if identity else None
         except Exception:  # noqa: BLE001 - an unlisted entry still opens pick mode
             result = None
+        self._set_model_discover_status("")
         self._served_models[provider_id] = tuple(result.model_ids) if result else ()
         self._open_model_picker(f"{name} ")
 
@@ -633,7 +756,7 @@ class ConsoleSettingsFieldRowsMixin:
                 self._modal_label(NAME_TITLE),
                 ConsoleSettingsInput(
                     value=name,
-                    id="console-settings-user-display-name",
+                    id=NAME_INPUT_ID,
                     classes="console-settings-control",
                 ),
                 classes="console-settings-modal-row",
@@ -663,7 +786,7 @@ class ConsoleSettingsFieldRowsMixin:
         Args:
             event: Any Input's change; only the name Input's is used.
         """
-        if event.input.id == "console-settings-user-display-name":
+        if event.input.id == NAME_INPUT_ID:
             self.query_one(f"#{NAME_DISCLOSURE_ID}", Collapsible).title = (
                 self._name_title(event.value)
             )
@@ -701,19 +824,34 @@ class ConsoleSettingsFieldRowsMixin:
             whose support is unknown leads with the neutral copy.
         """
         field = MODEL_CONFIG_FIELDS[name]
-        if isinstance(control, Select):
-            blank = control.value is Select.NULL
-        else:
-            blank = isinstance(control, Input) and not control.value.strip()
-        if not blank:
+        if not _is_blank(control):
             text = field.help
-        elif name in _REQUIRED_FIELDS:
+        elif name in REQUIRED_FIELDS:
             text = f"Required: {field.valid_range}."
         else:
             text = f"{BLANK_FIELD_HELP} · {field.help}"
         if name in self._unknown_support_fields:
             return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}"
         return text
+
+    def _field_source(self, word: str, control: Widget) -> str:
+        """Return one row's Source word, "provider" for a blank built-in value.
+
+        The resolver falls back to its built-in layer when no layer holds a
+        value; a blank row sends nothing, so the provider decides (review I6).
+
+        Args:
+            word: The resolver's Source word for the row's field.
+            control: The row's control.
+
+        Returns:
+            The word to show.
+        """
+        if word == CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.BUILT_IN] and _is_blank(
+            control
+        ):
+            return CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+        return word
 
     def _control_support(self, control: str) -> str:
         """Return the shared support answer for one control of the draft.
@@ -743,7 +881,7 @@ class ConsoleSettingsFieldRowsMixin:
         )
         return [
             f"{MODEL_FIELD_LABELS[name]} is required."
-            for name in _REQUIRED_FIELDS
+            for name in REQUIRED_FIELDS
             if name in supported
             and not self.query_one(f"#{field_control_id(name)}", Input).value.strip()
         ]
@@ -754,37 +892,32 @@ class ConsoleSettingsFieldRowsMixin:
         Samplers follow the shared ``supported_generation_fields``; the
         reasoning and thinking controls hide only on an authoritative
         "unsupported", and an "unknown" one stays with neutral help copy
-        (TASK-30012 AC#3). The Sampling title names every hidden field, so a
-        model change re-decides both at once. Hidden values are not rewritten
+        (TASK-30012 AC#3). The one-row Sampling title names or counts the
+        hidden fields and the opened disclosure lists them, so a model change
+        re-decides all three at once. Hidden values are not rewritten
         here: Apply commits them blank (the controller's rebase) and the
         request never carries them.
         """
         provider = self._active_provider
-        model = self._current_model_value()
-        supported = supported_generation_fields(provider, model, self._app_config)
+        hidden, self._unknown_support_fields = generation_field_support(
+            provider, self._current_model_value(), self._app_config
+        )
         focused = self.app.focused
-        hidden: list[str] = []
-        unknown: set[str] = set()
         for name in SAMPLING_FIELDS + CORE_FIELDS:
-            if name in _SUPPORT_CONTROL_FIELDS:
-                support = self._control_support(name)
-                shown = support != "unsupported"
-                if support == "unknown":
-                    unknown.add(name)
-            else:
-                shown = name in supported
             row = self.query_one(f"#{field_control_id(name)}-row")
-            if not shown:
-                hidden.append(name)
-                if focused is not None and row in focused.ancestors_with_self:
-                    self.call_after_refresh(self._focus_highest_priority_connection)
+            shown = name not in hidden
+            if not shown and focused is not None and row in focused.ancestors_with_self:
+                self.call_after_refresh(self._focus_highest_priority_connection)
             row.display = shown
-        self._unknown_support_fields = frozenset(unknown)
+        display = provider_display_name(provider, self._app_config)
         # Literal Content: a registry display name is user text, and a str
         # title is parsed as markup ("Lab [gpu]" vanished, "[/b]" raised).
         self.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible).title = Content(
-            hidden_fields_line(provider_display_name(provider, self._app_config), hidden)
+            hidden_fields_line(display, hidden)
         )
+        hidden_list = self.query_one(f"#{SAMPLING_HIDDEN_LIST_ID}", Static)
+        _show(hidden_list, hidden_fields_list(display, hidden))
+        hidden_list.display = bool(hidden)
         self._sync_unsaved_hint()  # re-reads each row's help line
 
     def _sync_field_rows(self, edited_labels: Iterable[str]) -> None:
@@ -824,11 +957,12 @@ class ConsoleSettingsFieldRowsMixin:
             self._field_source_cache = (key, words)
         words = self._field_source_cache[1]
         for row in self.query(".console-settings-field-row"):
-            control_id = str(row.id).removesuffix("-row")
-            name = control_id.removeprefix("console-settings-").replace("-", "_")
-            _show(row.get_child_by_id(f"{control_id}-source", Static), words[name])
+            control_id, name = field_row_names(row)
+            control = row.get_child_by_id(control_id)
+            source = row.get_child_by_id(f"{control_id}-source", Static)
+            _show(source, self._field_source(words[name], control))
             help_line = row.get_child_by_id(f"{control_id}-help", Static)
-            _show(help_line, self._field_help(name, row.get_child_by_id(control_id)))
+            _show(help_line, self._field_help(name, control))
             # An obsolete restored choice's recovery copy takes the help
             # line's room while it shows (it needs about 84 cells).
             help_line.display = not any(
@@ -839,8 +973,9 @@ class ConsoleSettingsFieldRowsMixin:
         """Focus where the shown view opens (R13 of the Phase 6 plan).
 
         The Context view opens on Budget strategy. The Model view opens on
-        Temperature, or, while a connection blocker stands, on its recovery
-        action inside the Connection disclosure, which opens first.
+        Temperature; on Change while no model is chosen (``select_model``);
+        or, while a connection blocker stands, on its recovery action inside
+        the Connection disclosure, which opens first.
         """
         if not self.is_mounted or not self.query(f"#{MODEL_CHANGE_ID}"):
             return

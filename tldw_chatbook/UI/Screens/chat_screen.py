@@ -6151,8 +6151,8 @@ class ChatScreen(BaseAppScreen):
             return
         self.app.push_screen(
             ConsoleEndpointTemplateModal(
-                # The sentinel-flow seam: seed from the exact settings
-                # modal's own resolved inputs rather than re-resolving.
+                # Seed from the settings modal's own resolved inputs; the
+                # created entry then lands on a pair through pick mode.
                 app_config=settings_modal._app_config,
                 providers_models=settings_modal._providers_models,
                 template_provider=settings_modal._active_provider or None,

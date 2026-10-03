@@ -22,9 +22,11 @@ from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
+    ConsoleValueLayer,
     resolve_console_value_layers,
 )
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    BLANK_CHOICE_PROMPT,
     BLANK_FIELD_HELP,
     CONNECTION_DISCLOSURE_ID,
     CORE_FIELDS,
@@ -198,7 +200,9 @@ async def test_model_view_opens_core_first_then_one_row_disclosures() -> None:
 @pytest.mark.asyncio
 async def test_every_row_paints_label_value_source_and_help(size) -> None:
     """AC#2/#3/#14: each row paints the shared label, its value, the
-    resolver's Source word and the shared help line, all on one row."""
+    resolver's Source word and the shared help line, all on one row. A blank
+    row whose value no layer holds reads "provider", not "built-in": it sends
+    nothing, so the provider decides (final review I6)."""
     app = CoreFirstHarness()
     settings = _settings()
     modal = _modal(app, settings)
@@ -219,6 +223,8 @@ async def test_every_row_paints_label_value_source_and_help(size) -> None:
             assert row.region.height == 1, name
             line = await _painted_line(pilot, app, row)
             word = CONSOLE_VALUE_SOURCE_WORDS[words[name]]
+            if words[name] is ConsoleValueLayer.BUILT_IN and getattr(settings, name) is None:
+                word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
             source = modal.query_one(f"#{field_control_id(name)}-source", Static)
             assert str(source.content) == word, name
             assert MODEL_FIELD_LABELS[name] in line, (name, line)
@@ -301,7 +307,9 @@ async def test_untouched_streaming_shows_its_effective_value_and_stays_inherited
 @pytest.mark.asyncio
 async def test_blank_field_says_what_it_sends_and_no_placeholder_shows() -> None:
     """AC#4: a blank field shows what it inherits and where from; no
-    Model view Input carries a placeholder that could read as a value."""
+    Model view Input carries a placeholder that could read as a value, and a
+    blank choice Select names what it inherits instead of "Select" (final
+    review I6). A cleared required field names its range (T1 review item 5)."""
     app = CoreFirstHarness()
     modal = _modal(app, _settings())
     async with app.run_test(size=(211, 44)) as pilot:
@@ -317,7 +325,20 @@ async def test_blank_field_says_what_it_sends_and_no_placeholder_shows() -> None
         help_line = modal.query_one("#console-settings-top-k-help", Static)
         assert str(help_line.content).startswith(BLANK_FIELD_HELP)
         line = await _painted_line(pilot, app, top_k)
-        assert BLANK_FIELD_HELP in line and "built-in" in line, line
+        assert BLANK_FIELD_HELP in line and " provider " in line, line
+        assert "built-in" not in line, line
+        effort = modal.query_one("#console-settings-reasoning-effort", Select)
+        assert effort.value is Select.NULL
+        line = await _painted_line(pilot, app, effort)
+        assert BLANK_CHOICE_PROMPT in line and "Select" not in line, line
+        temperature = modal.query_one("#console-settings-temperature", Input)
+        temperature.focus()
+        temperature.clear()
+        for _ in range(3):
+            await pilot.pause()
+        help_line = modal.query_one("#console-settings-temperature-help", Static)
+        valid = MODEL_CONFIG_FIELDS["temperature"].valid_range
+        assert str(help_line.content) == f"Required: {valid}."
 
 
 @pytest.mark.parametrize("theme", ["agentic_terminal", "textual-light"])

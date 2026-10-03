@@ -57,12 +57,18 @@ class GeometryHarness(ConsolidatedCSSApp):
 
 
 def build_geometry_modal(app: GeometryHarness, *, ready: bool) -> ConsoleSettingsModal:
-    """Build either a blocked first-use or configured power-user draft."""
+    """Build either a blocked first-use or configured power-user draft.
+
+    The ready draft holds a Temperature the saved chain lacks, so the footer
+    offers every action: Save as model default shows only while a save would
+    change the defaults (Phase 6 final review I5).
+    """
     return ConsoleSettingsModal(
         settings=ConsoleSessionSettings(
             provider="llama_cpp",
             model="model-a" if ready else None,
             base_url="http://127.0.0.1:9099",
+            temperature=0.9 if ready else None,
         ),
         app_config=app.app_config,
         providers_models={"llama_cpp": ["model-a", "model-b"] if ready else []},
@@ -142,12 +148,15 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
         assert str(connection.label) == MODEL_DISCOVER_BUTTON_LABEL
         assert str(save_default.label) == "Save as model default"
         assert str(save.label) == "Apply to this chat (Ctrl+Enter)"
+        # A blocked chat has no model, so there is no model default to save.
+        assert save_default.display is ready
+        footer_actions = (adopt, save_default, save) if ready else (adopt, save)
         painted = "\n".join(
             strip.text for strip in app.screen._compositor.render_strips()
         )
         assert "Apply to this chat (Ctrl+Enter)" in painted
         assert "Use for this conversation" not in painted
-        for action in (connection, adopt, save_default, save):
+        for action in (connection, *footer_actions):
             assert action.region.width >= len(str(action.label))
 
         connection_row = modal.query_one("#console-settings-connection-actions")
@@ -156,14 +165,14 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
             assert connection_row.layout.name == "vertical"
             assert footer.layout.name == "vertical"
             assert connection.region.height == 1
-            assert len({action.region.y for action in (adopt, save_default, save)}) == 3
+            assert len({action.region.y for action in footer_actions}) == len(footer_actions)
             assert {
-                action.region.width for action in (adopt, save_default, save)
+                action.region.width for action in footer_actions
             } == {footer.content_region.width}
         else:
             assert connection_row.layout.name == "horizontal"
             assert footer.layout.name == "horizontal"
-            assert len({action.region.y for action in (adopt, save_default, save)}) == 1
+            assert len({action.region.y for action in footer_actions}) == 1
 
         status = modal.query_one("#console-settings-model-discover-status", Static)
         status.display = True

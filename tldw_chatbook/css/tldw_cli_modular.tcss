@@ -8631,11 +8631,9 @@ ConsoleSettingsModal .console-context-action-row {
     text-overflow: ellipsis;
 }
 
-#console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
-}
 
+#console-settings-verbosity,
+#console-settings-thinking-effort,
 #console-settings-reasoning-effort,
 #console-context-thinking-history-policy {
     width: $ds-size-12;

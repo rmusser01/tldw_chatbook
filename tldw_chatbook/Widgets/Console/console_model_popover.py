@@ -260,7 +260,16 @@ def _fit(text: str, width: int) -> str:
     return text if len(text) <= width else f"{text[: width - 4]}…{text[-3:]}"
 
 
-def _context_copy(tokens: int, verified: bool) -> str:
+def context_copy(tokens: int, verified: bool) -> str:
+    """Return a context window's short size, e.g. ``"200k"`` or ``"~32k"``.
+
+    Args:
+        tokens: The window size in tokens.
+        verified: Whether the size is known; an estimate starts with ``~``.
+
+    Returns:
+        The size in ``k`` or ``M`` units.
+    """
     if tokens >= 1_000_000:
         size = f"{round(tokens / 1_000_000, 1):g}M"
     elif tokens >= 1_000:
@@ -1321,7 +1330,7 @@ class ConsoleModelPopover(
 
             try:
                 window = resolve_context_window(provider, model)
-                label = _context_copy(window.tokens, window.verified)
+                label = context_copy(window.tokens, window.verified)
             except Exception:  # noqa: BLE001 - an unknown size is shown, not raised
                 label = "?"
             self._context_labels[cache_key] = label
