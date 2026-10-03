@@ -105,9 +105,9 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
     Default for new chats (Ctrl+N) and Apply to this chat (Ctrl+Enter), on
     one painted row; Cancel is the Context view's, not the Model view's.
 
-    Plan ruling R14, pinned here because TASK-33006.6 lands after this task:
-    the Context view keeps its own scope copy and offers no defaults action
-    (its defaults line: ``test_context_view_paints_no_defaults_line``)."""
+    Plan ruling R14: the Context view keeps its own scope copy and offers
+    no defaults action (its defaults line:
+    ``test_defaults_line_follows_the_view_switch``)."""
     app = CoreFirstHarness()
     modal = pick_modal(app, _settings(**EDITED))
     async with app.run_test(size=size) as pilot:
@@ -142,35 +142,46 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
         )
 
 
-class StaleDefaultsLine(Exception):
-    """The known TASK-33006.6 AC#2 defect, raised only where it shows."""
-
-
-@pytest.mark.xfail(
-    strict=True,
-    raises=StaleDefaultsLine,
-    reason=(
-        "TASK-33006.6 AC#2: switching to the Context view leaves the defaults "
-        "line painted. This task landed before TASK-33006.6 (plan R2/R14); "
-        "that task fixes it and removes this marker."
-    ),
-)
+@pytest.mark.parametrize("edited", [True, False], ids=["edited", "unchanged"])
 @pytest.mark.asyncio
-async def test_context_view_paints_no_defaults_line() -> None:
-    """R14: the defaults-scope line shows only beside a defaults action; the
-    Context view offers none, so it must not paint the line."""
+async def test_defaults_line_follows_the_view_switch(edited) -> None:
+    """TASK-33006.6 AC#2 (plan R14): the defaults-scope line shows only
+    beside a defaults action. The Context view offers none, so switching to
+    it hides the line; switching back re-derives Save as model default and
+    its line from the draft, so an unchanged chat shows neither. Rewritten
+    on purpose from TASK-33006.5's strict xfail
+    ``test_context_view_paints_no_defaults_line``."""
     app = CoreFirstHarness()
-    modal = pick_modal(app, _settings(**EDITED))
+    settings = _settings(**EDITED) if edited else _settings()
+    if not edited:  # save the chat's own values as every default it compares
+        app.app_config["api_settings"]["llama_cpp"]["model"] = "model-a"
+        app.app_config["chat_defaults"].update(
+            provider="llama_cpp", model="model-a", streaming=settings.streaming
+        )
+        app.app_config["console"] = {
+            "provider_defaults": {
+                "llama_cpp": {
+                    name: getattr(settings, name)
+                    for name in FULL_MODEL_DEFAULT_FIELDS - {"streaming"}
+                    if getattr(settings, name) is not None
+                }
+            }
+        }
+    modal = pick_modal(app, settings)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         default_scope = modal.query_one("#console-settings-default-scope", Static)
-        line = str(default_scope.content)
-        assert default_scope.display and line  # beside Save as model default
+        save_default = modal.query_one("#console-settings-save-default", Button)
+        line = "Used by future conversations for llama.cpp."
+        assert save_default.display is default_scope.display is edited
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)
-        assert not modal.query_one("#console-settings-save-default", Button).display
-        if any(line in row for row in _painted(app.screen)):
-            raise StaleDefaultsLine(line)
+        assert not save_default.display and not default_scope.display
+        assert not any(line in row for row in _painted(app.screen))
+        modal.query_one("#console-settings-view-model", Button).press()
+        await settle(pilot, app)
+        assert save_default.display is default_scope.display is edited
+        assert any(line in row for row in _painted(app.screen)) is edited
 
 
 @pytest.mark.parametrize(

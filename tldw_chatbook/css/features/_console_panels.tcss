@@ -104,6 +104,18 @@ ConsoleSettingsModal CollapsibleTitle {
     text-wrap: wrap;
 }
 
+/* TASK-33006.6: 'Conversation max tokens' is exactly as wide as the shared
+   23-cell column and ran into its input, so the Context view's labels get
+   one more cell. The compact tier keeps 16 in both views (more specific). */
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
 /* TASK-33003.2: one-row controls (the Input/Select rules live with the rest
    of the modal's field styling in components/_agentic_terminal.tcss). These
    moved here from the modal's DEFAULT_CSS, which loses to app CSS anyway. */
