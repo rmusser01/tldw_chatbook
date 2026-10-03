@@ -484,9 +484,7 @@ class ConsolePromptQueueRegion(Widget):
             manage.tooltip = "Open the prompt queue manager."
             pause.label = presentation.pause_label
             pause.disabled = not presentation.pause_enabled
-            pause.tooltip = (
-                f"{presentation.pause_label} this session's prompt queue."
-            )
+            pause.tooltip = f"{presentation.pause_label} this session's prompt queue."
         self.refresh(layout=True)
         # A Button caches its box model per its OWN layout count, so a new
         # label keeps the old width unless the Button itself is re-laid
@@ -556,14 +554,10 @@ class ConsolePromptQueueRegion(Widget):
                 )
             elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
-                    self._on_manage_requested(
-                        self._session_id, presentation.revision
-                    )
+                    self._on_manage_requested(self._session_id, presentation.revision)
                 else:
                     self.post_message(
-                        self.ManageRequested(
-                            self._session_id, presentation.revision
-                        )
+                        self.ManageRequested(self._session_id, presentation.revision)
                     )
             elif self._on_primary_requested is not None:
                 self._on_primary_requested(
@@ -755,7 +749,9 @@ class ConsolePromptQueueUIController:
             session_id, expected_revision=expected_revision
         )
         if result.status is QueueMutationStatus.STALE_REVISION:
-            self._notify("The prompt queue changed. Review it and try again.", "warning")
+            self._notify(
+                "The prompt queue changed. Review it and try again.", "warning"
+            )
         elif not result.applied and result.status is not QueueMutationStatus.UNCHANGED:
             self._notify(
                 result.detail or "That prompt queue action is unavailable.",

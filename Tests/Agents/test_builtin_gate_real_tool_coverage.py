@@ -6,6 +6,7 @@ REAL objects (the real tool, the real gate, the real DB) rather than the
 synthetic doubles the neighbouring suites use, because "the double behaves"
 is exactly what those reviews found insufficient.
 """
+
 from __future__ import annotations
 
 import asyncio

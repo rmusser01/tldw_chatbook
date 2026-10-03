@@ -222,9 +222,7 @@ def _coerce_positive_int(value, default: int, name: str) -> int:
             raise ValueError(f"non-positive {name}")
         return val
     except Exception:
-        logger.opt(exception=True).warning(
-            f"run log: invalid {name}, using default"
-        )
+        logger.opt(exception=True).warning(f"run log: invalid {name}, using default")
         return default
 
 
@@ -249,7 +247,9 @@ def configured_max_record_bytes() -> int:
         non-positive or unparsable value).
     """
     configured = _setting("run_log_max_record_bytes", DEFAULT_MAX_RECORD_BYTES)
-    return _coerce_positive_int(configured, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes")
+    return _coerce_positive_int(
+        configured, DEFAULT_MAX_RECORD_BYTES, "max_record_bytes"
+    )
 
 
 def _validate_run_id_path_component(run_id: str) -> str | None:
@@ -343,9 +343,7 @@ def resolve_log_root(
             else _tool_sandbox_root()
         )
         workspace_scope = (
-            run_workspace(workspace_id)
-            if workspace_id is not None
-            else nullcontext()
+            run_workspace(workspace_id) if workspace_id is not None else nullcontext()
         )
         with workspace_scope:
             roots = allowed_file_roots(write=True, sandbox_root=sandbox)
@@ -529,7 +527,9 @@ class RunLogWriter:
         self._segment_index = 1
         self._segment_size = 0
         self._active = False
-        self._bind_attempted = False  # Track whether bind() was called, success or failure
+        self._bind_attempted = (
+            False  # Track whether bind() was called, success or failure
+        )
         self.log_dir: Path | None = None
 
     @property
@@ -603,6 +603,7 @@ class RunLogWriter:
             legacy_dir_name = dir_name
             dir_name = f".{dir_name}"
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(root):
             from tldw_chatbook.Tools.file_operation_tools import is_within
 
@@ -625,9 +626,7 @@ class RunLogWriter:
             run_dir = base / run_id
             # Verify containment of run_dir before creating it.
             if not is_within(run_dir, root):
-                logger.warning(
-                    "run log: run directory escapes root; logging disabled"
-                )
+                logger.warning("run log: run directory escapes root; logging disabled")
                 self._active = False
                 return
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -764,6 +763,7 @@ class RunLogWriter:
             sync: Whether to force an ``fsync`` after flushing.
         """
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(path):
             import os
 
@@ -853,6 +853,7 @@ class RunLogWriter:
         if not self._active or self.log_dir is None:
             return None
         from tldw_chatbook.Backup_Recovery.storage_admission import acquire_storage
+
         with acquire_storage(self.log_dir):
             with self._lock:
                 truncated_from = 0
@@ -904,7 +905,6 @@ class RunLogWriter:
                 self._segment_size += len(payload)
                 return RunLogRecordNumber(record.number, truncated=bool(truncated_from))
 
-
     def write_manifest(self, metadata: dict) -> None:
         """Write run-level metadata while holding configured file authority."""
         if self.log_dir is None:
@@ -935,7 +935,9 @@ class RunLogWriter:
 
         payload = dict(metadata)
         try:
-            payload["segments"] = [p.name for p in sorted(self.log_dir.glob("logs.*.txt"))]
+            payload["segments"] = [
+                p.name for p in sorted(self.log_dir.glob("logs.*.txt"))
+            ]
             payload["record_count"] = self._counter
             self._write_bytes(
                 self.log_dir / MANIFEST_NAME,

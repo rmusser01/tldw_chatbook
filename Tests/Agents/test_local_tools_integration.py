@@ -451,8 +451,7 @@ def test_fs_list_fence_flow_denied_still_completes(db, workspace):
     # {name}: ..." line shape a success produces, so turn 2 can react to it.
     second_payload = chat.calls[1]["messages_payload"]
     assert any(
-        m["role"] == "user"
-        and m["content"] == f"Tool result for fs_list: {refusal}"
+        m["role"] == "user" and m["content"] == f"Tool result for fs_list: {refusal}"
         for m in second_payload
     )
 
@@ -515,9 +514,7 @@ def test_direct_disclosure_uses_complete_schema_cost(workspace):
     schemas = probe_initial_catalog(registry, allowed, 100, lambda _schemas: 99)
     assert schemas is not None
     assert {s.name for s in schemas} == FS_TOOL_NAMES | BUILTIN_TOOL_NAMES
-    assert (
-        probe_initial_catalog(registry, allowed, 100, lambda _schemas: 101) is None
-    )
+    assert probe_initial_catalog(registry, allowed, 100, lambda _schemas: 101) is None
 
 
 def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
@@ -593,9 +590,11 @@ def test_mcp_registered_last_remains_reachable_through_discovery_and_approval(
     )
 
     assert outcome.status == RUN_DONE
-    assert [
-        step.tool_name for step in outcome.steps if step.kind == "tool_call"
-    ] == ["find_tools", "load_tools", mcp_name]
+    assert [step.tool_name for step in outcome.steps if step.kind == "tool_call"] == [
+        "find_tools",
+        "load_tools",
+        mcp_name,
+    ]
     assert mcp_name in next(
         step.result
         for step in outcome.steps
@@ -635,8 +634,8 @@ def test_raw_shell_provider_joins_the_local_registry_partition(workspace):
         initial_directory=lambda: workspace,
     )
 
-    registry, allowed, _builtin_names, local_names = (
-        _compose_run_registry_and_allowed({}, raw_shell_provider=provider)
+    registry, allowed, _builtin_names, local_names = _compose_run_registry_and_allowed(
+        {}, raw_shell_provider=provider
     )
 
     assert "shell_exec" in allowed
