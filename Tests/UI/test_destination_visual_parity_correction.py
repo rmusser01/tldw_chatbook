@@ -1467,7 +1467,15 @@ async def test_watchlists_active_section_tab_label_is_visible():
             f"a border inside the one-row strip eats the row the labels need: "
             f"{rows[0]!r}"
         )
-        for label in ("Read", "Sources", "Runs", "Rules", "Notifications", "Artifacts", "Overview"):
+        for label in (
+            "Read",
+            "Sources",
+            "Runs",
+            "Rules",
+            "Notifications",
+            "Artifacts",
+            "Overview",
+        ):
             _assert_label_intact_on_screen(
                 strip, label, context="watchlists section tab strip"
             )
@@ -1509,6 +1517,8 @@ async def test_watchlists_article_focus_gives_the_reader_the_flexible_body(size)
         assert reader.region.width + sum(grip.region.width for grip in grips) == (
             body.region.width
         )
+
+
 @pytest.mark.parametrize("size", [(235, 52), (160, 42)])
 @pytest.mark.asyncio
 async def test_watchlists_right_rail_does_not_clip_action_labels(size):
