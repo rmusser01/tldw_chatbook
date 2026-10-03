@@ -1,0 +1,18 @@
+# 11 fixed build (live, w1-t2-2): Ctrl+End, typed ' tail two' without Enter, waited 8 s
+-- operations (kind|state|reason):
+  10 create_note|completed|
+   3 update_file|completed|
+-- roots (state|last_status_code):
+active|up_to_date
+-- note in DB:
+version=4
+length=108 last16hex=6E64206D6F7265207461696C2074776F
+> The best time to plant a tree was 20 years ago.
+
+> Writing is thinking.
+second edit line and more tail two
+-- file on disk (md5, od tail):
+4e0033dc3f48087d1e4c1c23672f52cf
+0000120        e   d   i   t       l   i   n   e       a   n   d       m
+0000140    o   r   e       t   a   i   l       t   w   o  \n            
+0000155
