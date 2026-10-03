@@ -159,7 +159,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_controller.py": 1689,
     # TASK-32659: bounded saved-search loading, including authority/request fencing.
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
-    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 976,
+    # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
+    # library_conversation_reader_freshness.py with its new transcript re-check.
+    "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 964,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
     "tldw_chatbook/UI/Library_Modules/library_export_controller.py": 1453,
     # 2026-09-05, wave-5 task 2 (ingest controller PR, series 2/3): born
