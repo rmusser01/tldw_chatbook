@@ -2,7 +2,7 @@
 
 Date: 2026-10-02
 
-Assessment: revise the contracts below before implementation planning. The local,
+Assessment of the reviewed commit: revise the contracts below before implementation planning. The local,
 same-chat workflow and agent timer capability remain the approved scope.
 
 ## Scope and evidence
@@ -198,11 +198,38 @@ solely because the later claimant merged first.
 
 ## Readiness
 
-Keep ADR-143 Proposed and the design task In Progress. Revise the eight contracts,
-carry the integration requirements into the implementation plan, and review the
-resulting transitions and admission boundaries before implementing runtime code.
-ADR check: this review introduces no accepted architecture decision; it reviews
-the already proposed ADR-143 and identifies amendments it needs.
+The original assessment above refers to commit `627cb86f77692530c0a83eda955321f2e78c8236`;
+its finding line numbers are historical. The user subsequently authorized the
+corrections. Independent authority and runtime revision reviews confirmed that all
+eight original findings are addressed in the revised spec/ADR. Their follow-up
+clarifications are incorporated in the resolution map below. This resolves design
+contracts; it does not claim runtime implementation or qualification.
+
+## Resolution map (2026-10-02)
+
+| Finding | Revised contract | Required qualification |
+| --- | --- | --- |
+| 1: live ownership | Spec section 7: strict automatic-owner lock, shared/exclusive maintenance gate, per-conversation primary locks; advisory app behavior retained. | Cases 11/19: two live processes, unrelated manual control, exclusive recovery/migration and cold startup. |
+| 2: reviewed task authority | Sections 3/5/6: root instructions bound to grant; fresh exact-task human review replaces them, descendants use explicit follow-up authority. | Case 15: stored permissions/follow-ups cannot replace root body. |
+| 3: queue re-arming | Section 7: post-commit callback for every cursor/coalescence/skip/retry change. | Case 12: three real-loop due times without forced reload. |
+| 4: one-time transitions | Section 4: transition table, pending identity transfer, sole Run-now consumption, overdue Resume refusal and accepted retime refusal. | Case 13: pre/post acceptance and retime versus settlement race. |
+| 5: execution-time due slots | Sections 4/9: active slots skipped until physical settlement; immutable accepted request and no immediate catch-up. | Case 14: slow work, approval waits and midnight. |
+| 6: mutation replay | Sections 5/7: receipts for every mutation, hash/receipt lookup before CAS and fail-closed expired origin. | Case 16: committed-but-lost result in both protocols. |
+| 7: retained-state bounds | Sections 6/7: count/age/byte quotas, pinned dependencies, lifetime counters/window watermark and terminal/control reserves. | Cases 17/22: bounded compaction plus fresh revocation at full pinned quota. |
+| 8: request history | Section 3: versioned machine-origin notice projected as labeled historical request paired with its reply, never manual authority. | Case 18: stream/nonstream, restart/remount and compaction. |
+
+Additional revision-review cases close completed-root grant Pause/Resume (case 21),
+fresh quota-exempt revocation authority (22), one-time active retime refusal (13)
+and exclusive recovery while a secondary process holds manual work (11).
+Scratch, live persona/profile policy, manual-only UserPromptSubmit, deny-only hook
+seams, hard wall deadlines and token-based UI are explicit in the revised design
+and [six-slice implementation plan](../plans/2026-10-02-chat-schedules-and-agent-timers.md).
+Advanced cron input and chat Run-now UI are deferred without weakening service semantics.
+
+ADR-143 now accepts the design. The execution plan first integrates current dev
+prerequisites and reconciles the later TASK-32195 claimant; that collision remains
+an integration prerequisite rather than an invented local rename. No code or
+files in the shared dirty checkout changed.
 
 Documentation checks for this review cover links, Markdown fences, whitespace,
 task status and preservation of the existing user-authored goal-plan bytes.
