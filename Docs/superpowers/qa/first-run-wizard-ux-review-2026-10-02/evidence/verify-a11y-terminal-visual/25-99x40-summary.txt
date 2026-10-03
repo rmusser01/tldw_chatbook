@@ -1,0 +1,40 @@
+┌─────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                      Set up tldw chatbook                                       │
+│                                                                                                 │
+│▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄▄│
+│ ┌──┐           ┌──┐            ┌──┐            ┌──┐            ┌──┐                ┌──┐         │
+│ │✓ │           │! │            │! │            │✓ │            │✓ │                │6 │         │
+│ └──┘           └──┘            └──┘            └──┘            └──┘                └──┘         │
+│ Welcome        Provider        Model           Voice           Protect             Summary      │
+│─────────────────────────────────────────────────────────────────────────────────────────────────│
+│                                                                                                 │
+│  lives in Settings when you want it.                                                            │
+│                                                                                                 │
+│  ✗ Provider — no credentials or saved endpoint                                              ▃▃  │
+│  – Default model — not selected                                                                 │
+│  – RAG — off by default — embedding model e5-small-v2                                           │
+│  – Speech transcription — not set up (optional)                                                 │
+│  ✓ Voice — PocketTTS (default voice)                                                            │
+│  – Tools — all off; turn them on under MCP ▸ Servers ▸ built-in row ▸ Tool gates                │
+│  – Notes folder sync — set up later in Library                                                  │
+│  – Theme — textual-dark                                                                         │
+│  – Key encryption — off                                                                         │
+│  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎           │
+│  ▊ ▐ ▌ Keep model lists fresh — checks your configured providers online at startup  ▎           │
+│  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │
+│  Config file: /Users/macbook-dev/Documents/GitHub/tldw_cha…config.toml                          │
+│  Re-run setup any time: Settings ▸ Diagnostics ▸ Run setup wizard.                              │
+│                                                                                                 │
+│  ▐X▌ Get to know you after setup                                                                │
+│       Review provider setup    Add your first document                                          │
+│                                                                                                 │
+│       Write your first note     Explore Home     Review settings                                │
+│                                                                                                 │
+│                                                                                                 │
+│                                                                                                 │
+│▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+│                                                                                                 │
+│    Step 6 of 6                                                                    ← Back        │
+│                                                                                                 │
+└─────────────────────────────────────────────────────────────────────────────────────────────────┘
+ Small terminal (99×40) — setup works best at 100×30 or larger. Everything still works; steps may

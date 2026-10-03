@@ -1,0 +1,30 @@
+╭─────────╮
+│ ⌃1 Home │ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Home | Blocked · Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────┐┌──────────────────────────────────────────────────────────────────────┐ │
+│ │ ──────────────────── ││ Set up Console model                                                 │ │
+│ │ Needs Attention  ▾   ││ Console needs a working model before live AI tasks.                  │ │
+│ │  No approvals or     ││    Set up Console model                                              │ │
+│ │  failures pending.   ││                                                                      │ │
+│ │ ──────────────────── ││                                                                      │ │
+│ │ Running          ▾   ││                                                                      │ │
+│ │  Nothing running     ││                                                                      │ │
+│ │  right now.          ││                                                                      │ │
+│ │ ──────────────────── ││                                                                      │ │
+│ │ Recent           ▾   ││                                                                      │ │
+│ │  Conversations,      ││                                                                      │ │
+│ │  notes, media,       ││                                                                      │ │
+│ │  runs, chatbooks,    ││                                                                      │ │
+│ │  and imports will    ││                                                                      │ │
+│ │  appear here.        ││                      ╭───────────────────────────────────────────────╮ │
+│ │ ──────────────────── ││                      │                                               │ │
+│ │ Details          ▸   ││                      │ Model catalog                                 │ │
+│ │                      ││                      │ Online model-list checks stay off. You can    │ │
+│ │                      ││                      │ enable them any time in Settings.             │ │
+│ │                      ││                      │                                               │ │
+│ │                      ││                      ╰───────────────────────────────────────────────╯ │
+│ └──────────────────────┘└──────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
