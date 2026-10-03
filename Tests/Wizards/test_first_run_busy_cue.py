@@ -186,13 +186,21 @@ async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypa
     busy line (a timer) could paint. A slow path that awaits
     (``asyncio.sleep``) leaves the loop free and cannot catch that; this one
     blocks whichever thread runs it.
+
+    Review round 2: the property is asserted directly (the scan ran off the
+    main thread). The loop-gap bound is a second, looser check, measured with
+    the garbage collector frozen: in a process that has already run other
+    wizard apps, a GC pause alone passed the old 0.5 s bar.
     """
+    import gc
     import threading
     import time
 
     started = threading.Event()
+    ran_on: list[threading.Thread] = []
 
     async def blocking_discovery(*_args, **_kwargs):
+        ran_on.append(threading.current_thread())
         started.set()
         time.sleep(1.0)  # synchronous, like admission and SSL context setup
         return ()
@@ -210,18 +218,27 @@ async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypa
         wizard.query_one("#setup-track-full", RadioButton).value = True
         await pilot.pause(0.05)
 
-        container.action_next()
-        gaps: list[float] = []
-        last = time.monotonic()
-        deadline = last + 1.6
-        while time.monotonic() < deadline:
-            await asyncio.sleep(0.02)
-            now = time.monotonic()
-            gaps.append(now - last)
-            last = now
+        gc.collect()
+        gc.disable()
+        try:
+            container.action_next()
+            gaps: list[float] = []
+            last = time.monotonic()
+            deadline = last + 1.6
+            while time.monotonic() < deadline:
+                await asyncio.sleep(0.02)
+                now = time.monotonic()
+                gaps.append(now - last)
+                last = now
+        finally:
+            gc.enable()
 
         assert started.is_set(), "Provider never started the localhost scan"
-        assert max(gaps) < 0.5, f"the UI loop was blocked for {max(gaps):.2f} s"
+        assert ran_on and ran_on[0] is not threading.main_thread(), (
+            "the localhost scan ran on the UI thread"
+        )
+        # Below the scan's own 1.0 s block: a blocked loop shows the whole of it.
+        assert max(gaps) < 0.9, f"the UI loop was blocked for {max(gaps):.2f} s"
         assert isinstance(container.steps[container.current_step], ProviderStep)
         provider = container.steps[container.current_step]
         for _ in range(60):
