@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 13:59'
+updated_date: '2026-10-03 15:00'
 labels:
   - agents
   - console
@@ -26,8 +26,8 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
-- [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -226,6 +226,20 @@ Reason: mechanically preserve shipped TASK33662 recovery-owner hydration and ses
 4. Qualify the seven unchanged new recovery cases and rewritten two Resend cases plus proportionate unchanged recovery/continuation/scoped progress/trace neighbors with private profiles and fake providers/real SQLite. Read the incoming isolation lesson/TASK33665 and keep tests task-owned. Use a task-owned outer HOME/TLDW_CONFIG_PATH for the complete test process, including late pytest teardown; fixture sandboxing stays unchanged. This containment is not implementation or certification of TASK33665. Authenticate composed source/full tree/index/function/assertion preservation, incoming task states, fatal/added-line style/format and task-ID/path/readability/whitespace guards. Rebuild actual diagnostics/worker inventory; retain exact inherited debt and every NON-GREEN/baseline/interrupted/unexecuted limit. No full sweep, installed release, live key/provider, physicalCtrlQ/relaunch, aggregate-resource or wider audit.
 5. Obtain independent read-only immutable preservation/targeted-functional/artifact review. After ALL functional/artifact/review activity settles, run the ORIGINAL five unchanged tested/untested storage/app-import/UI-ready/boot-CSS cases at exact REPO_ROOT cwd/PYTHONPATH, with no pin/ceiling/count/warmup/timeout/work changes. Authenticate fresh counts/raw/XML/warnings/full reviewed union after the run; supplemental independent approval precedes final CLI AC3/Done and four-owned-doc closure.
 6. Keep all incoming statuses as shipped: TASK33662 Done/four checked; TASK33665/33666/33667 To Do/ten unchecked. Older TASK33662 To Do references are historical superseded statuses, not root physical-relaunch certification. Publish once using EXACT observed941715c876f11697df4e755bc726633bd0ace27c lease, verify actual refs/body/new-head Qodo and wait ALL FOUR new jobs before any next actual strict-base action. Normal protected --match-head-commit merge only with exact-head reviews/gates and live protection satisfied. Verify actual MERGED parents/tree/concurrency before pausing heartbeat/reporting.
+
+## Strict-base local refusal and Voice-step preservation — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/211-ephemeral-provider-failure-presentation.md; backlog/decisions/097-boot-budget-ratchets.md; existing ADR063/179/199/200 and ADR150.
+Reason: preserve shipped TASK32369 local validation and TASK33921 Voice-step extraction inside existing typed diagnostic/transient Console custody. This is a mechanical integration of existing contracts, with no new schema, owner, authority, dependency, runtime interface, UI design or performance gate.
+
+1. All FOUR published1955793ece2701b19a780b6da7a8b1218d377a1a jobs passed and exact-head Qodo has four zero counters/all four threads resolved/complete pagination before any strict-base work. Actual devf0ffcf9e819b577bd38c416f38550969c75fb5a0 is CONFLICTING/DIRTY under freshly read strict up-to-date protection enforced for administrators. Reopen TASK33664 AC3 and AC4/In Progress through CLI before rebase and preserve all prior qualifications and limits.
+2. Capture all386 approved hashes,23 incoming paths, full tree/index/modes/blob addresses and capture_cloud.py deletion. Six manifest overlaps reproduce clean three-way outputs. The seventh, console_provider_gateway.py, has two queue-signature/enqueue conflicts: carry both incoming local flag and prior typed payload; typed payload/console_copy must be consumed before the incoming local wrapper fallback so no sanitized presentation enters diagnostic str/message/STEP_ERROR. Reproduce the exact intended composition before rebase. All379 prior non-overlap files and16 incoming non-overlap paths remain exact, except a documented necessary incoming test-contract correction after unmodified evidence.
+3. Preserve new ChatConfigurationError.field, sensitive rebuild field, safe local not-sent copy and real Anthropic/Cohere pre-network refusals, alongside the existing content-free projector, transient Console/RunOutcome copy, fallback/retry/class/status semantics and durable audit. Run the original incoming five tests first; if their two former generic-wrapper diagnostic display oracles conflict with ADR211, retain NON-GREEN raw/XML and minimally redirect display checks to the existing Console helper while adding separate content-free diagnostic checks. Preserve every original assertion's behavioral purpose, markers, real-handler/no-network guards; no production message leak, readiness/config/marker bypass or guard weakening.
+4. Authenticate the whole moved VoiceSetupStep AST, lazy factory/resume imports and re-export, eight Textual registered handlers, thirteen retargeted test patches, six moved diagnostic call digests and path-only DOM census row. Preserve exact incoming9866 wizard ratchet without raising any pin. Run unchanged affected OmniVoice cases and bounded Voice/setup/resume/save/playback neighbors using fakes/private profiles; no actual provisioning, audio service, user keys, installation, playback or physical-key certification. Incoming wider wizard/architecture sweep records remain historical only.
+5. Preserve incoming TASK32369 and33921 Done/three checked each, all seven new follow-up tasks To Do and their unchecked criteria, plus all existing separate states including33662 Done and33665/33666/33667 To Do. Authenticate402 union hashes/full planned tree/index plus only explicitly qualified composition/test changes. Check affected Python fatal/added-line/format proportionately, preserve incoming inherited style/format debt, actual diagnostics/worker/DOM custody and task/whitespace guards. Existing CSS/native/schema/progress/recovery/original guard qualifications carry by exact source identity.
+6. Obtain independent read-only immutable source/targeted-functional/artifact review. Only after ALL functional/artifact/review activity settles run ORIGINAL five unchanged tested/untested storage/app-import/UI-ready/boot-CSS cases at exact REPO_ROOT cwd/PYTHONPATH and full-process task-owned outer profile. No pins/ceilings/counts/timeouts/warmup/work changes. Supplemental independent source/hash/raw/XML/count review precedes CLI closure and four-owned-document-only update.
+7. Publish once using EXACT observed1955793ece2701b19a780b6da7a8b1218d377a1a lease and concise body after live refs/reviews/gates. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs before any next actual strict-base action or normal protected --match-head-commit merge. Verify MERGED actual parents/tree/concurrency before pausing heartbeat. Retain every positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter and optional/runtime/style/profile/cleanup/resource/physical/wider limits.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
