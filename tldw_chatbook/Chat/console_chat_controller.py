@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
@@ -19079,7 +19080,9 @@ class ConsoleChatController:
         # they keep the unconditional mount below.
         is_head = True
         if session_id is not None:
-            self.add_pending_round(session_id, request_id, kind="chat_create")
+            self.add_pending_round(
+                session_id, request_id, kind=CONSOLE_PENDING_CHAT_CREATE_KIND
+            )
             # Keyed by ROUND; the return says whether THIS round is its
             # session's FIFO head. A non-head round must not mount: an
             # older sibling is still holding the card.

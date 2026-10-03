@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
@@ -387,8 +388,10 @@ def test_primary_agent_payload_has_no_label(make_controller):
     "close_at", ["already_closed", "before_registration", "after_registration"]
 )
 def test_question_admission_cannot_outlive_its_committed_close(
-    make_controller, monkeypatch, close_at
-):
+    make_controller: Callable[[], ConsoleChatController],
+    monkeypatch: pytest.MonkeyPatch,
+    close_at: str,
+) -> None:
     """A closed owner's delayed question exits without changing its sibling.
 
     Args:

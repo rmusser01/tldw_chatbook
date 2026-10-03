@@ -17927,3 +17927,15 @@ copy and failed after its count was fixed; assert the affected Inspector and
 Files counts for this contract. Ordinary full wrappers then verify old journeys,
 worker completion and cleanup. Record the maximum-count compatibility bound
 rather than claiming an additive deduplicated mixed legacy/registered total.
+
+
+## Ruff line:column is one range endpoint
+
+**TASK-32367 / PR #2953, 2026-10-03.** A mechanical review fix passed full-module
+AST equivalence, but `ruff format --range start:end` interpreted the colon as
+line:column and reformatted code beyond the intended edit. Artifact preflight
+caught a controller diagnostic digest change despite an unchanged call count.
+Remove the unrelated formatting rather than blessing it in the inventory. Use
+`start_line:start_column-end_line:end_column` (or `start_line-end_line`), validate
+nonempty parsed diff ranges, and inspect the actual diff; AST equality alone
+does not establish byte-local scope or persistent-diagnostic reproducibility.

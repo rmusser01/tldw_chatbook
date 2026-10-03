@@ -140,6 +140,7 @@ from textual.widgets import Select
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     DEFAULT_CONSOLE_SESSION_TITLE,
@@ -3097,7 +3098,10 @@ class ConsoleSessionController:
                 ("question", "Questions: cancelled without an answer."),
                 ("skill_install", "Skill installs: declined; runs cancelled."),
                 ("skill_script", "Skill scripts: declined; runs cancelled."),
-                ("chat_create", "Chat creation: declined; no chat created."),
+                (
+                    CONSOLE_PENDING_CHAT_CREATE_KIND,
+                    "Chat creation: declined; no chat created.",
+                ),
                 (
                     "worktree_merge",
                     "Worktree decisions: cancelled; no merge or discard.",

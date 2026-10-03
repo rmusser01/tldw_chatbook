@@ -1070,3 +1070,40 @@ QA oct03_provider_validation_dev_integration pins current sources, passing
 subsets, exact baseline failures and fresh guard receipts. TASK-32367 remains
 In Progress until published-head Qodo and all four hosted gates pass, followed
 by final task-metadata-head checks/review and verified protected normal merge.
+
+
+Mechanical final-review follow-up (2026-10-03 UTC)
+
+Qodo d40a53fd and 038a1411 are addressed by one shared
+CONSOLE_PENDING_CHAT_CREATE_KIND in the already-imported models module and
+fixture/stage/return annotations on the new question/Close test. The scalar
+remains exactly chat_create. All four full module ASTs equal reviewed 87e53655
+after only substituting that scalar/removing the added aliases and annotations;
+249 other pins remain exact (253 current). No runtime behavior or module import
+edge changes, and existing ADR-067/094/150/195 continue to apply.
+
+An initial formatter call misread line:column as a start/end range and changed
+unrelated source formatting. The preflight correctly rejected the altered
+controller diagnostic digest. Remove the unrelated churn; retain the inventory
+unchanged, rather than regenerating it. Preserve that failed preflight as
+discarded-candidate evidence. Correct explicit start:column-end:column range
+checks pass for every actual edit.
+
+The minimal candidate passes all 102 question/interrupt/chat-create contracts,
+eight top-level projection/Close cases (six boundary controls and both complete
+ordinary private wrappers), and 13 import/module/LOC guards with zero
+failures/errors/skips. No collection plugin or getter bypass is added; the
+question test keeps its existing bootstrap_profile owner. The only later source
+change sorts its new test-only Callable import; all bodies/assertions and every
+production byte remain exact. All three question/Close stages re-pass on final
+test bytes. Maximum ordinary wrapper 66.045s remains below the unchanged 180s cap.
+Full artifact preflight passes in 135.00s; all 253 pins
+remain stable. Zero-new Ruff across 35 changed Python files and
+diff/backlog checks pass. The earlier full UI/host/37-Perf/native/queue receipts
+retain their original identities; no fresh full or native replay is claimed.
+
+QA oct03_mechanical_review_followup records current pins once, narrow full-AST
+proof, exact receipts, fixture modes, limits and the discarded formatter attempt.
+Keep TASK-32367 In Progress until latest-dev publication, clean resolved Qodo and
+all four hosted gates, followed by final metadata-head review/checks and verified
+protected normal merge.
