@@ -37,6 +37,7 @@ class ChatConfigurationError(ChatAPIError):
         message: str = "Chat provider configuration error.",
         provider: str | None = None,
         status_code: int | None = 500,
+        field: str | None = None,
     ) -> None:
         """Build a configuration failure, with or without a provider status.
 
@@ -48,8 +49,12 @@ class ChatConfigurationError(ChatAPIError):
                 configuration or data error raised during request
                 preparation. Callers that classify by status must treat
                 ``None`` as "no provider verdict", not as a server error.
+            field: For a request stopped by a local check, the request field
+                that failed it (``"messages"``), so the user copy can name it
+                without showing the message (TASK-32369).
         """
         super().__init__(message, status_code=status_code, provider=provider)
+        self.field = field
 
 
 class ChatBadRequestError(ChatAPIError):

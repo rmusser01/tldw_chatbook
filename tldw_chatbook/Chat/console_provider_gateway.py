@@ -1495,6 +1495,20 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
     if provider_copy == _PROVIDER_REQUEST_FAILED_COPY:
         return provider_copy
     status_code = getattr(exc, "status_code", None)
+    field = getattr(exc, "field", None)
+    if (
+        isinstance(exc, ChatConfigurationError)
+        and status_code is None
+        and isinstance(field, str)
+        and field.isidentifier()
+    ):
+        # TASK-32369: a local check named the field it refused, so nothing
+        # reached the provider. Only the field name is shown, never the
+        # message. A status-less error without a field may be a reply that
+        # could not be read (task-32342), so it keeps the copy below.
+        return _sanitized_provider_diagnostic(
+            f"Request to {provider_copy} not sent: it failed a local check on {field}."
+        )
     status_copy = f" Status: {status_code}." if type(status_code) is int else ""
     return _sanitized_provider_diagnostic(
         f"Provider error from {provider_copy}: {category}.{status_copy}"
@@ -2077,14 +2091,19 @@ class _QueueItem:
     # "no real status available" (a bare RuntimeError, say), which the
     # consumer maps to ChatProviderError's own upstream-error default.
     status_code: int | None = None
+    # TASK-32369: the failure never left the client (a status-less
+    # ChatConfigurationError), so the consumer must not report a provider 502.
+    local: bool = False
 
     @classmethod
     def content(cls, text: str, *, synthetic: bool = False) -> "_QueueItem":
         return cls("content", text, synthetic=synthetic)
 
     @classmethod
-    def error(cls, text: str, status_code: int | None = None) -> "_QueueItem":
-        return cls("error", text, status_code=status_code)
+    def error(
+        cls, text: str, status_code: int | None = None, *, local: bool = False
+    ) -> "_QueueItem":
+        return cls("error", text, status_code=status_code, local=local)
 
     @classmethod
     def trace_verification_error(cls) -> "_QueueItem":
@@ -6678,6 +6697,8 @@ class ConsoleProviderGateway:
                     _QueueItem.error(
                         error_copy,
                         status_code=status_code,
+                        local=isinstance(exc, ChatConfigurationError)
+                        and status_code is None,
                     )
                 )
             finally:
@@ -6703,6 +6724,13 @@ class ConsoleProviderGateway:
                 item = await queue.get()
                 if item.kind == "done":
                     break
+                if item.kind == "error" and item.local:
+                    # TASK-32369: as the non-stream path does (task-32342), a
+                    # failure that never left the client stays status-less;
+                    # wrapping it as ChatProviderError(502) blamed the provider.
+                    raise ChatConfigurationError(
+                        item.text, provider=resolution.provider, status_code=None
+                    )
                 if item.kind == "error":
                     # F5: carry the real status the worker captured -- never
                     # re-derive it by parsing item.text back out (that text
