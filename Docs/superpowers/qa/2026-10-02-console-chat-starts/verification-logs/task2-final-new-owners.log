@@ -1,0 +1,214 @@
+........................................................................ [ 53%]
+....................FFF.......................................           [100%]
+=================================== FAILURES ===================================
+______ test_fresh_controller_projects_oldest_recovery_without_secret_body ______
+
+    def test_fresh_controller_projects_oldest_recovery_without_secret_body() -> None:
+        runtime, store, _entries = _runtime_with_two_recoveries()
+        fake = _FakeChatController(accepted=False)
+        fake.store = store
+        calls = _calls()
+
+        fresh = _recovery_ui_controller(runtime, fake, calls, [])
+>       presentation = fresh.presentation_for("session-a")
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_queue.py:546:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.UI.Console_Modules.prompt_queue.ConsolePromptQueueUIController object at 0x1219bbe90>
+session_id = 'session-a'
+
+    def presentation_for(
+        self, session_id: str, *, composer_collapsed: bool = False
+    ) -> ConsolePromptQueuePresentation:
+        """Return a body-free presentation for one session."""
+
+        controller = self._chat_controller_accessor()
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        activity = controller.activity_for(session_id)
+        recovery_ids = self._turn_recovery_ids(session_id)
+        turn_recovery_id = recovery_ids[0] if recovery_ids else None
+        presentation = derive_prompt_queue_presentation(
+            snapshot,
+            activity,
+            composer_collapsed=composer_collapsed,
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
+            ),
+            turn_recovery_id=turn_recovery_id,
+        )
+>       if controller._chat_start.is_accepted(session_id):
+           ^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: '_FakeChatController' object has no attribute '_chat_start'
+
+tldw_chatbook/UI/Console_Modules/prompt_queue.py:635: AttributeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-02 20:06:11.117 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_fresh_controller_projects0/test_data/config/config.toml
+2026-10-02 20:06:11.117 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_fresh_controller_projects0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-02 20:06:11.118 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_fresh_controller_projects0/test_data/config/config.toml
+2026-10-02 20:06:11.118 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-02 20:06:11.118 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+______ test_restore_restages_exact_attachments_then_reveals_next_recovery ______
+
+    @pytest.mark.asyncio
+    async def test_restore_restages_exact_attachments_then_reveals_next_recovery() -> None:
+        runtime, store, entries = _runtime_with_two_recoveries()
+        suffix = PendingAttachment(
+            "/later.png", "later.png", "image", "attachment", data=b"later"
+        )
+        store.add_pending_attachment("session-a", suffix)
+        fake = _FakeChatController(accepted=False)
+        fake.store = store
+        calls = _calls()
+        loaded: list[str] = []
+        controller = _recovery_ui_controller(runtime, fake, calls, loaded)
+
+        await controller.handle_primary_intent(
+            "session-a",
+            action="turn-recovery:restore:turn-a",
+            expected_revision=0,
+        )
+
+        assert store.session_draft("session-a") == "first secret draft"
+        assert store.pending_attachments("session-a") == [
+            entries[0].attachments[0],
+            suffix,
+        ]
+        assert store.pending_attachments("session-a")[0] is entries[0].attachments[0]
+        assert loaded == ["session-a"]
+        assert calls["focused"] == [True]
+>       assert controller.presentation_for("session-a").turn_recovery_id == "turn-b"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_queue.py:591:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.UI.Console_Modules.prompt_queue.ConsolePromptQueueUIController object at 0x1219bbfb0>
+session_id = 'session-a'
+
+    def presentation_for(
+        self, session_id: str, *, composer_collapsed: bool = False
+    ) -> ConsolePromptQueuePresentation:
+        """Return a body-free presentation for one session."""
+
+        controller = self._chat_controller_accessor()
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        activity = controller.activity_for(session_id)
+        recovery_ids = self._turn_recovery_ids(session_id)
+        turn_recovery_id = recovery_ids[0] if recovery_ids else None
+        presentation = derive_prompt_queue_presentation(
+            snapshot,
+            activity,
+            composer_collapsed=composer_collapsed,
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
+            ),
+            turn_recovery_id=turn_recovery_id,
+        )
+>       if controller._chat_start.is_accepted(session_id):
+           ^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: '_FakeChatController' object has no attribute '_chat_start'
+
+tldw_chatbook/UI/Console_Modules/prompt_queue.py:635: AttributeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-02 20:06:11.744 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_restore_restages_exact_at0/test_data/config/config.toml
+2026-10-02 20:06:11.744 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_restore_restages_exact_at0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-02 20:06:11.745 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_restore_restages_exact_at0/test_data/config/config.toml
+2026-10-02 20:06:11.745 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-02 20:06:11.745 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+_________ test_discard_releases_exact_oldest_and_reveals_next_recovery _________
+
+    @pytest.mark.asyncio
+    async def test_discard_releases_exact_oldest_and_reveals_next_recovery() -> None:
+        runtime, store, _entries = _runtime_with_two_recoveries()
+        fake = _FakeChatController(accepted=False)
+        fake.store = store
+        calls = _calls()
+        controller = _recovery_ui_controller(runtime, fake, calls, [])
+
+        await controller.handle_primary_intent(
+            "session-a",
+            action="turn-recovery:discard:turn-a",
+            expected_revision=0,
+        )
+
+        assert [entry.turn_id for entry in runtime.recoveries_for_session("session-a")] == [
+            "turn-b"
+        ]
+>       assert controller.presentation_for("session-a").turn_recovery_id == "turn-b"
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+Tests/UI/test_console_prompt_queue.py:611:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <tldw_chatbook.UI.Console_Modules.prompt_queue.ConsolePromptQueueUIController object at 0x1219ba060>
+session_id = 'session-a'
+
+    def presentation_for(
+        self, session_id: str, *, composer_collapsed: bool = False
+    ) -> ConsolePromptQueuePresentation:
+        """Return a body-free presentation for one session."""
+
+        controller = self._chat_controller_accessor()
+        snapshot = controller.prompt_queue_registry.snapshot(session_id)
+        activity = controller.activity_for(session_id)
+        recovery_ids = self._turn_recovery_ids(session_id)
+        turn_recovery_id = recovery_ids[0] if recovery_ids else None
+        presentation = derive_prompt_queue_presentation(
+            snapshot,
+            activity,
+            composer_collapsed=composer_collapsed,
+            dispatch_recovery_blocked=(
+                controller.prompt_queue_coordinator.dispatch_recovery_blocks_queue(
+                    session_id
+                )
+            ),
+            turn_recovery_id=turn_recovery_id,
+        )
+>       if controller._chat_start.is_accepted(session_id):
+           ^^^^^^^^^^^^^^^^^^^^^^
+E       AttributeError: '_FakeChatController' object has no attribute '_chat_start'
+
+tldw_chatbook/UI/Console_Modules/prompt_queue.py:635: AttributeError
+----------------------------- Captured stderr call -----------------------------
+2026-10-02 20:06:12.007 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6088 - Attempting to load CLI config from: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_discard_releases_exact_ol0/test_data/config/config.toml
+2026-10-02 20:06:12.014 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6117 - CLI Config file not found at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_discard_releases_exact_ol0/test_data/config/config.toml. Creating with default values from CONFIG_TOML_CONTENT.
+2026-10-02 20:06:12.027 | INFO     | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6126 - Created default CLI config file at /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-02-console-chat-destinations-and-starts/pytest-final-new-owners/test_discard_releases_exact_ol0/test_data/config/config.toml
+2026-10-02 20:06:12.031 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6191 - load_cli_config_and_ensure_existence returning config with top-level keys: ['config_schema_version', 'general', 'console', 'hooks', 'skills', 'appearance', 'acp', 'tldw_api', 'library', 'caching', 'agents', 'splash_screen', 'logging', 'metrics', 'database', 'webhooks', 'scheduling', 'media_cleanup', 'api_endpoints', 'providers', 'model_catalog', 'api_settings', 'chat_defaults', 'chat', 'web_security', 'network', 'image_generation', 'character_defaults', 'analysis_defaults', 'permission_summary', 'llm_management', 'llamacpp_snapshots', 'notes', 'Prompts', 'prompts', 'embedding_config', 'rag_citations', 'rag', 'rag_search', 'chunking', 'model_capabilities', 'tools', 'SearchSettings', 'webfetch', 'SearchEngines', 'media_processing', 'meetings', 'dictation', 'transcription', 'diarization', 'local_ingestion', 'mcp', 'subscriptions', 'github', 'briefings_feed_server', 'canvas', 'web_server', '_first_run']
+2026-10-02 20:06:12.032 | DEBUG    | tldw_chatbook.config:_load_cli_config_bootstrap_unlocked:6195 -   'api_settings' found with keys: ['openai', 'anthropic', 'cohere', 'deepseek', 'groq', 'google', 'huggingface', 'mistralai', 'openrouter', 'moonshot', 'qwencloud', 'zai', 'llama_cpp', 'oobabooga', 'koboldcpp', 'ollama', 'vllm', 'aphrodite', 'tabbyapi', 'custom', 'custom_2', 'local-llm', 'local_llamafile', 'local_llamacpp', 'local_vllm', 'local_ollama', 'local_onnx', 'local_transformers', 'local_mlx_lm']
+============================= slowest 25 durations =============================
+7.84s call     Tests/UI/test_console_prompt_queue.py::test_dirty_queue_edit_vetoes_navigation_and_preserves_text
+7.77s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[edit]
+7.41s call     Tests/UI/test_console_composer_reason_width.py::test_resize_from_wide_to_narrow_retracts_the_voice_chip
+6.91s call     Tests/UI/test_console_composer_reason_width.py::test_chip_going_idle_restores_the_reason_strip_budget
+6.17s call     Tests/UI/test_console_prompt_queue.py::test_navigation_confirmation_is_pure_and_preserves_manager_edit
+5.86s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[busy]
+5.40s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[edit]
+5.34s call     Tests/UI/test_console_composer_reason_width.py::test_wide_composer_keeps_voice_chip_capped_and_draft_floor
+5.28s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[busy]
+5.26s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_admission_freezes_view_source_filter[race]
+5.18s call     Tests/UI/test_console_prompt_queue.py::test_full_console_manager_mounts_entry_children_before_live_list_insert
+4.95s call     Tests/UI/test_console_prompt_queue.py::test_wired_queue_rejects_wrong_owner_before_draft_or_queue_mutation[race]
+4.94s call     Tests/UI/test_console_composer_reason_width.py::test_wide_composer_keeps_reason_strip_capped_and_draft_floor
+4.87s call     Tests/UI/test_console_composer_reason_width.py::test_preparing_renders_whole_in_the_intermediate_band
+4.85s call     Tests/UI/test_console_composer_reason_width.py::test_narrow_composer_keeps_the_draft_visible_beside_a_reason
+4.72s call     Tests/UI/test_console_composer_reason_width.py::test_narrow_composer_keeps_draft_visible_beside_voice_chip
+4.68s call     Tests/UI/test_console_composer_reason_width.py::test_resize_from_wide_to_narrow_reapplies_the_strip_budget
+4.50s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+4.49s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size2]
+4.33s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size0]
+4.12s call     Tests/UI/test_console_prompt_queue.py::test_mounted_shelf_and_neighboring_composer_fit_terminal[size1]
+3.33s call     Tests/Chat/test_console_chat_start.py::test_unconfirmed_preaccept_settlement_requires_review[raise]
+2.80s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+2.77s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+2.64s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[target_stop]
+=========================== short test summary info ============================
+FAILED Tests/UI/test_console_prompt_queue.py::test_fresh_controller_projects_oldest_recovery_without_secret_body
+FAILED Tests/UI/test_console_prompt_queue.py::test_restore_restages_exact_attachments_then_reveals_next_recovery
+FAILED Tests/UI/test_console_prompt_queue.py::test_discard_releases_exact_oldest_and_reveals_next_recovery
+3 failed, 131 passed in 234.39s (0:03:54)

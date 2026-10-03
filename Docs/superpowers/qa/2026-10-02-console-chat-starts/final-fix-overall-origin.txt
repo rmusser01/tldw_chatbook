@@ -1,0 +1,215 @@
+9ba96ebb626dd010f14d093b0e8d40f37c715d32:tldw_chatbook/Chat/console_chat_store.py:13987
+def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
+        """Point a session's active leaf at a node and recompute the active path.
+
+        Updates the in-memory pointer, rematerializes the active-path view via
+        the single writer, and -- when the session owns a persisted conversation
+        and the persistence adapter exposes a raw ``db`` seam -- write-throughs
+        the local-only ``conversations.active_leaf_message_id`` pointer (mapped
+        to the leaf node's *persisted* id, or ``None`` when the leaf is cleared
+        or not yet persisted). An ownership refusal leaves both cursors intact.
+        Other durable write failures retain the existing in-memory write-through
+        convention and are logged.
+
+        Args:
+            session_id: Native Console session ID.
+            message_id: Native id of the node to make the active leaf, or
+                ``None`` to clear the active path entirely.
+
+        Raises:
+            KeyError: If the session is unknown, or ``message_id`` is not
+                ``None`` and does not reference a node in the session's tree.
+            RuntimeError: Pending dispatch ownership refuses the cursor change.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        if message_id is not None and message_id not in nodes:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        if not self._persist_active_leaf(session_id, message_id):
+            raise RuntimeError("Conversation cursor change was refused.")
+        previous_leaf = self._active_leaf_by_session.get(session_id)
+        self._active_leaf_by_session[session_id] = message_id
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        if message_id != previous_leaf:
+            self._bump_conversation_context_epoch(session_id)
+            if message_id is not None:
+                self.record_trace_event(
+                    session_id,
+                    anchor_message_id=message_id,
+                    event_kind="branch_selected",
+                    summary="Conversation branch selected",
+                    status="selected",
+                    source_event_id=(
+                        f"message:{nodes[previous_leaf].persisted_message_id}"
+                        if previous_leaf in nodes
+                        and nodes[previous_leaf].persisted_message_id is not None
+                        else None
+                    ),
+                )
+            self._notify_canvas_context_changed(session_id)
+
+HEAD:tldw_chatbook/Chat/console_chat_store.py:14106
+def set_active_leaf(self, session_id: str, message_id: str | None) -> None:
+        """Point a session's active leaf at a node and recompute the active path.
+
+        Updates the in-memory pointer, rematerializes the active-path view via
+        the single writer, and -- when the session owns a persisted conversation
+        and the persistence adapter exposes a raw ``db`` seam -- write-throughs
+        the local-only ``conversations.active_leaf_message_id`` pointer (mapped
+        to the leaf node's *persisted* id, or ``None`` when the leaf is cleared
+        or not yet persisted). An ownership refusal leaves both cursors intact.
+        Other durable write failures retain the existing in-memory write-through
+        convention and are logged.
+
+        Args:
+            session_id: Native Console session ID.
+            message_id: Native id of the node to make the active leaf, or
+                ``None`` to clear the active path entirely.
+
+        Raises:
+            KeyError: If the session is unknown, or ``message_id`` is not
+                ``None`` and does not reference a node in the session's tree.
+            RuntimeError: Pending dispatch ownership refuses the cursor change.
+        """
+        self._session_or_raise(session_id)
+        nodes = self._nodes_by_session.get(session_id, {})
+        if message_id is not None and message_id not in nodes:
+            raise KeyError(f"Unknown Console message: {message_id}")
+        if not self._persist_active_leaf(session_id, message_id):
+            raise RuntimeError("Conversation cursor change was refused.")
+        previous_leaf = self._active_leaf_by_session.get(session_id)
+        self._active_leaf_by_session[session_id] = message_id
+        self._recompute_active_path(session_id)
+        self._bump_payload_revision(session_id)
+        if message_id != previous_leaf:
+            self._bump_conversation_context_epoch(session_id)
+            if message_id is not None:
+                self.record_trace_event(
+                    session_id,
+                    anchor_message_id=message_id,
+                    event_kind="branch_selected",
+                    summary="Conversation branch selected",
+                    status="selected",
+                    source_event_id=(
+                        f"message:{nodes[previous_leaf].persisted_message_id}"
+                        if previous_leaf in nodes
+                        and nodes[previous_leaf].persisted_message_id is not None
+                        else None
+                    ),
+                )
+            self._notify_canvas_context_changed(session_id)
+
+Function source identical: True
+
+9ba96ebb626dd010f14d093b0e8d40f37c715d32:Tests/Chat/test_console_chat_fork.py:1817
+def test_configuration_and_leaf_writers_block_fork_through_live_publication(
+    monkeypatch,
+    route,
+) -> None:
+    store, persistence, session, _, first_answer, _, selected, _ = _fork_store(
+        durable=True
+    )
+    entered = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    if route == "active_leaf":
+
+        def blocking_leaf(_session_id, _message_id):
+            entered.set()
+            assert release.wait(2)
+
+        monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
+
+        def mutate() -> None:
+            store.set_active_leaf(session.id, first_answer.id)
+    else:
+
+        def blocking_prompt(**_kwargs):
+            entered.set()
+            assert release.wait(2)
+            return True
+
+        monkeypatch.setattr(
+            persistence,
+            "update_conversation_system_prompt",
+            blocking_prompt,
+            raising=False,
+        )
+
+        def mutate() -> None:
+            store.set_session_system_prompt(session.id, "Changed system prompt")
+
+    def run_mutation() -> None:
+        try:
+            mutate()
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    thread = Thread(target=run_mutation)
+    thread.start()
+    assert entered.wait(2)
+    assert store.fork_eligibility(selected.id).eligible is False
+    release.set()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert failures == []
+    assert session.id not in store._fork_source_transitions
+
+HEAD:Tests/Chat/test_console_chat_fork.py:1817
+def test_configuration_and_leaf_writers_block_fork_through_live_publication(
+    monkeypatch,
+    route,
+) -> None:
+    store, persistence, session, _, first_answer, _, selected, _ = _fork_store(
+        durable=True
+    )
+    entered = Event()
+    release = Event()
+    failures: list[BaseException] = []
+
+    if route == "active_leaf":
+
+        def blocking_leaf(_session_id, _message_id):
+            entered.set()
+            assert release.wait(2)
+
+        monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
+
+        def mutate() -> None:
+            store.set_active_leaf(session.id, first_answer.id)
+    else:
+
+        def blocking_prompt(**_kwargs):
+            entered.set()
+            assert release.wait(2)
+            return True
+
+        monkeypatch.setattr(
+            persistence,
+            "update_conversation_system_prompt",
+            blocking_prompt,
+            raising=False,
+        )
+
+        def mutate() -> None:
+            store.set_session_system_prompt(session.id, "Changed system prompt")
+
+    def run_mutation() -> None:
+        try:
+            mutate()
+        except BaseException as exc:  # pragma: no cover - assertion reports it
+            failures.append(exc)
+
+    thread = Thread(target=run_mutation)
+    thread.start()
+    assert entered.wait(2)
+    assert store.fork_eligibility(selected.id).eligible is False
+    release.set()
+    thread.join(2)
+    assert not thread.is_alive()
+    assert failures == []
+    assert session.id not in store._fork_source_transitions
+
+Function source identical: True

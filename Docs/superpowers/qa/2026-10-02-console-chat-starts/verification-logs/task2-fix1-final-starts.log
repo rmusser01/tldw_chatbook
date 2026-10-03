@@ -1,0 +1,29 @@
+........................................................................ [ 70%]
+..............................                                           [100%]
+============================= slowest 25 durations =============================
+4.43s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[generation]
+4.40s call     Tests/Chat/test_console_chat_start.py::test_saved_launch_status_projects_to_native_and_persisted_rows
+4.32s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[deadline]
+3.86s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits
+2.82s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]
+2.57s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+2.49s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits
+2.41s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[/help]
+2.30s call     Tests/Chat/test_console_chat_start.py::test_unconfirmed_preaccept_settlement_requires_review[false]
+2.19s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[source_stop]
+2.13s setup    Tests/Chat/test_console_chat_start.py::test_creation_without_owner_loop_persists_not_started
+2.13s call     Tests/Chat/test_console_chat_start.py::test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-raise]
+2.09s call     Tests/Chat/test_console_chat_start.py::test_initial_preparation_keeps_owner_until_uncertain_refund[caller_cancel-false]
+2.08s call     Tests/Chat/test_console_chat_start.py::test_initial_preparation_keeps_owner_until_uncertain_refund[source_stop-false]
+1.89s setup    Tests/Chat/test_console_chat_start.py::test_remembered_creation_works_detached_and_restores_fresh_defaults
+1.83s setup    Tests/Chat/test_console_chat_start.py::test_visible_pending_handoff_persists_every_composer_edit[replacement]
+1.83s call     Tests/Chat/test_console_chat_start.py::test_native_project_decision_refuses_before_both_fences[2]
+1.78s setup    Tests/Chat/test_console_chat_start.py::test_unknown_handoff_version_cannot_restore_an_authorized_draft
+1.78s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[write_failure]
+1.76s call     Tests/Chat/test_console_chat_start.py::test_ledger_cutoff_retains_charge_and_requires_conversation_receipt[target_stop]
+1.74s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[@file]
+1.69s setup    Tests/Chat/test_console_chat_start.py::test_preparation_is_frozen_and_mutation_needs_approved_token
+1.68s call     Tests/Chat/test_console_chat_start.py::test_live_machine_retry_starts_manual_work_without_reassigning_old_allowance
+1.68s call     Tests/Chat/test_console_chat_start.py::test_native_project_decision_refuses_before_both_fences[1]
+1.64s call     Tests/Chat/test_console_chat_start.py::test_refused_start_preserves_draft_without_dispatch_or_timer[unready]
+102 passed in 124.11s (0:02:04)

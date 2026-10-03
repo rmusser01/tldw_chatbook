@@ -1,0 +1,137 @@
+{
+  "base_ref": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "base_sha": "529a9ea9d1c14ba4a2e085c0355c0a304ac562ab",
+  "baseline_red_paths": [
+    "tldw_chatbook/Chat/console_turn_preparation.py",
+    "tldw_chatbook/Chat/console_roleplay_identity.py",
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+    "Tests/Chat/test_console_roleplay_identity.py",
+    "Tests/UI/test_console_fleet_wake_hidden_screen.py",
+    "Tests/UI/test_console_launch_wake.py"
+  ],
+  "files": {
+    "Tests/Chat/test_console_roleplay_identity.py": {
+      "debt_units": 1,
+      "formatter_required": true,
+      "normalized_diff_sha256": "56dc2c21e34bf9c4f9e48b6f6a3f6b50a0aa2fd2801a1952957d5f0a6d965fde",
+      "source_hunks": [
+        [
+          261,
+          267
+        ]
+      ],
+      "source_sha256": "d7c99c24b177fab4d3ad251b3d843df9019f7b193c5884a5d1a69decf311df2a"
+    },
+    "Tests/UI/test_console_fleet_wake_hidden_screen.py": {
+      "debt_units": 4,
+      "formatter_required": true,
+      "normalized_diff_sha256": "2a34dfb8b0a24654d49f548deb62658e20f7f795d1e961d69da8706e82e097d0",
+      "source_hunks": [
+        [
+          263,
+          269
+        ]
+      ],
+      "source_sha256": "223fb9ee8ba133978bb6bda053403f8e7bf3f454b6d88298fee0cb491148d6b0"
+    },
+    "Tests/UI/test_console_launch_wake.py": {
+      "debt_units": 34,
+      "formatter_required": true,
+      "normalized_diff_sha256": "61c534e1d7f7631dcc9fa673ceae80358de4312aa21362a4aeceb457be9c4373",
+      "source_hunks": [
+        [
+          88,
+          96
+        ],
+        [
+          243,
+          249
+        ],
+        [
+          271,
+          277
+        ],
+        [
+          296,
+          302
+        ],
+        [
+          378,
+          384
+        ],
+        [
+          653,
+          660
+        ],
+        [
+          762,
+          768
+        ],
+        [
+          785,
+          793
+        ]
+      ],
+      "source_sha256": "1b5d6f7e0d06b13576d78afa5efdba3862a7e6f87e099c78e12a547685cc309f"
+    },
+    "tldw_chatbook/Chat/console_roleplay_identity.py": {
+      "debt_units": 9,
+      "formatter_required": true,
+      "normalized_diff_sha256": "7ad9f869c78f771995c3e03ba1feb32a508eba886d5494a18f7247c2c99905fa",
+      "source_hunks": [
+        [
+          132,
+          137
+        ],
+        [
+          210,
+          221
+        ]
+      ],
+      "source_sha256": "5783968d7d1f8340a51f4f83db1ae4a97776e611e860bda6f6f1e3aa3a82e832"
+    },
+    "tldw_chatbook/Chat/console_turn_preparation.py": {
+      "debt_units": 3,
+      "formatter_required": true,
+      "normalized_diff_sha256": "3f4e522ac19946ca927befb0418ce21f6ad6436f9d1baeed30e61586eeea7eb4",
+      "source_hunks": [
+        [
+          355,
+          361
+        ]
+      ],
+      "source_sha256": "8cb6a05231a1f78d723159b08e30714b6add8d66022a69cc48e272f22f835bfd"
+    },
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py": {
+      "debt_units": 16,
+      "formatter_required": true,
+      "normalized_diff_sha256": "f43b72c24281f1b53f8efc7e96359ca9db6292107259a8c2f8b379d21c051d02",
+      "source_hunks": [
+        [
+          389,
+          397
+        ],
+        [
+          456,
+          469
+        ],
+        [
+          603,
+          609
+        ]
+      ],
+      "source_sha256": "ef1b7eb44a06a609917c257850bc1cd6ede4729f88b075ea57d98f516f7f8a61"
+    }
+  },
+  "generated_at_utc": "2026-10-03T02:07:38.950551+00:00",
+  "paths": [
+    "tldw_chatbook/Chat/console_turn_preparation.py",
+    "tldw_chatbook/Chat/console_roleplay_identity.py",
+    "tldw_chatbook/UI/Console_Modules/prompt_queue.py",
+    "Tests/Chat/test_console_roleplay_identity.py",
+    "Tests/UI/test_console_fleet_wake_hidden_screen.py",
+    "Tests/UI/test_console_launch_wake.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}

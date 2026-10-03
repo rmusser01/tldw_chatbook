@@ -775,19 +775,30 @@ NEW_CHAT_TOOL_SCHEMA = ToolSchema(
     id="runtime:new_chat",
     name=NEW_CHAT_TOOL_NAME,
     description=(
-        "Create a brand-new, empty chat for a parallel workstream unrelated to "
-        "the current conversation's history. The user is asked to confirm every "
-        "creation. opening_prompt is placed in the new chat's input box as a "
-        "draft the user reviews and sends themselves; it is never sent "
-        "automatically. instructions, when given, become the new chat's standing "
-        "system prompt. The new chat opens in the same workspace, in the "
-        "background; the user switches to it when ready. Use sparingly — each "
-        "call shows the user an approval card, and do not retry after the user "
-        "declines."
+        "Create a fresh chat in same_workspace (default) or casual scope. "
+        "mode=draft (default) saves opening_prompt for review; mode=start "
+        "requires a nonblank opening_prompt and attempts one bounded background "
+        "agent turn. instructions optionally overrides the destination assistant's "
+        "standing prompt. Approval is required unless remembered for this exact "
+        "mode and destination. Keeps the current chat, composer and focus intact. "
+        "Returns draft, not_started, started (accepted, completion pending), or "
+        "review_required. A blocked/uncertain start still created the chat: do not "
+        "repeat creation to recover it. Use its normal review/retry controls. "
+        "Do not retry after denial."
     ),
     parameters={
         "type": "object",
         "properties": {
+            "destination": {
+                "type": "string",
+                "enum": ["same_workspace", "casual"],
+                "default": "same_workspace",
+            },
+            "mode": {
+                "type": "string",
+                "enum": ["draft", "start"],
+                "default": "draft",
+            },
             "title": {
                 "type": "string",
                 "description": "Short title for the new chat.",

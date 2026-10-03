@@ -42,6 +42,9 @@ import time
 
 import pytest
 
+# These owners exercise native config participants selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.Chat.test_console_fleet_wake import _terminal_subagent_run
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.test_console_fleet_wake_wiring import _attach_real_dbs
@@ -343,10 +346,16 @@ async def test_a_second_launch_does_not_re_announce_a_delivered_wake(tmp_path):
         assert await _settle(pilot, lambda: bool(gateway1.payloads)), (
             "precondition: the first launch must deliver"
         )
-    assert marks1.has_mark(conversation_id, FLEET_UNSEEN), (
-        "precondition: the unwatched delivery must KEEP the mark, which is "
-        "exactly what makes the second launch a real test"
-    )
+        assert await _settle(
+            pilot,
+            lambda: (
+                not app1.console_runtime.chat_controller.fleet_wake.delivering_conversation_ids()
+            ),
+        )
+        assert marks1.has_mark(conversation_id, FLEET_UNSEEN)
+    # Shutdown may clear the view mark; seed it again to prove that attention
+    # alone cannot replay a result whose exact delivery receipt already exists.
+    marks1.set_mark(conversation_id, FLEET_UNSEEN)
 
     app2, _marks2, gateway2 = _launch_app(tmp_path, real_service=True)
     async with app2.run_test(size=(120, 40)) as pilot:
@@ -424,6 +433,12 @@ async def test_a_launch_into_console_delivers_without_stealing_the_active_tab(
         assert store.active_session_id == landed_on, (
             "the launch wake moved the user off the tab they landed on: "
             f"{landed_on} -> {store.active_session_id}"
+        )
+        assert await _settle(
+            pilot,
+            lambda: (
+                not app.console_runtime.chat_controller.fleet_wake.delivering_conversation_ids()
+            ),
         )
         assert marks.has_mark(conversation_id, FLEET_UNSEEN), (
             "the wake landed in a tab the user was not viewing, so the ◈ mark "
@@ -537,9 +552,8 @@ async def test_a_launch_with_no_marks_constructs_nothing_and_reads_once(tmp_path
             )
             await pilot.pause(0.2)
             _assert_console_never_mounted(app)
-            assert calls == [ConversationLocalMarksService.FLEET_UNSEEN], (
-                "a launch with no marks must cost exactly one indexed mark "
-                f"listing; got {calls}"
+            assert calls == [], (
+                "durable wake discovery must not treat attention marks as authority"
             )
             runtime = app.console_runtime
             assert runtime.chat_store is None, "a launch with no marks built a store"

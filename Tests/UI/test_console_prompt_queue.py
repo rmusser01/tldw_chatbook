@@ -670,6 +670,14 @@ async def test_full_console_manager_mounts_entry_children_before_live_list_inser
 
 class _FakeChatController:
     def __init__(self, *, accepted: bool, preparing: bool = False) -> None:
+        async def no_prepared_start(_session_id):
+            return None
+
+        self._chat_start = SimpleNamespace(
+            is_accepted=lambda _session_id: False,
+            is_prepared=lambda _session_id: False,
+            withdraw_for_manual=no_prepared_start,
+        )
         self.prompt_queue_registry = (
             _registry_with_chain() if accepted else ConsolePromptQueueRegistry()
         )

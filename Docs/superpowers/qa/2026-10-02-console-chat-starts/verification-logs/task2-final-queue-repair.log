@@ -1,0 +1,7 @@
+.....                                                                    [100%]
+============================= slowest 25 durations =============================
+11.03s call     Tests/UI/test_console_runtime_ownership.py::test_accepted_agent_chat_start_has_visible_stop_in_mounted_target
+9.86s call     Tests/UI/test_console_runtime_ownership.py::test_clearing_agent_handoff_in_mounted_composer_persists_before_exit
+
+(13 durations < 1s hidden.)
+5 passed, 104 deselected in 28.39s

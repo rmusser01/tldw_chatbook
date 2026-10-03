@@ -10,6 +10,9 @@ from types import SimpleNamespace
 
 import pytest
 
+# These owners exercise native config participants selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     RUN_CANCELLED,
@@ -441,7 +444,7 @@ def test_child_chain_uses_its_own_exact_first_request_budget(monkeypatch, tmp_pa
     monkeypatch.setattr(
         agent_service,
         "_count_model_messages",
-        lambda messages, *_a: (
+        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             95 if "sub-agent" in str(messages[0].get("content", "")).lower() else 10
         ),
     )
@@ -504,7 +507,7 @@ def test_primary_token_omission_is_delivery_local_when_child_admits(
     monkeypatch.setattr(
         agent_service,
         "_count_model_messages",
-        lambda messages, *_a: (
+        lambda messages, *_a, reasoning_replay=None, tokenizer_model=None: (
             10 if "sub-agent" in str(messages[0].get("content", "")).lower() else 95
         ),
     )

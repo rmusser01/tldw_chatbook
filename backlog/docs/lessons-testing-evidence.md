@@ -17672,3 +17672,17 @@ input list still named it. Updating that list to `features/_console.tcss` and
 `features/_console_panels.tcss` restored all 268 targeted checks without changing
 qualification claims. File moves must update explicit digest inputs as well as
 build inputs; the existing presence check caught this drift before publication.
+
+## Visible Stop needs an inside-parent geometry assertion (TASK-33805, 2026-10-02)
+
+The isolated real Console rendered an accepted background chat as Agent running,
+but its Stop button was missing at the terminal edge. The button had display=true
+and width6: an existing Redirect button used10 cells that the composer action row
+never reserved. A mounted regression measured Stop's right edge169 against its
+parent's159, then clicked Stop after the width fix and verified the target's saved
+stopped state. Checking button presence/display alone would have missed the bug.
+
+The same run found that Ctrl+U cleared a version-2 handoff visibly while the saved
+revision stayed unchanged, although direct store edit/clear tests passed. Exercise
+the mounted composer event and reopen the actual database: persistence must be
+wired to the empty edit event, not only to activation or nonblank input.

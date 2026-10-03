@@ -46,6 +46,27 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from tldw_chatbook.Sync_Interop.hashing import canonical_payload_hash
 
 
+TERMINAL_RECEIPT = "44444444-4444-4444-8444-444444444444"
+TERMINAL_METADATA = json.dumps(
+    {"finish_reason": "stop", "terminal_receipt_id": TERMINAL_RECEIPT}
+)
+
+
+def _raw_semantic_corruption(db, sql, params=()):
+    """Seed corruption for read validation, restoring the real trigger guard."""
+    connection = db.get_connection()
+    authorization = db._semantic_mutation_authorization_for_coordinator(connection)
+    connection.create_function(
+        "console_semantic_mutation_authorized", 2, lambda *_args: 1
+    )
+    try:
+        return connection.execute(sql, params)
+    finally:
+        connection.create_function(
+            "console_semantic_mutation_authorized", 2, authorization._sqlite_authorized
+        )
+
+
 def _authority(*, attempt_id: str = "attempt-1") -> ConsoleTurnLibraryAuthority:
     return ConsoleTurnLibraryAuthority(
         policy=ConsoleLibraryPolicySnapshot(
@@ -499,13 +520,14 @@ def test_read_quarantines_invalid_ownership(tmp_path: Path, corruption: str) -> 
     _insert(db, repository, _acceptance(conversation_id))
     connection = db.get_connection()
     if corruption == "bad_role":
-        connection.execute(
-            "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
+        _raw_semantic_corruption(
+            db, "UPDATE messages SET role = ? WHERE id = ?", ("tool", "assistant-1")
         )
     elif corruption == "cross_conversation":
         other_id = db.add_conversation({"title": "other"})
         assert other_id is not None
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET conversation_id = ? WHERE id = ?",
             (other_id, "user-1"),
         )
@@ -552,9 +574,15 @@ def test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage(
         _acceptance(conversation_id, suffix="2"),
     )
 
-    db.set_conversation_active_leaf(conversation_id, first.assistant_message_id)
+    db.get_connection().execute(
+        "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+        (first.assistant_message_id, conversation_id),
+    )
     first_read = repository.read_for_session(conversation_id)
-    db.set_conversation_active_leaf(conversation_id, second.assistant_message_id)
+    db.get_connection().execute(
+        "UPDATE conversations SET active_leaf_message_id=? WHERE id=?",
+        (second.assistant_message_id, conversation_id),
+    )
     second_read = repository.read_for_session(conversation_id)
 
     assert first_read.status is ConsoleDispatchResultStatus.COMMITTED
@@ -679,7 +707,8 @@ def test_read_quarantines_malformed_or_mismatched_checkpoint_identity(
             "UPDATE console_dispatch_checkpoints SET assistant_message_id = ?",
             (malformed_id,),
         )
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET id = ? WHERE id = ?",
             (malformed_id, inserted.assistant_message_id),
         )
@@ -965,14 +994,17 @@ def test_state_cas_requires_every_expected_owner_predicate(
     )
     connection = db.get_connection()
     if mismatch == "assistant_state":
-        connection.execute(
+        _raw_semantic_corruption(
+            db,
             "UPDATE messages SET assistant_generation_state = ? WHERE id = ?",
             ("dispatch_started", inserted.assistant_message_id),
         )
         connection.commit()
     elif mismatch == "deleted":
-        connection.execute(
-            "UPDATE messages SET deleted = 1 WHERE id = ?", (inserted.user_message_id,)
+        _raw_semantic_corruption(
+            db,
+            "UPDATE messages SET deleted = 1 WHERE id = ?",
+            (inserted.user_message_id,),
         )
         connection.commit()
 
@@ -1062,7 +1094,8 @@ def test_terminal_settlement_failure_at_each_write_boundary_rolls_back(
                 expected_assistant_message_version=1,
                 terminal_state="complete",
                 content="finished",
-                metadata_json='{"finish_reason":"stop"}',
+                metadata_json=TERMINAL_METADATA,
+                terminal_receipt_id=TERMINAL_RECEIPT,
             )
         )
 
@@ -1090,7 +1123,8 @@ def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Pat
             expected_assistant_message_version=1,
             terminal_state="complete",
             content="finished",
-            metadata_json='{"finish_reason":"stop"}',
+            metadata_json=TERMINAL_METADATA,
+            terminal_receipt_id=TERMINAL_RECEIPT,
         )
     )
 
@@ -1116,26 +1150,31 @@ def test_terminal_settlement_is_atomic_and_returns_committed_proof(tmp_path: Pat
         assistant["assistant_generation_state"],
         assistant["version"],
         assistant["deleted"],
-    ) == ("finished", '{"finish_reason":"stop"}', "complete", 2, 0)
-    assert db.read_committed_chat_sync_intent(
-        message_id=inserted.assistant_message_id,
-        message_version=2,
-        payload_hash=expected_hash,
-    ) is not None
+    ) == ("finished", TERMINAL_METADATA, "complete", 2, 0)
+    assert (
+        db.read_committed_chat_sync_intent(
+            message_id=inserted.assistant_message_id,
+            message_version=2,
+            payload_hash=expected_hash,
+        )
+        is not None
+    )
 
 
 @pytest.mark.parametrize("boundary", ["continuation_write", "handoff_delete"])
 def test_continuation_handoff_failure_rolls_back_both_owners(
     tmp_path: Path, boundary: str
 ) -> None:
-    db, conversation_id = _db_and_conversation(
-        tmp_path / f"handoff-{boundary}.sqlite"
-    )
+    db, conversation_id = _db_and_conversation(tmp_path / f"handoff-{boundary}.sqlite")
     repository = ConsoleDispatchRepository(db)
     inserted = _insert(db, repository, _continuation_acceptance(conversation_id))
     started = _start_dispatch(repository, inserted)
     connection = db.get_connection()
-    table = "messages" if boundary == "continuation_write" else "console_dispatch_checkpoints"
+    table = (
+        "messages"
+        if boundary == "continuation_write"
+        else "console_dispatch_checkpoints"
+    )
     operation = "UPDATE" if boundary == "continuation_write" else "DELETE"
     connection.execute(
         f"""

@@ -744,7 +744,7 @@ class CharactersRAGDB:
         db_path_str (str): String representation of the database path for SQLite connection.
     """
 
-    _CURRENT_SCHEMA_VERSION = 75  # Durable Stop continuation admission receipts.
+    _CURRENT_SCHEMA_VERSION = 76  # Native agent-chat-start dispatch receipts.
     _SCHEMA_NAME = "rag_char_chat_schema"  # Used for the db_schema_version table
     _ALLOWED_CONVERSATION_STATES = ("in-progress", "resolved", "backlog", "non-viable")
     _DEFAULT_CONVERSATION_STATE = "in-progress"
@@ -8251,6 +8251,25 @@ UPDATE db_schema_version
                 f"{type(exc).__name__}"
             ) from exc
 
+    def _migrate_from_v75_to_v76(self, conn: sqlite3.Connection) -> None:
+        """Preserve checkpoint owners while adding native chat-start receipts."""
+        self._require_migration_entry_version(conn, 75, "V75→V76")
+        migration = (
+            Path(__file__).parent
+            / "migrations"
+            / "chachanotes_v75_to_v76_agent_chat_starts.sql"
+        )
+        with self.transaction() as cursor:
+            self._execute_migration_statements(
+                cursor, migration.read_text(encoding="utf-8"), "V75→V76"
+            )
+            changed = cursor.execute(
+                "UPDATE db_schema_version SET version = 76 WHERE schema_name = ? AND version = 75",
+                (self._SCHEMA_NAME,),
+            )
+            if changed.rowcount != 1:
+                raise SchemaError("V75→V76 version update failed")
+
     def _migrate_from_v72_to_v73(self, conn: sqlite3.Connection) -> None:
         """Persist the note-link relation and backfill it from existing bodies."""
 
@@ -8628,6 +8647,7 @@ UPDATE db_schema_version
                     72: self._migrate_from_v72_to_v73,
                     73: self._migrate_from_v73_to_v74,
                     74: self._migrate_from_v74_to_v75,
+                    75: self._migrate_from_v75_to_v76,
                 }
 
                 if current_db_version == 0:

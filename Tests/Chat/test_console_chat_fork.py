@@ -1826,10 +1826,12 @@ def test_configuration_and_leaf_writers_block_fork_through_live_publication(
     failures: list[BaseException] = []
 
     if route == "active_leaf":
+        persist_leaf = store._persist_active_leaf
 
-        def blocking_leaf(_session_id, _message_id):
+        def blocking_leaf(session_id, message_id):
             entered.set()
             assert release.wait(2)
+            return persist_leaf(session_id, message_id)
 
         monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
 

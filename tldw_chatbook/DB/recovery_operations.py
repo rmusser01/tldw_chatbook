@@ -268,7 +268,10 @@ class _AgentRunsAdapter(_SQLiteDeclaration):
             self.owner_id,
             self.versions,
             self.schemas,
-            ((18, 21, _AGENT_RUNS_MIGRATION_18_21),),
+            (
+                (18, 21, _AGENT_RUNS_MIGRATION_18_21),
+                (21, 22, _AGENT_RUNS_MIGRATION_21_22),
+            ),
         )
 
     def validate(self, candidate: Path) -> tuple[str, ...]:
@@ -1232,7 +1235,14 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             stamp = connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            if stamp != (75,):
+            actual = tuple(
+                row[0]
+                for row in connection.execute(
+                    "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
+                )
+            )
+            expected_stamp = 76 if actual == _SUBSCRIPTIONS_V76_SCHEMA else 75
+            if stamp != (expected_stamp,):
                 return ("unsupported_schema_version",)
         return ()
 
@@ -1291,7 +1301,7 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             "db.agent_runs",
             None,
             "agent_runs.db",
-            (18, 21),
+            (18, 21, 22),
             _AGENT_RUNS_SCHEMA,
             ("db.chachanotes.primary",),
             optional_default=True,
@@ -1305,3 +1315,79 @@ def recovery_adapters() -> tuple[OwnerAdapter, ...]:
             (),
         ),
     )
+
+
+# ADR-211: exact constructor-captured v22 object deltas; all v18/v21 variants remain.
+_AGENT_RUNS_V22_REMOVED = (
+    "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n)",
+    "CREATE TRIGGER automatic_chain_identity_immutable\nBEFORE UPDATE OF conversation_id, root_submission_id, limits_json ON automatic_work_chains\nWHEN OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+)
+_AGENT_RUNS_V22_ADDED = (
+    "CREATE INDEX idx_automatic_chains_allowance_root\n    ON automatic_work_chains(allowance_root_chain_id)",
+    "CREATE UNIQUE INDEX idx_automatic_chat_start_conversation_active\n    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted')",
+    "CREATE TABLE automatic_chat_start_attempts (\n    id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    session_incarnation TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),\n    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),\n    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL\n, allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id))",
+    "CREATE TRIGGER automatic_chain_identity_immutable\nBEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains\nWHEN OLD.id IS NOT NEW.id\n  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+    "CREATE TRIGGER automatic_chain_root_insert\nBEFORE INSERT ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER automatic_chain_root_update\nBEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER automatic_chat_start_identity_immutable\nBEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,\n    session_id, session_incarnation, owner_id, draft_revision, context_epoch,\n    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts\nWHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id\n  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id\n  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id\n  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch\n  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint\n  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id\nBEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END",
+)
+
+
+def _agent_runs_v22_catalog(schema):
+    import re
+
+    def catalog_key(sql):
+        match = re.match(
+            r'CREATE (?:UNIQUE |VIRTUAL )?(INDEX|TABLE|TRIGGER) (?:IF NOT EXISTS )?["`]?([^"` (]+)',
+            sql,
+        )
+        assert match is not None
+        return match[1].lower(), match[2]
+
+    unchanged = tuple(sql for sql in schema if sql not in _AGENT_RUNS_V22_REMOVED)
+    return tuple(sorted(unchanged + _AGENT_RUNS_V22_ADDED, key=catalog_key))
+
+
+_AGENT_RUNS_SCHEMA += tuple(
+    (22, _agent_runs_v22_catalog(schema))
+    for version, schema in _AGENT_RUNS_SCHEMA
+    if version == 21
+)
+_SUBSCRIPTIONS_V76_REPLACEMENTS = {
+    "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)": "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n    ON console_dispatch_checkpoints(user_message_id)",
+    "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)": "CREATE TABLE \"console_dispatch_checkpoints\" (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued', 'agent_chat_start')),\n    queue_entry_id TEXT,\n    agent_chat_start_attempt_id TEXT UNIQUE,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),\n    CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL\n            AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)\n        OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))\n)",
+}
+_SUBSCRIPTIONS_V76_SCHEMA = tuple(
+    _SUBSCRIPTIONS_V76_REPLACEMENTS.get(sql, sql) for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
+)
+_SUBSCRIPTIONS_SCHEMA += ((2, _SUBSCRIPTIONS_V76_SCHEMA),)
+_AGENT_RUNS_V22_FRESH_CHAIN = "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL,\n    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)\n)"
+_AGENT_RUNS_SCHEMA += (
+    (
+        22,
+        tuple(
+            _AGENT_RUNS_V22_FRESH_CHAIN
+            if sql.startswith("CREATE TABLE automatic_work_chains ")
+            else sql
+            for sql in next(
+                schema for version, schema in _AGENT_RUNS_SCHEMA if version == 22
+            )
+        ),
+    ),
+)
+
+
+# ADR-211: fixed installed v21→v22 SQL; only disposable candidates migrate.
+_AGENT_RUNS_MIGRATION_21_22 = (
+    "ALTER TABLE automatic_work_chains ADD COLUMN allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)",
+    "DROP TRIGGER IF EXISTS automatic_chain_identity_immutable",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_identity_immutable\nBEFORE UPDATE OF id, conversation_id, root_submission_id, limits_json, allowance_root_chain_id ON automatic_work_chains\nWHEN OLD.id IS NOT NEW.id\n  OR OLD.allowance_root_chain_id IS NOT NEW.allowance_root_chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id\n  OR OLD.root_submission_id IS NOT NEW.root_submission_id\n  OR OLD.limits_json IS NOT NEW.limits_json\nBEGIN SELECT RAISE(ABORT, 'automatic chain identity is immutable'); END",
+    "CREATE INDEX IF NOT EXISTS idx_automatic_chains_allowance_root\n    ON automatic_work_chains(allowance_root_chain_id)",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_root_insert\nBEFORE INSERT ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chain_root_update\nBEFORE UPDATE OF allowance_root_chain_id ON automatic_work_chains\nWHEN NEW.allowance_root_chain_id IS NOT NULL\nAND (NEW.id=NEW.allowance_root_chain_id OR NOT EXISTS (\n    SELECT 1 FROM automatic_work_chains WHERE id=NEW.allowance_root_chain_id\n    AND allowance_root_chain_id IS NULL))\nBEGIN SELECT RAISE(ABORT, 'automatic allowance must name a direct root'); END",
+    "CREATE TABLE IF NOT EXISTS automatic_chat_start_attempts (\n    id TEXT PRIMARY KEY,\n    source_run_id TEXT NOT NULL REFERENCES agent_runs(id),\n    source_chain_id TEXT NOT NULL REFERENCES automatic_work_chains(id),\n    chain_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_chains(id),\n    conversation_id TEXT NOT NULL,\n    session_id TEXT NOT NULL,\n    session_incarnation TEXT NOT NULL,\n    owner_id TEXT NOT NULL,\n    draft_revision INTEGER NOT NULL CHECK (typeof(draft_revision)='integer' AND draft_revision>=0),\n    context_epoch INTEGER NOT NULL CHECK (typeof(context_epoch)='integer' AND context_epoch>=0),\n    request_fingerprint TEXT NOT NULL CHECK (length(request_fingerprint)=64 AND request_fingerprint NOT GLOB '*[^0-9a-f]*'),\n    generation_reservation_id TEXT NOT NULL UNIQUE REFERENCES automatic_work_reservations(id),\n    state TEXT NOT NULL CHECK (state IN ('prepared', 'accepted', 'completed', 'aborted', 'review_required')),\n    created_at REAL NOT NULL,\n    accepted_at REAL,\n    completed_at REAL\n)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_automatic_chat_start_conversation_active\n    ON automatic_chat_start_attempts(conversation_id) WHERE state IN ('prepared', 'accepted')",
+    "CREATE TRIGGER IF NOT EXISTS automatic_chat_start_identity_immutable\nBEFORE UPDATE OF id, source_run_id, source_chain_id, chain_id, conversation_id,\n    session_id, session_incarnation, owner_id, draft_revision, context_epoch,\n    request_fingerprint, generation_reservation_id ON automatic_chat_start_attempts\nWHEN OLD.id IS NOT NEW.id OR OLD.source_run_id IS NOT NEW.source_run_id\n  OR OLD.source_chain_id IS NOT NEW.source_chain_id OR OLD.chain_id IS NOT NEW.chain_id\n  OR OLD.conversation_id IS NOT NEW.conversation_id OR OLD.session_id IS NOT NEW.session_id\n  OR OLD.session_incarnation IS NOT NEW.session_incarnation OR OLD.owner_id IS NOT NEW.owner_id\n  OR OLD.draft_revision IS NOT NEW.draft_revision OR OLD.context_epoch IS NOT NEW.context_epoch\n  OR OLD.request_fingerprint IS NOT NEW.request_fingerprint\n  OR OLD.generation_reservation_id IS NOT NEW.generation_reservation_id\nBEGIN SELECT RAISE(ABORT, 'chat start identity is immutable'); END",
+    "INSERT OR IGNORE INTO schema_version (version) VALUES (22)",
+)

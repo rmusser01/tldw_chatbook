@@ -1,0 +1,35 @@
+COMMAND ['git', 'show', '9ba96ebb626dd010f14d093b0e8d40f37c715d32:tldw_chatbook/Chat/console_chat_store.py']
+EXCERPT lines 14008-14020
+14008:         """
+14009:         self._session_or_raise(session_id)
+14010:         nodes = self._nodes_by_session.get(session_id, {})
+14011:         if message_id is not None and message_id not in nodes:
+14012:             raise KeyError(f"Unknown Console message: {message_id}")
+14013:         if not self._persist_active_leaf(session_id, message_id):
+14014:             raise RuntimeError("Conversation cursor change was refused.")
+14015:         previous_leaf = self._active_leaf_by_session.get(session_id)
+14016:         self._active_leaf_by_session[session_id] = message_id
+14017:         self._recompute_active_path(session_id)
+14018:         self._bump_payload_revision(session_id)
+14019:         if message_id != previous_leaf:
+14020:             self._bump_conversation_context_epoch(session_id)
+COMMAND ['git', 'show', '9ba96ebb626dd010f14d093b0e8d40f37c715d32:Tests/Chat/test_console_chat_fork.py']
+EXCERPT lines 1820-1837
+1820: ) -> None:
+1821:     store, persistence, session, _, first_answer, _, selected, _ = _fork_store(
+1822:         durable=True
+1823:     )
+1824:     entered = Event()
+1825:     release = Event()
+1826:     failures: list[BaseException] = []
+1827:
+1828:     if route == "active_leaf":
+1829:
+1830:         def blocking_leaf(_session_id, _message_id):
+1831:             entered.set()
+1832:             assert release.wait(2)
+1833:
+1834:         monkeypatch.setattr(store, "_persist_active_leaf", blocking_leaf)
+1835:
+1836:         def mutate() -> None:
+1837:             store.set_active_leaf(session.id, first_answer.id)
