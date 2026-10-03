@@ -717,6 +717,9 @@ async def _census_idle_and_visit(
         # Owned calls run in worker threads that cancelling the loop does not
         # stop; cleanup waits for them before it restores anything.
         in_flight: set[asyncio.Future[Any]] = set()
+        # Calls whose wrapper was cancelled; their outcome is read after
+        # cleanup, since no wrapper is left to report it.
+        orphaned: list[tuple[str, asyncio.Future[Any]]] = []
 
         async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
             name = getattr(operation, "__name__", "")
@@ -732,11 +735,15 @@ async def _census_idle_and_visit(
             try:
                 result = await asyncio.shield(call)
             except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    orphaned.append((name, call))
                 # Any call in the billed pass -- epoch read, collection or
                 # compaction -- ends the census with its name, not a timeout.
                 if window["calls"] and not billed.is_set():
                     counting["on"] = False
-                    window["error"] = f"{name or 'an owned call'} raised {type(error).__name__}"
+                    window["error"] = window["error"] or (
+                        f"{name or 'an owned call'} raised {type(error).__name__}"
+                    )
                     billed.set()
                 raise
             if name == "run_after_gc" and window["calls"] and not billed.is_set():
@@ -761,10 +768,10 @@ async def _census_idle_and_visit(
         )
         real_schedule(runtime, database, normalizer_factory)
         try:
-            await asyncio.wait_for(billed.wait(), 60)
-            assert window["error"] is None, window["error"]
-            assert window["calls"] == ["current_graph_epoch", "collect", "run_after_gc"], (
-                f"the billed GC pass ran {window['calls']}"
+            await asyncio.wait_for(billed.wait(), GC_PASS_WAIT_SECONDS)
+        except TimeoutError:
+            window["error"] = window["error"] or (
+                f"the billed GC pass did not finish in {GC_PASS_WAIT_SECONDS} s"
             )
         finally:
             task = runtime._legacy_trace_maintenance_task
@@ -773,9 +780,20 @@ async def _census_idle_and_visit(
                 await asyncio.gather(task, return_exceptions=True)
                 runtime._legacy_trace_maintenance_task = None
             if in_flight:
-                await asyncio.wait(set(in_flight), timeout=60)
+                await asyncio.wait(set(in_flight), timeout=GC_PASS_WAIT_SECONDS)
             monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
             monkeypatch.setattr(storage_admission, "_local_pause_requested", real_probe)
+        late = [
+            f"{name} then raised {type(call.exception()).__name__}"
+            for name, call in orphaned
+            if call.done() and not call.cancelled() and call.exception() is not None
+        ]
+        assert window["error"] is None and not late, "; ".join(
+            filter(None, [window["error"], *late])
+        )
+        assert window["calls"] == ["current_graph_epoch", "collect", "run_after_gc"], (
+            f"the billed GC pass ran {window['calls']}"
+        )
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -1066,6 +1084,9 @@ MAX_TRACE_GC_PASS_STORAGE_UNITS = {
     "helper_spawns": 3,
     "os_opens": 54,
 }
+#: How long the GC census waits for its billed pass, and again for owned
+#: calls still in their worker threads after cancelling the loop.
+GC_PASS_WAIT_SECONDS = 60
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
 #: TASK-33643: os.open ceilings on the Linux perf-guard runner, where path
