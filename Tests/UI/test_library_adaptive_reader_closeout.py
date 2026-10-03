@@ -1,4 +1,14 @@
-"""Durable cross-destination adaptive-reader closeout regressions."""
+"""Durable cross-destination adaptive-reader closeout regressions.
+
+Every case runs under ``@private_profile_test`` (TASK-32386): the journeys
+mount real production-CSS apps whose ``_build_test_app -> load_settings``
+path goes through the ADR-126 config-participant admission, which the
+per-test environment redirect fails closed (the TASK-32628/32873/33370
+``RecoveryRequired: raw_source_selection_changed`` class), and their
+durable per-destination reader preferences must stay isolated per case —
+a shared in-process bootstrap profile leaks a Library/Items choice written
+by one case into the next one's initial layout.
+"""
 
 from __future__ import annotations
 
@@ -33,6 +43,7 @@ from Tests.UI.test_library_shell import (
 )
 from Tests.UI.test_library_skills_reader import _wire_skills
 from Tests.UI.test_destination_shells import StaticLibraryNotesScopeService
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Library.library_notes_tree_paging import NotesBranchKey
 from tldw_chatbook.Library.collections_capture_models import (
     CapturePageRequest,
@@ -46,6 +57,9 @@ from tldw_chatbook.Notes.note_folder_models import (
     NotePlacementRecord,
 )
 from tldw_chatbook.UI.Screens import library_screen as library_screen_module
+from tldw_chatbook.Widgets.Library.library_browse_reader_shell import (
+    LIBRARY_BROWSE_READER_SHELL_ID,
+)
 from tldw_chatbook.Widgets.workbench_focus import _available_targets
 from tldw_chatbook.config import load_settings
 
@@ -810,12 +824,48 @@ async def _focus_closeout_work_via_f6(
     # Prompt/Skills mode changes may recompose their shell after
     # ``_open_destination`` returns. Resolve the currently mounted owner so
     # focus evidence never compares a live control with a stale shell object.
+    # The destination's own mode presses (e.g. Collections Info) flip
+    # ``reader_mode`` BEFORE the work-pane swap that projects it lands, so a
+    # cold/slow event loop can reach this point mid-recompose with the work
+    # pane unmounted and the workbench target list empty -- the
+    # TASK-31422/32386 load-dependent "collections has no reachable Work
+    # focus target" signature. Wait the swap out first instead of asserting
+    # against the transient.
+    def _work_target_ready() -> bool:
+        current = screen.query_one(DESTINATION_CONTRACT[destination][1])
+        work = current.work
+        return work.is_mounted and work.display and any(
+            pane is work or work in pane.ancestors
+            for pane, _target in _available_targets(
+                screen, screen._library_workbench_focus_targets()
+            )
+        )
+
+    await _wait_for_condition(
+        pilot,
+        _work_target_ready,
+        message=lambda: (
+            f"{destination} has no reachable Work focus target: "
+            f"row={screen._library_selected_row_id!r}, "
+            f"shell.work={screen.query_one(DESTINATION_CONTRACT[destination][1]).work!r}, "
+            f"available panes={[getattr(pane, 'id', None) for pane, _t in _available_targets(screen, screen._library_workbench_focus_targets())]}, "
+            f"focused={screen.focused!r}"
+        ),
+    )
     shell = screen.query_one(DESTINATION_CONTRACT[destination][1])
     available = _available_targets(screen, screen._library_workbench_focus_targets())
     assert any(
         pane is shell.work or shell.work in pane.ancestors
         for pane, _target in available
-    ), f"{destination} has no reachable Work focus target"
+    ), (
+        f"{destination} has no reachable Work focus target: "
+        f"row={screen._library_selected_row_id!r}, "
+        f"shell.work={shell.work!r} (id={shell.work.id!r}, "
+        f"display={shell.work.display!r}, "
+        f"mounted={getattr(shell.work, 'is_mounted', None)!r}), "
+        f"available panes={[getattr(pane, 'id', None) for pane, _t in available]}, "
+        f"focused={screen.focused!r}"
+    )
     focused = screen.focused
     assert focused is None or focused is screen or focused.parent is not None, (
         f"{destination} recompose left detached focus owner {focused!r}"
@@ -921,10 +971,14 @@ async def _exercise_closeout_resize_is_presentation_only(
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("destination", DESTINATIONS)
 async def test_closeout_resize_is_presentation_only(
-    destination: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    destination: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     facts, _compositor, _svg = await _exercise_closeout_resize_is_presentation_only(
         destination, tmp_path, monkeypatch
@@ -1050,8 +1104,11 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_closeout_preferences_restore_in_fresh_screen(tmp_path: Path) -> None:
+async def test_closeout_preferences_restore_in_fresh_screen(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     (
         facts,
         _compositor,
@@ -1186,6 +1243,17 @@ async def _exercise_closeout_single_app_route_cycle(
                         pilot,
                         stale_service.first_started.is_set,
                         message="Stale Conversation A worker did not start",
+                    )
+                    # The A selection schedules a canvas repaint; reading the
+                    # rows the instant the gated worker starts can catch that
+                    # repaint mid-flight with every row momentarily unmounted
+                    # (TASK-32386: observed as a transient `assert 0 >= 2`
+                    # under a cold event loop). Wait the rows back rather
+                    # than point-reading the transient.
+                    await _wait_for_condition(
+                        pilot,
+                        lambda: len(list(screen.query(".library-conversation-row"))) >= 2,
+                        message="Conversation rows did not survive the stale A read",
                     )
                     current_rows = list(screen.query(".library-conversation-row"))
                     assert len(current_rows) >= 2
@@ -1343,8 +1411,11 @@ async def _exercise_closeout_single_app_route_cycle(
     return facts, str(facts["compositor_text"]), svg
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
+async def test_closeout_single_app_route_cycle(
+    tmp_path: Path, request: pytest.FixtureRequest
+) -> None:
     facts, _compositor, _svg = await _exercise_closeout_single_app_route_cycle(tmp_path)
     receipts = facts["observations"]["revisit_receipts"]
     assert set(receipts) == set(DESTINATIONS)
@@ -1359,9 +1430,19 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
         }
         assert receipt["record"]["pending"] is None
         assert receipt["focus"]["region"] == "work"
-        assert receipt["identities"]["shell"] == (
-            DESTINATION_CONTRACT[destination][1].removeprefix("#")
-        )
+        if destination in {"media", "notes"}:
+            # 7b4a7e2896 graduated the two browse routes onto ONE resident
+            # LibraryBrowseReaderShell whose id is route-neutral on purpose
+            # (naming it after either route would lie); the route is
+            # projected through the marker classes the contract entries
+            # already name (`.library-media-route` / `.library-notes-route`).
+            # The identity this receipt must pin is therefore the shared
+            # shell's own id, not a `#`-stripped selector string.
+            assert receipt["identities"]["shell"] == LIBRARY_BROWSE_READER_SHELL_ID
+        else:
+            assert receipt["identities"]["shell"] == (
+                DESTINATION_CONTRACT[destination][1].removeprefix("#")
+            )
         assert receipt["worker_fenced"] is True
 
 
@@ -1373,10 +1454,11 @@ def _assert_inside_items(items, widget) -> None:
     )
 
 
+@private_profile_test
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", SIZES)
 async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_production_shell(
-    size: tuple[int, int],
+    size: tuple[int, int], request: pytest.FixtureRequest
 ) -> None:
     """Notes paging keeps its source-owned controls sound in the shared shell."""
     app = _build_test_app()
@@ -1416,6 +1498,20 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             ("folders", None, "more"),
             ("placements", None, "more"),
         }
+        # Region (layout) lags DOM mount: the branch-count settle above can
+        # return while the Items pane still measures 0x0 on a cold/slow event
+        # loop (TASK-32386 -- the same state-vs-projection lag the focus
+        # step waits out). Wait for real geometry before asserting it.
+        await _wait_for_condition(
+            pilot,
+            lambda: items.region.width > 0 and items.region.height > 0,
+            message=lambda: (
+                f"Notes Items pane never laid out at {size}: "
+                f"items_region={items.region!r}, "
+                f"shell_layout={shell.effective_layout!r}, "
+                f"screen_size={screen.size!r}"
+            ),
+        )
         assert items.region.width > 0 and items.region.height > 0
         _assert_inside_items(items, notes_list)
         for widget in (*screen.query(".library-notes-folder-row"), *initial_pagers):
@@ -1588,8 +1684,11 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         assert tuple(DESTINATION_CONTRACT) == DESTINATIONS
 
 
+@private_profile_test
 @pytest.mark.asyncio
-async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle() -> None:
+async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle(
+    request: pytest.FixtureRequest,
+) -> None:
     """An intentional Items close remains authoritative across later layout work."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(), notes=[])
@@ -1654,9 +1753,11 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         assert screen._notes_state.reader_layout.items_open is False
 
 
+@private_profile_test
 @pytest.mark.asyncio
 async def test_notes_explicit_close_never_resolves_against_stale_allocation(
     monkeypatch: pytest.MonkeyPatch,
+    request: pytest.FixtureRequest,
 ) -> None:
     """A hysteresis reset cannot make a decision from transient geometry."""
     app = _build_test_app()
