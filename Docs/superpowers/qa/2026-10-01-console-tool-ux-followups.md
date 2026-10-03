@@ -1155,3 +1155,39 @@ of it is claimed. TASK33625.2 is reopened In Progress for final review
 qualification, alongside TASK32367. Both need exact published-head clean/resolved
 Qodo/all four hosted gates, followed by final Done-metadata-head review/checks
 and verified protected normal merge.
+
+
+Provider rate-limit dev integration (2026-10-03 UTC)
+
+Rebase all46 own patches unchanged onto upstream PR2981 at d294c4871ff5b7585ad746bd6991c0934f61c639.
+Provider capture/parser/gateway/Hugging Face streaming and tooltip code are
+inherited unchanged; ChatScreen adds exactly its upstream spend wire line.
+Six inherited production files equal dev;250 previous pins stay exact, three
+inherited pins change and six are added, yielding259 current pins. No new ADR
+is required to consume this existing boundary; ADR094/097/195 and inherited
+provider contracts apply. No owner, authority, permission, fixture, CSS/token,
+assertion, budget or CI-setting changes are made.
+
+All24 top-level mounted checks pass (280.45s), including all five complete
+ordinary private wrappers, six count controls and13 hook cases. The maximum
+ordinary wrapper 78.849s and child 72.376s remain below180s.
+The full targeted provider/validation/Resend/telemetry command has470 passes
+and17 failures; an exact latest-dev source-only control reproduces the same
+487 cases and17 failure nodes/messages. All23 new telemetry cases pass.
+
+The unmarked mounted cost-tooltip test fails raw_source_selection_changed on
+both candidate and exact dev. Under only the existing real bootstrap_profile
+owner, its full mounted send/tooltip case passes in
+10.35s. Record both modes: the temporary collection plugin adds
+that marker to exactly this node; no getter/admission replacement or egress
+occurs. Do not claim the ordinary upstream fixture is green.
+
+All37 exact performance guards (22 startup,13 latency/responsiveness, two
+storage ratchets) pass. Full artifact preflight passes in 97.35s
+with all259 source pins stable. Zero-new Ruff across35 owned Python files,
+diff and Backlog checks pass. Previous native/broad receipts retain their
+original identities; no fresh native replay or full local suite is claimed.
+QA oct03_rate_limit_dev_integration records exact proof, receipts and limits.
+Keep TASK32367 and TASK33625.2 In Progress pending latest-dev publication,
+clean/resolved exact-head Qodo and all four hosted gates, then fresh final
+Done-metadata-head review/checks and verified protected normal merge.
