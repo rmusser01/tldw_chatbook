@@ -63,11 +63,16 @@ RESULT_ALREADY_ON = "Encryption is already on. Use Change password instead."
 RESULT_ENABLE_FAILED = "Encrypting failed; config.toml was left as it was."
 #: Encryption is off but a value is still `enc:` ciphertext under an earlier
 #: password; encrypting over it would strand it again, so enable refuses.
+#: ``{where}`` is the screen that can edit every named value (review round 2,
+#: R2-F2): Providers & Models edits only `api_settings.<provider>.api_key`;
+#: Advanced Config edits any value.
 RESULT_ENABLE_STRANDED = (
     "Encrypting failed: {path} is still encrypted with an earlier password "
-    "and can't be read. Re-enter or clear that key in Providers & Models, "
-    "then try again. config.toml was left as it was."
+    "and can't be read. Re-enter or clear it in {where}, then try again. "
+    "config.toml was left as it was."
 )
+WHERE_PROVIDERS = "Settings > Providers & Models"
+WHERE_ADVANCED_CONFIG = "Settings > Advanced Config"
 #: The change failed AND putting the old file back failed: the file may hold
 #: the new document. The state line shows what the file holds now.
 RESULT_FILE_CHANGED = (
@@ -127,6 +132,12 @@ def _current_state(assumed_enabled: bool) -> tuple[bool, bool]:
     )
 
 
+def _provider_key_path(path: str) -> bool:
+    """Whether Providers & Models edits this dotted config path."""
+    parts = path.split(".")
+    return len(parts) == 3 and parts[0] == "api_settings" and parts[2] == "api_key"
+
+
 def _enable_refused_message(config) -> str:
     """Why an enable on an encryption-off file was refused, in plain words."""
     stranded = config.encrypted_value_paths_on_disk()
@@ -135,7 +146,12 @@ def _enable_refused_message(config) -> str:
     path = stranded[0]
     if len(stranded) > 1:
         path += f" (and {len(stranded) - 1} more)"
-    return RESULT_ENABLE_STRANDED.format(path=path)
+    where = (
+        WHERE_PROVIDERS
+        if all(_provider_key_path(item) for item in stranded)
+        else WHERE_ADVANCED_CONFIG
+    )
+    return RESULT_ENABLE_STRANDED.format(path=path, where=where)
 
 
 def run_enable(password: str) -> EncryptionActionOutcome:

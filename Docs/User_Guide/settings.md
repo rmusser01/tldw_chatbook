@@ -1300,8 +1300,10 @@ failed action never leaves config.toml half-written: the previous file is
 restored. If restoring it fails too, the card says config.toml may have changed
 and the state line shows what the file holds now. **Encrypt keys…** also
 refuses when encryption is off but a saved key is still encrypted with an
-earlier password; the card names that setting so you can re-enter or clear the
-key in Providers & Models first. Startup unlock, the forgotten-password reset
+earlier password; the card names that setting and where to re-enter or clear
+it first: Settings ▸ Providers & Models for a provider's API key, Settings ▸
+Advanced Config for anything else (a web-search key or a server token, for
+example). Startup unlock, the forgotten-password reset
 and what happens with a wrong password are described in
 [First-Run Setup](First_Run_Setup.md#starting-chatbook-when-your-keys-are-encrypted).
 

@@ -231,6 +231,62 @@ def test_encrypt_over_a_stranded_value_names_it_and_the_way_out(cfg) -> None:
     assert path.read_bytes() == before
 
 
+def test_encrypt_over_a_stranded_non_provider_value_points_to_advanced_config(cfg):
+    # Review round 2 (R2-F2): a stranded value outside a provider's API key
+    # (a web-search key, the tldw server token, ...) cannot be edited in
+    # Providers & Models; sending the user there left them no way out.
+    import toml
+
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    path = cfg.card_test_path
+    path.write_text(
+        toml.dumps(
+            {
+                "search_engines": {
+                    "serper_search_api_key": ConfigEncryption().encrypt_value(
+                        "serper-sentinel", PASSWORD_A
+                    )
+                }
+            }
+        )
+    )
+    before = path.read_bytes()
+
+    outcome = card_module.run_enable(PASSWORD_B)
+
+    assert outcome.succeeded is False
+    assert "search_engines.serper_search_api_key" in outcome.message
+    assert "Advanced Config" in outcome.message
+    assert "Providers & Models" not in outcome.message
+    assert path.read_bytes() == before
+
+
+def test_mixed_stranded_values_point_to_the_place_that_edits_them_all(cfg):
+    import toml
+
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    engine = ConfigEncryption()
+    path = cfg.card_test_path
+    path.write_text(
+        toml.dumps(
+            {
+                "api_settings": {
+                    "openai": {"api_key": engine.encrypt_value("a", PASSWORD_A)}
+                },
+                "tldw_api": {"auth_token": engine.encrypt_value("b", PASSWORD_A)},
+            }
+        )
+    )
+
+    outcome = card_module.run_enable(PASSWORD_B)
+
+    assert "(and 1 more)" in outcome.message
+    assert "Advanced Config" in outcome.message
+    assert "Providers & Models" not in outcome.message
+
+
 def _double_fault(cfg, monkeypatch) -> None:
     def failing_publish(*_args, **_kwargs):
         raise ValueError("Configuration runtime reload failed")
