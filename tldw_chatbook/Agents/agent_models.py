@@ -1242,6 +1242,10 @@ class RunOutcome:
     # ``AgentService._persist`` never writes it to the database.
     final_messages: list[dict] | None = None
     denial_count: int = 0
+    # ADR-211: current gateway-sanitized UI copy, never diagnostic persistence.
+    console_copy: str | None = field(
+        default=None, repr=False, compare=False, kw_only=True
+    )
 
 
 def clamp_child_budget(child: RunBudget, parent_remaining_seconds: float) -> RunBudget:
