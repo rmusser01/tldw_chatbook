@@ -550,6 +550,69 @@ def test_the_reset_choice_reads_the_terminal_when_stdin_is_redirected(monkeypatc
     assert terminal.closed
 
 
+_REAL_TERMINAL_CHOICE = r"""
+import fcntl, sys, termios
+# A new session (start_new_session) with no terminal yet: make the pty on
+# stdout its controlling terminal, so /dev/tty is real. stdin is /dev/null.
+fcntl.ioctl(1, termios.TIOCSCTTY, 0)
+from tldw_chatbook.Backup_Recovery import launcher
+print('CHOICE=' + launcher._give_up_choice(), flush=True)
+"""
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX controlling terminal")
+@pytest.mark.timeout(120)
+def test_the_reset_choice_reads_a_real_controlling_terminal(tmp_path):
+    # Found live in review round 2: the fake terminal above hid that
+    # open("/dev/tty", "r+") raises io.UnsupportedOperation (a terminal is
+    # not seekable), so `tldw-cli < /dev/null` still quit at the choice.
+    import pty
+    import select
+    import time
+
+    master, slave = pty.openpty()
+    environment = os.environ.copy()
+    environment["PYTHONPATH"] = str(_REPO)
+    process = subprocess.Popen(  # noqa: S603 -- fixed interpreter and script
+        [sys.executable, "-c", _REAL_TERMINAL_CHOICE],
+        cwd=_REPO,
+        env=environment,
+        stdin=subprocess.DEVNULL,
+        stdout=slave,
+        stderr=slave,
+        start_new_session=True,
+        close_fds=True,
+    )
+    os.close(slave)
+    output = b""
+    answered = False
+    deadline = time.monotonic() + 90
+    try:
+        while time.monotonic() < deadline:
+            ready, _, _ = select.select([master], [], [], 0.1)
+            if ready:
+                try:
+                    chunk = os.read(master, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                output += chunk
+            if not answered and b"[Q]uit" in output:
+                os.write(master, b"r\n")
+                answered = True
+            if process.poll() is not None and not ready:
+                break
+    finally:
+        if process.poll() is None:
+            process.kill()
+        process.wait(timeout=30)
+        os.close(master)
+    text = output.decode("utf-8", "replace")
+    assert answered, text
+    assert "CHOICE=configuration_unlock_reset" in text, text
+
+
 def test_without_any_terminal_the_choice_still_reads_stdin(monkeypatch):
     import io
 

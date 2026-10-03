@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import getpass
+import io
 import json
 import os
 import sys
@@ -146,11 +147,23 @@ def _say(message: str) -> None:
 def _open_tty():
     """The controlling terminal, opened the way getpass opens it, or None.
 
-    None when there is no terminal (a service, CI, Windows).
+    None when there is no terminal (a service, CI, Windows). Not
+    ``open("/dev/tty", "r+")``: a terminal is not seekable, so the buffered
+    read-write text stream raises io.UnsupportedOperation (found live).
     """
     try:
-        return open("/dev/tty", "r+", encoding="utf-8", errors="replace")
-    except OSError:
+        fd = os.open("/dev/tty", os.O_RDWR | os.O_NOCTTY)
+    except (OSError, AttributeError):
+        return None
+    try:
+        return io.TextIOWrapper(
+            io.FileIO(fd, "w+"),
+            encoding="utf-8",
+            errors="replace",
+            line_buffering=True,
+        )
+    except (OSError, ValueError):
+        os.close(fd)
         return None
 
 
