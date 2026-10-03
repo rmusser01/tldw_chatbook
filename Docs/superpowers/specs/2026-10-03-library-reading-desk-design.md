@@ -35,7 +35,10 @@ Goals (v1):
 5. Side by side at 120x36 and wider; a lossless stacked fallback below that.
 6. Fully keyboard-operable, with visible buttons for mouse-first users; no colour-only meaning.
 
-Non-goals (v1): Collections and Conversations readers (they adopt the same companion slot later);
+Non-goals (v1): server-backed Media — the desk applies to local Media items, which carry a stable
+`uuid`; `tldw_server` exposes only integer media ids today, so the explicitly labelled external server
+detail (ADR-084) shows **Note** disabled with the reason `Notes beside server items need server support`
+until a coordinated server contract exposes media UUIDs; Collections and Conversations readers (they adopt the same companion slot later);
 server-authoritative Collections notes (ADR-113); provenance for kept AI answers (S-04 — reuses the
 link format later); restoring the desk after an app relaunch (ADR-033; tracked by TASK-34000.41 / S-22);
 a new server sync domain (ADR-105).
@@ -91,7 +94,7 @@ a new server sync domain (ADR-105).
 - Inserted text:
   ```markdown
   > Retrieval practice improved 7-day retention by 21 percentage points.
-  > — [paper-retrieval-practice, ¶12](media://4b0e…-uuid#p12)
+  > — [paper-retrieval-practice, ¶12](media://4b0e…-uuid#p12-9c41e7a2)
   ```
 - Receipt in the note status line: `Quoted ¶12 of paper-retrieval-practice`.
 - A quote from a document the note has not cited before needs nothing extra: the attribution link is
@@ -130,7 +133,9 @@ a new server sync domain (ADR-105).
 
 ### 5.1 Text is the truth
 - Source line: `[<title>](media://<media-uuid>)`. Quote attribution:
-  `[<title>, ¶<n>](media://<media-uuid>#p<n>)`.
+  `[<title>, ¶<n>](media://<media-uuid>#p<n>-<fp>)`, where `<fp>` is the first 8 hex characters of
+  SHA-256 over the quoted paragraph's normalized text (whitespace collapsed, case-folded) at quote time.
+  The fingerprint makes a copied or standalone link self-describing (§5.2).
 - `Media.uuid` is `UNIQUE NOT NULL` and stable across devices, so links are portable. MCP's existing
   `media://<integer-id>` resources keep their meaning; the in-app resolver distinguishes a UUID from an
   integer id.
@@ -142,18 +147,31 @@ a new server sync domain (ADR-105).
   block, so it can be ¶1). The same segmentation backs the Rendered and the Raw view, so `j`/`k`/`q`
   and anchors work on items that only have a Raw view (plain text, transcripts).
 - `#p<n>` opens the document scrolled to paragraph `n`.
-- If paragraph `n` no longer contains the quote's opening words (the document changed, e.g. re-import),
-  the reader opens and runs Find on those words, saying `Paragraph moved — found by text`. If nothing
-  matches: `Passage not found in the current version` — never a silent wrong passage.
+- Resolution order for `#p<n>-<fp>`:
+  1. paragraph `n`'s fingerprint equals `<fp>` → open there;
+  2. another paragraph's fingerprint equals `<fp>` (the passage moved, e.g. after re-import) → open
+     there and say `Paragraph moved — found`;
+  3. no fingerprint match, and the link was activated from inside a note whose adjacent blockquote holds
+     the quoted text → the activation passes that text to the resolver, which runs Find on its opening
+     words (`Paragraph moved — found by text`);
+  4. otherwise (text changed, or a standalone copied link with no context) → open the document at the
+     top and say `Passage not found in the current version` — never a silent wrong passage.
+- A bare `#p<n>` (no fingerprint, e.g. a hand-written link) uses steps 1 (position only), 3 and 4.
 
 ### 5.3 Derived device-local index
 - Table in the ChaChaNotes DB:
   `note_source_links(note_id TEXT, source_uuid TEXT, first_seen TEXT, last_seen TEXT, PRIMARY KEY(note_id, source_uuid))`
   plus an index on `source_uuid`.
-- Derived: rebuilt from the note body on every save through the note session, inside the save
-  transaction, off the UI thread; backfilled once by the migration (scan existing note bodies for
-  `media://<uuid>`). Never synced, never exported — the text carries the truth, so the index is always
-  rebuildable.
+- Derived and maintained at the **persistence boundary**, not in the editor: the ChaChaNotes note
+  write methods every path goes through (`add_note`, `update_note`, `soft_delete_note`, `restore_note`,
+  and any bulk/sync/import writer that bypasses them) re-derive the note's rows from its body inside the
+  same transaction. That covers the note session, lasting folder sync, Import once, Folder files
+  write-back, note-management tools and restore; soft delete removes the note's rows, restore re-derives
+  them. Backfilled once by the migration (scan existing note bodies for `media://<uuid>`).
+- Staleness backstop: each row records the note `version` it was derived from; a read that sees a
+  newer note version re-derives that note lazily, so a writer that was missed degrades to "slightly
+  late", never "wrong forever". D2 enumerates every note-body writer and pins the list with a test.
+- Never synced, never exported — the text carries the truth, so the index is always rebuildable.
 - Migration duties (CLAUDE.md gotcha 1): `_CURRENT_SCHEMA_VERSION` +1 with a migration, a
   `VALID_TABLES['chachanotes']` entry, an `EXPECTED_CHACHANOTES_INDEXES` entry, and a captured query plan
   with `sqlite_stat1` absent plus a `scripts/index_plan_pin_census.tsv` row.
