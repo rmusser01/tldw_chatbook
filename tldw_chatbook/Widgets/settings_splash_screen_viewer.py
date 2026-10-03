@@ -85,7 +85,9 @@ class SettingsSplashScreenViewer(Vertical):
                 for key, value in DEFAULT_SPLASH_CONFIG.items()
             }
         except Exception as exc:
-            logger.warning("Failed to load splash_screen config: {}. Using defaults.", exc)
+            logger.warning(
+                "Failed to load splash_screen config: {}. Using defaults.", exc
+            )
             config = dict(DEFAULT_SPLASH_CONFIG)
         if not isinstance(config, dict):
             config = dict(DEFAULT_SPLASH_CONFIG)
@@ -178,7 +180,9 @@ class SettingsSplashScreenViewer(Vertical):
                     classes="settings-toggle-state",
                 )
             with Horizontal(classes="settings-input-row"):
-                label_static = Static("Skip on keypress", classes="settings-input-label")
+                label_static = Static(
+                    "Skip on keypress", classes="settings-input-label"
+                )
                 # task-1561: the shared label column truncates longer
                 # labels ("Skip on keypress" showed as "Skip on").
                 label_static.add_class("w-20")
@@ -188,7 +192,9 @@ class SettingsSplashScreenViewer(Vertical):
                     id="settings-splash-skip-on-keypress",
                 )
                 yield Static(
-                    switch_state_label(bool(self._config.get("skip_on_keypress", True))),
+                    switch_state_label(
+                        bool(self._config.get("skip_on_keypress", True))
+                    ),
                     id="settings-splash-skip-on-keypress-state",
                     classes="settings-toggle-state",
                 )
@@ -212,7 +218,9 @@ class SettingsSplashScreenViewer(Vertical):
                 )
 
             yield Static("Gallery", classes="destination-section")
-            with Horizontal(id="settings-splash-gallery", classes="settings-splash-gallery"):
+            with Horizontal(
+                id="settings-splash-gallery", classes="settings-splash-gallery"
+            ):
                 yield OptionList(*self._card_options(), id="settings-splash-card-list")
                 with VerticalScroll(id="settings-splash-preview-scroll"):
                     yield Static(
@@ -221,7 +229,9 @@ class SettingsSplashScreenViewer(Vertical):
                     )
 
             with Horizontal(classes="settings-action-row"):
-                yield Button("Play selected", id="settings-splash-play", variant="primary")
+                yield Button(
+                    "Play selected", id="settings-splash-play", variant="primary"
+                )
 
             yield Static(
                 "",
@@ -441,7 +451,9 @@ class SettingsSplashScreenViewer(Vertical):
     def on_unmount(self) -> None:
         self._closing = True
         try:
-            container = self.query_one("#settings-splash-preview-scroll", VerticalScroll)
+            container = self.query_one(
+                "#settings-splash-preview-scroll", VerticalScroll
+            )
         except Exception:
             return
         for child in list(container.children):

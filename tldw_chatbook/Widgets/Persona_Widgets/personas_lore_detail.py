@@ -359,7 +359,9 @@ class PersonasLoreDetailWidget(Vertical):
         if table.row_count == 0 or table.cursor_row is None or table.cursor_row < 0:
             return None
         try:
-            return str(table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value)
+            return str(
+                table.coordinate_to_cell_key((table.cursor_row, 0)).row_key.value
+            )
         except Exception:
             return None
 
@@ -521,7 +523,9 @@ class PersonasLoreDetailWidget(Vertical):
         invalid/too-complex key or secondary-key pattern, else None."""
         if not payload.get("regex"):
             return None
-        for pat in list(payload.get("keys", [])) + list(payload.get("secondary_keys", [])):
+        for pat in list(payload.get("keys", [])) + list(
+            payload.get("secondary_keys", [])
+        ):
             try:
                 validate_regex_pattern(pat)
             except ValueError as exc:

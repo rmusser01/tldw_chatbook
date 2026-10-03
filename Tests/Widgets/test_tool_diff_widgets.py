@@ -134,8 +134,12 @@ class TestStripDiffContents:
         """The in-memory record keeps its contents for live UI rendering."""
         strip_diff_contents(diff_tool_result[0])
 
-        assert diff_tool_result[0]["result"]["old_content"] == "def f():\n    return 1\n"
-        assert diff_tool_result[0]["result"]["new_content"] == "def f():\n    return 2\n"
+        assert (
+            diff_tool_result[0]["result"]["old_content"] == "def f():\n    return 1\n"
+        )
+        assert (
+            diff_tool_result[0]["result"]["new_content"] == "def f():\n    return 2\n"
+        )
 
     def test_result_without_diff_keys_returned_as_is(self):
         result = {"tool_call_id": "call_1", "result": {"answer": 42}}
@@ -263,9 +267,7 @@ class TestToolExecutionWidgetDiffs:
         async with app.run_test() as pilot:
             widget.update_results(diff_tool_result)
 
-            found = await wait_for_condition(
-                lambda: len(widget.query(DiffView)) == 1
-            )
+            found = await wait_for_condition(lambda: len(widget.query(DiffView)) == 1)
             assert found, "DiffView was not mounted within the timeout"
             await pilot.pause()
 
@@ -294,13 +296,13 @@ class TestToolExecutionWidgetDiffs:
         app = DiffTestApp(widget)
 
         async with app.run_test():
-            widget.update_results(
-                [{"tool_call_id": "call_1", "result": {"answer": 2}}]
-            )
+            widget.update_results([{"tool_call_id": "call_1", "result": {"answer": 2}}])
 
             mounted = await wait_for_condition(
-                lambda: widget.tool_result_widget is not None
-                and widget.tool_result_widget.is_mounted
+                lambda: (
+                    widget.tool_result_widget is not None
+                    and widget.tool_result_widget.is_mounted
+                )
             )
             assert mounted, "ToolResultMessage was not mounted within the timeout"
             # Bounded negative wait: no DiffView should ever appear.
@@ -328,9 +330,7 @@ class TestToolExecutionWidgetDiffs:
         app = DiffTestApp(widget)
 
         async with app.run_test():
-            found = await wait_for_condition(
-                lambda: len(widget.query(DiffView)) == 1
-            )
+            found = await wait_for_condition(lambda: len(widget.query(DiffView)) == 1)
             assert found, "DiffView was not mounted within the timeout"
 
     @pytest.mark.asyncio
@@ -351,9 +351,7 @@ class TestToolExecutionWidgetDiffs:
 
         async with app.run_test():
             widget.update_results(diff_tool_result)
-            assert await wait_for_condition(
-                lambda: len(widget.query(DiffView)) == 1
-            )
+            assert await wait_for_condition(lambda: len(widget.query(DiffView)) == 1)
 
             updated_result = [
                 {
@@ -370,9 +368,11 @@ class TestToolExecutionWidgetDiffs:
             # may transiently coexist while its removal is processed, so wait
             # for the settled state).
             settled = await wait_for_condition(
-                lambda: len(widget.query(DiffView)) == 1
-                and widget.query(DiffView).first().code_modified
-                == "def f():\n    return 3\n"
+                lambda: (
+                    len(widget.query(DiffView)) == 1
+                    and widget.query(DiffView).first().code_modified
+                    == "def f():\n    return 3\n"
+                )
             )
             assert settled, "DiffView was not replaced within the timeout"
 
