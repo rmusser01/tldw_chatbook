@@ -12,9 +12,15 @@ Streaming and the reasoning or thinking controls, then the Sampling,
 Connection, Request estimate and name disclosures. Closed, each is one row
 whose title carries its value (TASK-33006.3); Connection names the endpoint
 host and where the key comes from, never the key. Focus opens on Temperature,
-or on the recovery action while a connection blocker stands; a restored focus
-target wins over both (``_restore_suspended_scroll_and_focus``), and a missing
-or unavailable one still falls back to Connection (TASK-30012).
+or on the recovery action while a connection blocker stands, or on Change
+while no model is chosen; a restored focus target wins over all three
+(``_restore_suspended_scroll_and_focus``), and a missing or unavailable one
+falls back to Change.
+
+The MODEL row's Change (or Alt+M) is the only way to change the model: it
+opens Switch model in pick-only mode, and the picked provider·model pair
+rebases the draft through the controller's rebaser; nothing is applied until
+Apply (spec rule 1, TASK-33006.4).
 
 The logic lives here, not in ``console_settings_modal.py``, because that
 module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
@@ -22,8 +28,8 @@ module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Callable, Iterable
+from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from textual import events
@@ -31,7 +37,7 @@ from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Collapsible, Input, Select, Static
+from textual.widgets import Button, Collapsible, Input, Select, Static
 
 from tldw_chatbook.Chat.console_provider_endpoints import effective_provider_endpoint
 from tldw_chatbook.Chat.console_provider_support import (
@@ -46,13 +52,29 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
+    ConsoleValueLayer,
+    normalize_console_model_value,
     resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
+from .console_model_popover import _context_copy
 from .console_settings_summary import build_console_readiness_presentation
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_settings_apply import (
+        ConsoleSettingsDraftState,
+        ConsoleSettingsOrigin,
+    )
+
+#: Opens Switch model in pick-only mode for Change: (origin, draft, Find
+#: text, callback); the callback gets ``(provider, model)`` or ``None`` on Esc.
+ModelPicker = Callable[
+    ["ConsoleSettingsOrigin", "ConsoleSettingsDraftState", str, Callable[..., None]],
+    None,
+]
 
 #: The CORE rows, in order (spec §7 mock (b)). Unsupported reasoning or
 #: thinking rows are hidden by the modal's support sync.
@@ -95,6 +117,9 @@ CONNECTION_SUMMARY_CELLS = 141
 #: The host part for an endpoint that cannot be parsed (a half-typed URL).
 INVALID_ENDPOINT_HOST = "invalid endpoint"
 MODEL_ROW_LABEL = "Model"
+#: The MODEL row's Change: the one way to change the pair (TASK-33006.4).
+MODEL_CHANGE_ID = "console-settings-model-change"
+MODEL_CHANGE_LABEL = "Change Alt+M"
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
@@ -116,6 +141,8 @@ _SUPPORT_CONTROL_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
 _REQUIRED_FIELDS = ("temperature", "top_p")
 #: Recovery actions that are not a connection blocker: tuning opens first.
 _TUNING_RECOVERY_ACTIONS = frozenset({None, "wait_for_active_run"})
+#: A missing model is fixed by the MODEL row's Change, which takes focus.
+_SELECT_MODEL = "select_model"
 #: The focusable control each connection recovery action lands on.
 _RECOVERY_FOCUS = {
     "configure_credential": "#console-settings-configure-credential",
@@ -138,15 +165,7 @@ def field_control_id(name: str) -> str:
 
 SAMPLING_FOCUS_IDS = frozenset(field_control_id(name) for name in SAMPLING_FIELDS)
 #: Restorable focus targets that live inside the Connection disclosure.
-CONNECTION_FOCUS_IDS = frozenset(
-    {
-        "console-settings-provider",
-        "console-settings-provider-picker",
-        "console-settings-model-picker",
-        "console-settings-model-custom",
-        "console-settings-base-url",
-    }
-)
+CONNECTION_FOCUS_IDS = frozenset({"console-settings-base-url"})
 
 
 def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
@@ -269,6 +288,8 @@ class ConsoleSettingsFieldRowsMixin:
 
     _field_source_cache: tuple[tuple[object, ...], dict[str, str]] | None = None
     _unknown_support_fields: frozenset[str] = frozenset()
+    #: The MODEL row's last readiness word, kept for context-window refreshes.
+    _model_row_word = ""
 
     def _field_row(self, name: str) -> Horizontal:
         """Build one Model view field row: label, control, Source word, help.
@@ -324,39 +345,112 @@ class ConsoleSettingsFieldRowsMixin:
         )
 
     def _model_row(self) -> Horizontal:
-        """Build the MODEL row: the draft's model, provider and readiness.
+        """Build the MODEL row: model · provider | Source | readiness · context | Change.
 
         Returns:
             The row, refreshed by ``_sync_model_row``.
         """
+        change = Button(MODEL_CHANGE_LABEL, id=MODEL_CHANGE_ID, compact=True)
+        change.tooltip = "Choose a provider·model pair (Switch model, pick mode)"
         return Horizontal(
             Static(MODEL_ROW_LABEL, classes="console-settings-field-label"),
+            Static("", id="console-settings-model-summary", markup=False),
             Static(
                 "",
-                id="console-settings-model-summary",
-                classes="console-settings-control",
+                id="console-settings-model-source",
+                classes="console-settings-field-source",
                 markup=False,
             ),
+            Static(
+                "",
+                id="console-settings-model-status",
+                classes="console-settings-help-line",
+                markup=False,
+            ),
+            change,
             id="console-settings-model-row",
             classes="console-settings-modal-row",
         )
 
-    def _sync_model_row(self, readiness: Any) -> None:
-        """Show the draft's model, provider and readiness word.
+    def _sync_model_row(self, readiness: Any = None) -> None:
+        """Show the draft's pair, its Source word, readiness and context window.
+
+        The pair is the chat's own ("this chat") until a pick changes it
+        ("edited *"); the words come from the shared Source-word table.
 
         Args:
-            readiness: The draft's ``ConsoleSettingsReadiness``.
+            readiness: The draft's ``ConsoleSettingsReadiness``; None keeps
+                the last readiness word (a context-window refresh).
         """
         try:
             summary = self.query_one("#console-settings-model-summary", Static)
         except (NoMatches, QueryError):
             return
-        model = self._current_model_value() or "no model"
-        word = build_console_readiness_presentation(readiness).primary_label
-        _show(
-            summary,
-            f"{model} · {provider_display_name(self._active_provider)} · {word}",
-        )
+        if readiness is not None:
+            self._model_row_word = build_console_readiness_presentation(
+                readiness
+            ).primary_label
+        model = self._current_model_value()
+        provider = self._active_provider
+        committed = self._unsaved_committed[0]
+        own = (
+            provider_config_key(committed.provider),
+            normalize_console_model_value(committed.model),
+        ) == (provider_config_key(provider), model)
+        layer = ConsoleValueLayer.THIS_CHAT if own else ConsoleValueLayer.EDITED_DRAFT
+        name = provider_display_name(provider, self._app_config)
+        _show(summary, f"{model or 'no model'} · {name}")
+        source = self.query_one("#console-settings-model-source", Static)
+        _show(source, CONSOLE_VALUE_SOURCE_WORDS[layer])
+        estimate = self._context_estimate
+        context = ""
+        if estimate.token_limit:
+            size = _context_copy(estimate.token_limit, bool(estimate.token_limit_verified))
+            context = f" · {size} context"
+        status = self.query_one("#console-settings-model-status", Static)
+        _show(status, f"{self._model_row_word}{context}")
+
+    def _open_model_picker(self, query: str = "") -> None:
+        """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
+
+        Args:
+            query: Text Find opens with; New endpoint… names the new entry.
+        """
+        if self._model_picker is None or not self.is_current:
+            return
+        self._model_picker(self._origin, self._draft, query, self._model_picked)
+
+    def _model_picked(self, pair: tuple[str, str] | None) -> None:
+        """Rebase the draft to the picked pair; Esc (None) changes nothing.
+
+        The pair lands through the controller's rebaser (``_rebase_to``), so
+        the hidden fields, the Sampling line and readiness follow at once,
+        and nothing is applied until Apply. Focus returns to Change.
+
+        Args:
+            pair: ``(provider, model)`` from pick mode, or None.
+        """
+        if pair is not None and self.is_attached:
+            provider, model = pair
+            current = (
+                provider_config_key(self._active_provider),
+                self._current_model_value(),
+            )
+            if (provider_config_key(provider), model) != current:
+                self._cancel_connection_probe()
+                if self._rebase_to(provider, model):
+                    self._advance_model_generation_preserving_current_listing()
+                    self._defer_pending_entry_discovery(provider)
+        if self.is_attached:
+            self.call_after_refresh(self._focus_change)
+
+    def _focus_change(self) -> None:
+        """Focus the MODEL row's Change, showing the Model view."""
+        if self._active_view != "model":
+            self._show_settings_view("model")
+        change = self.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        change.focus()
+        change.scroll_visible(animate=False)
 
     def _sync_connection_summary(self, readiness: Any) -> None:
         """Title Connection with its host, key source and where to change it.
@@ -666,7 +760,7 @@ class ConsoleSettingsFieldRowsMixin:
         Temperature, or, while a connection blocker stands, on its recovery
         action inside the Connection disclosure, which opens first.
         """
-        if not self.is_mounted or not self.query("#console-settings-provider"):
+        if not self.is_mounted or not self.query(f"#{MODEL_CHANGE_ID}"):
             return
         if self._active_view == "context":
             self._focus_context_control()
@@ -674,6 +768,9 @@ class ConsoleSettingsFieldRowsMixin:
         # The draft's readiness with its own test evidence, so a known
         # failure (refused, key rejected) opens on the fix too.
         action = self._readiness_for_current_draft(self._build_draft()).recovery_action
+        if action == _SELECT_MODEL:
+            self._focus_change()
+            return
         if action in _TUNING_RECOVERY_ACTIONS:
             temperature = self.query_one("#console-settings-temperature", Input)
             if self._is_effectively_focusable(temperature):
@@ -691,27 +788,16 @@ class ConsoleSettingsFieldRowsMixin:
                 control.focus()
                 control.scroll_visible(animate=False)
                 return
-        if action == "select_model":
-            self._focus_model_control()
-            return
-        self._focus_connection_fallback()
+        self._focus_change()
 
     def _focus_restored_fallback(self) -> None:
-        """Focus Connection when a restored focus target is missing or unavailable.
+        """Focus Change when a restored focus target is missing or unavailable.
 
-        TASK-30012's fallback, kept as it was (TASK-33006.1 AC#11): the Model
-        view shows with Connection open and a live Connection control takes
-        focus, in either view. Connection's contents become focusable only
-        once its opening paints, hence the deferred focus.
+        TASK-30012's fallback landed on Connection's provider picker; the
+        model is now chosen in the MODEL row (TASK-33006.4), so the Model
+        view shows with Change focused, in either view.
         """
-        if self._active_view != "model":
-            self._show_settings_view("model")
-        disclosure = self.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
-        if disclosure.collapsed:
-            disclosure.collapsed = False
-            self.call_after_refresh(self._focus_connection_fallback)
-            return
-        self._focus_connection_fallback()
+        self._focus_change()
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
         """Open a closed disclosure when focus lands inside it.

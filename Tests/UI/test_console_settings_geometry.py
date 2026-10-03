@@ -377,13 +377,15 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         await pilot.pause()
 
         body = modal.query_one("#console-settings-body", ScrollableContainer)
-        modal.query_one("#model-search-picker-input", Input).focus()
+        # TASK-33006.4: Change and Temperature replace the deleted pickers
+        # as two distinct restorable targets.
+        modal.query_one("#console-settings-model-change").focus()
         body.scroll_to(y=7, animate=False)
         await pilot.pause()
         snapshot = modal.capture_suspended_draft()
         assert snapshot.scroll_anchor > 0
 
-        modal.query_one("#console-settings-provider-picker-input", Input).focus()
+        modal.query_one("#console-settings-temperature", Input).focus()
         await pilot.pause()
         modal._restore_suspended_scroll_and_focus(snapshot)
         assert modal._pending_suspended_scroll_restore is not None
@@ -415,7 +417,7 @@ async def test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed(
         assert ancestor is body
 
         reveal_count = len(reveal_records)
-        stale_target = modal.query_one("#model-search-picker-input", Input)
+        stale_target = modal.query_one("#console-settings-model-change")
         reveal_generation = modal._focus_reveal_generation
         modal.on_descendant_focus(events.DescendantFocus(stale_target))
         assert modal._focus_reveal_generation == reveal_generation

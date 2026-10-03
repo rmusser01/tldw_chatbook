@@ -1,8 +1,8 @@
 """Import-closure guard for Conversation Settings-only helpers.
 
 The Console and canonical Settings screens are resident at ``_ui_ready``, but
-the Conversation Settings modal, its searchable provider picker, and endpoint
-test helper are only needed after the user opens the workflow. Keep those
+the Conversation Settings modal, its field-row helpers, and endpoint test
+helper are only needed after the user opens the workflow. Keep those
 modules off the first-paint path so the workflow does not consume ADR-097's
 zero-headroom UI-ready module ratchet.
 """
@@ -45,7 +45,6 @@ import tldw_chatbook.UI.Screens.chat_screen  # noqa: F401
 
 deferred = (
     "tldw_chatbook.UI.Screens.settings_endpoint_probe",
-    "tldw_chatbook.Widgets.Console.console_provider_picker",
     "tldw_chatbook.Widgets.Console.console_settings_field_row",
     "tldw_chatbook.Widgets.Console.console_settings_modal",
 )
@@ -57,13 +56,11 @@ from tldw_chatbook.UI.Screens.settings_endpoint_probe import (
     SettingsEndpointProbePurpose,
 )
 from tldw_chatbook.Widgets.Console import ConsoleSettingsModal
-from tldw_chatbook.Widgets.Console.console_provider_picker import (
-    ConsoleProviderPicker,
-)
+from tldw_chatbook.Widgets.Console.console_settings_field_row import MODEL_CHANGE_ID
 
 assert SettingsEndpointProbePurpose.CHAT_CATALOG.value == "chat_catalog"
 assert ConsoleSettingsModal is not None
-assert ConsoleProviderPicker is not None
+assert MODEL_CHANGE_ID == "console-settings-model-change"
 print("CONVERSATION_SETTINGS_BOOT_CLOSURE_OK")
 """
     result = subprocess.run(

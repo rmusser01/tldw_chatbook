@@ -3351,12 +3351,8 @@ class ChatScreen(BaseAppScreen):
         active_provider = settings.provider
         active_model = settings.model
         if suspended_draft is not None:
-            raw_provider = suspended_draft.raw_values.get("console-settings-provider")
-            if type(raw_provider) is str:
-                active_provider = raw_provider
             active_model = suspended_draft.provider_model_drafts.get(
-                active_provider,
-                settings.model if active_provider == settings.provider else None,
+                active_provider, active_model
             )
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
@@ -3378,7 +3374,9 @@ class ChatScreen(BaseAppScreen):
         active_run = self._console_run_active()
 
         modal_contract = _conversation_settings_modal_module()
+        from ..Console_Modules.model_switcher import open_model_picker
         modal = modal_contract.ConsoleSettingsModal(
+            model_picker=partial(open_model_picker, self),
             settings=store.session_settings(session_id) or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,

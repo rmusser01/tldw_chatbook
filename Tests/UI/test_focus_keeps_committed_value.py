@@ -92,12 +92,15 @@ async def test_conversation_settings_fields_keep_committed_value_on_focus():
         await pilot.pause()
         screen = app.screen
         # Read committed values with nothing focused (the modal focuses a
-        # picker on open, which is exactly the state under test).
+        # field on open, which is exactly the state under test).
         screen.set_focus(None)
         await pilot.pause(0.1)
         committed = {field.id: field.value for field in screen.query(Input)}
-        assert committed["model-search-picker-input"] == "model-a"
-        assert committed["console-settings-provider-picker-input"] == "llama.cpp"
+        assert committed["console-settings-temperature"] == "0.7"
+        # TASK-33006.4: the model is shown in the MODEL row, not an input.
+        assert "model-a" in str(
+            screen.query_one("#console-settings-model-summary").render()
+        )
         # TASK-33006.1: Connection follows the core fields as a closed
         # disclosure; open it so Tab reaches its fields too.
         screen.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible).collapsed = False
@@ -105,12 +108,7 @@ async def test_conversation_settings_fields_keep_committed_value_on_focus():
 
         probed = await _tab_through(app, pilot, screen, committed, presses=30)
 
-    assert {
-        "console-settings-temperature",
-        "console-settings-provider-picker-input",
-        "console-settings-base-url",
-        "model-search-picker-input",
-    } <= probed
+    assert {"console-settings-temperature", "console-settings-base-url"} <= probed
 
 
 @pytest.mark.asyncio

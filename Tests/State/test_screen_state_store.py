@@ -51,7 +51,7 @@ def test_suspended_conversation_draft_snapshot_rejects_malformed_nested_state() 
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     malformed = snapshot.to_mapping()
@@ -89,7 +89,7 @@ def test_suspended_conversation_draft_snapshot_fails_closed_on_unsafe_primitives
         provider_base_url_drafts={"openai": "https://example.invalid"},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     malformed = snapshot.to_mapping()
@@ -119,7 +119,7 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
         provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
         active_view="model",
         scroll_anchor=4,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": True},
     )
 

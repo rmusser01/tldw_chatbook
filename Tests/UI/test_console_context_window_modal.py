@@ -6,6 +6,7 @@ import pytest
 from textual.widgets import Select, Static
 
 from Tests.UI.test_console_session_settings import ModalHarness
+from Tests.UI.test_console_settings_model_change import real_rebase
 from tldw_chatbook.Chat.console_context_window import ContextWindowResolution
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
@@ -45,6 +46,7 @@ async def test_full_modal_refreshes_capacity_and_ignores_late_previous_model(fin
         ),
         context_window_resolver=resolve,
         can_save=True,
+        draft_rebaser=real_rebase,
     )
     app = ModalHarness()
     try:
@@ -55,17 +57,18 @@ async def test_full_modal_refreshes_capacity_and_ignores_late_previous_model(fin
             modal.query_one("#console-settings-streaming", Select).value = "off"
             await pilot.pause()
             assert modal._streaming_draft is False
-            modal.query_one("#console-settings-provider", Select).value = "anthropic"
+            # TASK-33006.4: the pair changes only through pick mode's result.
+            modal._model_picked(("anthropic", "claude-3-opus-20240229"))
             await pilot.pause()
             assert modal._context_estimate.token_limit == 64000
             if finish == "return":
-                modal.query_one("#console-settings-provider", Select).value = "openai"
+                modal._model_picked(("openai", "gpt-4o"))
                 await pilot.pause()
             elif finish == "dismiss":
                 # TASK-33003.5: the provider switch is an unapplied edit, so
                 # Esc asks first; Discard is the dismissal under test here.
                 await pilot.press("escape")
-                assert "Provider" in str(
+                assert "Model" in str(  # the pair (TASK-33006.4)
                     modal.query_one("#console-settings-close-message", Static).render()
                 )
                 await pilot.press("d")

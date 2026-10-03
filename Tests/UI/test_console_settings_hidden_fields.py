@@ -352,29 +352,42 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
 
 @pytest.mark.asyncio
 async def test_changing_the_model_updates_the_hidden_set_and_line_at_once() -> None:
-    """AC#6: the rebase a pick lands on re-decides the hidden rows and the
-    Sampling line in the same call, both ways."""
+    """AC#6: the pick Change lands re-decides the hidden rows and the
+    Sampling line in the same call, both ways.
+
+    Re-pointed by TASK-33006.4 (AC#7) at the Change gesture: real keys open
+    pick mode, and the pick lands through the controller's rebaser.
+    """
+    from Tests.UI.test_console_settings_model_change import pick, pick_modal
+
     app = CoreFirstHarness()
-    modal = _modal(app, _settings(), draft_rebaser=_real_rebase)
+    modal = pick_modal(app, _settings())
+    landed: list[tuple[tuple[str, ...], str]] = []
+    model_picked = modal._model_picked
+
+    def record_landing(pair) -> None:
+        model_picked(pair)
+        # No pause: the call that landed the pick already re-decided both.
+        landed.append((_hidden_rows(modal), _sampling_title(modal)))
+
+    modal._model_picked = record_landing
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         llama_hidden = _shared_hidden(app.app_config, "llama_cpp", "model-a")
         assert _hidden_rows(modal) == llama_hidden
         assert _sampling_title(modal) == _expected_line("llama_cpp", llama_hidden)
 
-        assert modal._rebase_to("anthropic", "claude-sonnet-4-5") is True
-        # No pause: the same call already changed the rows and the line.
-        assert _hidden_rows(modal) == _ANTHROPIC_HIDDEN
-        assert _sampling_title(modal) == _expected_line("anthropic", _ANTHROPIC_HIDDEN)
-        for _ in range(3):
-            await pilot.pause()
+        await pick(pilot, app, modal, "claude-sonnet")
+        assert landed[-1] == (
+            _ANTHROPIC_HIDDEN,
+            _expected_line("anthropic", _ANTHROPIC_HIDDEN),
+        )
         assert _painted_title(app, modal).endswith(
             _expected_line("anthropic", _ANTHROPIC_HIDDEN)
         )
 
-        assert modal._rebase_to("llama_cpp", "model-a") is True
-        assert _hidden_rows(modal) == llama_hidden
-        assert _sampling_title(modal) == _expected_line("llama_cpp", llama_hidden)
+        await pick(pilot, app, modal, "model-a")
+        assert landed[-1] == (llama_hidden, _expected_line("llama_cpp", llama_hidden))
 
 
 @pytest.mark.asyncio

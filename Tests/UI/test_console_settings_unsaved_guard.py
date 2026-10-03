@@ -57,7 +57,7 @@ from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
     unsaved_labels,
     unsaved_prompt_copy,
 )
-from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+from Tests.UI.test_console_settings_model_change import real_rebase
 
 _PROMPT_KEYS = "Enter apply · d discard · Esc keep editing"
 
@@ -321,10 +321,10 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
     elif edit == "endpoint":
         await _edit(pilot, modal, "#console-settings-base-url", "http://127.0.0.1:9100")
     elif edit == "provider":
-        modal.query_one("#console-settings-provider", Select).value = "openai"
+        # TASK-33006.4: a pair changes only through pick mode's result.
+        modal._model_picked(("openai", "gpt-5"))
     elif edit == "model":
-        # The route a user takes: committing a catalog row.
-        modal.query_one(ModelSearchPicker)._commit_catalog_model("model-b")
+        modal._model_picked((modal._active_provider, "model-b"))
     elif edit == "streaming":
         _flip_streaming(modal)
     for _ in range(4):
@@ -336,7 +336,8 @@ async def _round_trip_edit(pilot, modal: ConsoleSettingsModal, edit: str) -> Non
     [
         (None, None),
         ("temperature", "Temperature"),
-        ("provider", "Provider"),
+        # TASK-33006.4: the pair is one field, the MODEL row's "Model".
+        ("provider", "Model"),
         ("model", "Model"),
         ("endpoint", "Endpoint"),
         ("streaming", "Streaming"),
@@ -355,7 +356,7 @@ async def test_suspended_draft_round_trip_keeps_its_edits_unsaved(
     configured default, which is not an edit either.
     """
     app = _GuardHarness()
-    first = _modal()
+    first = _modal(draft_rebaser=real_rebase)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(app, pilot, first)
         if edit is not None:
@@ -944,9 +945,12 @@ def test_snapshot_carries_each_streaming_state_and_refuses_a_malformed_one(
 async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
     request, monkeypatch
 ):
-    """TASK-33003.10 repro, real router: a llama.cpp chat switched to OpenAI
-    (no key) leaves Streaming at Inherit; Configure credential -> Settings ->
-    Return must not exit the app, and the reopened modal shows Inherit."""
+    """TASK-33003.10 repro, real router: an OpenAI chat (no key) re-picked to
+    another model leaves Streaming at Inherit; Configure credential ->
+    Settings -> Return must not exit the app, and the reopened modal shows
+    Inherit. Since TASK-33006.4 the chat starts on OpenAI and the pick stays
+    there (a typed model id; pick mode cannot pick another provider's pair
+    that needs setup)."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setattr(
         settings_screen_module,
@@ -978,7 +982,7 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         session = store.ensure_session()
         store.replace_session_settings(
             session.id,
-            ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+            ConsoleSessionSettings(provider="openai", model="gpt-5"),
         )
         assert await console._open_console_settings() is True
         for _ in range(80):
@@ -988,13 +992,11 @@ async def test_configure_credential_with_inherit_streaming_keeps_the_app_up(
         first = app.screen
         assert isinstance(first, ConsoleSettingsModal)
         await _settle(pilot, first)
-        first.query_one("#console-settings-provider", Select).value = "openai"
-        for _ in range(20):
+        first._model_picked(("openai", "gpt-5-mini"))  # pick mode's result
+        for _ in range(4):
             await pilot.pause()
-            if first._active_provider == "openai":
-                break
-        await pilot.pause()
-        # The provider switch alone lands on Inherit (the task's repro).
+        assert first._active_provider == "openai"
+        # The model switch alone lands on Inherit (the task's repro).
         assert first._streaming_draft is None
         assert _shows_effective_streaming(first)
         await pilot.click("#console-settings-configure-credential")

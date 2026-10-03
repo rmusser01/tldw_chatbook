@@ -2952,54 +2952,6 @@ async def _request_settings_close(pilot, source: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_modal_provider_switch_takes_the_target_providers_own_model() -> (
-    None
-):
-    """TASK-33001.1: the Conversation settings modal's provider switch runs the
-    REAL controller rebase and fills the target provider's own model -- never
-    the chat-defaults model that belongs to another provider."""
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-
-    def real_rebase(state, **kwargs):
-        return ConsoleChatController.rebase_console_settings_draft(
-            object(), state, **kwargs
-        )
-
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="local-gguf")
-    estimate = ConsoleSettingsContextEstimate(
-        used_tokens=None, token_limit=None, label="unavailable"
-    )
-    modal = ConsoleSettingsModal(
-        settings=settings,
-        app_config={
-            "chat_defaults": {"provider": "OpenAI", "model": "gpt-5.6-terra"},
-            "api_settings": {
-                "llama_cpp": {"api_url": "http://127.0.0.1:8080"},
-                "anthropic": {"api_key": "test-key", "model": "claude-sonnet-5"},
-            },
-        },
-        # The configured model is NOT the catalog's first entry, so a
-        # snap-to-first-catalog-model regression cannot pass.
-        providers_models={
-            "llama_cpp": ["local-gguf"],
-            "anthropic": ["claude-haiku-5", "claude-sonnet-5"],
-        },
-        context_estimate=estimate,
-        can_save=True,
-        draft_rebaser=real_rebase,
-    )
-    app = _SettingsCloseHarness()
-    async with app.run_test(size=(120, 42)) as pilot:
-        await app.push_screen(modal, callback=app.capture)
-        await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
-        await pilot.pause()
-
-        assert modal._draft.settings.provider == "anthropic"
-        assert modal._draft.settings.model == "claude-sonnet-5"
-
-
-@pytest.mark.asyncio
 async def test_alt_m_popover_provider_switch_takes_the_target_providers_own_model() -> (
     None
 ):
@@ -3166,7 +3118,7 @@ async def test_settings_modal_min_p_for_anthropic_is_neither_sent_nor_saved() ->
     async with app.run_test(size=(120, 42)) as pilot:
         await app.push_screen(modal, callback=app.capture)
         await pilot.pause()
-        modal.query_one("#console-settings-provider", Select).value = "anthropic"
+        modal._model_picked(("anthropic", model))  # what pick mode hands back
         await pilot.pause()
         assert "min_p" not in {field.name for field in modal._draft.field_drafts}
 

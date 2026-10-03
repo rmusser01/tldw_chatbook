@@ -8,6 +8,7 @@ from textual.widgets import Button, Input, Select, Static
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_session_settings import ModalHarness
+from Tests.UI.test_console_settings_model_change import pick_mode_opener, real_rebase
 from tldw_chatbook.Chat.console_session_settings import (
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
@@ -38,16 +39,36 @@ def _isolate_context_metadata(monkeypatch):
 
 
 def _modal(app, *, provider="llama_cpp", tester=None):
+    providers_models = {"llama_cpp": ["model-a"]}
     return ConsoleSettingsModal(
         settings=ConsoleSessionSettings(
             provider=provider, model="model-a", base_url="http://127.0.0.1:9099"
         ),
         app_config=app.app_config,
-        providers_models={"llama_cpp": ["model-a"]},
+        providers_models=providers_models,
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
         connection_tester=tester,
+        # TASK-33006.4: the Console's wiring; a pair changes only by a pick.
+        draft_rebaser=real_rebase,
+        model_picker=pick_mode_opener(app, app.app_config, providers_models),
     )
+
+
+async def _pick_in_pick_mode(app, pilot, *keys: str) -> None:
+    """Pick mode is open: type ``keys`` (if any) in Find, then Enter."""
+    from tldw_chatbook.Widgets.Console.console_model_popover import (
+        ConsoleModelPopover,
+    )
+
+    for _ in range(30):
+        await pilot.pause(0.02)
+        if isinstance(app.screen, ConsoleModelPopover):
+            break
+    assert isinstance(app.screen, ConsoleModelPopover) and app.screen._pick_only
+    await app.workers.wait_for_complete()
+    await pilot.press(*keys, "enter")
+    await pilot.pause()
 
 
 async def _settled(modal, pilot):
@@ -99,6 +120,9 @@ async def test_create_endpoint_returns_to_responsive_settings_with_settled_evide
         ).value = "http://127.0.0.1:9999"
         await pilot.pause()
         template.query_one("#endpoint-template-create", Button).press()
+        # TASK-33006.4: the created entry opens pick mode on itself; the
+        # pick (the entry with the template's model) lands on a pair.
+        await _pick_in_pick_mode(app, pilot)
         for _ in range(30):
             await pilot.pause(0.02)
             if (
@@ -212,9 +236,7 @@ async def test_late_result_cannot_publish_after_same_family_entry_switch():
             await pilot.pause()
             modal.query_one("#console-settings-model-discover", Button).press()
             await asyncio.wait_for(started.wait(), 2)
-            modal.query_one(
-                "#console-settings-provider", Select
-            ).value = "custom-ep:two"
+            modal._model_picked(("custom-ep:two", "model-a"))  # pick mode's result
             await pilot.pause()
             modal.query_one("#console-settings-model-discover", Button).press()
             await asyncio.wait_for(current_started.wait(), 2)
@@ -226,7 +248,8 @@ async def test_late_result_cannot_publish_after_same_family_entry_switch():
             evidence = await _settled(modal, pilot)
             assert evidence.model_ids == ("current-model",)
             await pilot.pause()
-            assert modal._current_model_value() == "current-model"
+            # TASK-33006.4: a listing never picks the model; Change does.
+            assert modal._current_model_value() == "model-a"
             assert modal._connection_evidence_store.evidence_for(
                 modal._current_connection_probe_identity()
             ).model_ids == ("current-model",)
@@ -349,6 +372,22 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         template.query_one("#endpoint-template-url", Input).value = base_url
         await pilot.pause()
         template.query_one("#endpoint-template-create", Button).press()
+        # TASK-33006.4: the created entry opens the real pick-only switcher
+        # on itself; typing the served id picks the pair, then it is probed.
+        for _ in range(60):
+            await pilot.pause(0.02)
+            if isinstance(harness.screen, ConsoleModelPopover):
+                break
+        picker = harness.screen
+        assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
+        find = picker.query_one("#console-popover-find", Input)
+        assert find.value == f"{display_name} "
+        await harness.workers.wait_for_complete()
+        find.value = f"{display_name} {model_id}"
+        await pilot.pause()
+        row = picker.highlighted_row()
+        assert (row.provider, row.model) == (provider_id, model_id)
+        await pilot.press("enter")
         for _ in range(30):
             await pilot.pause(0.02)
             if harness.screen is modal:
@@ -368,7 +407,7 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         # Cancel asks first; Discard is the choice that closes unchanged.
         modal.query_one("#console-settings-cancel", Button).press()
         await pilot.pause()
-        assert "Provider" in str(
+        assert "Model" in str(  # the pair is one field (TASK-33006.4)
             modal.query_one("#console-settings-close-message", Static).renderable
         )
         await pilot.press("d")
@@ -509,7 +548,6 @@ async def test_completed_entry_listing_becomes_unverified_when_credential_change
         monkeypatch.setenv("ENTRY_PROBE_KEY", "fixture-second-key")
         modal._sync_readiness_display()
         assert not modal._current_model_discovery_matches_current_draft()
-        assert not modal._current_discovered_model_ids
 
 
 @pytest.mark.asyncio
@@ -548,15 +586,15 @@ async def test_make_default_retains_hyphenated_entry_and_endpoint_on_reload(
         await console._open_console_settings(focus_model=True)
         await pilot.pause()
         modal = harness.screen
-        modal.query_one(
-            "#console-settings-provider", Select
-        ).value = "custom-ep:gpu-node"
-        await pilot.pause()
+        # TASK-33006.4: Change opens the real pick-only switcher (the
+        # Console's open_model_picker); the entry's name picks its row.
+        assert harness.focused is modal.query_one(
+            "#console-settings-model-change", Button
+        )
+        await pilot.press("enter")
+        await _pick_in_pick_mode(harness, pilot, *"GPU node registry")
+        assert harness.screen is modal
         assert modal._active_provider == "custom-ep:gpu-node"
-        picker = modal.query_one("#console-settings-model-picker")
-        picker.set_model_value("registry-model")
-        picker.post_message(picker.ModelSelected("registry-model"))
-        await pilot.pause()
         assert modal._current_model_value() == "registry-model"
         button = modal.query_one("#console-settings-make-default", Button)
         assert not button.disabled
@@ -589,7 +627,10 @@ async def test_editing_builtin_endpoint_updates_bound_dirty_draft():
 
 
 @pytest.mark.asyncio
-async def test_stale_model_adapter_event_cannot_undo_discovered_selection():
+async def test_a_models_listing_never_changes_the_model():
+    """TASK-33006.4 (spec rule 1): Test connection lists models but never
+    picks one, even a sole listed model; only Change's pick mode does."""
+
     async def connection(_identity):
         return ProviderProbeResult("reachable", ("served-model",))
 
@@ -599,17 +640,16 @@ async def test_stale_model_adapter_event_cannot_undo_discovered_selection():
         await app.push_screen(modal)
         await pilot.pause()
         modal.query_one("#console-settings-model-discover", Button).press()
-        await _settled(modal, pilot)
-        select = modal.query_one("#console-settings-model-select", Select)
-        assert select.value == "served-model"
-        select.post_message(Select.Changed(select, "model-a"))
-        await pilot.pause()
-        assert modal._current_model_value() == "served-model"
+        evidence = await _settled(modal, pilot)
+        assert evidence.model_ids == ("served-model",)
+        assert modal._current_model_value() == "model-a"
         assert modal._current_model_discovery_matches_current_draft()
+        status = modal.query_one("#console-settings-model-discover-status", Static)
+        assert str(status.content) == "1 model listed"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("adapter", ["model", "endpoint"])
+@pytest.mark.parametrize("adapter", ["endpoint"])  # no model adapter since TASK-33006.4
 async def test_named_entry_adapter_echo_does_not_cancel_pending_probe(adapter):
     started = asyncio.Event()
     release = asyncio.Event()
@@ -636,12 +676,8 @@ async def test_named_entry_adapter_echo_does_not_cancel_pending_probe(adapter):
         await pilot.pause()
         modal.query_one("#console-settings-model-discover", Button).press()
         await asyncio.wait_for(started.wait(), 2)
-        if adapter == "model":
-            select = modal.query_one("#console-settings-model-select", Select)
-            select.post_message(Select.Changed(select, select.value))
-        else:
-            endpoint = modal.query_one("#console-settings-base-url", Input)
-            endpoint.post_message(Input.Changed(endpoint, endpoint.value))
+        endpoint = modal.query_one("#console-settings-base-url", Input)
+        endpoint.post_message(Input.Changed(endpoint, endpoint.value))
         await pilot.pause()
         assert modal._active_connection_probe_token is not None
         release.set()
