@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 11:00'
+updated_date: '2026-10-03 12:01'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -187,6 +187,19 @@ Reason: mechanically preserve shipped TASK33642 visit-only metadata reuse and de
 4. Authenticate full source/tree/index, exact incoming tightened guard/snapshot bytes, unchanged original assertion ASTs and typed provider/fallback/diagnostic SQL custody. Check fatal/static/format debt, diagnostic/worker/CSS/task/whitespace artifacts proportionately and request immutable independent source/functional review. No production repair is planned.
 5. Only after functional/review/artifact activity settles, run ORIGINAL five storage/app-import/UI-ready/boot-CSS cases with exact incoming040 guard sources and REPO_ROOT child cwd/PYTHONPATH. Read actual counts; retain earlier681/686 and1033/1033 as historical, not new measurements. No pin/ceiling/warmup/count/timeout/work change. Obtain supplemental independent raw/XML/hash/count approval, then recheck AC3/4 and close TASK33664 via CLI with all positive/NON-GREEN evidence and inherited limits.
 6. Documentation-only closure updates the four owned canonical records and preserves every approved source/lesson/ADR/index hash and capture_cloud.py deletion. Publish once with EXACT observed f8bcd94f6b50249e8e07356b9a4320483362406e lease. Require fresh current-head Qodo/no actionable threads/ALL FOUR jobs and actual strict protection before normal head-pinned protected merge. Do not rebase while fresh jobs run. Verify MERGED parents/tree/concurrency, then pause heartbeat.
+
+## Strict-base audio refusal and Roleplay review preservation — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/178-server-authority-refusal-recovery.md (existing Proposed record); existing ADR031/199/211.
+Reason: preserve the shipped TASK33660 authentication-refusal translation and incoming Roleplay review records mechanically. The audio probes reuse existing AuthenticationError, PolicyDeniedError and auth_required authority/recovery contracts; no new owner, authority, storage, schema, dependency, UI behavior, gate or ceiling.
+
+1. ALL FOUR published30c1595985b9abb6281b652a99b0df0e8c6a2c89 jobs passed and exact-head Qodo was clear before this strict-base update. Actual devf87153b799eb6285f2fb417674af1954429ace26 causes CONFLICTING/DIRTY under live strict/admin-enforced protection. Reopen AC3/In Progress through CLI before rebase. Capture all248 approved Git/disk hashes,105 incoming paths, prior full tree/index/modes/blob IDs, both append-only live-verification lesson additions and capture_cloud.py deletion.
+2. Rebase the preserving feature range once from040959 onto exactf871. All248 approved files have no incoming manifest overlap and remain exact. The sole actual feature-patch overlap is lessons-live-verification.md: preserve its entire231961-byte common prefix, all5706 prior feature suffix bytes and all876 incoming suffix bytes. Preserve104 other incoming paths byte-exact and the full planned tree with only incoming replacements and this authenticated lesson composition. Incoming TASK33660 and33621.44 remain Done/checked; all13 TASK33781–33793 remain To Do with73 unchecked criteria. Preserve the existing29TASK33910 To Do/246 unchecked and all separate task states.
+3. Qualify the unchanged incoming three audio test modules and existing local-authority/auth-classification/redirect/runtime-policy neighbors proportionately using fake clients and httpx.MockTransport. Preserve all original assertions and diagnostic/policy semantics. Do not run incoming QA harnesses, live servers/providers/user keys, microphones, physical keys or broader Roleplay review sweeps; their artifacts are authenticated historical evidence, not new behavior certification.
+4. Authenticate all353 composed source/lesson/ADR/index/incoming hashes, complete tree/index/modes/blob IDs and deletion. Check only incoming four Python files for fatal/Ruff/format and retain exact shipped debt. Verify supportedPython3.12.11 task-ID/path/readability guards and whitespace. Existing CSS, diagnostic, worker, native, SQL, schema, fallback and tightened guard qualifications carry by exact source identity; no new or weakened pin, ceiling, timeout, warmup, count or work.
+5. Commit immutable source and obtain independent read-only preservation/targeted-functional/evidence review. After ALL functional/artifact/review activity settles, run ORIGINAL five actual unchanged tested/untested storage, app-import, UI-ready and boot-CSS cases with exact REPO_ROOT cwd/PYTHONPATH. Read fresh counts rather than relabel historical681/686 imports and1033/1033 UI-ready; retain all warnings and zero-headroom limits. Obtain supplemental independent source/hash/raw/XML/count approval before closing AC3 through CLI.
+6. Documentation-only closure updates four owned canonical Markdown records, retaining every approved source hash and every historical positive/NON-GREEN/baseline/interrupted/unexecuted limitation. Publish once with EXACT observed30c1595985b9abb6281b652a99b0df0e8c6a2c89 lease and concise PR body. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs, then actual strict protection before normal protected --match-head-commit merge. No rebase while new CI runs. Verify MERGED parents/tree/concurrency proportionately, pause heartbeat and report completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
