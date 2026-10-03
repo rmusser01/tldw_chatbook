@@ -1242,6 +1242,11 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # DOES write durable per-destination reader preferences its later
             # cases must not see; it uses @private_profile_test instead.)
             "test_library_media_reader_traversal_t22207.py",
+            # TASK-21234: the fleet teardown notice suite builds real apps
+            # through _build_test_app for its direct-seam staging and its
+            # full-app superseded-navigation case; same admission signature
+            # and same class as the console integration suites above.
+            "test_fleet_teardown_notice.py",
         }
     )
     test_data_dir = (
