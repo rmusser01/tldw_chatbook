@@ -715,3 +715,16 @@ The preceding c88 UI job hit its unchanged20-minute limit at88%, with no
 assertion failure reported. Comparable groups took25–34% longer than on
 the preceding successful c814 run. Limits and coverage remain unchanged;
 fresh final-head CI and clean/resolved Qodo are required before normal merge.
+
+
+Qodo public Close contract correction (d97b6290, 2026-10-03 UTC)
+
+`ConsoleRuntime.close_session` now documents its existing arguments, result
+and RuntimeError refusals, including a retained session admission fence. The
+entire runtime executable AST is unchanged after restoring only the prior
+docstring; compile and range formatting pass. Of233 preceding pins,232
+retain exact bytes and only this docstring changes the runtime file hash.
+Fresh full preflight and zero-new Ruff34 pass. Original147-case and native
+receipts retain identities; no functional/native replay is claimed for strings.
+QA `close_contract_doc_review_followup` records exact byte/semantic proof.
+Fresh final-head CI/Qodo and current dev still precede normal protected merge.

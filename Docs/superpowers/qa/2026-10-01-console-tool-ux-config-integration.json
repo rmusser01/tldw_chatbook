@@ -2465,5 +2465,23 @@
       "assertion_failure_reported": false,
       "comparison": "Comparable approval/projection/Close/style groups ran25\u201334% slower than successful c814 job111063363950; no application/test changes introduced by this audit-only rebase. Fresh final-head gates remain required."
     }
+  },
+  "close_contract_doc_review_followup": {
+    "prior_head": "998d7187aa1d0b4f6a4511050d6b892d85363bc5",
+    "base": "2612fc56b26510630190ecacdc3855c4bffb1786",
+    "file": "tldw_chatbook/Chat/console_runtime.py",
+    "original_sha256": "ed6d4dc957c2a3a4b32285a75370a96338077251d0addb83fa3e0b5a67467697",
+    "source_sha256": "7fb7f9d660c62ef537a7d54f2a437b1585bbff16e667eb40d29bccb6fde23b25",
+    "entire_runtime_executable_ast_unchanged": true,
+    "compile_pass": true,
+    "existing_regression": "Tests/Chat/test_console_runtime_shutdown.py::test_reused_session_runtime_refuses_before_voice_close_ownership",
+    "limits": "Docstring-only qualification. Existing147-case and native receipts retain original source identities; no new functional or native replay claimed.",
+    "unchanged_byte_pins": 232,
+    "current_pin_count": 233,
+    "range_format_pass": true,
+    "lint": "/tmp/console-tool-ux-close-contract-final-lint.json",
+    "new_ruff_diagnostics": 0,
+    "preflight": "/tmp/console-tool-ux-close-contract-preflight.txt",
+    "preflight_pass": true
   }
 }

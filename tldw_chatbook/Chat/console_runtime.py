@@ -4684,7 +4684,22 @@ class ConsoleRuntime:
         expected_revision: int,
         timeout_seconds: float = CONSOLE_SESSION_CLOSE_GRACE_SECONDS,
     ) -> Any | None:
-        """Drain already-claimed voice publication before closing its session."""
+        """Drain already-claimed voice publication before closing its session.
+
+        Args:
+            session_id: Exact Console session to close.
+            expected_revision: Revision from the caller's lifecycle impact snapshot.
+            timeout_seconds: Grace period for bounded publication and turn drains.
+
+        Returns:
+            The removed session, or None if claimed voice publication does not
+            drain within its grace period.
+
+        Raises:
+            RuntimeError: Recovery retains a session admission fence, a voice
+                close is already active, or the runtime/controller cannot
+                accept closure.
+        """
 
         # A recreated store row cannot retire this app-lifetime close fence.
         # Refuse before taking any new voice-close ownership.
