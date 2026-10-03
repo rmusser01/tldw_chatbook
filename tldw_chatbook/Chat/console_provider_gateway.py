@@ -1511,8 +1511,22 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
             f"Request to {provider_copy} not sent: it failed a local check on {field}."
         )
     status_copy = f" Status: {status_code}." if type(status_code) is int else ""
+    # TASK-34100.5 AC#4: the provider's own allowlisted sentence, and the fix.
+    from tldw_chatbook.Chat.provider_error_reason import (
+        provider_reason_for_exception,
+    )
+
+    reason = provider_reason_for_exception(exc)
+    reason_copy = f" {provider_copy} says: “{reason}”" if reason else ""
+    action_copy = (
+        " Update the API key in Settings ▸ Providers & Models, or run "
+        "Ctrl+P ▸ Setup: Run setup wizard."
+        if category == "authentication failed"
+        else ""
+    )
     return _sanitized_provider_diagnostic(
         f"Provider error from {provider_copy}: {category}.{status_copy}"
+        f"{reason_copy}{action_copy}"
     )
 
 
@@ -1718,7 +1732,8 @@ def _provider_error_copy_with_model_recovery(
         return (
             f"{copy}{named} The provider could not find this model or "
             "endpoint, or this key cannot use it. Check the model name and "
-            "the key, or choose another model from the model picker."
+            "the key, or choose another model from the model picker "
+            "(Alt+M: Switch model)."
         )
     if status_code != 400:
         return copy

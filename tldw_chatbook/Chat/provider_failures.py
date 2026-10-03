@@ -80,6 +80,15 @@ def describe_stream_failure(exc: BaseException) -> str:
     exc_name = type(exc).__name__
     lowered_name = exc_name.lower()
 
+    stall_seconds = getattr(exc, "timeout_seconds", None)
+    if exc_name == "StreamStallError" and isinstance(stall_seconds, (int, float)):
+        # TASK-34100.5 AC#4: a stall is its own category with its own fixes,
+        # never "unexpected provider error" (the watchdog exists to say so).
+        return (
+            f"no reply for {stall_seconds:g} s — the provider stopped sending. "
+            "Retry, or wait longer by raising "
+            "chat_defaults.stream_stall_timeout_seconds in config.toml."
+        )
     if (
         isinstance(exc, (asyncio.TimeoutError, TimeoutError))
         or "timeout" in lowered_name
