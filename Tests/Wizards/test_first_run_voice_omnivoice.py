@@ -12,7 +12,8 @@ import pytest
 from textual import on
 from textual.widgets import Button, Checkbox, Collapsible, Input, Static
 
-import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+# TASK-33921: the step moved to its own module; patch where it looks names up.
+import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
 from Tests.Wizards.test_first_run_setup_wizard import _StepHost
 from tldw_chatbook.Event_Handlers.STTS_Events.stts_events import (
     STTSSettingsSaveEvent,
@@ -49,7 +50,7 @@ async def _select_omnivoice(step: VoiceSetupStep, pilot) -> None:
 def _state(monkeypatch: pytest.MonkeyPatch, value: str) -> list:
     calls: list = []
     monkeypatch.setattr(
-        wizard_module, "omnivoice_setup_state",
+        voice_step_module, "omnivoice_setup_state",
         lambda model_root, **_: calls.append(model_root) or value,
     )
     return calls
@@ -149,7 +150,7 @@ async def test_each_state_renders_copy_and_buttons(
 
 async def test_install_runs_consent_then_provision_then_rereads(monkeypatch) -> None:
     states = iter(["model_missing", "ready"])
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: next(states))
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", lambda *_a, **_k: next(states))
     order: list = []
 
     async def preflight(**_):
@@ -160,8 +161,8 @@ async def test_install_runs_consent_then_provision_then_rereads(monkeypatch) -> 
         order.append(("provision", report))
         return None
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
@@ -190,8 +191,8 @@ async def test_declining_consent_leaves_model_missing_and_reenables_install(
         provision_calls.append(report)
         return None
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(False))
@@ -221,8 +222,8 @@ async def test_provision_failure_shows_message_and_reenables_install(
     async def failing_provision(report, *, progress=None, **_):
         raise RuntimeError("disk full")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", preflight)
-    monkeypatch.setattr(wizard_module, "run_omnivoice_provision", failing_provision)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_provision", failing_provision)
     step = _step()
     host = _Host(step)
     monkeypatch.setattr(host, "push_screen", lambda screen, callback: callback(True))
@@ -247,7 +248,7 @@ async def test_install_double_press_runs_one_preflight(monkeypatch) -> None:
         await asyncio.sleep(0.3)
         raise RuntimeError("offline")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", slow_preflight)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", slow_preflight)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -268,7 +269,7 @@ async def test_preflight_failure_shows_message_and_allows_retry(monkeypatch) -> 
     async def failing(**_):
         raise RuntimeError("network down")
 
-    monkeypatch.setattr(wizard_module, "run_omnivoice_preflight", failing)
+    monkeypatch.setattr(voice_step_module, "run_omnivoice_preflight", failing)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -346,7 +347,7 @@ async def test_state_read_import_error_means_engine_missing(monkeypatch) -> None
     def broken(*_a, **_k):
         raise ImportError("onnxruntime is broken")
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", broken)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", broken)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -384,7 +385,7 @@ async def test_a_superseded_state_check_cannot_overwrite_the_current_one(
             return "ready"
         return "model_missing"
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", state)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()
@@ -409,7 +410,7 @@ async def test_a_stale_state_check_leaves_other_services_alone(monkeypatch) -> N
         release.wait(5)
         return "ready"
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", state)
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", state)
     step = _step()
     async with _Host(step).run_test(size=(120, 40)) as pilot:
         await pilot.pause()

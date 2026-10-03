@@ -123,7 +123,9 @@ _BUDGETS: dict[str, int] = {
     # Added 2026-09-21 (task-32901), each at its exact measured size as of
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 10404,
+    # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
+    # to UI/Wizards/first_run_voice_step.py.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 9866,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }

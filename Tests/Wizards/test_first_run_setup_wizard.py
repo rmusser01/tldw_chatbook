@@ -502,9 +502,10 @@ async def test_voice_resume_restores_all_non_secret_controls():
 
 @pytest.mark.asyncio
 async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    # TASK-33921: the Voice step looks this up in its own module.
+    import tldw_chatbook.UI.Wizards.first_run_voice_step as voice_step_module
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: "ready")
+    monkeypatch.setattr(voice_step_module, "omnivoice_setup_state", lambda *_a, **_k: "ready")
     resume = SetupDraft(
         version=SETUP_DRAFT_VERSION,
         track=TRACK_QUICK,
