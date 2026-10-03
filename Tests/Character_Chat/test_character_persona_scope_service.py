@@ -2951,13 +2951,22 @@ async def test_server_character_persona_service_from_config_denied_policy_does_n
     build_client.assert_not_called()
 
 
-def test_app_wires_character_persona_services(monkeypatch, request):
+@pytest.mark.parametrize("preimport_app", [False, True])
+def test_app_wires_character_persona_services(monkeypatch, request, preimport_app):
+    import importlib
+
     from Tests.Backup_Recovery.config_test_support import install_config_source
 
-    install_config_source(monkeypatch)
+    if preimport_app:
+        importlib.import_module("tldw_chatbook.app")
+    config = install_config_source(monkeypatch)
     from tldw_chatbook import app as app_module
     from tldw_chatbook import app_service_wiring
 
+    # App imports may precede installation of this test's real profile source.
+    monkeypatch.setattr(
+        app_service_wiring, "get_user_data_dir", config.get_user_data_dir
+    )
     server_service = Mock()
     server_dictionary_service = Mock()
     captured = {}
