@@ -9746,6 +9746,11 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_controller.dispose()
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
+        # TASK-34000.2 fix round 1: the sync runtime's status listener is
+        # paired with mount/unmount for the same reason as the registry's.
+        notes_sync_attention.release_library_notes_sync_attention_listener(
+            getattr(self, "_notes_controller", None)
+        )
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
@@ -17183,7 +17188,9 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=getattr(
                         self._notes_state, "tree_expanded_ids", set()
                     ),
-                    **notes_sync_attention.library_notes_tree_folder_sets(self._notes_state),
+                    **notes_sync_attention.library_notes_tree_folder_sets(
+                        self._notes_state
+                    ),
                 )
                 if branches
                 else None
@@ -17219,7 +17226,9 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_protected_folder_ids = frozenset()
         self._notes_state.tree_inactive_managed_folder_ids = frozenset()
         self._notes_state.filter_browse_receipt = None
-        notes_sync_attention.schedule_library_notes_sync_attention(getattr(self, "_notes_controller", None))
+        notes_sync_attention.schedule_library_notes_sync_attention(
+            getattr(self, "_notes_controller", None)
+        )
 
     def _library_notes_placement_order(self) -> str:
         """Return the repository placement order the Sort value asks for.

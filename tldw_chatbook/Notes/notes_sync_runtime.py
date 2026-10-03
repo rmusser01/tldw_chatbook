@@ -1598,6 +1598,10 @@ class NotesSyncRuntimeOwner:
         self._reviews: dict[str, ReconciliationPlan] = {}
         self._setup_reviews: dict[str, _SetupReview] = {}
         self._root_status: dict[str, NotesSyncRootRuntimeSnapshot] = {}
+        #: TASK-34000.2 fix round 1: callables told of every root status
+        #: publication (``_publish``), so a surface can follow a hold the
+        #: watcher produced without the user acting first.
+        self._status_listeners: list[Callable[[NotesSyncRootRuntimeSnapshot], None]] = []
         self._root_paths: dict[str, str] = {}
         self._mutation_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
             weakref.WeakValueDictionary()
@@ -3570,24 +3574,38 @@ class NotesSyncRuntimeOwner:
                 self._blocked_roots.discard(root_id)
                 await self._publish(root_id, "up_to_date", "sync_now")
             else:
+                # Fix round 1 (review Minor #2): name the same control
+                # ``_classify_incomplete_block`` names for this entry -- a
+                # cleanup still pending, or a settleable update, is Recovery's.
+                reason = getattr(result, "reason_code", None) or operation.reason_code
                 self._blocked_roots.add(root_id)
                 await self._publish(
                     root_id,
                     "needs_attention",
-                    "review_changes",
+                    (
+                        "resolve_cleanup"
+                        if reason == "replacement_cleanup_pending"
+                        or operation.kind in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+                        else "review_changes"
+                    ),
                     action_id=operation_id,
                 )
             return result
         finally:
             self._finish_task(root_id, task)
 
-    async def _run_settled_pass(self, root_id: str) -> None:
+    async def _run_settled_pass(self, root_id: str) -> bool:
         """Re-plan a root whose open entry Recovery just settled (TASK-34000.2).
 
         The same automatic pass a hint runs, with the same gates and the same
         publication: the settled baseline is what the planner measures from,
         so a note edit typed after the wedge is written now, and two-sided
         drift becomes a conflict row instead of a silent overwrite.
+
+        Returns:
+            Whether the pass left the root in a healthy status (fix round 1:
+            the Recovery line reads the published status, so it never says
+            "checked again" over a row that says failed or needs attention).
         """
 
         self._blocked_roots.discard(root_id)
@@ -3604,6 +3622,8 @@ class NotesSyncRuntimeOwner:
         except Exception:
             self._blocked_roots.add(root_id)
             await self._publish(root_id, "failed", "review_changes")
+        current = self._root_status.get(root_id)
+        return current is not None and current.status not in NOTES_SYNC_ATTENTION_STATUSES
 
     @producer_call
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
@@ -3935,9 +3955,51 @@ class NotesSyncRuntimeOwner:
     ) -> None:
         if persist:
             await self._maintenance_offload(self._store.update_root_status, root_id, status)
-        self._root_status[root_id] = NotesSyncRootRuntimeSnapshot(
-            root_id, status, next_action, action_id
-        )
+        snapshot = NotesSyncRootRuntimeSnapshot(root_id, status, next_action, action_id)
+        self._root_status[root_id] = snapshot
+        self._notify_status_listeners(snapshot)
+
+    def add_status_listener(
+        self, listener: Callable[[NotesSyncRootRuntimeSnapshot], None]
+    ) -> None:
+        """Tell ``listener`` about every root status publication (TASK-34000.2).
+
+        Idempotent per listener object. The listener runs on whatever thread
+        ``_publish`` runs on, right after ``_root_status`` is written; it must
+        marshal to its own thread itself. An exception it raises is logged
+        as metadata and never reaches the publishing pass.
+
+        Args:
+            listener: Called with the published ``NotesSyncRootRuntimeSnapshot``.
+
+        Raises:
+            TypeError: If ``listener`` is not callable.
+        """
+
+        if not callable(listener):
+            raise TypeError("listener must be callable.")
+        if listener not in self._status_listeners:
+            self._status_listeners.append(listener)
+
+    def remove_status_listener(
+        self, listener: Callable[[NotesSyncRootRuntimeSnapshot], None]
+    ) -> None:
+        """Stop telling ``listener``; unknown listeners are ignored."""
+
+        try:
+            self._status_listeners.remove(listener)
+        except ValueError:
+            pass
+
+    def _notify_status_listeners(self, snapshot: NotesSyncRootRuntimeSnapshot) -> None:
+        for listener in tuple(self._status_listeners):
+            try:
+                listener(snapshot)
+            except Exception as error:  # noqa: BLE001 - a listener never breaks a pass
+                logger.debug(
+                    "notes_sync_status_listener_failed",
+                    error_type=type(error).__name__,
+                )
 
     async def shutdown(self) -> None:
         """Close admission, stop hints, settle work, then release leases once."""

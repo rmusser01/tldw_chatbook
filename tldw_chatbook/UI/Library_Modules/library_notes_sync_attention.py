@@ -24,6 +24,8 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import os
+import threading
+import weakref
 from datetime import UTC, datetime
 from functools import partial
 from typing import Any
@@ -172,6 +174,7 @@ async def refresh_library_notes_sync_attention(
     """
 
     runtime = runtime if runtime is not None else _runtime(host)
+    ensure_library_notes_sync_attention_listener(host, runtime=runtime)
     folder_ids = frozenset(
         await _ask(runtime, "attention_folder_ids", default=frozenset()) or ()
     )
@@ -219,11 +222,118 @@ def schedule_library_notes_sync_attention(host: Any) -> None:
     )
 
 
+#: How long a burst of runtime status publications is coalesced before one
+#: refresh runs. A pass publishes several statuses in a row (checking, then
+#: the outcome); the refresh reads the final one.
+STATUS_LISTENER_DEBOUNCE_SECONDS = 0.2
+
+#: One listener per Notes host, so registration is idempotent and release
+#: finds it. Weak on the host: a screen that is gone holds nothing here.
+_STATUS_LISTENERS: weakref.WeakKeyDictionary[Any, LibraryNotesSyncAttentionListener] = (
+    weakref.WeakKeyDictionary()
+)
+
+
+class LibraryNotesSyncAttentionListener:
+    """Bridge the runtime's status publications to one debounced Notes refresh.
+
+    Fix round 1 (TASK-34000.2 review, Important #2): a hold produced by a
+    WATCHER pass while the user was idle (a disk conflict, a pass fenced at
+    attention) reached the runtime's ``_root_status`` but no Notes surface
+    until the next save, sync action or Library visit -- the finding's own
+    failure shape, one interaction wide. The runtime now calls its status
+    listeners from ``_publish``; this one marshals onto the app thread,
+    coalesces a burst into a single :func:`schedule_library_notes_sync_attention`
+    (itself exclusive), and never raises back into the runtime.
+    """
+
+    def __init__(self, host: Any) -> None:
+        self._host = host
+        self._pending = False
+
+    def __call__(self, *_snapshot: object) -> None:
+        """Receive one publication, from whatever thread ``_publish`` runs on."""
+
+        try:
+            app = getattr(self._host, "app_instance", None)
+            if app is None:
+                return
+            thread_id = getattr(app, "_thread_id", None)
+            if thread_id is None or thread_id == threading.get_ident():
+                self._arm(app)
+            else:
+                app.call_from_thread(self._arm, app)
+        except Exception as error:  # noqa: BLE001 - a status refresh, never the runtime
+            logger.debug(
+                "library_notes_sync_attention_listener_failed",
+                error_type=type(error).__name__,
+            )
+
+    def _arm(self, app: Any) -> None:
+        """On the app thread: start the debounce once per burst."""
+
+        if self._pending:
+            return
+        self._pending = True
+        set_timer = getattr(app, "set_timer", None)
+        if callable(set_timer):
+            set_timer(STATUS_LISTENER_DEBOUNCE_SECONDS, self.fire)
+        else:
+            self.fire()
+
+    def fire(self) -> None:
+        """Run the one refresh a burst earned."""
+
+        self._pending = False
+        schedule_library_notes_sync_attention(self._host)
+
+
+def ensure_library_notes_sync_attention_listener(host: Any, *, runtime: Any = None) -> None:
+    """Register this host's listener with the runtime once (idempotent).
+
+    Called from every refresh, because the runtime can start after the
+    screen mounts; the runtime keeps one entry per listener object.
+    """
+
+    runtime = runtime if runtime is not None else _runtime(host)
+    add = getattr(runtime, "add_status_listener", None)
+    if host is None or not callable(add):
+        return
+    try:
+        listener = _STATUS_LISTENERS.get(host)
+    except TypeError:
+        return
+    if listener is None:
+        listener = LibraryNotesSyncAttentionListener(host)
+        _STATUS_LISTENERS[host] = listener
+    with contextlib.suppress(Exception):
+        add(listener)
+
+
+def release_library_notes_sync_attention_listener(host: Any) -> None:
+    """Unregister this host's listener (the screen's unmount pairing)."""
+
+    try:
+        listener = _STATUS_LISTENERS.pop(host, None)
+    except TypeError:
+        return
+    if listener is None:
+        return
+    remove = getattr(_runtime(host), "remove_status_listener", None)
+    if callable(remove):
+        with contextlib.suppress(Exception):
+            remove(listener)
+
+
 __all__ = [
+    "STATUS_LISTENER_DEBOUNCE_SECONDS",
     "SYNC_PASS_WAIT_SECONDS",
+    "LibraryNotesSyncAttentionListener",
+    "ensure_library_notes_sync_attention_listener",
     "library_notes_tree_folder_sets",
     "load_library_note_location",
     "note_file_written_label",
     "refresh_library_notes_sync_attention",
+    "release_library_notes_sync_attention_listener",
     "schedule_library_notes_sync_attention",
 ]

@@ -26,6 +26,7 @@ from tldw_chatbook.Library.library_notes_lasting_sync_state import (
     build_reconciliation_review,
     check_failure_line,
     check_failure_row,
+    recovery_finished_line,
     initial_lasting_sync_snapshot,
     set_setup_value,
     validate_lasting_sync_history_page,
@@ -1532,13 +1533,13 @@ class LibraryNotesSyncController:
         if not self._lifecycle_is_current(root_id, epoch):
             return
         # Fix round 1: this route's success drops the refusal overlay. TASK-34000.2:
-        # Recovery now settles the entry and re-checks the folder, whose row
-        # then names the outcome -- the line claims no status that can go stale.
+        # Recovery settles the entry and re-checks the folder; the line reads the
+        # status that check published, never a healthy outcome it cannot vouch for.
         self._clear_root_failure(root_id)
         self._state = replace(
             self._state,
             phase="roots",
-            status_line="Recovery finished; the folder was checked again.",
+            status_line=recovery_finished_line(self._runtime, root_id),
         )
         self.refresh_roots()
 

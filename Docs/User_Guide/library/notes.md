@@ -824,7 +824,11 @@ folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed", th
 list's idle status reads "Library notes · ⚠ A sync folder needs attention ·
 Next: Open Manage sync folders." in place of "Ready", and the editor of any
 note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with
-"In a synced folder · ⚠ Sync needs attention · …" under its title. Before this
+"In a synced folder · ⚠ Sync needs attention · …" under its title. These
+surfaces follow the folder as its state changes — a hold that a background pass
+produces while you sit idle (a disk edit colliding with a note edit, say)
+reaches them within a moment, without a keypress — and they return to the
+healthy wording the same way once the folder is resolved. Before this
 an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
 end with a newline — left a `postcondition_failed` entry open on the folder
 while the tree, the list and the editor went on saying Sync managed, Ready and

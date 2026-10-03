@@ -1130,6 +1130,39 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "binding_authority_changed": (
         "This note's sync record changed during recovery. Check again."
     ),
+    # Fix round 1 (review Important #1): the code the finding's own Recovery
+    # raised, and the other refusals a sync-folder action can surface.
+    "recovery_authority_changed": (
+        "This entry can't be settled as it is. Check changes, then use Recovery again."
+    ),
+    "operation_already_completed": (
+        "This entry was already completed. Check changes to refresh the folder."
+    ),
+    "operation_root_mismatch": (
+        "This entry belongs to another folder. Check changes to refresh the list."
+    ),
+    "file_observation_failed": (
+        "The file could not be read while sync was working. Use Recovery again."
+    ),
+    "root_lease_required": (
+        "This folder isn't held by this window right now. Reconnect it, then check again."
+    ),
+    "root_authority_mismatch": (
+        "The folder changed while this action was running. Check again."
+    ),
+    "root_direction_changed": (
+        "The folder's sync direction changed meanwhile. Check again."
+    ),
+    "invalid_execution_result": (
+        "Sync returned an unusable result for this action. Check again."
+    ),
+    "changed_since_resolution": (
+        "The note or file changed after this resolution. Check changes to review it."
+    ),
+    "undo_expired": (
+        "This resolution can no longer be undone. Check changes to review the folder."
+    ),
+    "stale_operation_token": "This action refers to an older check. Check again.",
 }
 
 #: task-32534 AC#1: reason code -> (row phrase, the root row's next action).
@@ -1156,6 +1189,18 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
         "resolve_cleanup",
     ),
     "binding_authority_changed": ("the sync record changed", "sync_now"),
+    # Fix round 1 (review Important #1).
+    "recovery_authority_changed": ("entry can't be settled as it is", "sync_now"),
+    "operation_already_completed": ("entry was already completed", "sync_now"),
+    "operation_root_mismatch": ("entry belongs to another folder", "sync_now"),
+    "file_observation_failed": ("the file couldn't be read", "resolve_cleanup"),
+    "root_lease_required": ("folder isn't held by this window", "reconnect_folder"),
+    "root_authority_mismatch": ("the folder changed meanwhile", "sync_now"),
+    "root_direction_changed": ("the sync direction changed", "sync_now"),
+    "invalid_execution_result": ("sync returned an unusable result", "sync_now"),
+    "changed_since_resolution": ("the note or file changed since", "sync_now"),
+    "undo_expired": ("undo is no longer available", "sync_now"),
+    "stale_operation_token": ("refers to an older check", "sync_now"),
 }
 
 
@@ -1228,7 +1273,51 @@ def check_failure_row(
     return f"{verb} failed — {phrase}", next_action
 
 
+#: TASK-34000.2 fix round 1: root statuses under which Recovery's pass did
+#: not leave the folder healthy (the row says so; the line must agree).
+_UNHEALTHY_ROOT_STATUSES = frozenset({"failed", "needs_attention", "partial", "offline"})
+RECOVERY_FINISHED_HEALTHY = "Recovery finished; the folder was checked again."
+RECOVERY_FINISHED_UNHEALTHY = (
+    "Recovery finished, but the check found a problem — see the row."
+)
+
+
+def recovery_finished_line(runtime: object, root_id: str) -> str:
+    """Return Manage sync folders' status line after a Recovery that ran.
+
+    TASK-34000.2 fix round 1 (review Minor #1): Recovery settles the open entry
+    and re-checks the folder, and that check can itself end in a failed or
+    held status. The line reads the status the runtime published for this
+    root instead of asserting "checked again" over a row that says otherwise.
+    A runtime that cannot say (no snapshot, no such root) keeps the plain line.
+
+    Args:
+        runtime: The sync runtime owner (or a test double) with ``snapshot()``.
+        root_id: The folder Recovery ran on.
+
+    Returns:
+        One of the two ``RECOVERY_FINISHED_*`` sentences.
+    """
+
+    snapshot = getattr(runtime, "snapshot", None)
+    if not callable(snapshot):
+        return RECOVERY_FINISHED_HEALTHY
+    try:
+        roots = getattr(snapshot(), "roots", ())
+    except Exception:  # noqa: BLE001 - a status line, never the action
+        return RECOVERY_FINISHED_HEALTHY
+    for root in roots:
+        if getattr(root, "root_id", None) == root_id:
+            if getattr(root, "status", "") in _UNHEALTHY_ROOT_STATUSES:
+                return RECOVERY_FINISHED_UNHEALTHY
+            return RECOVERY_FINISHED_HEALTHY
+    return RECOVERY_FINISHED_HEALTHY
+
+
 __all__ = [
+    "RECOVERY_FINISHED_HEALTHY",
+    "RECOVERY_FINISHED_UNHEALTHY",
+    "recovery_finished_line",
     "LASTING_SYNC_HISTORY_PAGE_SIZE",
     "LastingSyncApplyBlocker",
     "LastingSyncHistory",

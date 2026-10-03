@@ -82,10 +82,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # The other quit variants live in test_library_quit_guard_extended.py,
 # outside this lane, because the lane is near its 20-minute cap (TASK-34000.47).
 # TASK-34000.2 raised it to 124: Tests/UI/test_library_notes_sync_attention.py
-# is one real-app boot (about 15 s of call time locally) over a real lasting-
-# sync root wedged the way review finding N-02 left it: the tree row, the Notes
-# list and the editor say "needs attention", and the real Recovery button
-# heals the folder with no "RuntimeError".
+# is one real-app boot over a real lasting-sync root wedged the way review
+# finding N-02 left it: the tree row, the Notes list and the editor say "needs
+# attention", and the real Recovery button heals the folder with no
+# "RuntimeError". Measured 24 s wall (14 s call) alone and 56 s wall under
+# local load, against the lane's 60 s per-file rule -- keep it a SINGLE test;
+# further attention variants go in non-gated files.
 MINIMUM_FILES = 124
 
 

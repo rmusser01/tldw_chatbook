@@ -2305,9 +2305,12 @@ async def test_cleanup_attention_retains_the_operation_for_review(
     await owner.resolve_cleanup("root-1", "operation-1")
 
     root = owner.snapshot().roots[0]
+    # TASK-34000.2 fix round 1: a cleanup still pending is Recovery's to
+    # finish, the same control ``_classify_incomplete_block`` names for this
+    # entry at startup -- not a Review whose check refuses the open entry.
     assert (root.status, root.next_action, root.action_id) == (
         "needs_attention",
-        "review_changes",
+        "resolve_cleanup",
         "operation-1",
     )
     await owner.shutdown()

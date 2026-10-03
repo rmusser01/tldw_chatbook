@@ -820,6 +820,17 @@ def test_the_lease_refusal_still_names_the_other_window() -> None:
         "stale_observation",
         "operation_needs_attention",
         "binding_authority_changed",
+        "recovery_authority_changed",
+        "operation_already_completed",
+        "operation_root_mismatch",
+        "file_observation_failed",
+        "root_lease_required",
+        "root_authority_mismatch",
+        "root_direction_changed",
+        "invalid_execution_result",
+        "changed_since_resolution",
+        "undo_expired",
+        "stale_operation_token",
     ],
 )
 def test_recovery_refusals_read_as_plain_copy_with_a_forward_action(reason: str):
@@ -836,6 +847,6 @@ def test_recovery_refusals_read_as_plain_copy_with_a_forward_action(reason: str)
     assert failure.startswith("Recovery failed — "), failure
     assert "RuntimeError" not in failure
     assert reason not in failure
-    assert next_action in {"resolve_cleanup", "sync_now"}
+    assert next_action in {"resolve_cleanup", "sync_now", "reconnect_folder"}
     assert next_action != "review_changes"
     assert reason in lasting_state._CHECK_REFUSAL_COPY

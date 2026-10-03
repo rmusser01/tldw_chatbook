@@ -19,11 +19,11 @@ from __future__ import annotations
 import pytest
 from textual.widgets import Button, Static
 
-from Tests.Notes.test_notes_sync_tail_edit import (
-    _TAIL_EDIT,
-    _Vault,
-    _owner,
-    _wedge,
+from Tests.Notes.notes_sync_tail_edit_support import (
+    TAIL_EDIT as _TAIL_EDIT,
+    Vault as _Vault,
+    build_owner as _owner,
+    wedge_root as _wedge,
 )
 from Tests.UI.app_factory import _build_test_app
 from Tests.UI.library_quit_guard_support import (
