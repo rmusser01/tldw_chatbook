@@ -2962,6 +2962,13 @@ and import them by that absolute path. A `NameError` for a symbol you know you
 defined means you are reading a different file, the same way an
 `AttributeError` for a symbol your feature defines means the wrong tree.
 
+**Second incident (TASK-33662, 2026-10-02).** A merge-base tree extracted to
+the generic `scratchpad/base` vanished in the middle of a 25-minute comparison
+run. pytest ended with `FileNotFoundError` on `os.chdir(.../scratchpad/base)`,
+and the other runs died with SIGTERM in the same minute. Files with other
+owners' names (`base_only.txt`, `rerun_head.log`) had appeared beside it. The
+same rule covers whole trees: use a task-named directory (`scratchpad/t33662/base`).
+
 ## A provider can satisfy the response envelope and still ignore the task (2026-09-11)
 
 **What happened.** Live-verifying a new default "Improve My Prompt" optimizer
