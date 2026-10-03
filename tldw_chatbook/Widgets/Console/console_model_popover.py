@@ -460,6 +460,7 @@ class ConsoleModelPopover(
         pick_only: bool = False,
         query: str = "",
         connection_prober: ConnectionProber | None = None,
+        served_models: Mapping[str, Sequence[str]] | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize one exact-origin Switch model transaction.
@@ -492,6 +493,8 @@ class ConsoleModelPopover(
                 is highlighted, and nothing applies until Enter.
             connection_prober: The screen's local-server probe, run once per
                 listed provider per open; this widget calls no network.
+            served_models: Models a Chat settings listing found per provider,
+                listed beside the saved ones (a new entry's, TASK-33006.4).
             **kwargs: Forwarded to ``ModalScreen``.
         """
         super().__init__(**kwargs)
@@ -514,6 +517,7 @@ class ConsoleModelPopover(
         self._setup_opener = setup_opener
         self._pick_only = pick_only
         self._connection_prober = connection_prober
+        self._served = {provider_key(p): m for p, m in (served_models or {}).items()}
         self._probes_offered: set[str] = set()
         settings = initial_draft.settings
         self._chat_settings = settings
@@ -958,7 +962,9 @@ class ConsoleModelPopover(
         self._sync_find_placeholder()
 
     def _saved_models(self, key: str) -> tuple[str, ...]:
-        """The provider's saved model list (a registry entry's own list)."""
+        """The provider's saved models (a registry entry's own list), then
+        the ones a Chat settings listing found it serving (``served_models``).
+        """
         cached = self._saved.get(key)
         if cached is not None:
             return cached
@@ -975,6 +981,7 @@ class ConsoleModelPopover(
                 and not isinstance(models, (str, bytes))
                 for model in models
             ]
+        listed += self._served.get(key, ())
         cached = tuple(
             dict.fromkeys(model for model in map(normalize_model_id, listed) if model)
         )

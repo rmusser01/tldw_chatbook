@@ -202,19 +202,19 @@ ConsoleSettingsModal .console-context-action-row {
     max-width: $ds-size-32;
 }
 
-/* TASK-33006.4: the MODEL row reads model · provider | Source | readiness
-   · context | Change; a long model id ends in an ellipsis. Below 100
-   columns (not redesigned) only the pair and Change show, so Change stays
-   reachable. */
+/* TASK-33006.4: model · provider | Source | readiness · context | Change.
+   The pair takes the free width; ModelPairSummary shortens only an id
+   wider than that, in the middle. Below 100 columns: pair and Change. */
 #console-settings-model-summary {
-    width: auto;
-    max-width: $ds-size-48;
+    width: $ds-width-fill;
     text-wrap: nowrap;
     text-overflow: ellipsis;
 }
 
-ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-summary {
-    width: $ds-width-fill;
+#console-settings-model-source,
+#console-settings-model-status {
+    width: auto;
+    margin: $ds-space-0 $ds-space-1;
 }
 
 ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-source,

@@ -14,7 +14,7 @@
         Archive this chat     │                                                                                                                                                    │                    │
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
         Search all chats…     │ Use: this conversation only. Defaults: future provider conversations.                                                                              │                    │
-   Chat 1                     │ Model             claude-sonnet-4-5 · Anthropic this chat          Ready · not tested · ~200k context                               Change Alt+M   │                    │
+   Chat 1                     │ Model             claude-sonnet-4-5 · Anthropic                                     this chat  Ready · not tested · ~200k context   Change Alt+M   │                    │
                               │ Temperature       │ 0.7        Console Behavior   How varied replies are: lower is focused, higher is more varied.                                 │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 2048       Console Behavior   Longest reply the model may write, in tokens.                                                    │                    │
   ▊  Filter visible     ▎     │ Streaming         │ Off ▼  provider           Show the reply as it is generated.                                                                   │                    │

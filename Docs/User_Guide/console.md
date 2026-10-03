@@ -462,9 +462,14 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
 - **Model**: the chat's model and its provider's name, where the pair comes
   from (*this chat*, or *edited \** once you change it here), the readiness
   word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
-  Ready · not tested · 200k context"), then **Change  Alt+M**. Change is the
-  only way to change the model: it opens **Switch model** (below) in pick
-  mode over Chat settings, listing the same provider·model pairs. **Enter**
+  Ready · not tested · 200k context"), then **Change  Alt+M**. A long model
+  id shows whole; only an id wider than the row is shortened in the middle,
+  keeping its start and its end (a GGUF file's quant), and the provider's
+  name is never cut. Below 100 columns the row shows only the pair and
+  Change; the context window still reads in **Request estimate**. Change is
+  the only way to change the model: it opens **Switch model** (below) in pick
+  mode over Chat settings, listing the same provider·model pairs, plus any
+  models a listing here found. **Enter**
   picks a pair and returns to Chat settings with the draft moved to that
   exact provider and model; nothing is applied until **Apply**. **Esc** returns
   with nothing changed and focus on Change. Pick mode shows no values or
@@ -502,7 +507,7 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   readiness detail. It has no provider or model picker: a provider is never
   chosen without a model. A models listing reports what the server serves
   ("2 models listed") but never picks a model, even when it lists only one;
-  **Change** does. When the chat is not ready (a missing key, an endpoint to
+  **Change** does, and pick mode then lists the served models too. When the chat is not ready (a missing key, an endpoint to
   set, no model), Chat settings opens with **Connection** already open and
   the fix focused (**Change** when the model is missing). Help that points at
   Settings names **F4**, the key that opens it.
@@ -554,7 +559,7 @@ colour, and a focused **Apply to this chat** keeps its colour instead of
 dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
-this chat 32, an endpoint URL 64; the MODEL row's pair ends in "…" past 48). The fields keep
+this chat 32, an endpoint URL 64). The fields keep
 their width on a wider terminal. The reasoning and thinking dropdowns
 (**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
 show their choice, or "Select" when none is set. A value saved earlier that
@@ -598,11 +603,13 @@ Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
-is saved to `config.toml` immediately. **Create** then opens Switch model's
-pick mode with the new entry's name in **Find**: pick one of its models (or
+is saved to `config.toml` immediately. **Create** then lists the models the
+new server serves and opens Switch model's pick mode with the entry's name
+in **Find**, offering those models beside the ones you named: pick one (or
 type a model id after the name) and the chat moves to that pair, after
-which the new server is tested by listing its models; **Esc** keeps the
-chat's pair. Unlike a typed-in URL, an entry never trips the "Endpoint not
+which the new server's connection is tested; **Esc** keeps the chat's pair.
+The `/endpoint` command opens Chat settings with this flow on top and lands
+the entry the same way. Unlike a typed-in URL, an entry never trips the "Endpoint not
 saved" block, and conversations using it survive restart. Renaming, editing, and deletion
 (with a guard that detaches conversations first) live in **F4 ▸ Providers &
 Models ▸ Custom endpoints**.

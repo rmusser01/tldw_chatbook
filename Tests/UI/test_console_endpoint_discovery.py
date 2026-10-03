@@ -396,7 +396,9 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         evidence = await _settled(modal, pilot)
         assert evidence.endpoint == "reachable"
         assert evidence.model_ids == (model_id,)
-        assert calls == [(provider_id, True)]
+        # Review round 1: Create lists the entry first (so pick mode offers
+        # what it serves), then the pick's evidence probe follows.
+        assert calls == [(provider_id, True)] * 2
         assert modal._current_model_value() == model_id
         assert modal._current_draft_discovery_identity().provider_key == provider_id
 
@@ -438,6 +440,71 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         assert settings.provider == provider_id
         assert settings.model == model_id
         assert settings.base_url == base_url
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
+    request, monkeypatch
+):
+    """Review round 1 (finding 1): ``/endpoint`` -> Create lands the entry
+    on a pair as New endpoint… does. Pick mode opens on the entry over the
+    exact Chat settings the command opened, listing the model it serves
+    though the template named none, and the pick rebases that draft."""
+    from Tests.UI.test_console_provider_apply_defaults_flow import (
+        _ConsoleFlowHarness,
+        _persisted_console_app,
+    )
+    from Tests.UI.test_destination_shells import _wait_for_selector
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+    from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+
+    async def connection(identity, *, app_config):
+        del app_config
+        assert identity.custom_endpoint_id == "custom-ep:command-box"
+        return ProviderProbeResult("reachable", ("served-z",))
+
+    monkeypatch.setattr(
+        ChatScreen, "_test_console_connection", staticmethod(connection)
+    )
+    harness = _ConsoleFlowHarness(_persisted_console_app())
+    async with harness.run_test(size=(160, 48)) as pilot:
+        console = harness.screen
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        console.action_open_console_new_endpoint()
+        for _ in range(60):
+            await pilot.pause(0.02)
+            if isinstance(harness.screen, ConsoleEndpointTemplateModal):
+                break
+        template = harness.screen
+        assert isinstance(template, ConsoleEndpointTemplateModal)
+        modal = harness.screen_stack[-2]
+        assert isinstance(modal, ConsoleSettingsModal)
+        template.query_one("#endpoint-template-name", Input).value = "Command box"
+        template.query_one(
+            "#endpoint-template-url", Input
+        ).value = "http://127.0.0.1:9998"
+        template.query_one("#endpoint-template-models", Input).value = ""
+        await pilot.pause()
+        template.query_one("#endpoint-template-create", Button).press()
+        for _ in range(60):
+            await pilot.pause(0.02)
+            if isinstance(harness.screen, ConsoleModelPopover):
+                break
+        picker = harness.screen
+        assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
+        assert picker.query_one("#console-popover-find", Input).value == "Command box "
+        await harness.workers.wait_for_complete()
+        await pilot.press(*"served-z", "enter")
+        for _ in range(30):
+            await pilot.pause(0.02)
+            if harness.screen is modal:
+                break
+        assert harness.screen is modal
+        assert (modal._active_provider, modal._current_model_value()) == (
+            "custom-ep:command-box",
+            "served-z",
+        )
 
 
 @pytest.mark.asyncio

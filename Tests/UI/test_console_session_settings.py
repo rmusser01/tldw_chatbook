@@ -7445,11 +7445,13 @@ async def test_endpoint_created_entry_discovery_settles_and_surfaces() -> None:
         await app.push_screen(modal)
         await pilot.pause()
 
-        # TASK-33006.4: a created entry opens pick mode on itself; the
-        # pick lands on the entry's pair and its first probe runs then.
-        modal._pick_created_endpoint("custom-ep:gpu-box")
+        # TASK-33006.4: a created entry is listed, then pick mode opens on
+        # it; the pick lands on the entry's pair and its first probe runs then.
+        modal.pick_created_endpoint("custom-ep:gpu-box")
         for _ in range(4):
             await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         await pilot.press("enter")
         await _drain_entry_probe(pilot, modal)
 
@@ -7480,11 +7482,13 @@ async def test_endpoint_created_entry_discovery_settles_failure() -> None:
         await app.push_screen(modal)
         await pilot.pause()
 
-        # TASK-33006.4: a created entry opens pick mode on itself; the
-        # pick lands on the entry's pair and its first probe runs then.
-        modal._pick_created_endpoint("custom-ep:gpu-box")
+        # TASK-33006.4: a created entry is listed, then pick mode opens on
+        # it; the pick lands on the entry's pair and its first probe runs then.
+        modal.pick_created_endpoint("custom-ep:gpu-box")
         for _ in range(4):
             await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
         await pilot.press("enter")
         await _drain_entry_probe(pilot, modal)
 
@@ -7943,6 +7947,7 @@ def _endpoint_command_screen_double(
     pushes: list[object],
     mount_result,
     provider_calls: list[str],
+    callbacks: list[object] | None = None,
 ) -> ChatScreen:
     """Constructor-free ChatScreen double for the ``/endpoint`` command flow.
 
@@ -7953,10 +7958,12 @@ def _endpoint_command_screen_double(
     store = ConsoleChatStore()
     store.create_session(settings=settings)
     screen = ChatScreen.__new__(ChatScreen)
+    callbacks = [] if callbacks is None else callbacks
 
     def push_screen(modal, callback=None):
         stack.append(modal)
         pushes.append(modal)
+        callbacks.append(callback)
         return mount_result()
 
     fake_app = SimpleNamespace(screen_stack=stack, push_screen=push_screen)
@@ -8019,6 +8026,7 @@ async def test_endpoint_command_layers_template_on_exact_settings_modal(
     stack: list[object] = []
     pushes: list[object] = []
     provider_calls: list[str] = []
+    callbacks: list[object] = []
 
     class MountResult:
         def __await__(self):
@@ -8033,6 +8041,7 @@ async def test_endpoint_command_layers_template_on_exact_settings_modal(
         pushes=pushes,
         mount_result=MountResult,
         provider_calls=provider_calls,
+        callbacks=callbacks,
     )
 
     await ChatScreen._open_console_new_endpoint(screen)
@@ -8042,9 +8051,11 @@ async def test_endpoint_command_layers_template_on_exact_settings_modal(
     assert isinstance(settings_modal, ConsoleSettingsModal)
     assert isinstance(template, ConsoleEndpointTemplateModal)
     # The exact settings modal this flow opened sits directly beneath the
-    # template: EndpointCreated reaches its handler, never ChatScreen.
+    # template and receives its result: the created entry lands on a pair
+    # in that modal's pick mode (TASK-33006.4), never on ChatScreen.
     assert stack[-2] is settings_modal
     assert stack[-1] is template
+    assert callbacks[-1] == settings_modal.pick_created_endpoint
     assert template._template_provider == "llama_cpp"
     # Provider-model options are resolved once for the settings modal and
     # reused for the template -- no second async resolution window.
@@ -8057,7 +8068,7 @@ async def test_endpoint_command_aborts_when_settings_dismissed_before_template(
 ) -> None:
     """/endpoint (Qodo PR-2646 High): if the settings modal is dismissed
     while its mount settles, the template is never pushed over ChatScreen
-    (an orphaned EndpointCreated would skip provider selection)."""
+    (an orphaned creation would land on no pair)."""
     from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
         ConsoleEndpointTemplateModal,
     )
