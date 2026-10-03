@@ -9002,6 +9002,9 @@ class AgentService:
                 from tldw_chatbook.Chat.console_trace_service import (
                     TraceCallPersistenceError,
                 )
+                from tldw_chatbook.Chat.provider_failures import (
+                    describe_stream_failure,
+                )
 
                 budget_tokens_known = False
                 if (
