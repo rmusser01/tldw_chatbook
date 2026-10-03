@@ -4,8 +4,11 @@ The steps moved whole out of ``FirstRunSetupWizard.py``. Textual registers
 ``@on`` handlers per message-pump class when the class is created
 (``_MessagePumpMeta``), so a handler survives a move only if it stays on a
 ``MessagePump`` subclass. A plain mixin would drop it silently (the
-TASK-33921 trap). These checks read each module's own source, so a handler
-or worker added to a step later is covered without editing this file.
+TASK-33921 trap). Two kinds of check: the first pair reads each module's
+own source, so a handler or worker added to a step later is covered without
+editing this file; the second pair holds the handlers and workers that
+existed before the split as a frozen list, which still fails when a later
+edit moves one into a mixin or drops its decorator.
 """
 
 from __future__ import annotations
@@ -128,6 +131,99 @@ def test_every_worker_method_is_still_a_worker_on_the_moved_class(
         method = cls.__dict__[name]
         # Both decorators hand back a launcher that wraps the original body.
         assert inspect.unwrap(method) is not method, f"{name} lost its decorator"
+
+
+#: Every ``@on`` handler each class had on base 1d8fe87659, before the split.
+#: Frozen on purpose (TASK-34100.1 review): the two tests above read the
+#: class's own source, so a handler moved into a plain mixin, or one that lost
+#: its decorator, drops out of what they check and they still pass.
+_BASE_ON_HANDLERS = {
+    "WelcomeStep": ("open_backup_restore",),
+    "ProviderStep": (
+        "_on_clear", "_on_detect_pressed", "_on_detected_endpoint_selected",
+        "_on_endpoint_changed", "_on_keep", "_on_key_changed",
+        "_on_key_submitted", "_on_provider_chosen", "_on_provider_highlighted",
+        "_on_provider_list_interacted", "_on_replace", "_on_test_pressed",
+        "_on_use_detected",
+    ),
+    "ModelStep": ("_on_custom_model", "_on_model_chosen", "_retry_model_discovery"),
+    "VoiceSetupStep": (
+        "_omnivoice_install_progressed", "_on_add_api_key",
+        "_on_authentication_changed", "_on_omnivoice_install", "_on_preset",
+        "_on_sample_changed", "_on_test_and_hear", "_on_voice_input_changed",
+    ),
+    "RagStep": ("_on_model",),
+    "SpeechSetupStep": (
+        "_activation_requested", "_cancel_external_pressed",
+        "_choose_transcribe_cpp_gguf_pressed", "_deletion_requested",
+        "_install_pressed", "_install_progressed", "_on_speech_language_changed",
+        "_on_speech_precision_changed", "_retry_pressed",
+        "_use_as_default_pressed", "_use_external_pressed",
+    ),
+    "AppearanceStep": (
+        "_on_card", "_on_show_all_cards", "_on_show_all_themes", "_on_theme",
+    ),
+    "ProtectKeysStep": ("_on_set_password",),
+    "SummaryStep": (
+        "_exit_chat", "_exit_home", "_exit_library", "_exit_library_notes",
+        "_exit_settings",
+    ),
+    "SetupWizardContainer": (
+        "_advance_on_input_submit", "_on_radio_advance_requested", "handle_back",
+        "handle_next", "handle_skip_entirely", "handle_step_later",
+        "handle_step_manual", "handle_step_retry",
+    ),
+}
+
+#: Every ``@work`` method on base 1d8fe87659; each is now ``@wizard_work``.
+_BASE_WORKERS = {
+    "VoiceSetupStep": (
+        "_load_omnivoice_state", "_omnivoice_preflight", "_omnivoice_provision",
+    ),
+    "SpeechSetupStep": (
+        "_activate_model", "_configure_transcribe_cpp_gguf", "_delete_model",
+        "_load_installed_state", "_preflight_external_vad", "_preflight_install",
+        "_prepare_external_readiness", "_provision_external_vad",
+        "_provision_install", "_verify_external_source",
+    ),
+    "FirstRunSetupWizard": ("_persist_started_flag",),
+}
+
+
+def _registered_on_handlers(cls: type) -> set[str]:
+    """Handler names Textual dispatches for ``cls``, across its whole MRO.
+
+    Textual collects ``@on`` methods per message-pump class into that class's
+    own ``_decorated_handlers``. A plain mixin gets no such table, so a
+    handler moved into one is missing here.
+    """
+    return {
+        handler.__name__
+        for klass in cls.__mro__
+        for handlers in vars(klass).get("_decorated_handlers", {}).values()
+        for handler, _selectors in handlers
+    }
+
+
+@pytest.mark.parametrize("class_name", sorted(_BASE_ON_HANDLERS))
+def test_every_base_on_handler_is_still_dispatched(class_name: str) -> None:
+    cls = getattr(wizard_module, class_name)
+
+    missing = set(_BASE_ON_HANDLERS[class_name]) - _registered_on_handlers(cls)
+    assert not missing, f"{class_name} no longer dispatches {sorted(missing)}"
+
+
+@pytest.mark.parametrize("class_name", sorted(_BASE_WORKERS))
+def test_every_base_worker_still_starts_a_wizard_worker(class_name: str) -> None:
+    cls = getattr(wizard_module, class_name)
+
+    for name in _BASE_WORKERS[class_name]:
+        launcher = getattr(cls, name)
+        code = getattr(launcher, "__code__", None)
+        assert inspect.unwrap(launcher) is not launcher, f"{name} lost its decorator"
+        assert code is not None and code.co_filename.endswith(
+            "first_run_step_guard.py"
+        ), f"{name} is not started through @wizard_work"
 
 
 #: Every public top-level name FirstRunSetupWizard.py defined before the split
