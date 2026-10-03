@@ -7,6 +7,14 @@ Full setup with keys only (arrows, Enter, Tab, typing, Ctrl+N, Ctrl+B,
 Esc). After every step change, every async completion and every modal
 dismissal they check one invariant: something visible and attached has
 focus. Only network and disk are faked.
+
+The two walks are standing guards, not RED proof: the headless walk lost no
+focus on the base code either (the step-change focus fix predates this
+task; removing it turns both red). The RED proof for AC#4 is
+``test_a_refused_next_gives_the_keyboard_back_to_next``, which fails on the
+pre-fix code (review round 1). Voice "Test and Hear" moving focus to the
+Service radio is review finding voice-speech-05, owned by the Voice group,
+so these walks check only that focus is alive there.
 """
 
 from __future__ import annotations
@@ -282,6 +290,8 @@ class _Walk:
         )
         await self.pilot.pause(0.1)
         _assert_focus_alive(self.app, "after the connection check completed")
+        # Not just alive: still on the field whose Enter started the check.
+        assert getattr(self.app.focused, "id", None) == "setup-provider-api-key"
 
     async def wait_model_list(self, *, failed: bool) -> None:
         model = self.container.steps[self.container.current_step]
@@ -384,6 +394,64 @@ async def test_quick_track_keyboard_walk_never_loses_focus(monkeypatch):
         await walk.back("model")
         await walk.wait_model_list(failed=False)
         await walk.back("provider")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["commit", "checkpoint"])
+@pytest.mark.parametrize("press", ["enter", "click"])
+async def test_a_refused_next_gives_the_keyboard_back_to_next(
+    monkeypatch, refusal: str, press: str
+):
+    """A Next that stays on its step leaves focus on Next, so Retry works.
+
+    TASK-34100.1 review: the advance fence disables Next, and Textual blurs a
+    focused widget the moment it is disabled. A Next that moved on re-anchored
+    focus in ``show_step``, but one the step refused (``commit`` said no, or
+    the checkpoint failed) left focus at None: the copy said "Retry with
+    Next" while Enter, Ctrl+N and Ctrl+B all did nothing until Tab.
+    """
+    wizard = _wizard(monkeypatch, failed_discovery=False)
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        walk = _Walk(app, pilot, wizard)
+        await walk.settle(0.3)
+        container = walk.container
+        refusing = [True]
+        if refusal == "commit":
+            welcome = container.steps[container.current_step]
+            real_commit = welcome.commit
+
+            async def commit():
+                await asyncio.sleep(0.05)
+                return (False, "Not yet.") if refusing[0] else await real_commit()
+
+            welcome.commit = commit
+        else:
+            real_checkpoint = container.persist_setup_checkpoint
+
+            async def checkpoint(step_id):
+                await asyncio.sleep(0.05)
+                return False if refusing[0] else await real_checkpoint(step_id)
+
+            container.persist_setup_checkpoint = checkpoint
+
+        if press == "enter":
+            await walk.tab_to("wizard-next")
+            await pilot.press("enter")
+        else:
+            await pilot.click("#wizard-next")
+        await walk.settle()
+        assert walk.step_id == "welcome"
+        _assert_focus_alive(app, f"after a Next refused by its {refusal}")
+        assert getattr(app.focused, "id", None) == "wizard-next"
+
+        # "Retry with Next": the key that started it retries it.
+        refusing[0] = False
+        await pilot.press("ctrl+n" if press == "click" else "enter")
+        await walk.settle()
+        assert walk.step_id == "provider"
+        _assert_focus_alive(app, "after the retried Next")
 
 
 @pytest.mark.asyncio

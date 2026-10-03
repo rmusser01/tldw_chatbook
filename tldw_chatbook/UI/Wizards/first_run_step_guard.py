@@ -66,6 +66,9 @@ _CONTAINED_ACTION_ATTR = "_first_run_contained_action"
 #: A key-bound action whose failure is reported as a Next that stayed put:
 #: ``action_next`` only launches the advance worker, so nothing moved yet.
 _ADVANCE_ACTIONS = frozenset({"action_next"})
+#: Container attribute holding the widget that had focus when a fence
+#: disabled the nav bar, so lifting the fence can give focus back.
+_FENCED_FOCUS_ATTR = "_first_run_fenced_focus"
 _NO_FRAME = ("", "", 0)
 
 
@@ -495,6 +498,68 @@ class WizardErrorGuard:
             if not contains_wizard_errors(self):
                 raise
             report_contained_error(self, "handler", error)
+
+
+def hold_fenced_focus(container: Any) -> None:
+    """Remember who has focus before a fence disables the nav bar.
+
+    Textual blurs a focused widget the moment it is disabled
+    (``Widget.watch_disabled``). With Back, Next and Exit all disabled, the
+    blur leaves focus at None. A Next that moves on gets focus back from
+    ``show_step``. One that stays on its step (the commit refused, or the
+    checkpoint failed) got nothing back, so Enter, Ctrl+N and Ctrl+B went
+    dead under copy that said "Retry with Next" (TASK-34100.1 review).
+
+    Args:
+        container: The ``SetupWizardContainer`` about to fence its nav bar.
+    """
+    try:
+        focused = container.screen.focused
+    except Exception:  # noqa: BLE001 - not on a screen yet: nothing to hold.
+        return
+    if focused is not None:
+        setattr(container, _FENCED_FOCUS_ATTR, focused)
+
+
+def restore_fenced_focus(container: Any) -> None:
+    """Give focus back once the fence lifts, unless something else took it.
+
+    Runs after the callbacks already queued, because ``Widget.focus`` defers
+    too: a ``show_step`` that just moved to a new step has queued its own
+    focus, which must win. Focus goes back to the held widget if it can take
+    it again, else the step on screen re-anchors it.
+
+    Args:
+        container: The ``SetupWizardContainer`` whose fence just lifted.
+    """
+    held = getattr(container, _FENCED_FOCUS_ATTR, None)
+    if held is None:
+        return
+    setattr(container, _FENCED_FOCUS_ATTR, None)
+
+    def restore() -> None:
+        try:
+            screen = container.screen
+            if screen.focused is not None or not container.is_attached:
+                return
+            if (
+                held.is_attached
+                and held.focusable
+                and held.screen is screen
+                and all(getattr(node, "display", True) for node in held.ancestors_with_self)
+            ):
+                screen.set_focus(held)
+                return
+            heal = _bound(container.steps[container.current_step], "_heal_orphaned_focus")
+        except Exception:  # noqa: BLE001 - the wizard is gone: nothing to restore.
+            return
+        if heal is not None:
+            heal()
+
+    try:
+        container.app.call_later(restore)
+    except Exception:  # noqa: BLE001 - no running app: nothing to restore.
+        return
 
 
 def report_advance_error(
