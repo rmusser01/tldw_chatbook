@@ -159,6 +159,42 @@ Key sections:
 - Property-based testing with Hypothesis
 - Markers: unit, integration, optional, asyncio
 
+### Merging into `dev`
+
+(protection as of 2026-09-27): GitHub refuses a merge unless all of these hold:
+
+- the required check is green;
+- the branch is up to date with `dev` (strict);
+- every review thread is resolved.
+
+These apply to admins too.
+
+The merge queue (`.github/workflows/merge-queue.yml`, spec
+`Docs/superpowers/specs/2026-10-03-merge-queue-design.md`) runs in GitHub Actions. It works the same from any machine,
+session or tool. Check its mode with `gh variable get MERGE_QUEUE`.
+
+**Queue `on`:**
+- Arm auto-merge (`gh pr merge <n> --auto --merge`) only when both of these hold:
+  - Qodo has posted its review on the *current* head;
+  - every thread on that head is resolved.
+
+  Then walk away. The queue rebases the PR when it reaches the front, starts its CI, and lets auto-merge land it.
+- Never `gh pr update-branch` an armed PR, and never merge an armed PR by hand. Either one makes the front PR's CI run go
+  to waste.
+- Before pushing more work to an armed PR, run `gh pr merge <n> --disable-auto`. Then `git pull --rebase`, because the
+  queue may have rebased your branch, and push with `--force-with-lease`. Never use a plain force push.
+- A conflict-free queue rebase needs no fresh Qodo review, because CI tests the combined result. New Qodo threads on the
+  rebased head block the merge, and the queue evicts the PR with the reason.
+- Never click "Approve and run" on a queue-rebased PR. Those runs are the token rebase's empty duplicates.
+- An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
+
+**Queue `off` or `dry`:**
+- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
+  pushed with `--force-with-lease`. Never merge `dev` into the branch (plain `gh pr update-branch` does exactly that).
+- Re-sync only the PR you are about to merge. Under strict protection, one PR merges per CI cycle.
+- Arm auto-merge only under the same Qodo and threads rule as above, and run `gh pr merge <n> --disable-auto` before
+  pushing more work.
+
 ## Special Systems
 
 ### Tool Calling

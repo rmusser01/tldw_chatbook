@@ -154,19 +154,31 @@ at the same spot caused most User Guide sync conflicts in the 2026-09-27 CI spec
 
 These apply to admins too.
 
-- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local
-  `git rebase origin/dev` pushed with `--force-with-lease`. Never merge `dev` into the branch
-  (plain `gh pr update-branch` does exactly that). This is the owner's rule; a merge resolution
-  is where `dev` lines get silently dropped. Then merge the moment the required check is green,
-  because each merge to `dev` makes the other ready PRs behind again.
-- Re-sync only the PR you are about to merge, not every behind PR. Under strict, one PR merges
-  per CI cycle, so each extra re-sync is a full wasted run (2026-09-28: a watcher that re-synced
-  5-7 PRs after every merge spent 5-7 runs per merge).
-- `gh pr merge <n> --auto --merge` is allowed **only** when both hold:
+The merge queue (`.github/workflows/merge-queue.yml`, spec
+`Docs/superpowers/specs/2026-10-03-merge-queue-design.md`) runs in GitHub Actions. It works the same from any machine,
+session or tool. Check its mode with `gh variable get MERGE_QUEUE`.
+
+**Queue `on`:**
+- Arm auto-merge (`gh pr merge <n> --auto --merge`) only when both of these hold:
   - Qodo has posted its review on the *current* head;
-  - every thread on that head is addressed and resolved.
-- Auto-merge stays armed across later pushes, so run `gh pr merge <n> --disable-auto` before
-  pushing any further work to that PR.
+  - every thread on that head is resolved.
+
+  Then walk away. The queue rebases the PR when it reaches the front, starts its CI, and lets auto-merge land it.
+- Never `gh pr update-branch` an armed PR, and never merge an armed PR by hand. Either one makes the front PR's CI run go
+  to waste.
+- Before pushing more work to an armed PR, run `gh pr merge <n> --disable-auto`. Then `git pull --rebase`, because the
+  queue may have rebased your branch, and push with `--force-with-lease`. Never use a plain force push.
+- A conflict-free queue rebase needs no fresh Qodo review, because CI tests the combined result. New Qodo threads on the
+  rebased head block the merge, and the queue evicts the PR with the reason.
+- Never click "Approve and run" on a queue-rebased PR. Those runs are the token rebase's empty duplicates.
+- An evicted PR has auto-merge off and a comment saying why. Fix the cause and re-arm; it rejoins at the back.
+
+**Queue `off` or `dry`:**
+- Re-sync a PR that is behind by **rebasing** it: `gh pr update-branch --rebase <n>`, or a local `git rebase origin/dev`
+  pushed with `--force-with-lease`. Never merge `dev` into the branch (plain `gh pr update-branch` does exactly that).
+- Re-sync only the PR you are about to merge. Under strict protection, one PR merges per CI cycle.
+- Arm auto-merge only under the same Qodo and threads rule as above, and run `gh pr merge <n> --disable-auto` before
+  pushing more work.
 
 ### Security Requirements
 

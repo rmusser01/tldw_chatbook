@@ -3,6 +3,13 @@
 Deliberate owner decision recorded after the PR #2634 merge flow. Do not
 re-tighten these without the owner's say-so.
 
+## 2026-10-03: in-repo merge queue (ADR-218)
+
+Protection is unchanged: strict, required conversation resolution, enforce_admins, and one required check. The queue
+works within these settings. It rebases the front armed PR with `GITHUB_TOKEN`, dispatches `derived-artifacts.yml`
+(`pr=<n>`), and leaves the merge to auto-merge. Its mode is the repository variable `MERGE_QUEUE` (off, dry or on), and
+setting it needs an admin. Agent rules are in `CLAUDE.md` and `AGENTS.md`, under "Merging into `dev`".
+
 ## 2026-09-27: strict re-enabled (owner decision)
 
 **"Require branches to be up to date" (strict): true** again. The owner chose
