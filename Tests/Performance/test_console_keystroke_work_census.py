@@ -714,6 +714,9 @@ async def _census_idle_and_visit(
 
         window: dict[str, Any] = {"calls": [], "error": None}
         billed = asyncio.Event()
+        # Owned calls run in worker threads that cancelling the loop does not
+        # stop; cleanup waits for them before it restores anything.
+        in_flight: set[asyncio.Future[Any]] = set()
 
         async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
             name = getattr(operation, "__name__", "")
@@ -723,8 +726,11 @@ async def _census_idle_and_visit(
                 counting["on"] = True
             if counting["on"] and not billed.is_set():
                 window["calls"].append(name)
+            call = asyncio.ensure_future(real_owned(database_, operation, *args, **kwargs))
+            in_flight.add(call)
+            call.add_done_callback(in_flight.discard)
             try:
-                result = await real_owned(database_, operation, *args, **kwargs)
+                result = await asyncio.shield(call)
             except BaseException as error:
                 # Any call in the billed pass -- epoch read, collection or
                 # compaction -- ends the census with its name, not a timeout.
@@ -766,6 +772,8 @@ async def _census_idle_and_visit(
                 task.cancel()
                 await asyncio.gather(task, return_exceptions=True)
                 runtime._legacy_trace_maintenance_task = None
+            if in_flight:
+                await asyncio.wait(set(in_flight), timeout=60)
             monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
             monkeypatch.setattr(storage_admission, "_local_pause_requested", real_probe)
 
