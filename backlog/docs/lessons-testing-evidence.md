@@ -22,6 +22,27 @@ details_url → run → artifact id), which named the 22 failures exactly —
 none of them the test the INTERNALERROR was attributed to.
 
 ---
+## A shard killed by `timeout-minutes` uploads no test artifact — measure from its surviving siblings
+
+**TASK-19425, 2026-09-30.** Diagnosing core-shard ceiling overruns, the natural
+first move was to download the json-report of the cancelled shards — the runs the
+task is ABOUT. Those artifacts do not exist and cannot: `timeout-minutes` kills the
+job before any `if: always()` upload step runs, which is the same mechanism behind
+the task's "no test summary" complaint. Runs 34795954804 and 34859834173 each
+cancelled two shards at exactly ~120.3 min; the only measurable evidence was the
+four sibling shards that DID finish (3.7-4.5 MB reports) plus job timestamps
+proving the cancellations were per-job timeouts (each ended exactly 120.x min
+after its own start), not push cancellations.
+
+**What to do.** Treat "cancelled shard has no artifact" as the signature of the
+ceiling firing, and rank durations from completed sibling shards of the same run.
+Confirm the kill mode from each job's started/completed timestamps (timeout =
+exactly `timeout-minutes` after its own start) before calling a cancellation a
+concurrency cancel. And before assuming a measured CI hang still exists at HEAD,
+check whether the file was fixed between the artifact's run and your base — and
+remember that if no full run has completed since a suspect commit landed, CI has
+never exercised it: a "hang was fixed" verdict from an old artifact says nothing
+about regressions newer than the last completing run.
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative

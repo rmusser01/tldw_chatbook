@@ -1311,7 +1311,21 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # six-table assertions never run -- the same admission signature as
             # the two console continuation suites above, red since the
             # hook-consent gate landed (aed1b13501).
-            "test_console_terminal_citation_persistence.py",        }
+            "test_console_terminal_citation_persistence.py",
+            # TASK-19425: the Console hook-consent send gate (aed1b13501)
+            # reads the saved [hooks] section through the guarded config
+            # loader on EVERY controller submit_draft/queue_prompt. Under
+            # the per-test redirect that read raises RecoveryRequired
+            # ("raw_source_selection_changed"), the gate's fail-closed
+            # except denies the send ("Hooks unavailable; review or
+            # disable hooks before sending."), and this suite's
+            # controlled-gateway tests wait forever for provider events
+            # that never arrive -- 87 reds, 17 of them pinned at the full
+            # --timeout cap per run (the 300s hang class this task
+            # measures). Same admission signature as the continuation
+            # suites above; the suite never re-selects a config itself.
+            "test_console_local_citation_boundary.py",
+        }
     )
     test_data_dir = (
         _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
