@@ -106,6 +106,7 @@ Tests/UI/test_screen_reuse_helpers.py
 Tests/UI/test_select_directory_typed_path.py
 Tests/UI/test_selection_dialogs.py
 Tests/UI/test_server_chatbook_service_lease.py
+Tests/UI/test_settings_anthropic_auth_source.py
 Tests/UI/test_settings_discovered_model_toggle.py
 Tests/UI/test_settings_network_defaults.py
 Tests/UI/test_settings_provider_view_model.py

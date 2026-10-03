@@ -1511,6 +1511,8 @@ def _validate_combined_provider_settings_mutation(
             allowed_extra_keys = {"model_defaults"}
             if ownership.provider_key == "qwencloud":
                 allowed_extra_keys.add("api_mode")
+            if ownership.provider_key == "anthropic":
+                allowed_extra_keys.add("auth_source")
             if not extra_keys.issubset(allowed_extra_keys):
                 if setup_mutation is None:
                     raise connection_error
@@ -1524,6 +1526,18 @@ def _validate_combined_provider_settings_mutation(
                 "chat_completions",
             }:
                 raise error
+            if "auth_source" in extra_keys:
+                # Lazy: the credential module must stay out of the UI-ready set.
+                from ..LLM_Calls.anthropic_subscription import (
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                )
+
+                if values["auth_source"] not in {
+                    AUTH_SOURCE_API_KEY,
+                    AUTH_SOURCE_SUBSCRIPTION,
+                }:
+                    raise error
         elif section == "model_capabilities.models":
             if (
                 not model
