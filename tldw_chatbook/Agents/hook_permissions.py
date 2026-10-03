@@ -446,23 +446,36 @@ class HookPermissions:
         Returns:
             The config selection (the effective config path as well as the
             loaded source) and generation, both files' identity and change
-            times (``None`` for a missing file), the posture of every
-            component of both parent directories (the full read refuses an
-            unsafe one), and the in-memory sealing, refresh and closed state
-            the snapshot also reflects.
+            times (``None`` for a missing file), the no-follow posture of the
+            store's lock file and of every component of both parent
+            directories (the full read refuses an unsafe one), the storage
+            admission epoch and the serving state of its native holds, and
+            the in-memory sealing, refresh and closed state the snapshot
+            also reflects.
         """
-        from tldw_chatbook.Backup_Recovery.storage_admission import _chain, _posture
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
 
         with self._cache_lock:
             memory = (frozenset(self._sealed), frozenset(self._refresh_pending))
+        with storage_admission._lock:
+            holds = tuple(
+                sorted(
+                    (str(key), storage_admission._hold_serving(hold))
+                    for key, hold in storage_admission._holds.items()
+                )
+            )
+        chain, posture = storage_admission._chain, storage_admission._posture
         return (
             str(config.get_cli_config_path()),
             config._CONFIG_CACHE_SOURCE,
             config._CONFIG_GENERATION,
             _file_stamp(config_path),
             _file_stamp(store_path),
-            tuple(_posture(part) for part in _chain(config_path.parent)),
-            tuple(_posture(part) for part in _chain(store_path.parent)),
+            posture(store_path.with_name(store_path.name + ".lock")),
+            tuple(posture(part) for part in chain(config_path.parent)),
+            tuple(posture(part) for part in chain(store_path.parent)),
+            bootstrap._admission_epoch,
+            holds,
             memory,
             self._closed.is_set(),
         )
@@ -480,10 +493,14 @@ class HookPermissions:
         Returns:
             The current review state.
         """
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
         with self._cache_lock:
             reusable = self._visit_reuse
             published = self._published
-        if reusable is not None and reusable[0] is published:
+        # A maintenance pause refuses the full read; show what it reports.
+        paused = storage_admission._pause is not None
+        if reusable is not None and reusable[0] is published and not paused:
             try:
                 if reusable[1] == self._visit_stamp(
                     published.config.config_path, published.store_path

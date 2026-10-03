@@ -193,6 +193,61 @@ def test_an_unsafe_store_directory_is_not_served_from_a_warm_visit(hook_file, mo
     assert unsafe is not approved
 
 
+def test_a_tampered_store_lock_is_not_served_from_a_warm_visit(hook_file, monkeypatch, tmp_path):
+    """TASK-33642: the store's lock file is part of the reuse stamp.
+
+    A full read refuses a lock file swapped for a symlink; a warm visit must
+    not keep showing the approval read before the swap.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+        tmp_path: Holds the symlink's target.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    lock = approved.store_path.with_name(approved.store_path.name + ".lock")
+    assert lock.exists()
+    target = tmp_path / "elsewhere.lock"
+    target.write_text("")
+    lock.unlink()
+    lock.symlink_to(target)
+    try:
+        count = len(reads)
+        tampered = owner.visit_snapshot()
+    finally:
+        lock.unlink()
+    assert len(reads) > count, "a swapped lock file was served from the reuse"
+    assert not tampered.ready
+
+
+def test_a_maintenance_pause_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: while storage admission is paused, a visit reads in full.
+
+    The full read is refused at the admission boundary and reports recovery;
+    a warm visit must not keep showing the approval from before the pause.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and opens a pause.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    owner.visit_snapshot()
+    monkeypatch.setattr(storage_admission, "_pause", object())
+    count = len(reads)
+    paused = owner.visit_snapshot()
+    assert len(reads) > count, "a paused admission was served from the reuse"
+    assert not paused.ready
+
+
 def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     owner = _owner()
     assert not owner.snapshot().ready
