@@ -24,6 +24,12 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
 )
 
+# The real Settings screen goes through config-participant admission, which the
+# per-test sandbox refuses (RecoveryRequired raw_source_selection_changed, seen in
+# CI's UI Fast Lane); keep the collection-time private profile, as
+# test_console_fork_fresh_lineage_flow.py does. Saves stay captured below.
+pytestmark = pytest.mark.bootstrap_profile
+
 _DRAFT_KEY = "provider_auth_source:anthropic"
 
 

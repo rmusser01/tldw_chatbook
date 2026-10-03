@@ -2117,6 +2117,54 @@ def test_combined_provider_settings_boundary_rejects_connection_without_setup(
     assert calls == []
 
 
+@pytest.mark.parametrize("auth_source", ["api_key", "claude_subscription"])
+def test_combined_boundary_writes_a_known_anthropic_sign_in_choice(monkeypatch, auth_source):
+    """TASK-34201: Settings' "Sign in with" save is an auth_source-only write."""
+    calls = []
+    expected = ConfigMutationResult(True, True, None)
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda values, *, delete_keys=None: calls.append(values) or expected,
+    )
+    section_values = {"api_settings.anthropic": {"auth_source": auth_source}}
+
+    result = persistence_module.persist_provider_settings_atomic(
+        None,
+        provider="anthropic",
+        model="claude-sonnet-4-6",
+        section_values=section_values,
+        delete_keys={},
+    )
+
+    assert result is expected
+    assert calls == [section_values]
+
+
+@pytest.mark.parametrize(
+    ("provider", "auth_source"),
+    [("anthropic", "oauth"), ("anthropic", ""), ("openai", "claude_subscription")],
+)
+def test_combined_boundary_refuses_other_sign_in_writes(monkeypatch, provider, auth_source):
+    calls = []
+    monkeypatch.setattr(
+        persistence_module,
+        "apply_settings_mutation_to_cli_config",
+        lambda *_args, **_kwargs: calls.append(True),
+    )
+
+    with pytest.raises(ValueError):
+        persistence_module.persist_provider_settings_atomic(
+            None,
+            provider=provider,
+            model="some-model",
+            section_values={f"api_settings.{provider}": {"auth_source": auth_source}},
+            delete_keys={},
+        )
+
+    assert calls == []
+
+
 def test_explicit_confirmation_is_authoritative_and_sparse():
     config = {
         "provider_setup": {"confirmed": {"llama_cpp": True, "custom": False}},
