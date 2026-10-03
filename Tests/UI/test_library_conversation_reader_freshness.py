@@ -14,6 +14,7 @@ import threading
 from typing import Any
 
 import pytest
+from loguru import logger
 from textual.screen import Screen
 from textual.widgets import Button, Input
 
@@ -439,24 +440,50 @@ async def test_load_pending_across_a_list_read_is_rechecked_once_it_settles(
 
 @pytest.mark.asyncio
 async def test_failed_recheck_keeps_the_loaded_transcript() -> None:
+    """A failed re-check read keeps the transcript and logs only its type.
+
+    The warning names the exception type and nothing the storage layer put
+    in the exception's text, which can quote saved message content; no
+    traceback is attached, so no frame locals reach the log either.
+    """
+    secret = "Saved message 1 quoted by storage"
     service = _ScriptedDetailService(_records())
     host = _harness(service)
-    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
-        screen, _ = await _open_alpha(pilot, host)
-        before = screen._conversations_state.reader_state
-        service.recheck_error = RuntimeError("storage busy")
+    records: list[tuple[str, Any]] = []
+    sink = logger.add(
+        lambda message: records.append((str(message), message.record)),
+        level="WARNING",
+        filter=lambda record: record["name"].endswith(
+            "library_conversation_reader_freshness"
+        ),
+    )
+    try:
+        async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+            screen, _ = await _open_alpha(pilot, host)
+            before = screen._conversations_state.reader_state
+            service.recheck_error = RuntimeError(secret)
 
-        await _leave_and_return(host, pilot)
-        await _wait_for_condition(
-            pilot, lambda: len(_rechecks(service)) == 1, message=lambda: service.calls
-        )
-        await screen.workers.wait_for_complete()
+            await _leave_and_return(host, pilot)
+            await _wait_for_condition(
+                pilot,
+                lambda: len(_rechecks(service)) == 1,
+                message=lambda: service.calls,
+            )
+            await screen.workers.wait_for_complete()
+            after = screen._conversations_state.reader_state
+            failed_workers = [
+                worker
+                for worker in screen.workers
+                if worker.group == RECHECK_WORKER_GROUP and worker.error is not None
+            ]
+    finally:
+        logger.remove(sink)
 
-        after = screen._conversations_state.reader_state
-        assert after.loaded_generation == before.loaded_generation
-        assert after.loaded_actions_eligible and after.error is None
-        assert [
-            worker
-            for worker in screen.workers
-            if worker.group == RECHECK_WORKER_GROUP and worker.error is not None
-        ] == []
+    assert after.loaded_generation == before.loaded_generation
+    assert after.loaded_actions_eligible and after.error is None
+    assert failed_workers == []
+    assert len(records) == 1
+    rendered, record = records[0]
+    assert "exception_type=RuntimeError" in record["message"]
+    assert secret not in rendered
+    assert record["exception"] is None

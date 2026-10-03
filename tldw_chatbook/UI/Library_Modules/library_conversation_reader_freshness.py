@@ -28,6 +28,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from loguru import logger
+
 from ...Library.library_conversation_reader_state import ConversationReaderState
 from ...Library.library_shell_state import LIBRARY_ROW_BROWSE_CONVERSATIONS
 
@@ -126,10 +128,12 @@ async def recheck_loaded_transcript(
 ) -> None:
     """Reload ``checked``'s transcript when its saved epoch or total moved.
 
-    A failed or missing read keeps the transcript on screen and says
-    nothing: the next list read re-checks, a deleted conversation is the
-    list's own absence check to settle, and the reader reports failures of
-    the reload it starts.
+    A failed or missing read keeps the transcript on screen and shows the
+    user nothing: the next list read re-checks, a deleted conversation is
+    the list's own absence check to settle, and the reader reports failures
+    of the reload it starts. A failed read logs one warning naming only the
+    exception type: storage errors can quote saved message text, so neither
+    the exception's message nor its traceback is logged.
 
     Args:
         controller: The ``LibraryConversationReaderController``.
@@ -147,7 +151,11 @@ async def recheck_loaded_transcript(
             message_limit=1,
             max_chars=1,
         )
-    except Exception:  # noqa: BLE001 - the next list read re-checks again
+    except Exception as exc:  # noqa: BLE001 - the next list read re-checks again
+        logger.warning(
+            "Library conversation reader re-check failed; exception_type={}",
+            type(exc).__name__,
+        )
         return
     current = controller._library_conversation_reader_state
     if not (
