@@ -71,9 +71,9 @@ async def test_buffer_duration_keystroke_does_not_write_synchronously():
         config_path = _config_path()
         if config_path.exists():
             on_disk = toml.load(config_path)
-            assert (
-                on_disk.get("dictation", {}).get("buffer_duration_ms") != 300
-            ), "the keystroke wrote to disk synchronously instead of debouncing"
+            assert on_disk.get("dictation", {}).get("buffer_duration_ms") != 300, (
+                "the keystroke wrote to disk synchronously instead of debouncing"
+            )
 
 
 async def test_burst_of_edits_collapses_into_one_batched_write():
@@ -200,8 +200,7 @@ async def test_edit_during_in_flight_write_survives_a_quit():
         assert write_started.wait(timeout=2), "worker never started its write"
         worker = window._settings_persist_worker
         assert worker is not None and not worker.is_finished, (
-            "edit 1's worker must still be in flight for this test to mean "
-            "anything"
+            "edit 1's worker must still be in flight for this test to mean anything"
         )
 
         # Edit 2 lands while edit 1's write is still blocked in flight.

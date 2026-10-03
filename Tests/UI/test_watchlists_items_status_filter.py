@@ -169,7 +169,9 @@ def test_get_new_items_scoped_to_one_subscription_still_filters_by_status():
     _seed_one_item_per_status(db)
     subscription_id = db.get_all_subscriptions(limit=5)[0]["id"]
 
-    scoped_all = db.get_new_items(subscription_id=subscription_id, status=None, limit=50)
+    scoped_all = db.get_new_items(
+        subscription_id=subscription_id, status=None, limit=50
+    )
     scoped_one = db.get_new_items(
         subscription_id=subscription_id, status="ingested", limit=50
     )
@@ -215,9 +217,7 @@ async def test_every_reader_status_appears_in_the_list_and_is_distinguishable():
         assert set(texts) == {str(row["id"]) for row in displayed}, (
             "every displayed item must have exactly one rendered row"
         )
-        by_status = {
-            row["status"]: texts[str(row["id"])] for row in displayed
-        }
+        by_status = {row["status"]: texts[str(row["id"])] for row in displayed}
         assert by_status["new"].startswith("● "), (
             f"the unread row must lead with the unread dot; got {by_status['new']!r}"
         )
@@ -290,9 +290,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
         screen = host.screen_stack[-1]
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
-        target = next(
-            item for item in pane.items if item["title"] == SEEDED["new"]
-        )
+        target = next(item for item in pane.items if item["title"] == SEEDED["new"])
         rows_before = len(pane.displayed_items())
 
         async def _no_reload() -> None:
@@ -308,8 +306,7 @@ async def test_ingest_repaints_the_live_row_instead_of_removing_it():
 
         pane = screen.query_one("#watchlists-items-pane", ArticleListPane)
         assert len(pane.displayed_items()) == rows_before, (
-            "ingesting must not remove the row from a view whose filter "
-            "includes it"
+            "ingesting must not remove the row from a view whose filter includes it"
         )
         row_text = _row_texts_by_id(pane).get(str(target["id"]), "")
         assert "· ingested" in row_text, (
@@ -348,7 +345,9 @@ async def test_ingest_feedback_toast_never_parses_markup():
         for _ in range(10):
             await pilot.pause()
 
-        matching = [kwargs for message, kwargs in toasts if message == "Item marked ingested."]
+        matching = [
+            kwargs for message, kwargs in toasts if message == "Item marked ingested."
+        ]
         assert matching, f"Ingest must report what happened; saw {toasts!r}"
         assert all(kwargs.get("markup") is False for kwargs in matching)
 
@@ -466,9 +465,9 @@ async def test_unread_items_past_the_newest_page_are_still_reachable():
         # The precondition that makes this a real test: under the reader's
         # "All" the page is entirely triaged, so an in-memory filter has
         # nothing unread to find.
-        assert not [
-            row for row in pane.items if row.get("status") == "new"
-        ], "precondition: no unread item is inside the newest-100 page"
+        assert not [row for row in pane.items if row.get("status") == "new"], (
+            "precondition: no unread item is inside the newest-100 page"
+        )
 
         pane.status_filter = "unread"
         for _ in range(80):
@@ -525,8 +524,7 @@ async def test_a_search_keystroke_does_not_re_page():
             if calls:
                 break
         assert calls == ["new"], (
-            "switching to Unread must re-page with status='new' pushed into "
-            "the query"
+            "switching to Unread must re-page with status='new' pushed into the query"
         )
 
 
@@ -556,7 +554,9 @@ async def test_the_delete_gesture_on_an_item_says_and_does_ignore():
         pane = await _settled_items_pane(screen, pilot, len(READER_SEEDED))
 
         toasts: list[str] = []
-        screen.app_instance.notify = lambda message, **kwargs: toasts.append(str(message))
+        screen.app_instance.notify = lambda message, **kwargs: toasts.append(
+            str(message)
+        )
         dialogs: list[object] = []
         screen.app.push_screen = lambda *a, **k: dialogs.append(a)
 
@@ -687,15 +687,16 @@ def test_the_d_binding_names_both_verbs_it_performs():
     )
 
     binding = next(
-        entry
-        for entry in WatchlistsCollectionsScreen.BINDINGS
-        if entry[0] == "d"
+        entry for entry in WatchlistsCollectionsScreen.BINDINGS if entry[0] == "d"
     )
     assert binding[1] == "delete_selected"
     label = binding[2].lower()
     assert "delete" in label and "ignore" in label, (
         f"the key performs both verbs; its label says {binding[2]!r}"
     )
-    assert "after confirmation" not in (
-        WatchlistsCollectionsScreen.action_delete_selected.__doc__ or ""
-    ).split("\n")[0], "the summary line must not promise a dialog for every kind"
+    assert (
+        "after confirmation"
+        not in (WatchlistsCollectionsScreen.action_delete_selected.__doc__ or "").split(
+            "\n"
+        )[0]
+    ), "the summary line must not promise a dialog for every kind"

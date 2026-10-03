@@ -351,9 +351,7 @@ class SplashScreen(Container):
                 # TASK-2154.10 (AC-04): render the SAME card's static content
                 # instead of playing its effect -- branding and readability
                 # survive, motion does not.
-                logger.info(
-                    f"Reduced motion: rendering '{self.card_name}' statically"
-                )
+                logger.info(f"Reduced motion: rendering '{self.card_name}' statically")
                 self._display_static_fallback()
                 return
             # Start animation

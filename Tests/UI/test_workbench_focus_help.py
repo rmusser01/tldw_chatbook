@@ -211,6 +211,7 @@ async def test_help_panel_second_f1_dismisses():
 @pytest.mark.asyncio
 async def test_generic_help_fallback_lists_screen_bindings():
     """Screens without a custom handler get help generated from their BINDINGS."""
+
     class BareScreen:
         BINDINGS = [
             Binding("ctrl+s", "send", "Send message"),

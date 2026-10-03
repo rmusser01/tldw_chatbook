@@ -94,14 +94,73 @@ __all__ = [
 # `rough`, `turns`, `pulls`, `builds`, which no stopword list removes).
 FTS5_STOPWORDS: FrozenSet[str] = frozenset(
     {
-        "a", "about", "all", "also", "am", "an", "and", "any", "are", "as",
-        "at", "be", "been", "but", "by", "can", "do", "does", "for", "from",
-        "had", "has", "have", "how", "i", "if", "in", "into", "is", "it",
-        "its", "me", "my", "no", "not", "of", "on", "or", "our", "out",
-        "so", "than", "that", "the", "their", "them", "then", "there",
-        "these", "they", "this", "to", "up", "was", "we", "were", "what",
-        "when", "where", "which", "who", "why", "will", "with", "would",
-        "you", "your",
+        "a",
+        "about",
+        "all",
+        "also",
+        "am",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "be",
+        "been",
+        "but",
+        "by",
+        "can",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "me",
+        "my",
+        "no",
+        "not",
+        "of",
+        "on",
+        "or",
+        "our",
+        "out",
+        "so",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "to",
+        "up",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+        "you",
+        "your",
     }
 )
 
@@ -265,9 +324,7 @@ def build_prefix_match_expression(tokens: Iterable[str]) -> str:
         query left to run would be an unbounded stopword prefix.
     """
     return " ".join(
-        f"{quote_fts5_token(token)}*"
-        for token in tokens
-        if not is_fts5_stopword(token)
+        f"{quote_fts5_token(token)}*" for token in tokens if not is_fts5_stopword(token)
     )
 
 

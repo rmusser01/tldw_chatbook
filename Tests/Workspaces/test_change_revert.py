@@ -1,4 +1,5 @@
 """TASK-1974: revert engine — restore-to-B with guards, against real git."""
+
 from __future__ import annotations
 
 import pytest
@@ -73,9 +74,7 @@ def test_uncreate_is_a_guarded_delete_not_a_checkout(turn):
     """`checkout B -- path` errors on a B-absent path; un-create must be an
     explicit delete that only fires when the path is genuinely absent at B."""
     service, db, root, row = turn
-    outcomes = revert_paths(
-        service, db, row, ["new.txt"], run_active=lambda: False
-    )
+    outcomes = revert_paths(service, db, row, ["new.txt"], run_active=lambda: False)
     assert outcomes[0].ok and not (root / "new.txt").exists()
 
 
@@ -122,9 +121,7 @@ def test_uncreate_reports_failure_when_a_nonempty_dir_squats_the_path(turn):
     (root / "new.txt").mkdir()
     (root / "new.txt" / "keep.md").write_text("user data\n")
 
-    outcomes = revert_paths(
-        service, db, row, ["new.txt"], run_active=lambda: False
-    )
+    outcomes = revert_paths(service, db, row, ["new.txt"], run_active=lambda: False)
 
     assert not outcomes[0].ok and outcomes[0].error, (
         "silent false success: dir left in place but ok=True"
@@ -137,9 +134,7 @@ def test_uncreate_removes_an_empty_dir_squatter(turn):
     (root / "new.txt").unlink()
     (root / "new.txt").mkdir()
 
-    outcomes = revert_paths(
-        service, db, row, ["new.txt"], run_active=lambda: False
-    )
+    outcomes = revert_paths(service, db, row, ["new.txt"], run_active=lambda: False)
 
     assert outcomes[0].ok and not (root / "new.txt").exists()
 
@@ -171,9 +166,7 @@ def test_traversal_paths_are_refused_lexically(turn):
 def test_revert_refuses_while_a_run_is_active(turn):
     service, db, root, row = turn
     with pytest.raises(RevertRefusedError, match="run"):
-        revert_paths(
-            service, db, row, ["edit.txt"], run_active=lambda: True
-        )
+        revert_paths(service, db, row, ["edit.txt"], run_active=lambda: True)
     assert (root / "edit.txt").read_text() == "after\n", (
         "the refusal must happen BEFORE any file is touched"
     )

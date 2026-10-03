@@ -35,7 +35,10 @@ def probe(label: str, fields: dict) -> tuple[int, int]:
     msg = body["choices"][0]["message"]
     reasoning = len(msg.get("reasoning_content") or "")
     comp = body.get("usage", {}).get("completion_tokens", 0)
-    print(f"PROBE {label}: reasoning_chars={reasoning} completion_tokens={comp}", flush=True)
+    print(
+        f"PROBE {label}: reasoning_chars={reasoning} completion_tokens={comp}",
+        flush=True,
+    )
     return reasoning, comp
 
 
@@ -54,7 +57,10 @@ def main() -> None:
         for name, fields in arms.items():
             samples.setdefault(name, []).append(probe(f"{name}-rep{rep}", fields))
 
-    print("\n=== A: monotonic depth low <= medium <= xhigh (reasoning chars) ===", flush=True)
+    print(
+        "\n=== A: monotonic depth low <= medium <= xhigh (reasoning chars) ===",
+        flush=True,
+    )
     means = {n: sum(r for r, _ in v) / len(v) for n, v in samples.items()}
     print(f"means: {json.dumps({k: int(v) for k, v in means.items()})}", flush=True)
     a_ok = means["low"] <= means["medium"] <= means["xhigh"]

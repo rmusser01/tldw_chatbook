@@ -227,9 +227,7 @@ def _disposition_counts(dispositions: list[dict[str, Any]]) -> dict[str, int]:
 #: `record_check_result`'s SUCCESS branch, resetting the breaker and
 #: stamping `last_successful_check` for a run that contacted nothing.
 _SUCCESS_DISPOSITION_COUNTERS: tuple[str, ...] = tuple(
-    counter
-    for counter in _DISPOSITION_COUNTERS
-    if counter not in ("error", "skipped")
+    counter for counter in _DISPOSITION_COUNTERS if counter not in ("error", "skipped")
 )
 
 
@@ -468,7 +466,9 @@ class LocalWatchlistsService:
         self.notification_app = notification_app
         self.run_executor = run_executor
         self.filter_service = filter_service or WatchlistFilterService()
-        self.content_alert_service = content_alert_service or WatchlistContentAlertService()
+        self.content_alert_service = (
+            content_alert_service or WatchlistContentAlertService()
+        )
 
     @property
     def db_factory(self) -> Callable[[], SubscriptionsDB]:
@@ -714,9 +714,7 @@ class LocalWatchlistsService:
             after=after,
         )
         return WatchlistItemPage(
-            items=tuple(
-                normalize_watchlist_item("local", row) for row in page.items
-            ),
+            items=tuple(normalize_watchlist_item("local", row) for row in page.items),
             has_more=page.has_more,
             snapshot_max_item_id=page.snapshot_max_item_id,
             snapshot_count=page.snapshot_count,
@@ -763,9 +761,7 @@ class LocalWatchlistsService:
                 subscription_id=int(source_id) if source_id is not None else None,
                 status=status if status else None,
                 run_id=int(run_id) if run_id is not None else None,
-                watchlist_id=(
-                    int(watchlist_id) if watchlist_id is not None else None
-                ),
+                watchlist_id=(int(watchlist_id) if watchlist_id is not None else None),
                 unassigned_only=bool(unassigned_only),
                 statuses=list(statuses) if statuses is not None else None,
                 is_flagged=is_flagged,
@@ -782,7 +778,9 @@ class LocalWatchlistsService:
             rows.append(
                 {
                     "name": str(payload.get("name") or "Untitled subscription"),
-                    "type": self._local_type_for_source_type(payload.get("source_type")),
+                    "type": self._local_type_for_source_type(
+                        payload.get("source_type")
+                    ),
                     "source": str(
                         payload.get("url")
                         or payload.get("source")
@@ -801,9 +799,7 @@ class LocalWatchlistsService:
     def _create_source_rows_exact_batch(
         db: SubscriptionsDB, rows: Sequence[Mapping[str, Any]]
     ) -> list[dict[str, Any]]:
-        outcomes = db.create_sources_exact_batch(
-            rows, result_mode="watchlist_source"
-        )
+        outcomes = db.create_sources_exact_batch(rows, result_mode="watchlist_source")
         return [
             {
                 "input_index": int(outcome["input_index"]),
@@ -867,9 +863,7 @@ class LocalWatchlistsService:
             changes["type"] = self._local_type_for_source_type(payload["source_type"])
         changes.update(self._subscription_config_fields(payload))
         if changes:
-            await run_db_off_loop(
-                db, db.update_subscription, int(source_id), **changes
-            )
+            await run_db_off_loop(db, db.update_subscription, int(source_id), **changes)
         row = await run_db_off_loop(db, db.get_subscription, int(source_id))
         return normalize_local_subscription_row(row)
 
@@ -1110,7 +1104,9 @@ class LocalWatchlistsService:
         db = self._db()
         return await run_db_off_loop(db, db.get_subscription_id_by_source, str(url))
 
-    async def resolve_or_create_watchlist(self, name: str) -> tuple[dict[str, Any], bool]:
+    async def resolve_or_create_watchlist(
+        self, name: str
+    ) -> tuple[dict[str, Any], bool]:
         """The watchlist named `name` (case-insensitive), creating it if missing.
 
         TASK-3604 (ADR-043 rule 4): OPML folder names map to watchlists by
@@ -1142,7 +1138,9 @@ class LocalWatchlistsService:
         )
         return result["watchlist"], result["outcome"] == "created"
 
-    async def add_source_to_watchlist(self, *, watchlist_id: Any, source_id: Any) -> None:
+    async def add_source_to_watchlist(
+        self, *, watchlist_id: Any, source_id: Any
+    ) -> None:
         """Add a source to a watchlist (idempotent), via the bundle service.
 
         Args:
@@ -1155,7 +1153,9 @@ class LocalWatchlistsService:
         """Every watchlist, via the bundle service (TASK-3604 export)."""
         return WatchlistBundleService(self._db()).list_watchlists(limit=10000)
 
-    async def list_watchlist_source_rows(self, *, watchlist_id: Any) -> list[dict[str, Any]]:
+    async def list_watchlist_source_rows(
+        self, *, watchlist_id: Any
+    ) -> list[dict[str, Any]]:
         """One watchlist's member feeds, in the serializer's vocabulary.
 
         TASK-3604: maps the bundle's tree-row keys (`type`) onto the OPML
@@ -1267,9 +1267,7 @@ class LocalWatchlistsService:
             # scheduled-check handler, the Check Now path) were written
             # against `KeyError`. Mapped back to the documented contract, with
             # the original chained so the cause is not lost.
-            raise KeyError(
-                f"Subscription not found: {resolved_source_id}"
-            ) from exc
+            raise KeyError(f"Subscription not found: {resolved_source_id}") from exc
         run = await self.get_run(receipt["id"])
         run["_claim_acquired"] = receipt["_claim_acquired"]
         return run
@@ -1488,9 +1486,7 @@ class LocalWatchlistsService:
                 await self.record_run_failure(
                     run_id,
                     source_id=source_id,
-                    error=(
-                        "Check cancelled: navigated away before it finished."
-                    ),
+                    error=("Check cancelled: navigated away before it finished."),
                     elapsed_ms=int((time.time() - start_time) * 1000),
                 )
             except Exception:
@@ -1564,9 +1560,7 @@ class LocalWatchlistsService:
                     f"{run_id}; subscriptions.last_error will not be updated."
                 )
         if source_id is not None:
-            await run_db_off_loop(
-                db, db.record_check_error, int(source_id), error_msg
-            )
+            await run_db_off_loop(db, db.record_check_error, int(source_id), error_msg)
         return await self.record_run_result(
             run_id,
             status="failed",
@@ -1852,9 +1846,7 @@ class LocalWatchlistsService:
         # `update_alert_rule` both end by awaiting this method, so leaving
         # it inline would have left those two still blocking the loop on
         # their last statement.
-        row = await run_db_off_loop(
-            db, self._select_alert_rule_row, db, int(rule_id)
-        )
+        row = await run_db_off_loop(db, self._select_alert_rule_row, db, int(rule_id))
         if row is None:
             raise KeyError(f"Watchlist alert rule not found: {rule_id}")
         return normalize_watchlist_alert_rule(
@@ -2210,9 +2202,7 @@ class LocalWatchlistsService:
             # pane with nothing further to wire.
             disposition_counts = _disposition_counts(dispositions)
             run_stats: dict[str, Any] = {"dispositions": disposition_counts}
-            all_error_message = _all_error_check_message(
-                disposition_counts, len(items)
-            )
+            all_error_message = _all_error_check_message(disposition_counts, len(items))
             if all_error_message is not None:
                 failures = [
                     failure
@@ -2230,9 +2220,7 @@ class LocalWatchlistsService:
                     assert aggregate is not None
                     aggregate_stats = watchlist_failure_stats(aggregate)
                     statuses = {failure.http_status for failure in failures}
-                    retry_delays = {
-                        failure.retry_after_seconds for failure in failures
-                    }
+                    retry_delays = {failure.retry_after_seconds for failure in failures}
                     if len(statuses) == 1:
                         aggregate_stats["http_status"] = next(iter(statuses))
                     if len(retry_delays) == 1:
@@ -2420,9 +2408,7 @@ class LocalWatchlistsService:
         _IN_FLIGHT_URL_CHECKS.add(key)
         try:
             if isolated:
-                return await self._check_url_isolated(
-                    monitor, subscription_config, url
-                )
+                return await self._check_url_isolated(monitor, subscription_config, url)
             return await monitor.check_url(subscription_config)
         finally:
             # `finally`, so a raise (the non-isolated arm), a cancellation
@@ -2473,9 +2459,7 @@ class LocalWatchlistsService:
             # Type-only: never the exception message or the URL itself, both
             # of which can carry fetched page content or a query string with
             # sensitive data.
-            logger.debug(
-                f"watchlist URL check failed, isolated: {type(exc).__name__}"
-            )
+            logger.debug(f"watchlist URL check failed, isolated: {type(exc).__name__}")
             failure = classify_watchlist_failure(exc)
             return None, {
                 "kind": DISPOSITION_ERROR,
@@ -2593,7 +2577,9 @@ class LocalWatchlistsService:
             extraction_rules if isinstance(extraction_rules, Mapping) else {}
         )
         params = request_options.get("params") or request_options.get("query")
-        request_params = dict(params) if isinstance(params, Mapping) and params else None
+        request_params = (
+            dict(params) if isinstance(params, Mapping) and params else None
+        )
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             response = await guarded_fetch_httpx_async(
@@ -2997,7 +2983,9 @@ class LocalWatchlistsService:
         except (TypeError, ValueError):
             return None
 
-    def _load_source_filters(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+    def _load_source_filters(
+        self, db: SubscriptionsDB, source_id: int
+    ) -> list[dict[str, Any]]:
         """Load active include/exclude/flag filters for a source."""
         cursor = db.conn.cursor()
         cursor.execute(
@@ -3013,19 +3001,23 @@ class LocalWatchlistsService:
         )
         filters: list[dict[str, Any]] = []
         for row in cursor.fetchall():
-            filters.append({
-                "id": row["id"],
-                "name": row["name"],
-                "is_active": bool(row["is_active"]),
-                "conditions": self._parse_json_value(row["conditions"]),
-                "action": row["action"],
-                "action_params": self._parse_json_value(row["action_params"]),
-                "priority": int(row["priority"] or 0),
-                "is_include_required": bool(row["is_include_required"]),
-            })
+            filters.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "is_active": bool(row["is_active"]),
+                    "conditions": self._parse_json_value(row["conditions"]),
+                    "action": row["action"],
+                    "action_params": self._parse_json_value(row["action_params"]),
+                    "priority": int(row["priority"] or 0),
+                    "is_include_required": bool(row["is_include_required"]),
+                }
+            )
         return filters
 
-    def _load_content_alert_rules(self, db: SubscriptionsDB, source_id: int) -> list[dict[str, Any]]:
+    def _load_content_alert_rules(
+        self, db: SubscriptionsDB, source_id: int
+    ) -> list[dict[str, Any]]:
         """Load active content-alert rules for a source."""
         cursor = db.conn.cursor()
         cursor.execute(
@@ -3041,16 +3033,20 @@ class LocalWatchlistsService:
         )
         rules: list[dict[str, Any]] = []
         for row in cursor.fetchall():
-            rules.append({
-                "id": row["id"],
-                "name": row["name"],
-                "is_active": bool(row["is_active"]),
-                "conditions": self._parse_json_value(row["conditions"]),
-                "action": row["action"],
-                "action_params": self._parse_json_value(row["action_params"]),
-                "priority": int(row["priority"] or 0),
-                "severity": (self._parse_json_value(row["action_params"]) or {}).get("severity", "warning"),
-            })
+            rules.append(
+                {
+                    "id": row["id"],
+                    "name": row["name"],
+                    "is_active": bool(row["is_active"]),
+                    "conditions": self._parse_json_value(row["conditions"]),
+                    "action": row["action"],
+                    "action_params": self._parse_json_value(row["action_params"]),
+                    "priority": int(row["priority"] or 0),
+                    "severity": (
+                        self._parse_json_value(row["action_params"]) or {}
+                    ).get("severity", "warning"),
+                }
+            )
         return rules
 
     def _apply_filters_and_alerts(
@@ -3071,7 +3067,9 @@ class LocalWatchlistsService:
             enriched["filter_decision"] = decision
             enriched["matched_filter_id"] = evaluation.get("matched_filter_id")
             enriched["run_id"] = run_id
-            alert_matches = self.content_alert_service.evaluate(enriched, content_alert_rules)
+            alert_matches = self.content_alert_service.evaluate(
+                enriched, content_alert_rules
+            )
             enriched["alert_matches"] = alert_matches if alert_matches else None
             kept.append(enriched)
         return kept

@@ -52,9 +52,7 @@ class _AgenticFamilySources:
     )
 
     def read_text(self, encoding: str = "utf-8") -> str:
-        return _detok(
-            "\n".join(p.read_text(encoding=encoding) for p in self._PATHS)
-        )
+        return _detok("\n".join(p.read_text(encoding=encoding) for p in self._PATHS))
 
 
 AGENTIC = _AgenticFamilySources()
@@ -81,10 +79,10 @@ _SPLIT_SHEETS = tuple(
 
 def _bundle_union_text() -> str:
     return _detok(
-        "\n".join(
-            path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS)
-        )
+        "\n".join(path.read_text(encoding="utf-8") for path in (BUNDLE, *_SPLIT_SHEETS))
     )
+
+
 CODING = ROOT / "tldw_chatbook/css/features/_coding.tcss"
 CODE_REPO = ROOT / "tldw_chatbook/css/features/_code_repo.tcss"
 CONFIG_SEARCH = ROOT / "tldw_chatbook/css/features/config_search.tcss"
@@ -1435,9 +1433,7 @@ def test_wizard_progress_default_css_matches_active_state_contract():
     # TASK-16811: the .active states moved into css/features/_wizards.tcss
     # (widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
     # DEFAULT_CSS must stay free of local $ds declarations.
-    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace(
-        "$ds-focus-* tokens", ""
-    )
+    assert "$ds-" not in WizardProgress.DEFAULT_CSS.replace("$ds-focus-* tokens", "")
     assert_wizard_progress_active_contracts(
         WIZARDS.read_text(encoding="utf-8"), scope="WizardProgress"
     )
@@ -1447,9 +1443,7 @@ def test_wizard_selection_states_are_readable_without_dominant_fill():
     assert_wizard_selection_active_contracts(
         # The status-item rules live in the status owning sheet since
         # ADR-161 task 8a; the card/tree selectors stay in the wizards sheet.
-        WIZARDS.read_text(encoding="utf-8")
-        + "\n"
-        + STATUS.read_text(encoding="utf-8")
+        WIZARDS.read_text(encoding="utf-8") + "\n" + STATUS.read_text(encoding="utf-8")
     )
 
 
@@ -1857,9 +1851,7 @@ def test_repo_tree_widget_states_match_code_repo_contract():
     # tokens; _code_repo.tcss is the single owner now.
     assert "$ds-focus-bg:" not in TreeNode.DEFAULT_CSS
     assert ".tree-node-selected {" not in TreeNode.DEFAULT_CSS
-    selected = css_block(
-        CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected"
-    )
+    selected = css_block(CODE_REPO.read_text(encoding="utf-8"), ".tree-node-selected")
     assert_native_row_hover_state_contract(hover)
     assert_native_row_hover_state_contract(source_hover)
     assert_readable_selected_state_contract(selected)
@@ -1944,9 +1936,7 @@ def test_tamagotchi_focus_uses_non_obscuring_custom_widget_contract():
     # (the widget-local `$ds-*:` fallbacks shadowed the bundle tokens); the
     # DEFAULT_CSS must stay free of local $ds declarations.
     assert "$ds-focus-bg:" not in text
-    focus = css_block(
-        WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus"
-    )
+    focus = css_block(WIDGETS.read_text(encoding="utf-8"), "BaseTamagotchi:focus")
     assert_custom_widget_focus_contract(focus)
 
 
@@ -2066,7 +2056,6 @@ def test_library_notes_focus_cues_are_visible_without_obscuring_content():
         AGENTIC.read_text(encoding="utf-8"),
         _bundle_union_text(),
     ):
-
         for selector in (
             "#library-note-preview-region:focus",
             "#library-note-context-region:focus",

@@ -70,7 +70,9 @@ async def test_every_supported_studio_setting_and_action_is_mounted() -> None:
     assert not required - mounted
 
 
-def test_voice_action_constants_keep_destinations_separate_from_blend_operations() -> None:
+def test_voice_action_constants_keep_destinations_separate_from_blend_operations() -> (
+    None
+):
     from tldw_chatbook.UI.Speech import speech_settings_pane
 
     assert not hasattr(speech_settings_pane, "VOICE_PROFILE_ACTIONS")
@@ -94,9 +96,9 @@ async def test_voice_blends_pane_mounts_every_blend_operation() -> None:
     app = _BlendHarness()
     async with app.run_test() as pilot:
         await pilot.pause()
-        assert not {
-            action.id for action in VOICE_BLEND_ACTIONS
-        } - {widget.id for widget in app.query("*") if widget.id}
+        assert not {action.id for action in VOICE_BLEND_ACTIONS} - {
+            widget.id for widget in app.query("*") if widget.id
+        }
 
 
 def test_control_inventory_matches_the_request_option_contract() -> None:

@@ -39,10 +39,12 @@ async def capture() -> None:
             shell.items.query_one("#library-media-row-0").press()
             await _wait_for_condition(
                 pilot,
-                lambda: screen._library_media_reader_session.pending_request is None
-                and screen._library_media_reader_session.loaded_id is not None
-                and screen._library_media_reader_session.selected_id
-                == screen._library_media_reader_session.loaded_id,
+                lambda: (
+                    screen._library_media_reader_session.pending_request is None
+                    and screen._library_media_reader_session.loaded_id is not None
+                    and screen._library_media_reader_session.selected_id
+                    == screen._library_media_reader_session.loaded_id
+                ),
                 message=f"Reader did not settle at {width}x{height}.",
             )
             await pilot.pause()

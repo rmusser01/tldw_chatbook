@@ -370,9 +370,8 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         """
         if not entity:
             return False
-        return (
-            str(entity.get("entity_kind") or "") == "subscription"
-            and bool(entity.get("paused"))
+        return str(entity.get("entity_kind") or "") == "subscription" and bool(
+            entity.get("paused")
         )
 
     @classmethod
@@ -417,7 +416,9 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
             One rule per line, or "" when the source has none.
         """
         settings = entity.get("settings")
-        stored = settings.get("ignore_selectors") if isinstance(settings, dict) else None
+        stored = (
+            settings.get("ignore_selectors") if isinstance(settings, dict) else None
+        )
         if isinstance(stored, (list, tuple)):
             return "\n".join(str(selector) for selector in stored)
         if stored:
@@ -600,7 +601,9 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
 
         with Vertical(id="inspector-actions"):
             if deepest.kind == "source":
-                yield Button("Preview", id="inspector-preview-button", variant="primary")
+                yield Button(
+                    "Preview", id="inspector-preview-button", variant="primary"
+                )
                 # TASK-2309: this is a SECOND activation site for the same
                 # `CheckNowRequested` write the Sources pane's own button
                 # posts, so it must show the same busy state the screen is
@@ -683,10 +686,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 yield Button("Ingest", id="inspector-ingest-button", variant="primary")
                 yield Button("Ignore", id="inspector-ignore-button", variant="error")
                 yield self._queue_briefing_button(entity)
-                if (
-                    str(entity.get("content_kind") or "")
-                    == CONTENT_KIND_CHANGE
-                ):
+                if str(entity.get("content_kind") or "") == CONTENT_KIND_CHANGE:
                     yield Button(
                         "Full page",
                         id="inspector-full-page-button",
@@ -828,7 +828,9 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
                 or "Untitled"
             )
             levels.append(
-                _Level(kind=entity_type, label=str(title), entity=entity, target_scope=None)
+                _Level(
+                    kind=entity_type, label=str(title), entity=entity, target_scope=None
+                )
             )
         return levels
 
@@ -890,7 +892,7 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         if button_id.startswith("inspector-breadcrumb-"):
             event.stop()
             try:
-                index = int(button_id[len("inspector-breadcrumb-"):])
+                index = int(button_id[len("inspector-breadcrumb-") :])
             except ValueError:
                 return
             levels = self._resolve_levels()
@@ -1058,4 +1060,6 @@ class InspectorPane(RecomposeCaptureGuard, Vertical):
         except Exception:
             notify = None
         if callable(notify):
-            notify("Nothing to save: no ignore rules field is open.", severity="warning")
+            notify(
+                "Nothing to save: no ignore rules field is open.", severity="warning"
+            )

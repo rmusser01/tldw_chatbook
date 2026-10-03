@@ -27,7 +27,9 @@ def test_page_values_are_frozen_and_constructible():
 
 def test_query_freeze_commits_statuses_as_tuple_and_as_kwargs_detaches_list():
     statuses = ["new", "reviewed"]
-    query = ReaderItemQuery.freeze(("local", "all", "all", ""), {"statuses": statuses, "limit": 20})
+    query = ReaderItemQuery.freeze(
+        ("local", "all", "all", ""), {"statuses": statuses, "limit": 20}
+    )
     statuses.append("ingested")
     assert query.kwargs == (("limit", 20), ("statuses", ("new", "reviewed")))
     kwargs = query.as_kwargs()
@@ -47,7 +49,9 @@ def test_query_freeze_rejects_mutable_context_and_non_status_values():
 
 def test_start_captures_first_page_and_keeps_empty_page():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {"statuses": []})
-    snapshot = ReaderItemSnapshot.start(query, page([], watermark=9, count=0, cursor=None, has_more=False))
+    snapshot = ReaderItemSnapshot.start(
+        query, page([], watermark=9, count=0, cursor=None, has_more=False)
+    )
     assert snapshot.query == query
     assert snapshot.watermark == 9
     assert snapshot.snapshot_count == 0
@@ -73,16 +77,25 @@ def test_start_requires_first_page_count_and_seeds_seen_ids():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
     with pytest.raises(ValueError):
         ReaderItemSnapshot.start(query, page([], count=None))
-    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "2"}, {"id": 1}], cursor=WatchlistItemCursor(None, 1)))
+    snapshot = ReaderItemSnapshot.start(
+        query, page([{"item_id": "2"}, {"id": 1}], cursor=WatchlistItemCursor(None, 1))
+    )
     assert snapshot.seen_ids == frozenset({1, 2})
     assert snapshot.cursor == WatchlistItemCursor(None, 1)
 
 
 def test_continuation_stages_copy_and_deduplicates_items():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
-    original = ReaderItemSnapshot.start(query, page([{"item_id": 2}, {"item_id": 1}], cursor=WatchlistItemCursor(None, 1)))
+    original = ReaderItemSnapshot.start(
+        query,
+        page([{"item_id": 2}, {"item_id": 1}], cursor=WatchlistItemCursor(None, 1)),
+    )
     candidate, appended = original.with_continuation(
-        page([{"item_id": 1}, {"id": "0"}], cursor=WatchlistItemCursor(None, 0), has_more=False)
+        page(
+            [{"item_id": 1}, {"id": "0"}],
+            cursor=WatchlistItemCursor(None, 0),
+            has_more=False,
+        )
     )
     assert appended
     assert original.page_count == 1
@@ -98,7 +111,9 @@ def test_continuation_stages_copy_and_deduplicates_items():
 
 def test_unhashable_identity_is_skipped():
     query = ReaderItemQuery.freeze(("local",), {})
-    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": []}, {"id": {"bad": True}}, {"id": "ok"}]))
+    snapshot = ReaderItemSnapshot.start(
+        query, page([{"item_id": []}, {"id": {"bad": True}}, {"id": "ok"}])
+    )
     assert snapshot.seen_ids == frozenset({"ok"})
 
 
@@ -114,9 +129,14 @@ def test_composite_identity_that_raises_hash_is_skipped():
 
 def test_identity_falls_back_from_empty_item_id_and_preserves_string_ids():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
-    snapshot = ReaderItemSnapshot.start(query, page([{"item_id": "", "id": "external-a"}, {"id": "external-b"}]))
+    snapshot = ReaderItemSnapshot.start(
+        query, page([{"item_id": "", "id": "external-a"}, {"id": "external-b"}])
+    )
     assert snapshot.seen_ids == frozenset({"external-a", "external-b"})
-    assert snapshot.pages[0] == ({"item_id": "", "id": "external-a"}, {"id": "external-b"})
+    assert snapshot.pages[0] == (
+        {"item_id": "", "id": "external-a"},
+        {"id": "external-b"},
+    )
 
 
 def test_numeric_string_identity_is_canonical_across_item_id_and_id_fields():
@@ -130,7 +150,9 @@ def test_numeric_string_identity_is_canonical_across_item_id_and_id_fields():
 
 def test_duplicate_only_continuation_advances_traversal_without_blank_page():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
-    original = ReaderItemSnapshot.start(query, page([{"item_id": 2}], cursor=WatchlistItemCursor(None, 2)))
+    original = ReaderItemSnapshot.start(
+        query, page([{"item_id": 2}], cursor=WatchlistItemCursor(None, 2))
+    )
     candidate, appended = original.with_continuation(
         page([{"id": 2}], cursor=WatchlistItemCursor(None, 1), has_more=True)
     )
@@ -151,7 +173,9 @@ def test_continuation_rejects_different_watermark_and_empty_identity():
 
 def test_page_accessors_are_bounds_checked_and_has_next_uses_cache_or_traversal():
     query = ReaderItemQuery.freeze(("local", "all", "all", ""), {})
-    snapshot = ReaderItemSnapshot.start(query, page([{"id": 1}], cursor=WatchlistItemCursor(None, 1), has_more=True))
+    snapshot = ReaderItemSnapshot.start(
+        query, page([{"id": 1}], cursor=WatchlistItemCursor(None, 1), has_more=True)
+    )
     with pytest.raises(IndexError):
         snapshot.page(1)
     with pytest.raises(IndexError):
@@ -162,7 +186,9 @@ def test_page_accessors_are_bounds_checked_and_has_next_uses_cache_or_traversal(
         snapshot.has_next(-1)
     assert snapshot.page(0) == ({"id": 1},)
     assert snapshot.has_next(0)
-    candidate, _ = snapshot.with_continuation(page([{"id": 2}], cursor=None, has_more=False))
+    candidate, _ = snapshot.with_continuation(
+        page([{"id": 2}], cursor=None, has_more=False)
+    )
     assert candidate.has_next(0)
     assert not candidate.has_next(1)
 

@@ -463,9 +463,7 @@ class PreviewValidationStep(WizardStep):
             root.add(f"💡 Prompts ({type_counts[ContentType.PROMPT]})")
 
         if type_counts.get(ContentType.KEPT_BRIEFING):
-            root.add(
-                f"📰 Kept Briefings ({type_counts[ContentType.KEPT_BRIEFING]})"
-            )
+            root.add(f"📰 Kept Briefings ({type_counts[ContentType.KEPT_BRIEFING]})")
 
     @staticmethod
     def _expected_content_total(manifest: ChatbookManifest) -> int:

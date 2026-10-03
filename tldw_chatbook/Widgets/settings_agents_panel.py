@@ -241,8 +241,7 @@ class AgentsSettingsPanel(Vertical):
                     classes="settings-compact-select",
                 )
             yield Static(
-                "Params (one key = value per line; empty = inherit the "
-                "resolved stack)",
+                "Params (one key = value per line; empty = inherit the resolved stack)",
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-params-area")
@@ -308,8 +307,7 @@ class AgentsSettingsPanel(Vertical):
                 )
                 yield Checkbox(value=False, id="agents-override-enabled-checkbox")
             yield Static(
-                "Override allowlist (one per line: provider or "
-                "provider/model-glob)",
+                "Override allowlist (one per line: provider or provider/model-glob)",
                 classes="settings-input-label",
             )
             yield TextArea(id="agents-override-allowlist-area")
@@ -318,9 +316,7 @@ class AgentsSettingsPanel(Vertical):
             )
             with Horizontal(classes="settings-input-row"):
                 yield Button("Test routing", id="agents-test-routing-button")
-            yield Static(
-                "", id="agents-routing-report", classes="settings-detail-row"
-            )
+            yield Static("", id="agents-routing-report", classes="settings-detail-row")
         yield Static(
             "", id="agents-status", classes="settings-detail-row", markup=False
         )
@@ -422,8 +418,7 @@ class AgentsSettingsPanel(Vertical):
             row.get("provider", ""),
         )
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
-            f"{key} = {value}"
-            for key, value in definition_from_row(row).params
+            f"{key} = {value}" for key, value in definition_from_row(row).params
         )
         wall_seconds = row.get("max_wall_seconds")
         self.query_one("#agents-wall-seconds-input", Input).value = (
@@ -473,7 +468,9 @@ class AgentsSettingsPanel(Vertical):
         self.query_one("#agents-instructions-area", TextArea).text = preset.instructions
         model_input = self.query_one("#agents-model-input", Input)
         model_input.value = preset.model
-        self._set_select_provider(self.query_one("#agents-provider-select", Select), preset.provider)
+        self._set_select_provider(
+            self.query_one("#agents-provider-select", Select), preset.provider
+        )
         self.query_one("#agents-params-area", TextArea).text = "\n".join(
             f"{key} = {value}" for key, value in preset.params
         )
@@ -522,9 +519,7 @@ class AgentsSettingsPanel(Vertical):
             tool_allowlist=stored_tools,
             model=self.query_one("#agents-model-input", Input).value.strip(),
             enabled=self.query_one("#agents-enabled-switch", Switch).value,
-            provider=(
-                "" if provider_value is Select.NULL else str(provider_value)
-            ),
+            provider=("" if provider_value is Select.NULL else str(provider_value)),
             params=params_to_tuple(params),
             max_wall_seconds=max_wall_seconds,
         )
@@ -577,9 +572,9 @@ class AgentsSettingsPanel(Vertical):
         self.query_one(
             "#agents-override-enabled-checkbox", Checkbox
         ).value = routing.spawn_override_enabled
-        self.query_one(
-            "#agents-override-allowlist-area", TextArea
-        ).text = "\n".join(routing.spawn_override_allowlist)
+        self.query_one("#agents-override-allowlist-area", TextArea).text = "\n".join(
+            routing.spawn_override_allowlist
+        )
 
     def _parse_allowlist(self, text: str) -> tuple[list[str], list[str]]:
         """Split the allowlist draft into ``(entries, problems)``.
@@ -654,8 +649,7 @@ class AgentsSettingsPanel(Vertical):
             note = "Could not write the [agents] routing keys to config.toml."
         if problems:
             warning.update(
-                "Override allowlist NOT saved — fix or remove: "
-                + "; ".join(problems)
+                "Override allowlist NOT saved — fix or remove: " + "; ".join(problems)
             )
         return note
 

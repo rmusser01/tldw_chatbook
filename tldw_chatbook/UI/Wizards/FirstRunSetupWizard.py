@@ -253,7 +253,6 @@ SUMMARY_KEY_HINTS = "Ctrl+B back · choose an action below to finish"
 
 
 class SetupWizardProgress(WizardProgress):
-
     #: TASK-21148 (UAT F-2/F-3): the stacked number+title layout. Declared
     #: as BUNDLED_CSS so build_css.py lifts it into the widget-defaults
     #: tier of the app bundle — a class-level DEFAULT_CSS would register
@@ -2168,8 +2167,7 @@ class ProviderStep(SetupStep):
             env_var = getattr(readiness, "env_var", "") or ""
             if env_var:
                 parts.append(
-                    f"(Already exported {env_var}? It's picked up "
-                    "automatically.)"
+                    f"(Already exported {env_var}? It's picked up automatically.)"
                 )
             # task-32555 AC#3: the skip is visible where the key goes.
             parts.append(
@@ -3911,8 +3909,7 @@ class ModelStep(SetupStep):
             # rejected key, the fix lives one step Back (UAT M-1).
             retry.set_class(
                 discovery_state != "connection_failed"
-                or self._rendered_probe_failure
-                == wizard_state.PROVIDER_PROBE_AUTH,
+                or self._rendered_probe_failure == wizard_state.PROVIDER_PROBE_AUTH,
                 "hidden",
             )
         except NoMatches:
@@ -4259,8 +4256,6 @@ class ModelStep(SetupStep):
         return {"model_id": self._effective_model_id()}
 
 
-
-
 class RagStep(SetupStep):
     """RAG/embeddings: report dep status; pick a default embedding model."""
 
@@ -4277,7 +4272,9 @@ class RagStep(SetupStep):
         with Vertical(classes="setup-rag"):
             yield Static("Search & RAG", classes="setup-title")
             yield Static("", id="setup-rag-status", classes="setup-subtitle")
-            with SetupRadioSet(id="setup-rag-model-choice", classes="setup-choice-list"):
+            with SetupRadioSet(
+                id="setup-rag-model-choice", classes="setup-choice-list"
+            ):
                 for model_id in self._embedding_model_ids():
                     # The id comes from the user's `[embedding_config] models`
                     # table, so it must not be handed to a markup parser: a
@@ -6268,8 +6265,7 @@ class AppearanceStep(SetupStep):
         for card_name in names:
             button = SetupRadioButton(
                 self._card_display_name(card_name),
-                value=bool(card_name)
-                and card_name == self.selected_splash_card,
+                value=bool(card_name) and card_name == self.selected_splash_card,
             )
             button._card_name = card_name
             yield button
@@ -6651,9 +6647,7 @@ class SummaryStep(SetupStep):
             with Horizontal(classes="setup-summary-actions-row"):
                 # task-32140: a local-first user who came for notes was
                 # told the only thing they could do needed an API key.
-                yield Button(
-                    "Write your first note", id="setup-exit-library-notes"
-                )
+                yield Button("Write your first note", id="setup-exit-library-notes")
                 yield Button("Explore Home", id="setup-exit-home")
                 yield Button("Review settings", id="setup-exit-settings")
 
@@ -6959,9 +6953,7 @@ class SummaryStep(SetupStep):
             try:
                 self.wizard.request_model_catalog_refresh()
             except Exception:
-                logger.debug(
-                    "Model catalog refresh request skipped", exc_info=True
-                )
+                logger.debug("Model catalog refresh request skipped", exc_info=True)
         return True, ""
 
     def get_step_data(self) -> Dict[str, Any]:

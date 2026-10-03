@@ -235,6 +235,7 @@ def _debug(message: str) -> None:
         return
     logger.debug(message)
 
+
 #: Directory prefixes that are refused along with everything beneath them.
 #: The LOCATION rule (see the module docstring): used where the directory
 #: is unambiguously a credential store and its filenames are not
@@ -577,7 +578,9 @@ def _db_sidecar_paths(db_path: Path) -> tuple[Path, ...]:
         equality: appending is not the same as matching anything that
         merely starts with the DB's name.
     """
-    return tuple(db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES)
+    return tuple(
+        db_path.with_name(db_path.name + suffix) for suffix in _DB_SIDECAR_SUFFIXES
+    )
 
 
 class SensitivePathContext(NamedTuple):

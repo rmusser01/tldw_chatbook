@@ -143,7 +143,9 @@ def _scan_source(source: str, *, relative_path: str) -> list[Finding]:
     }
 
     def is_session_ctor(node: ast.AST) -> bool:
-        return isinstance(node, ast.Call) and _qualified(node.func) in session_ctor_names
+        return (
+            isinstance(node, ast.Call) and _qualified(node.func) in session_ctor_names
+        )
 
     # Pass 1: find every name/self-attribute this file binds to a fresh
     # `requests.Session()` -- assignment, `with ... as`, or an annotated
@@ -183,9 +185,9 @@ def _scan_source(source: str, *, relative_path: str) -> list[Finding]:
                     session_vars.add(item.optional_vars.id)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             for arg in list(node.args.args) + list(node.args.kwonlyargs):
-                if arg.annotation is not None and _qualified(
-                    arg.annotation
-                ) in {f"{a}.Session" for a in aliases}:
+                if arg.annotation is not None and _qualified(arg.annotation) in {
+                    f"{a}.Session" for a in aliases
+                }:
                     session_vars.add(arg.arg)
 
     def has_timeout(call: ast.Call, leaf: str) -> bool:
@@ -208,7 +210,9 @@ def _scan_source(source: str, *, relative_path: str) -> list[Finding]:
             continue
         if is_session_ctor(node):
             findings.append(
-                Finding(relative_path, node.lineno, "bare-session", _qualified(node.func))
+                Finding(
+                    relative_path, node.lineno, "bare-session", _qualified(node.func)
+                )
             )
             continue
         if not isinstance(node.func, ast.Attribute):
@@ -269,7 +273,9 @@ def test_llm_calls_package_has_no_bare_session_or_timeoutless_call() -> None:
     be completely clean, with zero exemptions."""
     by_file = _scan_package()
     offenders = {
-        path: findings for path, findings in by_file.items() if path.startswith("LLM_Calls/")
+        path: findings
+        for path, findings in by_file.items()
+        if path.startswith("LLM_Calls/")
     }
     assert offenders == {}, "\n".join(
         str(f) for findings in offenders.values() for f in findings
@@ -330,7 +336,9 @@ def test_scanner_flags_bare_session_construction() -> None:
 
 
 def test_scanner_flags_module_level_timeoutless_call() -> None:
-    source = "import requests\n\ndef f():\n    return requests.post('https://x', json={})\n"
+    source = (
+        "import requests\n\ndef f():\n    return requests.post('https://x', json={})\n"
+    )
     findings = _scan_source(source, relative_path="synthetic.py")
     assert [f.kind for f in findings] == ["timeoutless-call"]
 
@@ -392,11 +400,7 @@ def test_scanner_ignores_files_that_do_not_import_requests() -> None:
 def test_scanner_ignores_lazy_in_function_import_target_of_confusion() -> None:
     """A lazy, function-local ``import requests`` must still be recognised --
     several real files in this codebase import it that way on purpose."""
-    source = (
-        "def f():\n"
-        "    import requests\n"
-        "    return requests.Session()\n"
-    )
+    source = "def f():\n    import requests\n    return requests.Session()\n"
     findings = _scan_source(source, relative_path="synthetic.py")
     assert [f.kind for f in findings] == ["bare-session"]
 
@@ -422,7 +426,6 @@ def test_scanner_accepts_a_timeout_forwarded_explicitly_beside_kwargs() -> None:
     naming it -- `**kwargs` alongside an explicit `timeout=` is fine.
     """
     source = (
-        "import requests\n"
-        "requests.post(url, timeout=opts.get('timeout', 30), **opts)\n"
+        "import requests\nrequests.post(url, timeout=opts.get('timeout', 30), **opts)\n"
     )
     assert _scan_source(source, relative_path="synthetic.py") == []

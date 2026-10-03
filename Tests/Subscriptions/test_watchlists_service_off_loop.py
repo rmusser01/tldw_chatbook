@@ -217,8 +217,7 @@ async def test_simple_db_calls_run_off_the_event_loop_thread(
 
     assert threads, f"SubscriptionsDB.{db_method_name} must have been called"
     assert all(thread_id != loop_thread for thread_id in threads), (
-        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: "
-        f"{threads}"
+        f"SubscriptionsDB.{db_method_name} ran on the event-loop thread: {threads}"
     )
 
 
@@ -387,8 +386,7 @@ async def test_get_alert_rule_reads_off_the_event_loop_thread(tmp_path):
 
     assert rule_again["rule_id"] == rule["rule_id"]
     assert not loop_statements, (
-        "get_alert_rule ran SQL on the event-loop thread: "
-        f"{loop_statements[:3]}"
+        f"get_alert_rule ran SQL on the event-loop thread: {loop_statements[:3]}"
     )
 
 
