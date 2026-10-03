@@ -318,11 +318,14 @@ def test_pcm_byte_limit_is_derived_from_the_single_sixty_second_ceiling(
     coordinator_module: Any,
 ) -> None:
     assert coordinator_module.DICTATION_MAX_SECONDS == 60.0
-    assert coordinator_module.pcm_byte_limit(
-        sample_rate=16_000,
-        channels=2,
-        sample_width=2,
-    ) == 3_840_000
+    assert (
+        coordinator_module.pcm_byte_limit(
+            sample_rate=16_000,
+            channels=2,
+            sample_width=2,
+        )
+        == 3_840_000
+    )
 
 
 def test_idle_dictation_dispatches_immediately_and_delivers_ordered_text(
@@ -338,7 +341,10 @@ def test_idle_dictation_dispatches_immediately_and_delivers_ordered_text(
     )
 
     assert handle.waiting_for_executor is False
-    assert handle.append_segment(b"\x01\x00\x02\x00") is coordinator_module.DictationAppendStatus.ACCEPTED
+    assert (
+        handle.append_segment(b"\x01\x00\x02\x00")
+        is coordinator_module.DictationAppendStatus.ACCEPTED
+    )
     assert executor.wait_for_submissions(1)
     assert executor.submissions[0]["source"].audio == b"\x01\x00\x02\x00"
     assert executor.submissions[0]["segment_end_frames"] == (2,)
@@ -669,7 +675,10 @@ def test_exact_limit_is_frame_aligned_retained_and_reported_once(
     )
     exact = b"\x01\x00" * 120
 
-    assert handle.append_segment(exact) is coordinator_module.DictationAppendStatus.LIMIT_REACHED
+    assert (
+        handle.append_segment(exact)
+        is coordinator_module.DictationAppendStatus.LIMIT_REACHED
+    )
     assert executor.wait_for_submissions(1)
     assert executor.submissions[0]["source"].audio == exact
     with pytest.raises(RuntimeError, match="finished"):
@@ -690,7 +699,10 @@ def test_one_frame_over_limit_retains_every_accepted_complete_frame(
     )
     over = b"\x01\x00" * 121
 
-    assert handle.append_segment(over) is coordinator_module.DictationAppendStatus.LIMIT_REACHED
+    assert (
+        handle.append_segment(over)
+        is coordinator_module.DictationAppendStatus.LIMIT_REACHED
+    )
     assert executor.wait_for_submissions(1)
     assert executor.submissions[0]["source"].audio == over[:-2]
     assert executor.submissions[0]["segment_end_frames"] == (120,)
@@ -715,6 +727,7 @@ def test_stale_and_duplicate_terminals_are_ignored_once(
     delivered_event = threading.Event()
     executor = FakeExecutor()
     coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
+
     def on_result(result: ExecutorResult) -> None:
         delivered.append(result.payload["text"])
         delivered_event.set()
@@ -754,9 +767,12 @@ def test_current_preparing_event_advances_library_generation_once_outside_lock(
         results.append(result.payload["text"])
         result_delivered.set()
 
-    assert coordinator.submit_library(
-        **_library_kwargs(on_event=on_event, on_result=on_result)
-    ) == 1
+    assert (
+        coordinator.submit_library(
+            **_library_kwargs(on_event=on_event, on_result=on_result)
+        )
+        == 1
+    )
     submission = executor.submissions[0]
 
     executor.emit_event(3, attempt_id="different-attempt")
@@ -1186,7 +1202,9 @@ def test_processing_thread_exits_within_join_bound_while_dictation_waits(
     waiter.join(1.0)
 
 
-def test_blocking_one_shot_returns_exact_executor_payload(coordinator_module: Any) -> None:
+def test_blocking_one_shot_returns_exact_executor_payload(
+    coordinator_module: Any,
+) -> None:
     executor = FakeExecutor()
     coordinator = coordinator_module.LocalSTTDispatchCoordinator(executor)
     expected = {

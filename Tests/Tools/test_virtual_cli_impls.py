@@ -144,7 +144,11 @@ def test_leased_cat_limit_zero_calls_executor_once_and_returns_empty_page(tmp_pa
     ("command", "argv", "expected"),
     (
         ("ls", ["docs"], ("list_directory", "docs")),
-        ("cat", ["a.txt", "--offset", "2", "--limit", "4"], ("read_file", "a.txt", 2, 4)),
+        (
+            "cat",
+            ["a.txt", "--offset", "2", "--limit", "4"],
+            ("read_file", "a.txt", 2, 4),
+        ),
         ("grep", ["needle", "--mode", "files"], ("grep_files", "needle", "files")),
         ("find", ["**/*.py"], ("glob_files", "**/*.py")),
         ("stat", ["a.txt"], ("stat_path", "a.txt")),
@@ -155,7 +159,11 @@ def test_leased_cat_limit_zero_calls_executor_once_and_returns_empty_page(tmp_pa
             ("git_diff", True, "HEAD~1..HEAD", "a.py", True),
         ),
         ("git_log", ["--count", "7", "--path", "src"], ("git_log", 7, "src")),
-        ("git_blame", ["a.py", "--start", "2", "--end", "5"], ("git_blame", "a.py", 2, 5)),
+        (
+            "git_blame",
+            ["a.py", "--start", "2", "--end", "5"],
+            ("git_blame", "a.py", 2, 5),
+        ),
         ("git_branches", [], ("git_branches",)),
     ),
 )

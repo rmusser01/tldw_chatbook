@@ -744,9 +744,7 @@ def test_prepare_repository_refuses_a_protected_repository_root(
     # `context` it threads into this exact call (see `_denylist_pathspecs`
     # sharing one `SensitivePathContext` per tool call instead of
     # re-resolving it) -- the stub must accept that keyword too.
-    monkeypatch.setattr(
-        gti, "is_sensitive_path", lambda candidate, context=None: True
-    )
+    monkeypatch.setattr(gti, "is_sensitive_path", lambda candidate, context=None: True)
     with pytest.raises(LocalToolError, match="protected path"):
         prepare_repository(repo, ".")
 

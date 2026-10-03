@@ -133,7 +133,7 @@ BUFFER_CAP_SECONDS = 60
 #: emissions. At the default 20ms block size this is roughly one second;
 #: it exists purely to avoid flooding `on_event` with one event per empty
 #: callback during a prolonged underrun.
-_UNDERRUN_THROTTLE_BLOCKS = 50   # >= 1s at 20ms blocks
+_UNDERRUN_THROTTLE_BLOCKS = 50  # >= 1s at 20ms blocks
 
 
 @dataclass(frozen=True)
@@ -168,6 +168,7 @@ class SinkUnderrun:
             the value is meaningful even when a single throttled event
             covers a short burst of consecutive underruns.
     """
+
     frames: int
 
 
@@ -178,6 +179,7 @@ class SinkFailed:
     Attributes:
         reason: Human-readable description of what failed.
     """
+
     reason: str
 
 
@@ -210,6 +212,7 @@ class PumpResult:
             (the source exception's `str()`) and `"failed"` (the sink's
             own `SinkFailed` reason, or a drain-wait-deadline message).
     """
+
     outcome: PumpOutcome
     bytes_fed: int
     reason: str = ""
@@ -330,10 +333,10 @@ class StreamingPcmSink:
         self._blocksize_ms = blocksize_ms
         self._factory = stream_factory
         self._lock = threading.Lock()
-        self._buf: deque[bytes] = deque()      # arbitrary-size chunks
-        self._buffered_bytes = 0                # bytes still queued whole in self._buf
-        self._leftover = b""                    # partial block carried between callbacks
-        self._leftover_off = 0                  # bytes already consumed from self._leftover
+        self._buf: deque[bytes] = deque()  # arbitrary-size chunks
+        self._buffered_bytes = 0  # bytes still queued whole in self._buf
+        self._leftover = b""  # partial block carried between callbacks
+        self._leftover_off = 0  # bytes already consumed from self._leftover
         self._state = "idle"
         self._audible = False
         self._closed = False
@@ -348,7 +351,7 @@ class StreamingPcmSink:
         self._bytes_per_frame = 2
         self._full_reported = False
         self._underruns = 0
-        self._underrun_last_emit_block = -10**9
+        self._underrun_last_emit_block = -(10**9)
         self._block_index = 0
         self._stream: Any = None
         # Hand-off from the audio callback thread to a dedicated notify
@@ -480,7 +483,9 @@ class StreamingPcmSink:
                 return
             self._bytes_per_frame = 2 * channels
             self._cap_bytes = BUFFER_CAP_SECONDS * sample_rate * self._bytes_per_frame
-            self._prebuffer_bytes = PREBUFFER_MS * sample_rate * self._bytes_per_frame // 1000
+            self._prebuffer_bytes = (
+                PREBUFFER_MS * sample_rate * self._bytes_per_frame // 1000
+            )
         factory = self._factory
         if factory is None:
             sd = _import_sounddevice()
@@ -490,14 +495,22 @@ class StreamingPcmSink:
 
             def factory(**kw):
                 return sd.OutputStream(
-                    samplerate=kw["samplerate"], channels=kw["channels"],
-                    blocksize=kw["blocksize"], dtype="int16",
-                    callback=lambda outdata, frames, t, status:
-                        kw["callback"](outdata, frames, t, status),
+                    samplerate=kw["samplerate"],
+                    channels=kw["channels"],
+                    blocksize=kw["blocksize"],
+                    dtype="int16",
+                    callback=lambda outdata, frames, t, status: kw["callback"](
+                        outdata, frames, t, status
+                    ),
                 )
+
         try:
-            self._stream = factory(samplerate=sample_rate, channels=channels,
-                                    blocksize=frames_per_block, callback=self._callback)
+            self._stream = factory(
+                samplerate=sample_rate,
+                channels=channels,
+                blocksize=frames_per_block,
+                callback=self._callback,
+            )
             self._stream.start()
         except Exception as exc:
             self._fail(f"audio device open failed: {exc}")
@@ -538,7 +551,9 @@ class StreamingPcmSink:
             _clear_live_sink(self)
             return
         self._notify_thread = threading.Thread(
-            target=self._notify_loop, name="StreamingPcmSinkNotify", daemon=True,
+            target=self._notify_loop,
+            name="StreamingPcmSinkNotify",
+            daemon=True,
         )
         self._notify_thread.start()
 
@@ -753,8 +768,13 @@ class StreamingPcmSink:
                     outdata[:] = 0
                     return
                 if not self._audible:
-                    have_any = self._buffered_bytes > 0 or self._leftover_remaining_locked() > 0
-                    if self._buffered_bytes >= self._prebuffer_bytes or (self._closed and have_any):
+                    have_any = (
+                        self._buffered_bytes > 0
+                        or self._leftover_remaining_locked() > 0
+                    )
+                    if self._buffered_bytes >= self._prebuffer_bytes or (
+                        self._closed and have_any
+                    ):
                         self._audible = True
                         # Enqueued while still holding self._lock (rather
                         # than after release) so a concurrent stop() -- which
@@ -775,8 +795,11 @@ class StreamingPcmSink:
                         outdata[:] = 0
                         return
                 chunk = self._take_locked(need)
-                drained = (self._closed and self._buffered_bytes == 0
-                           and self._leftover_remaining_locked() == 0)
+                drained = (
+                    self._closed
+                    and self._buffered_bytes == 0
+                    and self._leftover_remaining_locked() == 0
+                )
                 if self._audible and not chunk and not drained:
                     # Noted (and, if due, enqueued) while still holding
                     # self._lock -- same reasoning as SinkStarted above: a
@@ -790,7 +813,7 @@ class StreamingPcmSink:
                 out = memoryview(outdata).cast("B")
                 out[: len(chunk)] = chunk
                 if len(chunk) < need:
-                    out[len(chunk):] = b"\x00" * (need - len(chunk))
+                    out[len(chunk) :] = b"\x00" * (need - len(chunk))
             else:
                 outdata[:] = 0
             if drained:
@@ -852,14 +875,14 @@ class StreamingPcmSink:
         remaining = self._leftover_remaining_locked()
         if remaining >= need:
             start = self._leftover_off
-            chunk = self._leftover[start:start + need]
+            chunk = self._leftover[start : start + need]
             self._leftover_off += need
             if self._leftover_off >= len(self._leftover):
                 self._leftover = b""
                 self._leftover_off = 0
             return chunk
 
-        parts = [self._leftover[self._leftover_off:]] if remaining else []
+        parts = [self._leftover[self._leftover_off :]] if remaining else []
         have = remaining
         self._leftover = b""
         self._leftover_off = 0
@@ -903,7 +926,10 @@ class StreamingPcmSink:
                 sink's running total.
         """
         self._underruns += frames
-        if self._block_index - self._underrun_last_emit_block >= _UNDERRUN_THROTTLE_BLOCKS:
+        if (
+            self._block_index - self._underrun_last_emit_block
+            >= _UNDERRUN_THROTTLE_BLOCKS
+        ):
             self._underrun_last_emit_block = self._block_index
             self._notify_q.put(("emit", SinkUnderrun(frames=self._underruns)))
 
@@ -1107,12 +1133,16 @@ def _result(sink: StreamingPcmSink, bytes_fed: int) -> PumpResult:
     `sink.terminal_reason`; `reason` is populated from `sink.fail_reason`
     only when that outcome is `"failed"` (L8).
     """
-    outcome = sink.terminal_reason or "stopped"   # defensive fallback; every call site ensures terminal first
+    outcome = (
+        sink.terminal_reason or "stopped"
+    )  # defensive fallback; every call site ensures terminal first
     reason = (sink.fail_reason or "") if outcome == "failed" else ""
     return PumpResult(outcome=outcome, bytes_fed=bytes_fed, reason=reason)
 
 
-async def _feed_one_piece(sink: StreamingPcmSink, piece: bytes) -> Literal["fed", "terminal", "draining"]:
+async def _feed_one_piece(
+    sink: StreamingPcmSink, piece: bytes
+) -> Literal["fed", "terminal", "draining"]:
     """Feed one already-sliced piece to `sink`, retrying through backpressure.
 
     Isolates `pump`'s backpressure-retry loop (M4) so both the sink
@@ -1337,13 +1367,14 @@ async def pump(
 
         if sink.terminal_reason is not None:
             return _result(sink, bytes_fed)
-        sink.close()   # no-op if state is already "draining" (L10 path above)
+        sink.close()  # no-op if state is already "draining" (L10 path above)
         deadline = time.monotonic() + sink.buffered_seconds + _DRAIN_WAIT_MARGIN_SECONDS
         while sink.terminal_reason is None:
             if time.monotonic() >= deadline:
                 sink.stop()
                 return PumpResult(
-                    outcome="failed", bytes_fed=bytes_fed,
+                    outcome="failed",
+                    bytes_fed=bytes_fed,
                     reason="drain wait exceeded deadline (device callback stalled?)",
                 )
             await asyncio.sleep(0.01)

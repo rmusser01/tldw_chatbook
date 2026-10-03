@@ -85,9 +85,7 @@ async def _boot_media_library(host, pilot):
 
 def _media_app_host():
     app = _build_test_app()
-    _seed_conversations(
-        app, _two_conversations(), notes=None, media=_two_media_items()
-    )
+    _seed_conversations(app, _two_conversations(), notes=None, media=_two_media_items())
     return LibraryHarness(app)
 
 
@@ -116,7 +114,7 @@ async def test_media_row_open_and_detail_arrival_are_canvas_scoped() -> None:
 
 @pytest.mark.asyncio
 async def test_media_viewer_back_is_canvas_scoped_and_restores_list_focus() -> None:
-    """"‹ Back to list" swaps only the canvas child and re-arms row focus."""
+    """ "‹ Back to list" swaps only the canvas child and re-arms row focus."""
     host = _media_app_host()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
@@ -333,9 +331,7 @@ async def test_prompts_import_open_and_cancel_are_canvas_scoped(tmp_path) -> Non
             await pilot.pause()
             assert screen.focused is path_input
             screen.query_one("#library-prompts-import-cancel", Button).press()
-            await _wait_for_selector_gone(
-                screen, pilot, "#library-prompts-import-path"
-            )
+            await _wait_for_selector_gone(screen, pilot, "#library-prompts-import-path")
             await pilot.pause()
         assert calls == []
         assert screen.query_one("#library-prompts-canvas") is canvas_before
@@ -375,9 +371,7 @@ async def test_skills_import_open_and_cancel_are_canvas_scoped(tmp_path) -> None
             await pilot.pause()
             assert screen.focused is path_input
             screen.query_one("#library-skills-import-cancel", Button).press()
-            await _wait_for_selector_gone(
-                screen, pilot, "#library-skills-import-path"
-            )
+            await _wait_for_selector_gone(screen, pilot, "#library-skills-import-path")
             await pilot.pause()
         assert calls == []
         assert screen.query_one("#library-skills-canvas") is canvas_before

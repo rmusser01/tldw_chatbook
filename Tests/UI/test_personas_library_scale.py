@@ -272,9 +272,7 @@ async def test_import_offpage_name_conflict_message(
         # The conflict character is not on page 0 (name_asc), proving the fix
         # cannot lean on the page cache.
         pane = screen.query_one(PersonasLibraryPane)
-        assert conflict_name not in {
-            row.name for row in pane._row_lookup.values()
-        }
+        assert conflict_name not in {row.name for row in pane._row_lookup.values()}
 
         notes: list[tuple[str, str]] = []
         monkeypatch.setattr(

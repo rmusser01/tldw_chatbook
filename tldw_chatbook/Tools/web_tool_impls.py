@@ -82,8 +82,12 @@ def _is_public_ip(ip_str: str) -> bool:
     if any(ip in net for net in _BLOCKED_EXTRA_NETWORKS):
         return False
     return not (
-        ip.is_private or ip.is_loopback or ip.is_link_local
-        or ip.is_multicast or ip.is_reserved or ip.is_unspecified
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
     )
 
 
@@ -120,8 +124,11 @@ def validate_outbound_url(url: str) -> str:
         candidates = [host]
     except ValueError:
         try:
-            infos = socket.getaddrinfo(host, port or (443 if parts.scheme == "https" else 80),
-                                       proto=socket.IPPROTO_TCP)
+            infos = socket.getaddrinfo(
+                host,
+                port or (443 if parts.scheme == "https" else 80),
+                proto=socket.IPPROTO_TCP,
+            )
         except (socket.gaierror, UnicodeError, OSError) as exc:
             raise LocalToolError(f"host does not resolve: {host!r}") from exc
         candidates = [info[4][0] for info in infos]
@@ -136,11 +143,11 @@ def validate_outbound_url(url: str) -> str:
 
 FETCH_MAX_REDIRECTS = 5
 FETCH_TIMEOUT_SECONDS = 30.0
-FETCH_MAX_BYTES = 1 * 1024 * 1024          # default cap
-FETCH_HARD_MAX_BYTES = 5 * 1024 * 1024     # absolute ceiling for max_bytes arg
+FETCH_MAX_BYTES = 1 * 1024 * 1024  # default cap
+FETCH_HARD_MAX_BYTES = 5 * 1024 * 1024  # absolute ceiling for max_bytes arg
 FETCH_CACHE_TTL_SECONDS = 900.0
 FETCH_CACHE_MAX_ENTRIES = 256
-RATE_LIMIT_INTERVAL_SECONDS = 1.0          # per-domain min interval
+RATE_LIMIT_INTERVAL_SECONDS = 1.0  # per-domain min interval
 PDF_MAX_BYTES = 20 * 1024 * 1024  # refusal threshold, never a truncation (spec §1)
 # Refusal threshold for the OTHER allowlisted binary kinds (image/zip/audio):
 # one shared ceiling, PDF keeps its own untouched (binary-fetch design doc
@@ -161,12 +168,20 @@ _REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # Content types surfaced as text. Anything else is refused so the tool never
 # returns binary blobs through the text tool contract.
 _HTML_TYPES = frozenset({"text/html", "application/xhtml+xml"})
-_PLAIN_TYPES = frozenset({
-    "text/plain", "text/markdown", "application/json",
-    "application/xml", "text/xml", "application/ld+json",
-})
+_PLAIN_TYPES = frozenset(
+    {
+        "text/plain",
+        "text/markdown",
+        "application/json",
+        "application/xml",
+        "text/xml",
+        "application/ld+json",
+    }
+)
 
-_SCRIPT_STYLE_RE = re.compile(r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL)
+_SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style)[^>]*>.*?</\1>", re.IGNORECASE | re.DOTALL
+)
 _TAG_RE = re.compile(r"<[^>]+>")
 _WS_RE = re.compile(r"[ \t ]+")
 _BLANKLINES_RE = re.compile(r"\n{3,}")
@@ -395,7 +410,12 @@ def _fetch_once(
         status = response.status_code
         if status in _REDIRECT_STATUSES:
             return status, response.headers, b"", False, None
-        declared = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+        declared = (
+            (response.headers.get("content-type") or "")
+            .split(";", 1)[0]
+            .strip()
+            .lower()
+        )
         chunks: list[bytes] = []
         downloaded = 0
         kind: "str | None" = _declared_kind(declared)
@@ -412,7 +432,11 @@ def _fetch_once(
             # text/html during a crawl keeps today's full-read behavior
             # (the design doc's stated non-goal) instead of being cut at
             # the sniff window with truncated=False.
-            if html_only and resolved and (kind == "pdf" or (declared and declared not in _HTML_TYPES)):
+            if (
+                html_only
+                and resolved
+                and (kind == "pdf" or (declared and declared not in _HTML_TYPES))
+            ):
                 break  # crawl only needs the type; don't drain the body
             # Review fix (Minor 3): while the kind is UNRESOLVED the loop
             # must not break before the sniff window fills -- a caller
@@ -440,7 +464,13 @@ def _decode_body(body: bytes, content_type: str) -> str:
     """Decode using the charset advertised in the content-type header."""
     charset = "utf-8"
     if "charset=" in content_type.lower():
-        candidate = content_type.lower().split("charset=", 1)[1].split(";", 1)[0].strip().strip('"')
+        candidate = (
+            content_type.lower()
+            .split("charset=", 1)[1]
+            .split(";", 1)[0]
+            .strip()
+            .strip('"')
+        )
         try:
             codecs.lookup(candidate)
             charset = candidate
@@ -517,7 +547,10 @@ def _describe_image(body: bytes) -> str:
     seeking, since ``verify()`` leaves the file object unusable for
     anything further.
     """
-    from PIL import Image, UnidentifiedImageError  # local import: keep module import cheap
+    from PIL import (
+        Image,
+        UnidentifiedImageError,
+    )  # local import: keep module import cheap
 
     try:
         with Image.open(BytesIO(body)) as probe:
@@ -554,7 +587,9 @@ def _describe_archive(body: bytes) -> str:
         # (struct/Overflow/Value errors on absurd fields); normalize with a
         # fixed message — never interpolate an arbitrary exception string
         # derived from attacker-controlled bytes (Qodo PR #1442).
-        raise LocalToolError("[archive-error] could not read ZIP (malformed metadata)") from exc
+        raise LocalToolError(
+            "[archive-error] could not read ZIP (malformed metadata)"
+        ) from exc
     lines = [f"[archive] ZIP, {_format_size(len(body))}, {len(infos)} members"]
     for info in infos[:ARCHIVE_LIST_MAX]:
         name = _member_display_name(info.filename)
@@ -737,7 +772,9 @@ def _robots_disallowed_message(url: str) -> str:
     )
 
 
-def _fetch_robots_parser(client: httpx.Client, cache_key: str) -> "RobotFileParser | None":
+def _fetch_robots_parser(
+    client: httpx.Client, cache_key: str
+) -> "RobotFileParser | None":
     """Fetch+parse the robots.txt at ``cache_key`` (``scheme://host[:port]``).
 
     Own bounded redirect loop (fix round 1, Important 1): a 3xx robots.txt
@@ -776,15 +813,25 @@ def _fetch_robots_parser(client: httpx.Client, cache_key: str) -> "RobotFilePars
     current = f"{cache_key}/robots.txt"
     for _hop in range(FETCH_MAX_REDIRECTS + 1):
         try:
-            _validate_hop(current)  # symmetry with every other request (design doc Minor 9)
+            _validate_hop(
+                current
+            )  # symmetry with every other request (design doc Minor 9)
         except Exception as exc:  # noqa: BLE001 - broad by design: fails open
-            logger.debug(f"robots.txt unreachable for {cache_key}: {exc} — failing open")
+            logger.debug(
+                f"robots.txt unreachable for {cache_key}: {exc} — failing open"
+            )
             return None
-        _enforce_rate_limit(urlsplit(current).hostname or "unknown")  # propagates; see docstring
+        _enforce_rate_limit(
+            urlsplit(current).hostname or "unknown"
+        )  # propagates; see docstring
         try:
-            status, headers, body, truncated, _kind = _fetch_once(client, current, ROBOTS_MAX_BYTES)
+            status, headers, body, truncated, _kind = _fetch_once(
+                client, current, ROBOTS_MAX_BYTES
+            )
         except Exception as exc:  # noqa: BLE001 - broad by design: fails open
-            logger.debug(f"robots.txt unreachable for {cache_key}: {exc} — failing open")
+            logger.debug(
+                f"robots.txt unreachable for {cache_key}: {exc} — failing open"
+            )
             return None
         if status in _REDIRECT_STATUSES:
             location = headers.get("location")
@@ -805,14 +852,18 @@ def _fetch_robots_parser(client: httpx.Client, cache_key: str) -> "RobotFilePars
             continue
         if not (200 <= status < 300) or truncated:
             reason = "truncated body" if truncated else f"status {status}"
-            logger.debug(f"robots.txt unreachable for {cache_key}: {reason} — failing open")
+            logger.debug(
+                f"robots.txt unreachable for {cache_key}: {reason} — failing open"
+            )
             return None
         try:
             text = _decode_body(body, headers.get("content-type", ""))
             parser = RobotFileParser()
             parser.parse(text.splitlines())
         except Exception as exc:  # noqa: BLE001 - broad by design: fails open
-            logger.debug(f"robots.txt for {cache_key} could not be parsed: {exc} — failing open")
+            logger.debug(
+                f"robots.txt for {cache_key} could not be parsed: {exc} — failing open"
+            )
             return None
         return parser
     logger.debug(
@@ -1010,7 +1061,9 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
     try:
         max_bytes = max(1, min(int(max_bytes), FETCH_HARD_MAX_BYTES))
     except (TypeError, ValueError) as exc:
-        raise LocalToolError(f"[invalid-url] max_bytes must be an integer: {max_bytes!r}") from exc
+        raise LocalToolError(
+            f"[invalid-url] max_bytes must be an integer: {max_bytes!r}"
+        ) from exc
 
     # Read once per invocation, not per hop (design doc ruling 6).
     respect_robots = _webfetch_settings()["respect_robots_txt"]
@@ -1070,14 +1123,18 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
                 raise LocalToolError(_robots_disallowed_message(current_url))
             _enforce_rate_limit(urlsplit(current_url).hostname or "unknown")
             status, headers, body, truncated, kind = _fetch_once(
-                client, current_url, max_bytes,
+                client,
+                current_url,
+                max_bytes,
                 pdf_max_bytes=PDF_MAX_BYTES if pymupdf_ok else None,
                 binary_max_bytes=BINARY_MAX_BYTES,
             )
             if status in _REDIRECT_STATUSES:
                 location = headers.get("location")
                 if not location:
-                    raise LocalToolError(f"[http-{status}] redirect without a Location header")
+                    raise LocalToolError(
+                        f"[http-{status}] redirect without a Location header"
+                    )
                 current_url = urljoin(current_url, location)
                 continue
             break
@@ -1098,7 +1155,9 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
             client.close()
 
     if status >= 400:
-        raise LocalToolError(f"[http-{status}] upstream returned status {status} for {url!r}")
+        raise LocalToolError(
+            f"[http-{status}] upstream returned status {status} for {url!r}"
+        )
 
     if kind == "pdf":
         if not pymupdf_ok:
@@ -1135,7 +1194,18 @@ def web_fetch(url: str, *, max_bytes: int = FETCH_MAX_BYTES) -> str:
 # ---------------------------------------------------------------------------
 
 SEARCH_DEFAULT_ENGINE = "duckduckgo"
-SEARCH_ENGINES = ("google", "bing", "duckduckgo", "brave", "kagi", "tavily", "searx", "exa", "serper", "yandex")
+SEARCH_ENGINES = (
+    "google",
+    "bing",
+    "duckduckgo",
+    "brave",
+    "kagi",
+    "tavily",
+    "searx",
+    "exa",
+    "serper",
+    "yandex",
+)
 SEARCH_DEFAULT_RESULT_COUNT = 5
 SEARCH_MAX_RESULT_COUNT = 10
 # Byte budgets (re-plan spec §2.2), matching the provider's byte-based
@@ -1402,14 +1472,16 @@ CRAWL_MAX_PAGES_CEILING = 40
 CRAWL_DEFAULT_MAX_DEPTH = 2
 CRAWL_MAX_DEPTH_CEILING = 5
 CRAWL_DEADLINE_SECONDS = 120.0
-CRAWL_PAGE_TIMEOUT_SECONDS = 10.0   # per page; a hung page must not eat the crawl
+CRAWL_PAGE_TIMEOUT_SECONDS = 10.0  # per page; a hung page must not eat the crawl
 CRAWL_EXCERPT_MAX_CHARS = 200
 CRAWL_RESULT_MAX_BYTES = 24 * 1024
 CRAWL_BLOCK_MAX_BYTES = 1024
-CRAWL_MAX_LINKS_PER_PAGE = 500      # frontier bound: cap links enqueued FROM one page
-CRAWL_TITLE_MAX_CHARS = 512         # bound on <title> accumulation (see _CrawlLinkParser.handle_data)
+CRAWL_MAX_LINKS_PER_PAGE = 500  # frontier bound: cap links enqueued FROM one page
+CRAWL_TITLE_MAX_CHARS = (
+    512  # bound on <title> accumulation (see _CrawlLinkParser.handle_data)
+)
 SITEMAP_MAX_BYTES = 5 * 1024 * 1024
-SITEMAP_MAX_CHILDREN = 20           # cap child sitemaps actually fetched from an index
+SITEMAP_MAX_CHILDREN = 20  # cap child sitemaps actually fetched from an index
 
 _CRAWL_USER_AGENT = "tldw-chatbook-web-crawl/1.0"
 
@@ -1503,7 +1575,9 @@ def _parse_sitemap(xml_bytes: bytes) -> tuple[list[str], list[str]]:
     # otherwise it escapes as a raw, untyped exception instead of the
     # structured [crawl-failed] every other sitemap failure produces.
     except (xET.ParseError, ValueError) as exc:
-        raise LocalToolError(f"[crawl-failed] sitemap could not be parsed: {exc}") from exc
+        raise LocalToolError(
+            f"[crawl-failed] sitemap could not be parsed: {exc}"
+        ) from exc
     locs = [
         loc.text.strip()
         for loc in root.findall(f".//{_SITEMAP_NS}loc")
@@ -1613,16 +1687,24 @@ def _crawl_fetch_page(
         if status in _REDIRECT_STATUSES:
             location = headers.get("location")
             if not location:
-                raise LocalToolError(f"[http-{status}] redirect without a Location header")
+                raise LocalToolError(
+                    f"[http-{status}] redirect without a Location header"
+                )
             try:
                 current = urljoin(current, location)
             except ValueError as exc:
-                raise LocalToolError(f"[invalid-url] malformed redirect Location: {location!r}") from exc
+                raise LocalToolError(
+                    f"[invalid-url] malformed redirect Location: {location!r}"
+                ) from exc
             continue
         if status >= 400:
-            raise LocalToolError(f"[http-{status}] upstream returned status {status} for {current!r}")
+            raise LocalToolError(
+                f"[http-{status}] upstream returned status {status} for {current!r}"
+            )
         return current, headers, body, truncated, kind
-    raise LocalToolError(f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}")
+    raise LocalToolError(
+        f"[redirect-limit] exceeded {FETCH_MAX_REDIRECTS} redirects for {url!r}"
+    )
 
 
 class _SitemapSeed(NamedTuple):
@@ -1677,11 +1759,17 @@ def _seed_from_sitemap(
     fetch failure.
     """
     final_url, _headers, body, truncated, _kind = _crawl_fetch_page(
-        client, sitemap_url, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
+        client,
+        sitemap_url,
+        deadline,
+        max_bytes=SITEMAP_MAX_BYTES,
+        html_only=False,
         respect_robots=respect_robots,
     )
     if truncated:
-        raise LocalToolError(f"[crawl-failed] sitemap exceeds {SITEMAP_MAX_BYTES} bytes: {sitemap_url!r}")
+        raise LocalToolError(
+            f"[crawl-failed] sitemap exceeds {SITEMAP_MAX_BYTES} bytes: {sitemap_url!r}"
+        )
     page_urls, children = _parse_sitemap(body)
     sitemap_host = _crawl_host(final_url)
 
@@ -1734,7 +1822,11 @@ def _seed_from_sitemap(
         children_fetched += 1
         try:
             _f, _h, child_body, child_truncated, _kind = _crawl_fetch_page(
-                client, child, deadline, max_bytes=SITEMAP_MAX_BYTES, html_only=False,
+                client,
+                child,
+                deadline,
+                max_bytes=SITEMAP_MAX_BYTES,
+                html_only=False,
                 respect_robots=respect_robots,
             )
         except (LocalToolError, _CrawlDeadline):
@@ -1744,7 +1836,9 @@ def _seed_from_sitemap(
             children_skipped += 1
             continue
         try:
-            child_pages, _nested = _parse_sitemap(child_body)  # one level: nested indexes ignored
+            child_pages, _nested = _parse_sitemap(
+                child_body
+            )  # one level: nested indexes ignored
         except LocalToolError:
             children_skipped += 1
             continue
@@ -1811,8 +1905,12 @@ def web_crawl(
     if not isinstance(url, str) or not url.strip():
         raise LocalToolError("[invalid-args] url must be a non-empty string")
     url = url.strip()
-    max_pages = _coerce_budget(max_pages, CRAWL_DEFAULT_MAX_PAGES, CRAWL_MAX_PAGES_CEILING)
-    max_depth = _coerce_budget(max_depth, CRAWL_DEFAULT_MAX_DEPTH, CRAWL_MAX_DEPTH_CEILING)
+    max_pages = _coerce_budget(
+        max_pages, CRAWL_DEFAULT_MAX_PAGES, CRAWL_MAX_PAGES_CEILING
+    )
+    max_depth = _coerce_budget(
+        max_depth, CRAWL_DEFAULT_MAX_DEPTH, CRAWL_MAX_DEPTH_CEILING
+    )
     scope_host = _crawl_host(url)
     if not scope_host:
         raise LocalToolError(f"[invalid-args] url has no host: {url!r}")
@@ -1843,18 +1941,31 @@ def web_crawl(
         expand_links = sitemap_url is None
         if sitemap_url is not None:
             if not isinstance(sitemap_url, str) or not sitemap_url.strip():
-                raise LocalToolError("[invalid-args] sitemap_url must be a non-empty string")
+                raise LocalToolError(
+                    "[invalid-args] sitemap_url must be a non-empty string"
+                )
             try:
                 seed = _seed_from_sitemap(
-                    client, sitemap_url.strip(), scope_host, max_pages, deadline,
+                    client,
+                    sitemap_url.strip(),
+                    scope_host,
+                    max_pages,
+                    deadline,
                     respect_robots=respect_robots,
                 )
             except _CrawlDeadline:
-                seed = _SitemapSeed(urls=[], children_capped=False, budget_truncated=False, children_skipped=0)
+                seed = _SitemapSeed(
+                    urls=[],
+                    children_capped=False,
+                    budget_truncated=False,
+                    children_skipped=0,
+                )
             except LocalToolError as exc:
                 if "[crawl-failed]" in str(exc):
                     raise
-                raise LocalToolError(f"[crawl-failed] sitemap could not be fetched: {exc}") from exc
+                raise LocalToolError(
+                    f"[crawl-failed] sitemap could not be fetched: {exc}"
+                ) from exc
             queue = deque((u, 0) for u in seed.urls)
             visited = {_normalize_crawl_url(u) for u in seed.urls}
             children_skipped = seed.children_skipped
@@ -1898,7 +2009,9 @@ def web_crawl(
                 break
             except LocalToolError as exc:
                 if is_start and sitemap_url is None:
-                    raise LocalToolError(f"[crawl-failed] start URL could not be fetched: {exc}") from exc
+                    raise LocalToolError(
+                        f"[crawl-failed] start URL could not be fetched: {exc}"
+                    ) from exc
                 # Prefix check, not substring: _validate_hop/_robots_allows put
                 # the reason at position 0 of THEIR message, but a URL echoed
                 # into an unrelated error (e.g. an http-404 message quoting
@@ -1953,7 +2066,9 @@ def web_crawl(
             # decode behavior for that edge case unchanged.
             if kind == "pdf" or (ctype and ctype not in _HTML_TYPES):
                 marker = "[application/pdf]" if kind == "pdf" else f"[{ctype}]"
-                pages.append({"url": final_url, "title": "", "excerpt": "", "marker": marker})
+                pages.append(
+                    {"url": final_url, "title": "", "excerpt": "", "marker": marker}
+                )
                 listed.add(final_norm)
                 continue
 
@@ -1984,12 +2099,14 @@ def web_crawl(
                 if truncated:
                     cache_text += f"\n\n[... truncated: response exceeded max_bytes={FETCH_MAX_BYTES} ...]"
                 _cache_put((final_url, FETCH_MAX_BYTES), cache_text)
-            pages.append({
-                "url": final_url,
-                "title": parser.title.strip(),
-                "excerpt": full_text[:CRAWL_EXCERPT_MAX_CHARS].strip(),
-                "marker": None,
-            })
+            pages.append(
+                {
+                    "url": final_url,
+                    "title": parser.title.strip(),
+                    "excerpt": full_text[:CRAWL_EXCERPT_MAX_CHARS].strip(),
+                    "marker": None,
+                }
+            )
             listed.add(final_norm)
 
             # Expansion: same-host pages only, within the depth budget. A page
@@ -2031,8 +2148,12 @@ def web_crawl(
         client.close()
 
     return _format_crawl_result(
-        pages, failed, blocked, stop_reason,
-        children_skipped=children_skipped, duplicates_skipped=duplicates_skipped,
+        pages,
+        failed,
+        blocked,
+        stop_reason,
+        children_skipped=children_skipped,
+        duplicates_skipped=duplicates_skipped,
         robots_disallowed=robots_disallowed,
     )
 
@@ -2118,7 +2239,10 @@ def _deep_search_settings() -> dict:
     The backend value stays raw so the shared resolver can distinguish a
     missing preference from an invalid saved choice before dispatch.
     """
-    from ..config import _get_int_timeout_value, get_cli_setting  # local: keep module import cheap
+    from ..config import (
+        _get_int_timeout_value,
+        get_cli_setting,
+    )  # local: keep module import cheap
 
     def _str(key: str, default: str) -> str:
         # Substitute the default ONLY for a missing key or a non-string
@@ -2358,7 +2482,9 @@ def deep_search_pipeline_params(
     return params
 
 
-def web_deep_search(question: str, engine: Optional[str] = None, max_results: Optional[int] = None) -> str:
+def web_deep_search(
+    question: str, engine: Optional[str] = None, max_results: Optional[int] = None
+) -> str:
     """Multi-query web research: sub-questions, relevance filtering, a cited answer.
 
     Two-phase pipeline (``Web_Scraping.WebSearch_APIs``): phase 1
@@ -2451,18 +2577,20 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # phase 1 (a real search-provider call) ever runs.
     relevance_llm = settings.get("relevance_analysis_llm")
     if not relevance_llm or not str(relevance_llm).strip():
-        raise LocalToolError("[deep-search-failed] relevance: no relevance_analysis_llm configured")
+        raise LocalToolError(
+            "[deep-search-failed] relevance: no relevance_analysis_llm configured"
+        )
     final_answer_llm = settings.get("final_answer_llm")
     if not final_answer_llm or not str(final_answer_llm).strip():
-        raise LocalToolError("[deep-search-failed] synthesis: no final_answer_llm configured")
+        raise LocalToolError(
+            "[deep-search-failed] synthesis: no final_answer_llm configured"
+        )
 
     deadline_s = float(settings.get("deep_search_timeout_s", 240) or 240)
 
     # task-16484: ONE shared assembly (this tool, the Console /research
     # command, and the baseline script all build these params).
-    search_params = deep_search_pipeline_params(
-        engine=engine, max_results=max_results
-    )
+    search_params = deep_search_pipeline_params(engine=engine, max_results=max_results)
 
     from ..Web_Scraping import WebSearch_APIs  # local import: keep module import cheap
 
@@ -2504,7 +2632,9 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         watchdog_task = asyncio.ensure_future(_watchdog())
         try:
             pipeline_result = await asyncio.wait_for(
-                WebSearch_APIs.analyze_and_aggregate(wsr, sub_query_dict, search_params, cancel_event=cancel_event),
+                WebSearch_APIs.analyze_and_aggregate(
+                    wsr, sub_query_dict, search_params, cancel_event=cancel_event
+                ),
                 timeout=hard_timeout,
             )
         finally:
@@ -2531,7 +2661,9 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
 
     final_answer = phase2_result.get("final_answer") or {}
     relevant_results = phase2_result.get("relevant_results") or {}
-    warnings = list((phase2_result.get("web_search_results_dict") or {}).get("warnings") or warnings)
+    warnings = list(
+        (phase2_result.get("web_search_results_dict") or {}).get("warnings") or warnings
+    )
 
     sub_questions = list(sub_query_dict.get("sub_questions") or [])
     n_queries = 1 + len(sub_questions)
@@ -2591,19 +2723,27 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # summarization call actually failed and truncated raw text was
     # substituted (WebSearch_APIs.py's per-chunk except branch).
     fallback_count = sum(1 for c in chunks if isinstance(c, dict) and c.get("fallback"))
-    fallback_note = f" · {fallback_count} chunk(s) used a fallback summary" if fallback_count else ""
+    fallback_note = (
+        f" · {fallback_count} chunk(s) used a fallback summary"
+        if fallback_count
+        else ""
+    )
     warning_note = f" · {len(warnings)} search warning(s)" if warnings else ""
     # "may be incomplete", not a definite "partial synthesis" claim
     # (task-1356 review, N2): the b2 probe showed a run whose watchdog
     # fired mid-call but which still went on to complete fully and
     # successfully -- deadline_hit only means the deadline was reached,
     # not that anything was actually cut short.
-    deadline_note = " · deadline reached — results may be incomplete" if deadline_hit else ""
+    deadline_note = (
+        " · deadline reached — results may be incomplete" if deadline_hit else ""
+    )
     # task-16333: a gate-fallback report must never masquerade as a
     # relevance-verified one.
     gate_block = final_answer.get("gate") or {}
     gate_note = (
-        " · evidence not relevance-verified (gate fallback)" if gate_block.get("fallback") else ""
+        " · evidence not relevance-verified (gate fallback)"
+        if gate_block.get("fallback")
+        else ""
     )
     # "scored" is only accurate when the relevance loop ran to completion --
     # a deadline hit means some of `results` were never examined at all, so
@@ -2617,7 +2757,9 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # the footer so the model can weigh the answer's grounding; absent on
     # fallback/failure branches, which have no verdict to report.
     citation_note = ""
-    citation_summary = deep_search_citations_footer(final_answer.get("citation_verification"))
+    citation_summary = deep_search_citations_footer(
+        final_answer.get("citation_verification")
+    )
     if citation_summary:
         citation_note = f" · {citation_summary}"
 
@@ -2627,7 +2769,9 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         f"{fallback_note}{warning_note}{deadline_note}{citation_note}{gate_note}"
     )
 
-    text = _truncate_to_bytes(str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES)
+    text = _truncate_to_bytes(
+        str(final_answer.get("text") or ""), DEEP_SEARCH_ANSWER_MAX_BYTES
+    )
 
     # Sources gets whatever's left of the REAL total after the footer
     # (built above, always emitted in full) and the answer (already capped)
@@ -2639,9 +2783,15 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # (RunBudget.max_tool_result_chars) actually preserves.
     footer_bytes = len(footer.encode("utf-8"))
     answer_bytes = len(text.encode("utf-8"))
-    section_separator_bytes = len("\n\n".encode("utf-8")) * 2  # joins the 3 sections below
+    section_separator_bytes = (
+        len("\n\n".encode("utf-8")) * 2
+    )  # joins the 3 sections below
     sources_budget = max(
-        0, DEEP_SEARCH_TOTAL_MAX_BYTES - footer_bytes - answer_bytes - section_separator_bytes
+        0,
+        DEEP_SEARCH_TOTAL_MAX_BYTES
+        - footer_bytes
+        - answer_bytes
+        - section_separator_bytes,
     )
 
     # Count-capped (DEEP_SEARCH_SOURCES_MAX) THEN byte-budget-capped
@@ -2657,14 +2807,18 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
     # evidence existed at all) and "count cap" for evidence beyond
     # DEEP_SEARCH_SOURCES_MAX that was never even considered.
     evidence = final_answer.get("evidence") or []
-    candidates = [item for item in evidence[:DEEP_SEARCH_SOURCES_MAX] if isinstance(item, dict)]
+    candidates = [
+        item for item in evidence[:DEEP_SEARCH_SOURCES_MAX] if isinstance(item, dict)
+    ]
     count_omitted = max(0, len(evidence) - DEEP_SEARCH_SOURCES_MAX)
     source_lines: list = []
     sources_bytes = 0
     emitted = 0
     for i, item in enumerate(candidates, 1):
         sid = item.get("id", i)
-        title = _truncate_to_bytes(str(item.get("title") or item.get("url") or "Untitled"), 200)
+        title = _truncate_to_bytes(
+            str(item.get("title") or item.get("url") or "Untitled"), 200
+        )
         url = _truncate_to_bytes(str(item.get("url") or ""), 500)
         line = f"[{sid}] {title} — {url}"
         line_bytes = len(line.encode("utf-8"))
@@ -2675,12 +2829,16 @@ def web_deep_search(question: str, engine: Optional[str] = None, max_results: Op
         emitted += 1
     size_omitted = len(candidates) - emitted
     if size_omitted > 0:
-        source_lines.append(f"… [{size_omitted} further source(s) omitted: size cap reached]")
+        source_lines.append(
+            f"… [{size_omitted} further source(s) omitted: size cap reached]"
+        )
     if count_omitted > 0:
         source_lines.append(
             f"… [{count_omitted} further source(s) omitted: count cap reached "
             f"({DEEP_SEARCH_SOURCES_MAX} max)]"
         )
-    sources_block = "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
+    sources_block = (
+        "Sources:\n" + "\n".join(source_lines) if source_lines else "Sources: (none)"
+    )
 
     return f"{text}\n\n{sources_block}\n\n{footer}"

@@ -53,8 +53,18 @@ from ...Chat.provider_readiness import is_valid_provider_api_key
 from ...DB.Evals_DB import EvalsDB
 from ...Evals.word_bench.capture_client import WordBenchCaptureClient
 from ...Evals.word_bench.models import BenchConfig, Snippet, Target
-from ...Evals.word_bench.runner import CancelToken, CaptureClientLike, ProgressFn, WordBenchRunner
-from ...Evals.word_bench.storage import _unique_name, load_bench, model_steering, save_bench
+from ...Evals.word_bench.runner import (
+    CancelToken,
+    CaptureClientLike,
+    ProgressFn,
+    WordBenchRunner,
+)
+from ...Evals.word_bench.storage import (
+    _unique_name,
+    load_bench,
+    model_steering,
+    save_bench,
+)
 from .evals_state import EvalsViewModel
 from .snippet_editor import dataset_snippets, import_snippets_into_dataset
 
@@ -220,7 +230,9 @@ def configured_llama_cpp_model_id(app_config: Optional[Mapping[str, Any]]) -> st
     return model.strip() if isinstance(model, str) else ""
 
 
-def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Optional[str]:
+def _configured_llama_cpp_api_key(
+    app_config: Optional[Mapping[str, Any]],
+) -> Optional[str]:
     """The llama.cpp API key to send, env-first per this project's
     documented precedence (env vars -> config.toml -> defaults; see
     CLAUDE.md). ``LLAMA_CPP_API_KEY`` is the same env var name
@@ -231,7 +243,11 @@ def _configured_llama_cpp_api_key(app_config: Optional[Mapping[str, Any]]) -> Op
     """
     settings = _llama_cpp_settings(app_config)
     env_var = settings.get("api_key_env_var")
-    env_name = env_var.strip() if isinstance(env_var, str) and env_var.strip() else "LLAMA_CPP_API_KEY"
+    env_name = (
+        env_var.strip()
+        if isinstance(env_var, str) and env_var.strip()
+        else "LLAMA_CPP_API_KEY"
+    )
     env_value = os.environ.get(env_name)
     if env_value and is_valid_provider_api_key(env_value):
         return env_value.strip()
@@ -591,9 +607,7 @@ async def create_and_run_sample_bench(
     # the rail's render-time gate must never reach this).
     target_row = resolve_sample_target(view_model, app_config, create=True)
     if target_row is None:
-        raise RuntimeError(
-            "No configured target is available for the sample bench."
-        )
+        raise RuntimeError("No configured target is available for the sample bench.")
 
     dataset_id = db.create_dataset(
         name=_unique_name(SAMPLE_DATASET_NAME),
@@ -631,8 +645,12 @@ async def create_and_run_sample_bench(
     runner = WordBenchRunner(db, factory)
     try:
         outcome = await runner.run(
-            config, [target], snippets, task_id,
-            progress=progress, cancel_token=cancel_token,
+            config,
+            [target],
+            snippets,
+            task_id,
+            progress=progress,
+            cancel_token=cancel_token,
         )
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)
@@ -852,8 +870,12 @@ async def run_existing_bench(
         factory = client_factory or _default_client_factory(app_config)
         runner = WordBenchRunner(db, factory)
         outcome = await runner.run(
-            config, targets, snippets, task_id,
-            progress=progress, cancel_token=cancel_token,
+            config,
+            targets,
+            snippets,
+            task_id,
+            progress=progress,
+            cancel_token=cancel_token,
         )
     except asyncio.CancelledError:
         _mark_orphaned_runs_cancelled(db, task_id)

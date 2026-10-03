@@ -168,7 +168,9 @@ def test_native_console_state_keeps_suspended_settings_draft_process_local() -> 
     assert retained is not None
     assert retained["settings"]["system_prompt"] == "private system text"
     assert retained["settings"]["pinned_prefill"] == "private prefill text"
-    assert retained["raw_values"]["console-settings-base-url"] == "http://127.0.0.1:9099"
+    assert (
+        retained["raw_values"]["console-settings-base-url"] == "http://127.0.0.1:9099"
+    )
     assert payload["suspended_conversation_settings_token"] == 19
 
     restored = bare_screen(ConsoleChatStore())
@@ -256,7 +258,9 @@ def test_existing_snapshot_outer_copy_behavior_is_unchanged() -> None:
     assert store.restore("chat", identity)["selected"] == "row-1"
 
 
-def test_library_screen_state_runtime_mismatch_rejects_continue_before_restore() -> None:
+def test_library_screen_state_runtime_mismatch_rejects_continue_before_restore() -> (
+    None
+):
     store = ScreenStateStore()
     server_a = RuntimeIdentity("server", "server-a")
     server_b = RuntimeIdentity("server", "server-b")

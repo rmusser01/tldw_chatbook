@@ -193,7 +193,10 @@ async def test_media_choice_and_rag_toggles_are_canvas_scoped() -> None:
             await _wait_for_selector(screen, pilot, "#library-media-type-filter")
         assert calls == []
         assert screen.query_one("#library-rail") is media_rail
-        assert screen.query_one("#library-media-canvas", LibraryMediaCanvas) is media_canvas
+        assert (
+            screen.query_one("#library-media-canvas", LibraryMediaCanvas)
+            is media_canvas
+        )
 
         screen.query_one("#library-row-browse-search").press()
         await _wait_for_selector(screen, pilot, "#library-rag-mode-toggle")
@@ -229,9 +232,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _library_selected_row_id="",
         run_worker=Mock(),
     )
-    skill_event = SimpleNamespace(
-        stop=Mock(), button=SimpleNamespace(skill_name=None)
-    )
+    skill_event = SimpleNamespace(stop=Mock(), button=SimpleNamespace(skill_name=None))
     prompt_screen = SimpleNamespace(
         _prompts_state=SimpleNamespace(
             mutation_in_flight=False,
@@ -251,9 +252,7 @@ async def test_prompt_and_skill_row_handlers_route_to_their_canvas() -> None:
         _library_selected_row_id="",
         run_worker=Mock(),
     )
-    prompt_event = SimpleNamespace(
-        stop=Mock(), button=SimpleNamespace(prompt_id=1)
-    )
+    prompt_event = SimpleNamespace(stop=Mock(), button=SimpleNamespace(prompt_id=1))
 
     with patch.object(
         library_screen_module,
@@ -320,9 +319,7 @@ async def test_real_prompt_and_skill_rows_keep_their_canvas_identity(tmp_path) -
         screen = _active_library_screen(skills_host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-skills").press()
-        row = await _wait_for_selector(
-            screen, pilot, "#library-skill-row-scoped-skill"
-        )
+        row = await _wait_for_selector(screen, pilot, "#library-skill-row-scoped-skill")
         canvas = screen.query_one("#library-skills-canvas")
         calls, spy = _screen_recompose_spy()
         with patch.object(BaseAppScreen, "refresh", spy):
@@ -370,8 +367,11 @@ async def test_ingest_backend_switch_recomposes_only_the_ingest_canvas(
     _seed_conversations(app, ())
     screen = LibraryScreen(app)
     screen._build_library_ingest_state = lambda: build_library_ingest_state(
-        (), form=screen._ingest_state.form, ingest_backend=backend["value"],
-        runtime_source="server", server_ingest_available=True,
+        (),
+        form=screen._ingest_state.form,
+        ingest_backend=backend["value"],
+        runtime_source="server",
+        server_ingest_available=True,
     )
     screen.apply_navigation_context({LIBRARY_NAV_CONTEXT_INGEST: True})
     host = LibraryHarness(app, screen=screen)
@@ -460,9 +460,7 @@ def test_import_status_lines_patch_the_mounted_static_without_recompose() -> Non
         "_sync_library_canvas",
         side_effect=AssertionError("mounted status line must not recompose"),
     ):
-        LibraryScreen._apply_library_prompts_import_status(
-            prompt_screen, "2 imported"
-        )
+        LibraryScreen._apply_library_prompts_import_status(prompt_screen, "2 imported")
         prompt_screen._library_selected_row_id = (
             library_screen_module.LIBRARY_ROW_BROWSE_NOTES
         )

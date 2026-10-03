@@ -237,7 +237,11 @@ def run_git(
     if resolved_executable is None:
         raise LocalToolError("git is not available on this system")
     resolved_executable = resolved_executable.resolve()
-    if not isinstance(max_output_bytes, int) or isinstance(max_output_bytes, bool) or max_output_bytes <= 0:
+    if (
+        not isinstance(max_output_bytes, int)
+        or isinstance(max_output_bytes, bool)
+        or max_output_bytes <= 0
+    ):
         max_output_bytes = GIT_MAX_OUTPUT_BYTES
 
     process = subprocess.Popen(
@@ -273,7 +277,9 @@ def run_git(
             _kill_process(process, own_process_group=own_process_group)
             with contextlib.suppress(Exception):
                 process.wait()
-            raise LocalToolError(f"git command timed out after {timeout} seconds: {list(argv)}")
+            raise LocalToolError(
+                f"git command timed out after {timeout} seconds: {list(argv)}"
+            )
         try:
             name, data = done.get(timeout=min(remaining, 0.05))
         except queue.Empty:
@@ -305,9 +311,7 @@ def run_git(
     )
 
 
-def _kill_process(
-    process: subprocess.Popen, *, own_process_group: bool = True
-) -> None:
+def _kill_process(process: subprocess.Popen, *, own_process_group: bool = True) -> None:
     """Kill the whole process group on POSIX; fall back to the direct child."""
     if own_process_group and os.name == "posix":
         # process was started with start_new_session=True, so its pid is
@@ -451,9 +455,7 @@ def _denylist_pathspecs(
         elif kind == "name":
             specs.append(f":(exclude,glob,icase)**/{_glob_escape(value)}")
         else:  # pragma: no cover - defensive; see the docstring
-            raise LocalToolError(
-                f"unsupported sensitive-path exclusion kind: {kind!r}"
-            )
+            raise LocalToolError(f"unsupported sensitive-path exclusion kind: {kind!r}")
     return tuple(specs)
 
 
@@ -464,8 +466,7 @@ def _repo_relative_exclusions(
 ) -> tuple[SensitiveExclusion, ...]:
     """Translate parent-admitted workspace exclusions to repository-relative."""
     repo_parts = tuple(
-        part.casefold()
-        for part in repo_root.relative_to(workspace_root).parts
+        part.casefold() for part in repo_root.relative_to(workspace_root).parts
     )
     translated: list[SensitiveExclusion] = []
     for exclusion in exclusions:
@@ -487,7 +488,9 @@ def _repo_relative_exclusions(
             continue
         if exclusion.kind in {"subtree", "file"}:
             translated.append(SensitiveExclusion(exclusion.kind, ""))
-        elif exclusion.kind == "direct_children" and len(repo_parts) == len(folded_value):
+        elif exclusion.kind == "direct_children" and len(repo_parts) == len(
+            folded_value
+        ):
             translated.append(SensitiveExclusion("direct_children", ""))
     return tuple(translated)
 
@@ -828,9 +831,7 @@ def git_status(
             ),
         ],
         subcommand="status",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -980,9 +981,7 @@ def git_branches(
             "--format=%(HEAD)%00%(refname:short)%00%(upstream:short)%00%(objectname)",
         ],
         subcommand="branch",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1080,9 +1079,7 @@ def git_log(
     result = _run_git_checked(
         argv,
         subcommand="log",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1158,7 +1155,9 @@ def git_diff(
         # machine-safe --no-textconv/--no-ext-diff already present —
         # verified as a command-execution escape via a hostile repo's
         # .gitattributes diff driver. Refuse outright.
-        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(commit_range):
+        if commit_range.startswith("-") or not _COMMIT_RANGE_PATTERN.match(
+            commit_range
+        ):
             raise LocalToolError(
                 f"invalid commit_range {commit_range!r}: "
                 "must be a ref/range matching [A-Za-z0-9._/~^-] and not start with '-'"
@@ -1219,9 +1218,7 @@ def git_diff(
     result = _run_git_checked(
         argv,
         subcommand="diff",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
@@ -1299,13 +1296,13 @@ def git_blame(
     result = _run_git_checked(
         argv,
         subcommand="blame",
-        cwd=_git_cwd(
-            workspace_root, repo_root, own_process_group=own_process_group
-        ),
+        cwd=_git_cwd(workspace_root, repo_root, own_process_group=own_process_group),
         executable=executable,
         own_process_group=own_process_group,
     )
-    lines = [f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)]
+    lines = [
+        f"{ln}: {author}: {text}" for ln, author, text in _parse_blame(result.stdout)
+    ]
     return "\n".join(lines) if lines else "(no blame output)"
 
 
@@ -1334,7 +1331,9 @@ def _parse_blame(stdout: str) -> list[tuple[int, str, str]]:
         if raw_line.startswith("author "):
             author_name = raw_line.removeprefix("author ")
             current["author_name"] = author_name
-            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = author_name
+            commit_metadata.setdefault(str(current["commit"]), {})["author_name"] = (
+                author_name
+            )
     return lines
 
 

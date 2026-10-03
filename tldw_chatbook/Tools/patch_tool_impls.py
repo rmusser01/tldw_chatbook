@@ -177,7 +177,11 @@ def parse_unified_diff(
 
         if not hunks:
             raise FilesystemPatchError("invalid_diff")
-        files.append(PatchFile(old_path=old_path, new_path=new_path, action=action, hunks=tuple(hunks)))
+        files.append(
+            PatchFile(
+                old_path=old_path, new_path=new_path, action=action, hunks=tuple(hunks)
+            )
+        )
         if len(files) > max(1, int(max_files)):
             raise FilesystemPatchError("diff_file_limit_exceeded")
 
@@ -228,7 +232,10 @@ def apply_patch_to_text(original: str, patch_file: PatchFile) -> str:
                 raise FilesystemPatchError("patch_context_mismatch")
             if _line_body(original_lines[cursor]) != hunk_line.text:
                 raise FilesystemPatchError("patch_context_mismatch")
-            if _line_has_trailing_newline(original_lines[cursor]) != hunk_line.has_trailing_newline:
+            if (
+                _line_has_trailing_newline(original_lines[cursor])
+                != hunk_line.has_trailing_newline
+            ):
                 raise FilesystemPatchError("patch_context_mismatch")
             if hunk_line.kind == "context":
                 output.append(original_lines[cursor])
@@ -435,9 +442,7 @@ def patch_files(diff_text: str, *, workspace_root: Path, dry_run: bool = False) 
             raise LocalToolError(
                 f"fs_patch failed [{exc.reason_code}]: {rel_path}"
             ) from exc
-        summaries.append(
-            f"{'would patch' if dry_run else 'patched'} {rel_path}"
-        )
+        summaries.append(f"{'would patch' if dry_run else 'patched'} {rel_path}")
     return "\n".join(summaries)
 
 

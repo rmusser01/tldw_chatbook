@@ -187,7 +187,9 @@ async def test_quick_picker_widget_browse_selects_file(tmp_path, monkeypatch):
 
     picked = []
     widget = QuickPickerWidget(
-        file_types="task files", callback=lambda p: picked.append(p), context="test_quick"
+        file_types="task files",
+        callback=lambda p: picked.append(p),
+        context="test_quick",
     )
     app = _WidgetHost(widget)
 
@@ -216,7 +218,9 @@ async def test_quick_picker_widget_browse_selects_file(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_quick_picker_widget_clear_selection(tmp_path):
-    widget = QuickPickerWidget(file_types="evaluation files", context="test_quick_clear")
+    widget = QuickPickerWidget(
+        file_types="evaluation files", context="test_quick_clear"
+    )
     widget.selected_file = str(tmp_path / "old.txt")
     app = _WidgetHost(widget)
 

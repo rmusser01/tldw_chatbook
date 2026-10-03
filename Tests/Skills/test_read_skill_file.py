@@ -88,7 +88,9 @@ async def test_read_binary_returns_refusal_not_bytes(tmp_path):
 async def test_read_truncates_over_cap(tmp_path):
     svc = _svc(tmp_path)
     d = await _make_skill(svc)
-    (d / "references" / "big.md").write_text("x" * (SKILL_FILE_READ_CAP_CHARS + 500), encoding="utf-8")
+    (d / "references" / "big.md").write_text(
+        "x" * (SKILL_FILE_READ_CAP_CHARS + 500), encoding="utf-8"
+    )
     out = await svc.read_skill_file("demo", "references/big.md")
     assert out["truncated"] is True
     assert len(out["content"]) < SKILL_FILE_READ_CAP_CHARS + 200  # cap + marker line
@@ -102,7 +104,9 @@ async def test_read_untrusted_raises_blocked(tmp_path, monkeypatch):
 
     def _deny(name):
         raise SkillTrustBlockedError(
-            skill_name=name, reason_code="skill_modified", trust_status="quarantined_modified"
+            skill_name=name,
+            reason_code="skill_modified",
+            trust_status="quarantined_modified",
         )
 
     monkeypatch.setattr(svc, "_require_trusted_skill", _deny)
