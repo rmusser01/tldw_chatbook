@@ -13060,7 +13060,26 @@ class TLDWAPIClient:
         scope_type: Literal["global", "workspace"] | None = None,
         workspace_id: str | None = None,
     ) -> dict[str, Any]:
-        """Export diagnostics using the validated conversation scope, if supplied."""
+        """Export lorebook diagnostics for a conversation.
+
+        Args:
+            chat_id: Conversation ID.
+            page: Page number, starting at one.
+            size: Number of diagnostic turns per page.
+            order: Ascending or descending turn order.
+            scope_type: Global or workspace scope. If omitted, a supplied
+                workspace_id infers workspace scope; with neither, no scope
+                parameters are sent, preserving the server's global default.
+            workspace_id: Required for workspace scope; ignored for global scope.
+
+        Returns:
+            The server's diagnostics and pagination response dictionary.
+
+        Raises:
+            ValidationError: Scope is invalid or workspace scope has no ID.
+            APIResponseError: The server returns an unsuccessful response.
+            APIConnectionError: The request cannot connect to the server.
+        """
         scope_params = self._normalize_conversation_scope_params(
             scope_type=scope_type, workspace_id=workspace_id
         )

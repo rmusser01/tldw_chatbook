@@ -8,9 +8,8 @@ assignee:
 references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2968
 modified_files:
-- tldw_chatbook/tldw_api/client.py
-- Tests/tldw_api/test_character_persona_client.py
-updated_date: 2026-10-03 01:20
+- Tests/tldw_api/test_lorebook_diagnostics_transport.py
+updated_date: 2026-10-03 01:28
 ---
 
 ## Description
@@ -37,8 +36,8 @@ Workspace-chat lorebook diagnostics exports through the Chatbook API client fail
 ADR required: no
 ADR path: N/A
 Reason: Routine compatibility fix using the existing ConversationScopeParams contract; no server authorization, storage, or ownership change.
+Qodo follow-up: expand Google-style scope documentation and commit HTTP-transport integration coverage. Reverify the real API separately; test fixtures are not UAT.
 <!-- SECTION:PLAN:END -->
-
 ## Implementation Notes
 
 <!-- SECTION:IMPLEMENTATION_NOTES:BEGIN -->
@@ -48,6 +47,9 @@ Read-only authenticated real HTTP checks (no mocks, no sends): before fix, omitt
 Changed blocks pass Ruff formatting; filewide Ruff debt decreases755to754 with zero added-line findings. Bandit client scope:0findings,0errors. Compilation, diff whitespace, task-ID uniqueness, and4787task-file readability checks pass. Independent reviewer: no actionable findings.
 ADR required:no; routine existing-contract bug fix. Evidence retained at /private/tmp/chatbook-lorebook-workspace-20261002-mQ7iVP, including failed initial TDD and premature baseline-export invocations; the latter ran no tests and were repeated only after complete baseline export. Full-suite sweep not requested. PR publication/CI/review and requester-authored Change summary remain pending; no companion merge authorized.
 Published companion PR2968 against dev: https://github.com/rmusser01/tldw_chatbook/pull/2968 . Fix commit33d57c3c8611dac4546c027fc9298772c3244fcc. All scoped acceptance criteria are satisfied; task remains In Progress for hosted CI/Qodo review and requester-authored merge summary. No companion merge performed. This follow-up task-only update does not change qualified application or test source.
+Qodo posted two verified review comments on PR2968: missing Google-style public docstring sections (4171087200) and no committed HTTP transport integration test (4171087202). Addressing both within existing scope before handoff.
+Addressed Qodo docstring4171087200 with Google-style Args/Returns/Raises, including scope inference, ignored global workspace IDs, and validation/network/server errors. Addressed transport coverage4171087202 with two committed tests through the unmodified public client, real HTTPX socket transport, and an owned stdlib loopback fixture endpoint. The receiving endpoint records exact scope and pagination query fields. Both tests fail against the exact original client and pass against the fix. This fixture-based integration coverage is explicitly not live-server UAT; independent authenticated no-mock real-server checks pass again with unchanged history.
+Final five-file run:101passed and the same one pre-existing app-wiring Mock/is_memory_db failure. Client/schema/transport subset:48passing cases. New transport file has zero Ruff findings and passes formatting; changed production block formatting passes. Application behavior is unchanged from the qualified scope fix. Full-suite sweep not requested; CI/latest-head review and human merge-summary gate remain pending.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
