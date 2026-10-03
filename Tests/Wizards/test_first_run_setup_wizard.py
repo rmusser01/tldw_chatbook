@@ -9332,7 +9332,9 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     cancelled = asyncio.Event()
     release_late_result = asyncio.Event()
     late_result_returned = asyncio.Event()
-    asyncio.get_running_loop().call_later(3, release_late_result.set)
+    # A safety valve only: the test releases the late result itself. It used
+    # to fire at 3 s, racing the failure line on a loaded machine.
+    asyncio.get_running_loop().call_later(30, release_late_result.set)
 
     async def cancellation_resistant_discovery(**_kwargs):
         started.set()
@@ -9374,8 +9376,18 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
         assert container.current_step == model_index
         model_step = container.steps[model_index]
         assert isinstance(model_step, ModelStep)
-        for _ in range(30):
-            if list(model_step.query("#setup-model-connection-failed")):
+        # Wait on the condition, not a fixed 30 x 0.05 s (1.5 s) window, which
+        # flaked under load (TASK-34100.1 review). The failure row mounts
+        # before Retry is unhidden, so wait for both.
+        def failure_rendered() -> bool:
+            retry_buttons = list(model_step.query("#setup-model-retry"))
+            return bool(list(model_step.query("#setup-model-connection-failed"))) and (
+                bool(retry_buttons) and "hidden" not in retry_buttons[0].classes
+            )
+
+        deadline = asyncio.get_running_loop().time() + 10
+        while asyncio.get_running_loop().time() < deadline:
+            if failure_rendered():
                 break
             await pilot.pause(0.05)
 
