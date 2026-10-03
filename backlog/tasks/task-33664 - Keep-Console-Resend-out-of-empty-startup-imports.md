@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 09:35'
+updated_date: '2026-10-03 09:57'
 labels:
   - agents
   - console
@@ -27,6 +27,7 @@ The required Resend merge-base integration loads its new module during empty Con
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
 - [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -152,6 +153,17 @@ Reason: mechanically preserve incoming PR2970/TASK33922 provider display-name/40
 4. Authenticate full tracked tree, all non-overlap/three-way source hashes, unchanged SQL/refund/nonreplay/hooks/recovery/schema/authority/custody and original guards. Reproduce affected source artifacts/static/task-ID/path/readability/whitespace checks proportionately; retain inherited lint/format/size/AST/profile debt and all earlier evidence. Obtain focused independent immutable source and functional evidence review.
 5. After functional/review/artifact work settles, run ORIGINAL five storage/app-import/UI-ready/boot-CSS cases unchanged with exact REPO_ROOT cwd/PYTHONPATH; retain original sources/counts/limits/warnings. Recheck/close AC3 through CLI only after qualification. Documentation-only closure preserves approved source hashes and deletion.
 6. Publish once with EXACT observed f8bcd94f6b50249e8e07356b9a4320483362406e lease, update concise PR body and verify actual refs/current-head Qodo/no actionable threads/ALL FOUR fresh jobs. Never rebase while those jobs run. Merge normally with --match-head-commit only after actual strict protection is satisfied; verify MERGED parents/tree/concurrency then pause heartbeat. No live providers, user keys, physical CtrlQ/relaunch, full suite, Windows, wider audit or installed/package/index/native release certification is added.
+
+## Required typed-provider presentation integration — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md; backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md; backlog/decisions/200-preset-pre-tool-fallback-targets.md
+Reason: routine integration repair restoring incoming TASK33922 Console copy under the existing redacted typed-error and fallback contracts. No transport protocol, persisted field, owner, retry/fallback policy, authority, schema, dependency, gate or ceiling changes.
+1. Retain immutable762a source review and original NON-GREEN gateway selection8PASS/1FAIL2.642s. Independent review proves the queue creates sanitized display/model/recovery text but raises only the projected typed exception; direct Console loses that copy, while AgentService persists describe_stream_failure into STEP_ERROR.
+2. Before production repair, add offline real-gateway/controller400/401/404 and typed rate-limit presentation controls. Prove unchanged exception class/message/status/provider/retry_after and content-free durable agent audit, while Console shows sanitized incoming display/model/recovery text. Keep all incoming recovery/redaction assertions, adapting only obsolete generic-wrapper expectations to the retained typed projection and actual display consumer.
+3. Carry only existing sanitized queue text in a dedicated in-memory Console presentation field on the projected ChatAPIError. Add a narrow Console-only description helper in the already-loaded provider_failures module; leave the existing diagnostic helper and AgentService audit caller unchanged. Use the Console helper at its two existing visible exception surfaces. Do not add raw provider bodies, new imports/modules to startup, serialize presentation, or change error/fallback classification.
+4. Run the actual new RED/GREEN display/audit controls, focused gateway/failure-copy/controller and complete bounded preset-fallback neighbors. Authenticate changed assertion ASTs and raw/XML evidence; obtain fresh immutable independent source/targeted-functional review. Preserve all earlier positive and NON-GREEN evidence, including the unmodified incoming response-double failure.
+5. After repair, review and artifact activity settle, run the ORIGINAL five guards unchanged. Recheck AC3/4 and close through CLI only after evidence; documentation-only closure preserves approved source. Publish once with exact observedf8b lease, require fresh Qodo/no actionable threads/ALL FOUR current-head jobs and actual strict protection before normal head-pinned merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
