@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 03:30'
+updated_date: '2026-10-03 03:47'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -140,4 +140,7 @@ The initial ENOSPC rebase attempt left a clean plan HEAD and no rebase/index-loc
 Preserving known-work trace integration qualifies immutable source e963c33d0476ba3ac8c868a8202232e44acfe1a4 on actual dev2612fc. After all four prior a0708ef jobs/Qodo passed, strict protection required the actual conflict update. Upstream initialization/generation/conditional probe compose within the existing admitted batch; all production SQL/100ms bound, runtime/schema/privacy/refund/nonreplay/physical custody and original Performance bytes stay exact. ADR097/199 apply; no new ADR/owner/gate/ceiling.
 Initial root54 selection is NON-GREEN53pass/1cold first-row assertion failure154.235s, retained with unchanged isolated1pass5.280s. The admission-count fixture now uses the existing clock seam with all86 original assertions exact; a separate real cold-worker0-row/checkpoint/retry/≤2admissions/zerohandle control detects an external ignore-time mutation at the intended assertion. Both affected modules29PASS37.151s. The original failure clock was unrecorded; no deterministic host-load cause is claimed. Append-only incident lesson preserves the entire prior prefix.
 Independent final review approves all131 hashes,129 unchanged entries and test/lesson qualification, no findings. Original5budgets PASS107.723s at681/686imports,1033/1033UI-ready with exact sources/limits/workload and original warnings. Original93/10 static plus owned fixture/whitespace, CSS12, diagnostics638/16, workers340/161/69/27 and4793 task guards pass; inherited whole-fileI001/format remains exact. Incoming TASK33801 Done/TASK33802 To Do/QA artifacts retain shipped status/content; no wider audit or separate program closure. All earlier positive/NON-GREEN limits remain. Documentation closure preserves approved hashes; exact observeda0708ef lease publication and fresh-head Qodo/four jobs/protected merge remain delivery gates.
+
+Required Roleplay/capture preservation is independently approved at immutable79b2f251865ddc16aae052e723d5f6078ec0f5a1 on actual devacc45cdc2e7ec90157e478a0e4b499084830edf9. All177 prior/incoming hashes and the incoming deletion are authenticated; package/native/Performance bytes remain exact against approveddaf2. Existing ADR031/097/199 apply; no new ADR/source repair/owner/gate/ceiling. The original five guards PASS107.713s, exit0, zerofail/error/skip at681/686imports and1033/1033UI-ready, exact incoming guard sources/cwd/PYTHONPATH/limits/work and original warnings. Incoming capture/preset modules145PASS/51retainedSKIP5.432s, loopback/offline only. Static93/10/added-line/whitespace pass with1794 inherited whole-file findings;4794 tasks unique/readable; exact diagnostic/CSS/worker reproduction remains valid.
+Roleplay original editor and bare-navigation setup failures reproduce on exact incoming dev; seven architecture/size and three existing global-quit cases pass, while new Roleplay behavior and remaining bare neighbors stay unqualified/unexecuted. The rejected readiness adapter was neither created nor executed. Canonical review retains raw interrupted/NON-GREEN/baseline evidence and no deterministic timing/load cause. Incoming TASK33622.14 Done and TASK33640 In Progress/uncheckedAC5 remain exact; no live-provider/physicalCtrlQ/full-suite/Windows/aggregate-resource/release/wider-audit certification. All earlier evidence and separate programs remain. RecheckAC3/Done follows guards and independent approval; documentation closure preserves177 hashes before exact637 lease publication and fresh-head Qodo/fourCI/strict protected merge.
 <!-- SECTION:NOTES:END -->
