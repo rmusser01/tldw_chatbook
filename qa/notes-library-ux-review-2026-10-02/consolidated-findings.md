@@ -1,5 +1,8 @@
 # Notes + Library UX review — master findings (2026-10-02)
 
+> **Pre-verification list.** This is the consolidated list as it stood *before* independent re-reproduction and backlog triage, so its severity counts (P0 5 · P1 36 · P2 50 · P3 12) differ from the final ones. The **final** severities and totals (P0 7 · P1 24 · P2 52 · P3 20) are in `findings.json` / `findings.md` and `report.md`; each finding's `severity_original` → `severity_repro` → `severity_triage` history is in `findings.json`. Use this file for repro steps and sources, not for counts.
+
+
 Target: origin/dev `2d34cbf80d`, worktree `.worktrees/notes-library-ux-review`. Synthesis of 7 live persona journeys (Assessment A: j1–j7) and 2 detector/static passes (Assessment B: B-mechanical, B-static). 134 raw findings were consolidated into 103 deduplicated findings.
 
 Severity: P0 = blocks task completion, data loss, crash, or a lie about saved/synced state; P1 = significant difficulty or confusion; P2 = annoyance with a workaround; P3 = polish. Where sources disagreed, the chosen level and the reason are given in the entry's evidence and in the contradictions section.

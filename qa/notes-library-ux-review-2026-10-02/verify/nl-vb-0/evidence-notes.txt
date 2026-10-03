@@ -19,7 +19,7 @@ note_id: 5a13a9cb-ae08-424e-adac-fcefb424b550
 ## re-import via Add from files > Import once: bundle file previewed as 'Create 1 new note: Lisbon, 3 days'; both imported bodies keep the raw --- block; single export keyword 'travel' not restored
 
 ## L-18 everything export (nl-vb-0-3) unzip -l
-Archive:  /private/tmp/claude-501/-Users-macbook-dev-Documents-GitHub-tldw-chatbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/nlrev/runs/nl-vb-0-3/home/Library export 2026-10-03.zip
+Archive:  $HARNESS/runs/nl-vb-0-3/home/Library export 2026-10-03.zip
   Length      Date    Time    Name
 ---------  ---------- -----   ----
       642  10-03-2026 00:31   README.md
