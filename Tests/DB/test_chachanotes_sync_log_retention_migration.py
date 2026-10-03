@@ -146,9 +146,7 @@ def test_upgrading_a_real_v44_database_purges_its_backlog(tmp_path: Path):
                 "content": superseded_body,
             }
         )
-        historical.update_message(
-            edited_id, {"content": "second"}, expected_version=1
-        )
+        historical.update_message(edited_id, {"content": "second"}, expected_version=1)
         historical.update_message(edited_id, {"content": kept_body}, expected_version=2)
         with historical.transaction() as conn:
             conn.execute(
@@ -166,8 +164,7 @@ def test_upgrading_a_real_v44_database_purges_its_backlog(tmp_path: Path):
         assert _version(connection) == 44
         assert RETENTION_TRIGGERS.isdisjoint(_triggers(connection))
         payloads_before = [
-            row[0]
-            for row in connection.execute("SELECT payload FROM sync_log")
+            row[0] for row in connection.execute("SELECT payload FROM sync_log")
         ]
         assert any(deleted_body in payload for payload in payloads_before)
         assert any(superseded_body in payload for payload in payloads_before)
@@ -231,9 +228,11 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
             }
         )
         historical.soft_delete_message(message_id, expected_version=1)
-        rows_before = historical.get_connection().execute(
-            "SELECT COUNT(*) FROM sync_log"
-        ).fetchone()[0]
+        rows_before = (
+            historical.get_connection()
+            .execute("SELECT COUNT(*) FROM sync_log")
+            .fetchone()[0]
+        )
 
     original = CharactersRAGDB._execute_migration_statements
 
@@ -277,14 +276,20 @@ def test_a_failure_mid_step_rewinds_to_v44_with_nothing_applied(
             CharactersRAGDB._CURRENT_SCHEMA_VERSION
         )
         assert RETENTION_TRIGGERS <= _triggers(migrated.get_connection())
-        assert migrated.execute_query(
-            "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?", (f"%{needle}%",)
-        ).fetchone()[0] == 0
+        assert (
+            migrated.execute_query(
+                "SELECT COUNT(*) FROM sync_log WHERE payload LIKE ?", (f"%{needle}%",)
+            ).fetchone()[0]
+            == 0
+        )
         # ...and the step it now runs after landed too, in the same replay.
-        assert migrated.execute_query(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
-            "AND name LIKE 'actor\\_%' ESCAPE '\\'"
-        ).fetchone()[0] == 2
+        assert (
+            migrated.execute_query(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' "
+                "AND name LIKE 'actor\\_%' ESCAPE '\\'"
+            ).fetchone()[0]
+            == 2
+        )
     finally:
         migrated.close_connection()
 
@@ -410,6 +415,7 @@ def test_upgrading_reindexes_only_live_rows_into_messages_fts(tmp_path: Path):
 
     migrated = CharactersRAGDB(db_path, client_id="v46-upgrade")
     try:
+
         def fts_rowids() -> list[int]:
             return [
                 row[0]

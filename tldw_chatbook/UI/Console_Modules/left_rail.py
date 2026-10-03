@@ -2579,8 +2579,17 @@ class ConsoleLeftRail(Vertical):
                 steering_bar,
                 back_button,
                 full_log_button,
-                *([Button("Progress: 0 queued", id="console-agent-progress", compact=True)]
-                  if self._open_agent_progress is not None else []),
+                *(
+                    [
+                        Button(
+                            "Progress: 0 queued",
+                            id="console-agent-progress",
+                            compact=True,
+                        )
+                    ]
+                    if self._open_agent_progress is not None
+                    else []
+                ),
                 classes="console-agent-section",
             )
             yield _ContextBoundedSection(
@@ -2644,7 +2653,6 @@ class ConsoleLeftRail(Vertical):
                 self._refresh_progress_navigation()
             self._progress_counts = counts
 
-
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Catch this rail's own section-toggle buttons; let everything else bubble.
 
@@ -2664,7 +2672,10 @@ class ConsoleLeftRail(Vertical):
                 consulted here.
         """
         button_id = event.button.id or ""
-        if button_id == "console-agent-progress" and self._open_agent_progress is not None:
+        if (
+            button_id == "console-agent-progress"
+            and self._open_agent_progress is not None
+        ):
             event.stop()
             self._open_agent_progress()
             return

@@ -47,7 +47,9 @@ class SelectionManager:
         selection = None
         if self._active or self._finished is not None:
             start, end = sorted((self._origin_offset, self._current_offset))
-            selection = TextSelection(row_key=self._origin_row or "", start=start, end=end)
+            selection = TextSelection(
+                row_key=self._origin_row or "", start=start, end=end
+            )
         return SelectionState(active=self._active, selection=selection)
 
     @property
@@ -119,7 +121,11 @@ class SelectionManager:
             return None
         state = self.state
         self._active = False
-        self._finished = None if state.selection is None or state.selection.is_empty else state.selection
+        self._finished = (
+            None
+            if state.selection is None or state.selection.is_empty
+            else state.selection
+        )
         self._just_finished = True
         if self._finished is not None:
             self._release_click_pending = True
@@ -147,6 +153,7 @@ def offset_for_cell(text: str, cell_x: int) -> int:
     monotone and clamped to ``[0, len(text)]``).
     """
     return max(0, min(cell_x, len(text)))
+
 
 # --- keyboard motion helpers (phase 5) -----------------------------------------
 

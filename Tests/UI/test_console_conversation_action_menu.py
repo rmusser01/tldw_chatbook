@@ -473,9 +473,7 @@ async def _wait_until(pilot, predicate, *, timeout: float = 5.0) -> bool:
 
 
 def _assert_app_alive(pilot) -> None:
-    assert pilot.app._exception is None, (
-        f"the app died: {pilot.app._exception!r}"
-    )
+    assert pilot.app._exception is None, f"the app died: {pilot.app._exception!r}"
     assert pilot.app.is_running
 
 
@@ -803,7 +801,9 @@ def _read_only_folder(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "unwritable", [_parent_is_a_file, _read_only_folder], ids=["file-parent", "read-only"]
+    "unwritable",
+    [_parent_is_a_file, _read_only_folder],
+    ids=["file-parent", "read-only"],
 )
 @private_profile_test
 async def test_unwritable_save_path_shows_an_error_and_keeps_the_app_running(
@@ -812,9 +812,7 @@ async def test_unwritable_save_path_shows_an_error_and_keeps_the_app_running(
     """AC#3: a save that cannot complete says why and never ends the app."""
     target, restore = unwritable(tmp_path)
     try:
-        async with make_console_pilot(
-            size=(160, 48), production_styles=True
-        ) as pilot:
+        async with make_console_pilot(size=(160, 48), production_styles=True) as pilot:
             chat_screen = pilot.app.screen
             await _seed_row_zero_messages(pilot)
             modal = await _open_save_prompt_from_row_menu(pilot)

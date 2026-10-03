@@ -5,12 +5,14 @@ Model summary, but the status chips kept showing the OLD provider/model
 until a session/tab switch — the user watches "Provider: Anthropic" while
 the run is actually served by the newly-applied provider.
 """
+
 from __future__ import annotations
 
 from dataclasses import replace
 from types import SimpleNamespace
 
 import pytest
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -211,8 +213,8 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
         durability_copy="Temporary until this chat is promoted",
         draft_rebaser=rebase,
         live_committer=commit,
-        default_readiness_resolver=lambda _provider, _model: (
-            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        default_readiness_resolver=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
         ),
     )
     async with harness.run_test(size=(100, 38)) as pilot:
@@ -240,8 +242,7 @@ async def test_model_apply_popover_commits_selected_provider_and_model_once() ->
 
 
 @pytest.mark.asyncio
-async def test_model_apply_exact_origin_is_captured_before_catalog_await(
-) -> None:
+async def test_model_apply_exact_origin_is_captured_before_catalog_await() -> None:
     """A tab switch during catalog loading must not retarget the popover.
 
     Rewritten for TASK-33004.4: the opener now awaits nothing before it
@@ -271,8 +272,8 @@ async def test_model_apply_exact_origin_is_captured_before_catalog_await(
         _remember_console_model_options=lambda _provider, _options: None,
         _provider_readiness_app_config=lambda: {},
         _console_settings_initial_draft=ChatScreen._console_settings_initial_draft,
-        _console_default_readiness=lambda _provider, _model: (
-            ConsoleSettingsReadiness("Ready", "Ready.", True)
+        _console_default_readiness=lambda _provider, _model: ConsoleSettingsReadiness(
+            "Ready", "Ready.", True
         ),
         _commit_console_settings_submission_live=lambda _submission: None,
         _apply_console_model_popover_result=lambda _result: None,

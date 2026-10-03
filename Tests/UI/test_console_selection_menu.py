@@ -172,7 +172,9 @@ class _TranscriptMenuApp(ConsolidatedCSSApp):
         transcript.set_messages(
             [
                 ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content="hello selectable world", id="m1"
+                    role=ConsoleMessageRole.USER,
+                    content="hello selectable world",
+                    id="m1",
                 )
             ]
         )
@@ -183,9 +185,7 @@ class _TranscriptMenuApp(ConsolidatedCSSApp):
     ) -> None:
         self.quote_requests.append(event)
 
-    def on_console_side_chat_requested(
-        self, event: ConsoleSideChatRequested
-    ) -> None:
+    def on_console_side_chat_requested(self, event: ConsoleSideChatRequested) -> None:
         self.side_chat_requests.append(event)
 
 
@@ -197,7 +197,9 @@ async def _finish_drag_selection(pilot) -> None:
     row.set_selection_range(0, 5)
     transcript.selection_manager.finish_drag()
     transcript.post_message(
-        ConsoleTranscript.TranscriptTextSelected(selection=TextSelection(row.id, 0, 5), screen_x=4, screen_y=6)
+        ConsoleTranscript.TranscriptTextSelected(
+            selection=TextSelection(row.id, 0, 5), screen_x=4, screen_y=6
+        )
     )
     await pilot.pause()
 
@@ -290,7 +292,6 @@ async def test_escape_dismisses_menu_in_transcript_context():
         assert not app.query(ConsoleSelectionMenu)
 
 
-
 @pytest.mark.asyncio
 async def test_transcript_mounts_menu_on_selection_release():
     app = _TranscriptMenuApp()
@@ -311,7 +312,12 @@ async def test_add_to_chat_quotes_selection_and_cleans_up():
         assert not app.query(ConsoleSelectionMenu)
         transcript = app.query_one(ConsoleTranscript)
         assert transcript.selection_manager.state.selection is None
-        assert app.query_one("#console-message-m1", ConsoleTranscriptMessage).get_selection_text() == ""
+        assert (
+            app.query_one(
+                "#console-message-m1", ConsoleTranscriptMessage
+            ).get_selection_text()
+            == ""
+        )
 
 
 @pytest.mark.asyncio
@@ -444,7 +450,9 @@ class _TallTranscriptMenuApp(ConsolidatedCSSApp):
         transcript.set_messages(
             [
                 ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content=f"row {i} selectable text", id=f"m{i}"
+                    role=ConsoleMessageRole.USER,
+                    content=f"row {i} selectable text",
+                    id=f"m{i}",
                 )
                 for i in range(30)
             ]
@@ -517,7 +525,9 @@ class _ShortTranscriptWithComposerApp(App[None]):
         transcript.set_messages(
             [
                 ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content=f"row {i} selectable text", id=f"m{i}"
+                    role=ConsoleMessageRole.USER,
+                    content=f"row {i} selectable text",
+                    id=f"m{i}",
                 )
                 for i in range(30)
             ]
@@ -625,8 +635,10 @@ async def test_short_owner_box_shrinks_menu_and_keeps_containment(ansi_color):
         menu = await _wait_for_menu(
             app,
             pilot,
-            lambda candidate: candidate.has_class("shrunk-for-short-owner")
-            and candidate.region.bottom <= region.bottom,
+            lambda candidate: (
+                candidate.has_class("shrunk-for-short-owner")
+                and candidate.region.bottom <= region.bottom
+            ),
         )
         assert menu.has_class("shrunk-for-short-owner")
         assert not menu.query_one("#console-selection-feedback-hint").display
@@ -1102,9 +1114,9 @@ async def test_screen_mounted_menu_steals_no_flow_height():
         await pilot.pause()  # clamp pass
         menu = app.query_one(ConsoleSelectionMenu)
         assert menu.region.y == 10  # still anchored at its cell
-        assert (
-            content.region.height == 36
-        ), "menu stole flow height from the 1fr sibling"
+        assert content.region.height == 36, (
+            "menu stole flow height from the 1fr sibling"
+        )
 
 
 class _MarkdownTranscriptMenuApp(App[None]):
@@ -1154,15 +1166,11 @@ async def test_markdown_drag_menu_add_to_chat_quotes_whole_lines():
         row.post_message(_markdown_mouse(MouseDown, body, dy=0, dx=0))
         await pilot.pause()
         transcript.post_message(
-            _markdown_mouse(
-                MouseMove, body, dy=max(0, body.region.height - 1), dx=200
-            )
+            _markdown_mouse(MouseMove, body, dy=max(0, body.region.height - 1), dx=200)
         )
         await pilot.pause()
         transcript.post_message(
-            _markdown_mouse(
-                MouseUp, body, dy=max(0, body.region.height - 1), dx=200
-            )
+            _markdown_mouse(MouseUp, body, dy=max(0, body.region.height - 1), dx=200)
         )
         await pilot.pause()
 
@@ -1171,7 +1179,9 @@ async def test_markdown_drag_menu_add_to_chat_quotes_whole_lines():
         await pilot.pause()
 
         assert len(app.quote_requests) == 1
-        assert app.quote_requests[0].quote == _MarkdownTranscriptMenuApp._MARKDOWN_SOURCE
+        assert (
+            app.quote_requests[0].quote == _MarkdownTranscriptMenuApp._MARKDOWN_SOURCE
+        )
         assert row.get_selection_text() == ""  # cleaned up
         assert not app.query(ConsoleSelectionMenu)
 
@@ -1233,7 +1243,9 @@ class _FocusTranscriptMenuApp(App[None]):
         transcript.set_messages(
             [
                 ConsoleChatMessage(
-                    role=ConsoleMessageRole.USER, content="hello selectable world", id="m1"
+                    role=ConsoleMessageRole.USER,
+                    content="hello selectable world",
+                    id="m1",
                 )
             ]
         )
@@ -1654,9 +1666,10 @@ async def test_create_note_button_present_for_every_selection():
             button = menu.query_one("#console-selection-create-note")
             assert not button.disabled
             ids = [b.id for b in menu.query("Button")]
-            assert ids.index("console-selection-create-note") == ids.index(
-                "console-selection-ask-side-chat"
-            ) + 1
+            assert (
+                ids.index("console-selection-create-note")
+                == ids.index("console-selection-ask-side-chat") + 1
+            )
 
 
 @pytest.mark.asyncio

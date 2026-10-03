@@ -63,18 +63,20 @@ class _CapturingGateway:
         self.captured = None
 
     async def resolve_for_send(self, selection):
-        return with_destination(ConsoleProviderResolution(
-            provider=selection.provider,
-            base_url=selection.base_url or "",
-            model=(
-                selection.explicit_model
-                or selection.configured_model
-                or "test-model"
-            ),
-            ready=True,
-            readiness_key="llama_cpp",
-            execution_key="llama_cpp",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider=selection.provider,
+                base_url=selection.base_url or "",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "test-model"
+                ),
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+        )
 
     async def stream_chat(self, _resolution, provider_messages, **kwargs):
         self.captured = [dict(m) for m in provider_messages]
@@ -189,9 +191,7 @@ async def test_native_send_applies_conversation_dictionary_agent_branch(dictiona
             # task-15791: the conversation browser's poll now batch-reads
             # sub-agent counts through the bridge (perf finding A); the
             # double predates it -- the stale-double class.
-            subagent_counts = staticmethod(
-                lambda conversation_ids: {}
-            )
+            subagent_counts = staticmethod(lambda conversation_ids: {})
 
         bridge = _Bridge()
         screen._ensure_console_agent_bridge = lambda: bridge

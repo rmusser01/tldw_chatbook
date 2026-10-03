@@ -81,7 +81,9 @@ def _schema_snapshot(path: Path) -> tuple[int, tuple[tuple[object, ...], ...]]:
 
 def _rollback_state(
     path: Path,
-) -> tuple[int, tuple[int, tuple[tuple[object, ...], ...]], tuple[tuple[object, ...], ...]]:
+) -> tuple[
+    int, tuple[int, tuple[tuple[object, ...], ...]], tuple[tuple[object, ...], ...]
+]:
     """Return version, complete schema, and policy rows for rollback assertions."""
     with sqlite3.connect(path) as connection:
         version = _version(connection)
@@ -162,7 +164,9 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
     _build_v47(path)
     with sqlite3.connect(path) as before:
         names = set(_objects(before))
-        message_columns = {row[1] for row in before.execute("PRAGMA table_info(messages)")}
+        message_columns = {
+            row[1] for row in before.execute("PRAGMA table_info(messages)")
+        }
         assert "console_conversation_library_policy" not in names
         assert "console_dispatch_checkpoints" not in names
         assert "idx_console_dispatch_checkpoint_conversation" not in names
@@ -209,9 +213,9 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
     }["assistant_generation_state"]
     assert message_state == ("TEXT", 0, None, 0)
 
-    assert _foreign_key_contract(
-        connection, "console_conversation_library_policy"
-    ) == {("conversation_id", "conversations", "id", "CASCADE", "CASCADE")}
+    assert _foreign_key_contract(connection, "console_conversation_library_policy") == {
+        ("conversation_id", "conversations", "id", "CASCADE", "CASCADE")
+    }
     assert _foreign_key_contract(connection, "console_dispatch_checkpoints") == {
         ("assistant_message_id", "messages", "id", "NO ACTION", "CASCADE"),
         ("user_message_id", "messages", "id", "NO ACTION", "CASCADE"),
@@ -285,10 +289,13 @@ def test_real_v47_fixture_gains_exact_v48_local_schema_and_seed_rows(
 
     _insert_conversation(connection, "after-migration")
     connection.commit()
-    assert connection.execute(
-        "SELECT 1 FROM console_conversation_library_policy "
-        "WHERE conversation_id = 'after-migration'"
-    ).fetchone() is None
+    assert (
+        connection.execute(
+            "SELECT 1 FROM console_conversation_library_policy "
+            "WHERE conversation_id = 'after-migration'"
+        ).fetchone()
+        is None
+    )
     db.close_connection()
 
 
@@ -351,9 +358,7 @@ def test_all_final_message_sync_triggers_serialize_state_and_update_watches_it(
     assert json.loads(update[1])["assistant_generation_state"] == "accepted"
 
     connection.execute("DELETE FROM sync_log")
-    connection.execute(
-        "UPDATE messages SET deleted = 1 WHERE id = 'assistant-message'"
-    )
+    connection.execute("UPDATE messages SET deleted = 1 WHERE id = 'assistant-message'")
     deleted = connection.execute(
         "SELECT operation, payload FROM sync_log WHERE entity_id = 'assistant-message'"
     ).fetchone()

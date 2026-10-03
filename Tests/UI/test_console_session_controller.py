@@ -251,9 +251,7 @@ async def test_new_temporary_console_uses_published_blank_defaults() -> None:
         ephemeral=True
     )
 
-    temporary = next(
-        session for session in store.sessions() if session.id != source.id
-    )
+    temporary = next(session for session in store.sessions() if session.id != source.id)
     assert temporary.ephemeral is True
     _assert_published_blank_session(temporary)
 
@@ -319,9 +317,7 @@ async def test_new_chat_and_workspace_blank_share_app_owned_published_config() -
     )
 
     await screen._session._create_native_console_session_from_active_context()
-    screen._workspace._activate_console_session_for_workspace(
-        "workspace-published"
-    )
+    screen._workspace._activate_console_session_for_workspace("workspace-published")
 
     sessions = [session for session in store.sessions() if session.id != source.id]
     assert len(sessions) == 2
