@@ -171,6 +171,9 @@ def test_module_entry_wrong_password_reprompts_in_place(tmp_path):
     assert "REACHED_APPLICATION" in result.stdout, result.stderr[-4000:]
     assert "PASSWORD_SET=True" in result.stdout
     assert result.stderr.count("That password didn't match. Try again.") == 1
+    # A wrong password is an expected outcome, not an error: no log line may
+    # land between the prompts (live run printed "ERROR ... Decryption failed").
+    assert "Decryption failed" not in result.stderr
     _secrets_absent(result, verifier)
 
 
