@@ -223,3 +223,27 @@ def test_the_agent_failure_summary_keeps_the_whole_fix() -> None:
     assert len(summary) <= FAILURE_SUMMARY_MAX_CHARS
     assert "(Alt+M: Switch model)." in summary[:FAILURE_SUMMARY_MAX_CHARS]
     assert len(summary) > 500, "the old cut would have dropped the fix"
+
+
+def test_an_agent_failure_reason_that_ends_a_sentence_gets_no_second_period() -> None:
+    """Live (slow llama.cpp, 2026-10-03): 'Agent run failed: no first token
+    after 90 s -- ... or try a smaller model..' -- the wrapper added a period
+    to a reason that already ended with one."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Agents.agent_models import RUN_ERROR, STEP_ERROR
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    reason = describe_stream_failure(
+        StreamStallError(90, provider="llama_cpp", first_token=True)
+    )
+    outcome = SimpleNamespace(
+        status=RUN_ERROR,
+        steps=[SimpleNamespace(kind=STEP_ERROR, summary=reason)],
+        final_text="",
+    )
+
+    copy = ConsoleChatController._agent_failure_visible_copy(outcome)
+
+    assert copy.endswith("try a smaller model."), copy
+    assert not copy.endswith("..")

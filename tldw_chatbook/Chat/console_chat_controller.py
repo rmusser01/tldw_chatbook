@@ -28018,7 +28018,7 @@ class ConsoleChatController:
             return (
                 f"Agent run stuck: {reason or 'budget or loop limit reached'}.{suffix}"
             )
-        return f"Agent run failed: {reason or outcome.status}."
+        return f"Agent run failed: {(reason or outcome.status).rstrip('.')}."
 
     @staticmethod
     def _without_duplicated_summary(
