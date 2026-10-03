@@ -41,6 +41,7 @@ where a quit-flow prompt is written, which is these methods.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -180,6 +181,7 @@ def scan_module_functions(
     return roots, offences
 
 
+@lru_cache(maxsize=1)  # one tree walk per run; the tests only read it
 def _scan_tree() -> tuple[list[str], list[str]]:
     roots: list[str] = []
     offences: list[str] = []

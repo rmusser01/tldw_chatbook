@@ -25,6 +25,7 @@ so it is removed in the same change.
 from __future__ import annotations
 
 import ast
+from functools import lru_cache
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -106,6 +107,7 @@ def scan_source(source: str, label: str) -> tuple[list[str], list[str]]:
     return flushing, offences
 
 
+@lru_cache(maxsize=1)  # one tree walk per run; the tests only read it
 def _scan_tree() -> tuple[list[str], list[str]]:
     flushing: list[str] = []
     offences: list[str] = []

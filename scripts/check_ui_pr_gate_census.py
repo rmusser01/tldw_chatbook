@@ -76,9 +76,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the Resend action row, its `r` key, the in-flight guard, and a real-Console
 # click and keypress through both Resend paths.
 # TASK-34000.1 raised it to 123: the census already held 122 files, and
-# Tests/UI/test_library_quit_guard.py (real-app Ctrl+Q over unsaved Library
-# Notes / prompt / skill / Folder files work, asserted against the DB and the
-# file on disk) joins it.
+# Tests/UI/test_library_quit_guard.py joins it. It is a deliberately lean core:
+# 3 real-app boots, about 35-45 s locally; the typed tail and a new note reach
+# the DB before exit; a refused save keeps the typist in place and Ctrl+Q asks.
+# The other quit variants live in test_library_quit_guard_extended.py,
+# outside this lane, because the lane is near its 20-minute cap (TASK-34000.47).
 MINIMUM_FILES = 123
 
 
