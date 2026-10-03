@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-10 01:56'
-updated_date: '2026-09-10 02:00'
+updated_date: '2026-10-02'
 labels:
   - console
   - scheduling
@@ -46,4 +46,6 @@ Reason: This adds durable scheduling authority, an automatic submission origin, 
 - The user approved the local same-chat composer flow with existing tools and added agent-created timers. The written draft assumes main native agents; spawned-agent resumption was raised separately and has not been selected.
 - Self-review made future-work authority explicit: automatic timer descendants share a finite grant; fixed human cadence requires explicit follow-up authorization; cancellation of the root covers its descendants. It also specifies durable logical tool-call identity, viewless startup, exact Save payloads, and separate approval-timeout and uncertain-effect recovery.
 - Documentation validation covered the three artifacts and their local links, YAML/IDs/status, Markdown fences and whitespace. The original goal-plan line bytes were preserved. No application code or runtime tests changed.
-- Written design review remains outstanding. Keep this task In Progress and ADR-143 Proposed until that review; implementation planning follows the approved written design.
+- Written design review: [2026-10-02 scheduling review](../../Docs/superpowers/reviews/2026-10-02-chat-schedules-and-agent-timers-review.md). Independent authority and runtime reviews found eight contracts to revise before implementation planning: live-owner exclusion, reviewed-task authority, queue re-arming, one-time transitions, due slots during execution, mutation replay, retained-state bounds and scheduled history projection. Current scratch/profile/hook/design-token integration requirements and timeout qualification are recorded there too.
+- The review also records a TASK-32195 collision with a later web-search task now on dev. Add-commit provenance makes this design the earlier claimant; reconcile the later record and its references before integration rather than silently renumbering this design.
+- The written review is complete, but its design revisions remain outstanding. Keep this task In Progress and ADR-143 Proposed; implementation planning follows the revised written design. No runtime implementation was added during review.
