@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 05:20'
+updated_date: '2026-10-03 06:37'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -128,6 +128,17 @@ Reason: preserve 31 newly landed Markdown records exactly, without implementing 
 2. Rebase onto exact1d566b9 only. Preserve every prior tracked path except the four owned qualification records; preserve all31 incoming spec/review/task Markdown files byte-exact, including all29 TASK33910 records as shipped To Do/unchecked. No Roleplay implementation, new ADR or source repair is in scope.
 3. Authenticate Git/disk hashes and modes/blob IDs, the complete prior tree, unchanged package/native/Packaging/Performance and derived-artifact source trees, and exact incoming additions/deletion. Run the actual task-ID/path/readability guards and whitespace check. Obtain focused independent immutable preservation/evidence review. Previous original five budgets107.713s and all functional positive/NON-GREEN/skip evidence carry forward by exact source identity; no new runtime or performance measurement is claimed for documentation-only additions.
 4. Record actual qualification and inherited limitations, recheck/close AC3 through CLI after guards/review, then documentation closure preserves the final manifest. Publish once with EXACT observed231d30d810d17c41030bc9fe6813bd03761852b4 lease. Require fresh-head Qodo/no actionable threads, all four jobs and live strict protection before normal --match-head-commit merge; verify MERGED parents/tree/concurrent changes and pause heartbeat.
+
+## Strict-base queue shelf preservation — October 2
+
+ADR required: no new ADR
+ADR path: existing ADR031/097/150/199 remain applicable; incoming TASK33625.4 owns the shipped shelf repair.
+Reason: mechanical preserving integration of the landed label-sizing/layout repair and its generated CSS, with no new owner, authority, schema, dependency, dispatch rule, gate or budget.
+1. All FOUR published cf50848 jobs PASS and edited exact-head Qodo is clear before this update. Actual dev74bd039 (PR2964/TASK33625.4) is BEHIND under live strict up-to-date protection enforced for administrators. Reopen TASK33664 AC3 through CLI; capture all208 approved hashes, seven incoming paths and prior tree entries. The sole overlap is the testing lesson document; preserve every old and incoming lesson without masking earlier evidence.
+2. Rebase once onto exact74bd039. Preserve incoming prompt_queue.py, its two generated CSS streams, test module, user guide and Done/checked TASK33625.4 byte-exact. Compose the lesson document against authenticated base/prior/incoming bytes. Preserve all207 non-overlap approved hashes, exact capture fixture deletion and every other tracked source. No new runtime repair is planned.
+3. Run the actual incoming Tests/UI/test_console_prompt_queue.py consumers unchanged, including all17 new/changed painted-label cases and original recovery/admission neighbors. Reproduce all12 CSS bundles, task-ID/path/readability, diagnostic/worker and targeted fatal/added-line checks; disclose inherited lint/format/size/AST/profile debt and any non-green evidence. Obtain an independent immutable source/lesson/CSS/runtime-contract review. Incoming Done is shipped status, not a new live-capture/physical-key certification.
+4. After functional/review/artifact work settles, run ORIGINAL five storage/import/UI-ready/boot-CSS cases unchanged with exact REPO_ROOT cwd/PYTHONPATH. No pins/ceilings/counts/warmup/timeouts/measured-work changes. Qualify actual results and limitations, then recheck/close AC3 through CLI; four-owned-Markdown closure preserves the approved source manifest.
+5. Publish once with EXACT observed cf50848faffcc62ed41d594e686b88a165d6e5db lease. Fresh-head Qodo/no actionable threads, all FOUR jobs and actual strict protection precede normal --match-head-commit merge. Verify MERGED parents/tree/concurrent changes and pause heartbeat. No full suite, live provider, Roleplay/relaunch or wider release qualification is added.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
