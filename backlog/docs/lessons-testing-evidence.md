@@ -17889,3 +17889,25 @@ the existing committed generation under the shared interrupt lock: earlier
 states are swept and later admission returns cancelled. Keep callbacks outside
 the non-reentrant lock, and assert a sibling question remains answerable.
 Testing only a round present at the cancellation snapshot misses late admission.
+
+
+## A cancelled worker can still have a stale UI payload
+
+**TASK-32367 / PR #2953, 2026-10-03.** A review alleged that chat-create
+registration could pass its Close fence and occur after cancellation. The actual
+check/insert and sweep share the standalone mutex: six call-through interleavings
+for both tools passed, preserving a live sibling. Running Close on a foreign
+thread instead hit the real prompt-queue ownership refusal; that invalid probe
+was not evidence of a registration race.
+
+Independent review found a different gap. Real mounted tests paused the source's
+initial marshal, changed tabs or completed Close, then resumed it. The worker
+correctly denied Close, but its captured payload replaced the sibling's live card.
+A queued `None` clear could erase that sibling too; restoring only the old clear
+inside the otherwise corrected test process reproduced the erased state. Qualify
+scoped owners and derive the current head on the actual UI callback, then invoke
+the sink outside locks. Keep legacy unparked callers distinct: an initial equality
+guard dropped their only card after navigation, reproduced by the new legacy
+control. Inspect the survivor's actual resume state and mounted request ID after
+dispatch completes; worker cancellation and registration snapshots alone do not
+prove correct presentation.

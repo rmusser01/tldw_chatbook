@@ -466,6 +466,189 @@ async def _verify_chat_create_confirmation_has_its_own_kind_and_review_route(
             await _stop_workers(controller, workers, pilot)
 
 
+_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS = 5
+
+
+async def _verify_late_chat_create_projection_spares_the_active_sibling(
+    request, tmp_path
+):
+    """Keep a sibling confirmation through late source projection and clear.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Parent directory for both source-transition app fixtures.
+    """
+    for closing in (True, False):
+        await _verify_late_chat_create_projection_transition(
+            request, tmp_path, closing=closing
+        )
+
+
+async def _verify_late_chat_create_projection_transition(
+    request, tmp_path, *, closing: bool
+):
+    """A delayed source marshal cannot replace a live sibling's confirmation.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Separate app and database directory for each source transition.
+        closing: Complete source Close or retain it across navigation and a clear.
+    """
+    case_path = tmp_path / ("close" if closing else "navigate")
+    case_path.mkdir()
+    app = _build_app(case_path)
+    workers = []
+    async with app.run_test(size=(160, 48)) as pilot:
+        console, controller, store, source_id = await _seed_console(app, pilot)
+        entered = threading.Event()
+        release = threading.Event()
+        results = {}
+        errors = []
+        marshalled = threading.Event()
+        clear_requested = threading.Event()
+        clear_entered = threading.Event()
+        clear_release = threading.Event()
+        cleared = threading.Event()
+        original_marshal = controller._marshal_pending_chat_create
+
+        def delayed_marshal(payload):
+            """Pause source projection or its queued clear before real UI dispatch.
+
+            Args:
+                payload: Original controller confirmation or teardown payload.
+            """
+            is_source_clear = (
+                payload is None
+                and threading.current_thread() is source_worker
+                and clear_requested.is_set()
+            )
+            if is_source_clear:
+                clear_entered.set()
+                assert clear_release.wait(
+                    _CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS
+                )
+            if payload and payload.get("session_id") == source_id:
+                entered.set()
+                assert release.wait(_CHAT_CREATE_PRESENTATION_SYNC_TIMEOUT_SECONDS)
+            original_marshal(payload)
+            if payload and payload.get("session_id") == source_id:
+                marshalled.set()
+            if is_source_clear:
+                cleared.set()
+
+        def request_confirmation(session_id, key):
+            """Exercise the real worker request and report failures to its owner.
+
+            Args:
+                session_id: Existing source or live sibling session.
+                key: Result identity for this worker.
+            """
+            try:
+                results[key] = controller.request_chat_create_confirm(
+                    {"tool": "new_chat", "title": f"Proposed {key}"},
+                    session_id=session_id,
+                )
+            except Exception as exc:  # noqa: BLE001 - expose worker failure
+                errors.append((key, type(exc).__name__))
+
+        controller._marshal_pending_chat_create = delayed_marshal
+        source_worker = threading.Thread(
+            target=request_confirmation, args=(source_id, "source"), daemon=True
+        )
+        workers.append(source_worker)
+        source_worker.start()
+        try:
+            await _wait(pilot, entered.is_set)
+            source_round = controller.pending_chat_create_ids()[0]
+            sibling = controller.new_session(title="Live sibling")
+            sibling_worker = threading.Thread(
+                target=request_confirmation,
+                args=(sibling.id, "sibling"),
+                daemon=True,
+            )
+            workers.append(sibling_worker)
+            sibling_worker.start()
+            await _wait(
+                pilot,
+                lambda: (
+                    bool(list(console.query("#chat-create-card")))
+                    and console.query_one("#chat-create-card").display
+                    and console.query_one("#chat-create-card")._request_id
+                    != source_round
+                ),
+            )
+            sibling_round = console.query_one("#chat-create-card")._request_id
+            assert sibling_round
+            if closing:
+                ticket = controller.begin_session_close(
+                    source_id,
+                    expected_revision=controller.lifecycle_impact(
+                        session_id=source_id
+                    ).revision,
+                )
+                controller.finalize_session_close(ticket)
+                assert not any(s.id == source_id for s in store.sessions())
+            release.set()
+            await _wait(pilot, marshalled.is_set)
+            if closing:
+                await _finish_worker(pilot, source_worker)
+                assert results["source"] == {"allow": False, "remember": False}
+            else:
+                await _wait(
+                    pilot,
+                    lambda: (
+                        controller.pending_chat_create_ids()
+                        == [source_round, sibling_round]
+                    ),
+                )
+                await pilot.pause()
+            assert not errors, errors
+            assert store.active_session_id == sibling.id
+            state = console._task_resume_state
+            assert state.pending_chat_create["request_id"] == sibling_round
+            card = console.query_one("#chat-create-card")
+            assert card.display and card._request_id == sibling_round
+            if not closing:
+                # Capture a clear while its source is viewed, then restore
+                # the sibling before that real UI dispatch completes.
+                controller.switch_session(source_id)
+                clear_requested.set()
+                controller.resolve_pending_chat_create(
+                    False, False, request_id=source_round
+                )
+                await _wait(pilot, clear_entered.is_set)
+                controller.switch_session(sibling.id)
+                await _wait(
+                    pilot,
+                    lambda: (
+                        console.query_one("#chat-create-card")._request_id
+                        == sibling_round
+                    ),
+                )
+                clear_release.set()
+                await _wait(pilot, cleared.is_set)
+                await _finish_worker(pilot, source_worker)
+                current = console._task_resume_state.pending_chat_create
+                assert current is not None, (
+                    "Delayed source clear erased the live sibling"
+                )
+                assert current["request_id"] == sibling_round
+                assert (
+                    console.query_one("#chat-create-card")._request_id == sibling_round
+                )
+            controller.resolve_pending_chat_create(
+                True, False, request_id=sibling_round
+            )
+            await _finish_worker(pilot, sibling_worker)
+            assert results["sibling"] == {"allow": True, "remember": False}
+            assert controller.pending_chat_create_ids() == []
+        finally:
+            release.set()
+            clear_release.set()
+            controller._marshal_pending_chat_create = original_marshal
+            await _stop_workers(controller, workers, pilot)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_session_owned_pending_projection_journeys(
@@ -482,6 +665,7 @@ async def test_session_owned_pending_projection_journeys(
         _verify_inspector_counts_queued_approval_rounds_for_its_own_session,
         _verify_review_routes_reach_visible_skill_confirm_before_queued_approval,
         _verify_chat_create_confirmation_has_its_own_kind_and_review_route,
+        _verify_late_chat_create_projection_spares_the_active_sibling,
     )
     for index, journey in enumerate(journeys):
         case_path = tmp_path / str(index)

@@ -472,3 +472,75 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
     assert session.id not in controller._chat_create_session_grants
     assert controller.pending_chat_create_ids() == []
     assert controller._parked_chat_create_payloads == {}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("closing", [False, True], ids=["navigate", "close"])
+def test_legacy_chat_create_marshal_keeps_its_unscoped_contract(
+    make_controller, monkeypatch, closing
+):
+    """An unparked legacy round remains visible after navigation, or denies Close.
+
+    Args:
+        make_controller: Existing real confirmation registry with a fake UI sink.
+        monkeypatch: Pauses only the original worker-to-UI marshal boundary.
+        closing: Complete source Close instead of merely changing the viewed tab.
+    """
+    controller = make_controller()
+    source = controller.new_session(title="Legacy source")
+    entered = threading.Event()
+    release = threading.Event()
+    marshalled = threading.Event()
+    results = {}
+    original_marshal = controller._marshal_pending_chat_create
+
+    def delayed_marshal(payload):
+        """Hold the legacy initial projection before its real UI callback.
+
+        Args:
+            payload: Original controller confirmation or teardown payload.
+        """
+        if payload:
+            entered.set()
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        original_marshal(payload)
+        if payload:
+            marshalled.set()
+
+    monkeypatch.setattr(controller, "_marshal_pending_chat_create", delayed_marshal)
+    worker = threading.Thread(
+        target=lambda: results.update(
+            decision=controller.request_chat_create_confirm(_payload())
+        )
+    )
+    worker.start()
+    try:
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        request_id = controller.pending_chat_create_ids()[0]
+        controller.new_session(title="Viewed sibling")
+        if closing:
+            ticket = controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+            controller.finalize_session_close(ticket)
+        release.set()
+        assert marshalled.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        captured = [
+            payload
+            for payload in controller.pending_chat_create_payloads
+            if payload and payload.get("request_id") == request_id
+        ]
+        assert bool(captured) is not closing
+        assert controller._parked_chat_create_payloads == {}
+        if not closing:
+            controller.resolve_pending_chat_create(True, False, request_id=request_id)
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        assert not worker.is_alive()
+        assert results == {"decision": {"allow": not closing, "remember": False}}
+    finally:
+        release.set()
+        controller.begin_shutdown()
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)

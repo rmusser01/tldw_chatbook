@@ -857,3 +857,66 @@ and zero-new Ruff35 pass. Earlier question194+ordinary3, exact37 Perf, mounted
 no functional/native replay is claimed for this documentation-only rebase. QA
 roleplay_design_docs_dev_rebase records paths, exact range-diff and source proof.
 Fresh final-head CI/Qodo/current dev still precede normal protected merge.
+
+
+Chat-create UI dispatch currentness (PR2953 review investigation, 2026-10-03 UTC)
+
+Qodo 6f41bacd proposed a register-after-sweep race. Six call-through interleavings
+on the unchanged reviewed 54c controller, plus all 56 existing Chat cases, pass 62
+checks: admission and the Close sweep share the standalone registry lock. Close
+publishes its permanent generation before sweeping. Registration first is swept;
+Close first is rejected at admission. The initial probe called Close from a
+foreign thread and raised the prompt-queue owner violation, so it is invalid
+race evidence. The corrected probe runs Close on its real owner and observes
+the original lock/check/insert/sweep. Qodo accepted the rebuttal: its canonical
+overview updated at 05:33:14 UTC reports 0 bugs/rules/cross-repo conflicts on 54c.
+
+Separate ordinary mounted-source review reproduced a valid presentation bug on
+the unchanged published controller: a worker pauses after registration before
+UI dispatch, navigation or complete Close places a live sibling confirmation,
+then the obsolete source payload replaces its actual pending state/card. Close
+still denies and ends the source worker; this is a presentation race, not an
+admission/wait/permission race. Initial NoMatches from querying before the card
+mounted is retained as invalid setup evidence. Valid navigation and Close red
+receipts verify the sibling request identity after the actual callback completes.
+
+The existing marshal now resolves the current UI sink and qualifies the live
+round, committed Close and scoped active session on the UI owner. External
+setters remain outside locks. Delayed None clears rederive the active parked
+head instead of erasing it. Restoring only the unconditional clear branch in
+an otherwise corrected in-process controller reproduces a missing sibling state;
+this is an isolated branch comparison, not pure dev or the whole original
+controller. An earlier malformed temporary patch is not functional evidence.
+The final regression explicitly checks that the survivor payload exists.
+
+A naive active-session check also drops the only unparked legacy card after
+navigation; its Close control passes. A trusted internal session_scoped bit
+preserves legacy session_id=None initial projection and keeps Close denial.
+This is the only justified deviation from the initial marshal-only plan; it
+adds no public payload/API, owner, permission, persistence or lock. Existing
+ADR-094/150 apply; no new ADR.
+
+Final formatted-source qualification passes 64 Chat cases: all 58 checked-in
+consent/execution cases plus the six unchanged call-through probes added at
+collection, with existing explicit bootstrap-profile ownership. No getter
+mocking or admission bypass. A separate ordinary 58-case consent receipt is
+retained. Both complete Close/approval files and the complete projection file
+pass 5 ordinary private wrappers covering 23 fresh-app journeys in 369.62s, with
+zero failures/errors/skips. The slowest parent wrapper is 124.114s and child
+109.938s under unchanged 180s limits. Original journeys/assertions and the public
+wrapper census remain intact; new Close/navigation cases use separate fresh
+apps and DBs, release both marshal gates and join every worker. All 37 exact
+Perf Guards pass with unchanged budgets, counters, canaries, snapshots, ticks
+and limits. Zero-new Ruff across 35 files, changed-range formatting, diff checks and
+independent read-only source review pass.
+
+Only two controller methods and two test modules change versus 54c; all 235
+other source pins retain exact bytes (238 current). Original controller/test
+AST outside the explicit added behavior/cases is preserved. Native 27/29
+receipts retain their original identities; native was not replayed for this
+callback correction. The incident lesson and Console guide record current
+source/teardown behavior. QA chat_create_ui_projection_review_followup pins
+valid/invalid comparisons, fixture modes, exact sources and fresh run receipts.
+Fresh full artifact preflight passes (exit 0, all 238 source pins stable).
+Published-head Qodo/all four CI gates/current dev and verified protected
+normal merge remain the completion checkpoints.

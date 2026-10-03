@@ -2016,8 +2016,10 @@ proposes chats.
   and any instructions. When the agent didn't name the new chat, the card
   shows the default title it would get ("Fork of <source chat>" for a fork,
   "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
-  **Deny**. A round that never gets answered — you stop the run, or the
-  card is torn down — fails closed as a denial: nothing is created.
+  **Deny**. Stopping the run or closing its source tab cancels the
+  confirmation: nothing is created. Switching tabs keeps the decision with
+  its source tab; return there to answer it. Delayed updates from that tab
+  cannot replace another tab's live confirmation.
 - **"Allow for this session" is per tool and ends with the session.**
   `fork_chat` and `new_chat` are remembered separately, a remembered tool
   skips its card for the rest of the Console session, and the next session

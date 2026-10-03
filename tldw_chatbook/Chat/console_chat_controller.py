@@ -19042,6 +19042,8 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            # Legacy callers never park; their initial card remains unscoped.
+            "session_scoped": session_id is not None,
             "run_id": current_run_id(),
             # Re-read after the wait: a late Allow must not stick. See
             # `revoke_approval_rounds_for_run`.
@@ -19184,13 +19186,45 @@ class ConsoleChatController:
         )
 
     def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
-        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
+        """WORKER THREAD: project a current chat-create decision on the UI.
+
+        Recheck scoped ownership after dispatch; legacy unparked rounds keep
+        their unconditional initial projection. A clear derives the current head.
 
         Args:
-            payload: The pending confirm dict to show, or None to hide it.
+            payload: Proposed confirmation, or None to rederive the active head.
         """
-        if self.app is not None and self.set_pending_chat_create is not None:
-            self.app.call_from_thread(self.set_pending_chat_create, payload)
+        if self.app is None or self.set_pending_chat_create is None:
+            return
+
+        def _apply() -> None:
+            """UI THREAD: qualify the current owner before painting its decision."""
+            setter = self.set_pending_chat_create
+            if setter is None:
+                return
+            active_session_id = self.store.active_session_id or ""
+            if payload is None:
+                setter(
+                    self._head_round_payload(
+                        self._parked_chat_create_payloads, active_session_id
+                    )
+                )
+                return
+            owning_session_id = str(payload.get("session_id") or "")
+            if owning_session_id in self._session_close_generations:
+                return
+            with self._pending_chat_create_lock:
+                state = self._pending_chat_create_rounds.get(payload.get("request_id"))
+                if state is None or state.get("revoked") or state["event"].is_set():
+                    return
+                if state.get("session_scoped", True) and (
+                    owning_session_id != active_session_id
+                ):
+                    return
+            # The UI owns Close/navigation; external sinks run outside locks.
+            setter(payload)
+
+        self.app.call_from_thread(_apply)
 
     def resolve_pending_chat_create(
         self, allow: bool, remember: bool, request_id: str | None = None
