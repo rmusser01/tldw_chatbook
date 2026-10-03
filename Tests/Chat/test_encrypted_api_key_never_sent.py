@@ -413,3 +413,59 @@ def test_chat_api_call_drops_a_ciphertext_api_key(monkeypatch):
         Chat_Functions.chat_api_call("openai", MESSAGES, api_key=CIPHERTEXT) == "ok"
     )
     assert received.get("api_key") is None
+
+
+def test_openai_embeddings_refuse_ciphertext(monkeypatch, sent):
+    # Review round 1 survey: the embeddings helper read the key raw.
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    monkeypatch.setattr(
+        LLM_API_Calls, "load_settings", lambda: {"openai_api": {"api_key": CIPHERTEXT}}
+    )
+
+    error = _outcome(lambda: LLM_API_Calls.get_openai_embeddings("text", "m"))
+
+    assert not _ciphertext_credentials(sent), "ciphertext reached the wire"
+    assert isinstance(error, ValueError) and MISSING_KEY.search(str(error)), repr(error)
+    assert not sent
+
+
+@pytest.mark.parametrize("prefix_case", ["enc:", "ENC:"])
+def test_recovered_openai_selection_refuses_ciphertext(tmp_path, prefix_case):
+    # Review round 1 survey: the recovered-settings check refused "ENC:" but
+    # not the engine's real lowercase "enc:" prefix.
+    import toml
+
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    path = home / "config.toml"
+    value = prefix_case + CIPHERTEXT.removeprefix("enc:")
+    path.write_text(toml.dumps({"api_settings": {"openai": {"api_key": value}}}))
+    path.chmod(0o600)
+
+    with pytest.raises(recovery_review.ProviderReconnectRequired):
+        recovery_review._selection(
+            path, "config:api_settings.openai.api_key", resolve=True
+        )
+
+
+def test_recovered_openai_selection_still_returns_a_plain_key(tmp_path):
+    import toml
+
+    from tldw_chatbook.LLM_Calls import recovery_review
+
+    home = tmp_path / "profile"
+    home.mkdir(mode=0o700)
+    path = home / "config.toml"
+    path.write_text(
+        toml.dumps({"api_settings": {"openai": {"api_key": "sk-proj-plain-key"}}})
+    )
+    path.chmod(0o600)
+
+    *_, secret = recovery_review._selection(
+        path, "config:api_settings.openai.api_key", resolve=True
+    )
+
+    assert secret == "sk-proj-plain-key"
