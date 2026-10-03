@@ -68,22 +68,14 @@ def main_cli_runner() -> Any:
     )
 
     try:
-        from tldw_chatbook.Backup_Recovery.launcher import (
-            minimal_recovery,
-            startup_preflight,
-        )
+        # TASK-34100.4: the one startup unlock (preflight with strict decrypt,
+        # retry, forgotten-password reset, admission, password install) --
+        # `python -m tldw_chatbook.app` runs the same function.
+        from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
 
-        reason, password = startup_preflight()
-        if reason is not None:
-            return minimal_recovery(reason)
-        from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
-
-        admit_startup()
-        if password is not None:
-            from tldw_chatbook.config import set_encryption_password
-
-            set_encryption_password(password)
-            password = None
+        stopped = startup_unlock()
+        if stopped is not None:
+            return stopped
 
         from tldw_chatbook.app import main_cli_runner as app_main_cli_runner
 

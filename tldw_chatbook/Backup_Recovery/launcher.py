@@ -5,11 +5,74 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import sys
 import tomllib
 import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, is_dataclass
 from pathlib import Path
+
+#: TASK-34100.4: preflight outcomes that are user choices, not recovery
+#: reasons. ``startup_unlock`` maps them; they never reach ``minimal_recovery``.
+UNLOCK_QUIT_REASON = "configuration_unlock_quit"
+UNLOCK_RESET_REASON = "configuration_unlock_reset"
+
+#: One name for one password everywhere: "master password" (protect-summary-02
+#: found "Configuration password", "Unlock Configuration" and "master password"
+#: for the same secret).
+UNLOCK_INTRO = (
+    "Your saved API keys are encrypted. Enter the master password you set "
+    "during setup."
+)
+UNLOCK_PROMPT = "Master password (leave empty if you forgot it): "
+UNLOCK_MISMATCH = "That password didn't match. Try again."
+UNLOCK_GIVE_UP = (
+    "Forgot your master password? Resetting removes the encrypted API keys "
+    "from config.toml and turns encryption off. Chats, notes and documents "
+    "are not affected; you re-enter your API keys afterwards in Settings."
+)
+UNLOCK_CHOICE_PROMPT = "[R]eset saved keys or [Q]uit: "
+UNLOCK_RESET_DONE = (
+    "Saved keys were reset and encryption is off. Re-enter your API keys in "
+    "Settings > Providers & Models."
+)
+UNLOCK_RESET_FAILED = (
+    "Resetting the saved keys failed; config.toml was left as it was."
+)
+
+#: Plain sentences for the recovery host instead of a raw reason code.
+_UNLOCK_RECOVERY_COPY = {
+    "configuration_unlock_failed": (
+        "The master password could not be checked: no private terminal was "
+        "available to ask for it, or reading it failed. Quit, then relaunch "
+        "chatbook from a terminal to try again."
+    ),
+    "configuration_unlock_unavailable": (
+        "config.toml says its API keys are encrypted, but the check for its "
+        "master password is missing, so it cannot be unlocked. Quit, then restore "
+        "config.toml from a backup or remove its [encryption] table and "
+        "re-enter your keys."
+    ),
+}
+
+
+def _say(message: str) -> None:
+    """Write one pre-TUI line where getpass prompts (never stdout data)."""
+    print(message, file=sys.stderr, flush=True)
+
+
+def _choice(prompt: str) -> str:
+    """Ask a non-secret, echoed question before the TUI starts.
+
+    Raises:
+        EOFError: Standard input is closed.
+    """
+    sys.stderr.write(prompt)
+    sys.stderr.flush()
+    line = sys.stdin.readline()
+    if not line:
+        raise EOFError
+    return line
 
 
 def _secret(prompt: str) -> str:
@@ -52,12 +115,7 @@ def startup_preflight() -> tuple[str | None, str | None]:
         verifier = encryption.get("password_verifier")
         if not isinstance(verifier, str) or not verifier:
             return "configuration_unlock_unavailable", None
-        password = _secret("Configuration password: ")
-        engine = ConfigEncryption()
-        if not password or not engine.verify_password(password, verifier):
-            return "configuration_unlock_failed", None
-        engine.decrypt_config_strict(document, password)
-        return None, password
+        return _unlock_interactively(ConfigEncryption(), document, verifier)
     except (
         OSError,
         ValueError,
@@ -72,6 +130,97 @@ def startup_preflight() -> tuple[str | None, str | None]:
             else "configuration_invalid"
         )
         return reason, None
+
+
+def _unlock_interactively(engine, document, verifier) -> tuple[str | None, str | None]:
+    """Ask until the master password strict-decrypts, or the user gives up.
+
+    TASK-34100.4 (protect-summary-02): a wrong password re-prompts in place
+    instead of dropping the user into recovery mode. An empty entry gives up
+    and offers a reset or quit. There is no attempt cap: this guards a local
+    file, and each try already costs an scrypt derivation.
+
+    Returns:
+        ``(None, password)`` once every saved value decrypts, or
+        ``(UNLOCK_RESET_REASON | UNLOCK_QUIT_REASON, None)``.
+
+    Raises:
+        ValueError: No private terminal is available to ask for the password.
+    """
+    _say(UNLOCK_INTRO)
+    while True:
+        try:
+            password = _secret(UNLOCK_PROMPT)
+        except (EOFError, KeyboardInterrupt):
+            _say("")
+            return UNLOCK_QUIT_REASON, None
+        if not password:
+            return _give_up_choice(), None
+        if engine.verify_password(password, verifier) and _decrypts(
+            engine, document, password
+        ):
+            return None, password
+        password = None
+        _say(UNLOCK_MISMATCH)
+
+
+def _decrypts(engine, document, password: str) -> bool:
+    """Strict decrypt: a password that passes the verifier but cannot read
+    every saved key (the stranded state a second enable used to produce) is
+    not an unlock -- the app would otherwise start with ciphertext as keys."""
+    try:
+        engine.decrypt_config_strict(document, password)
+    except ValueError:
+        return False
+    return True
+
+
+def _give_up_choice() -> str:
+    """Offer the forgotten-password exits until one is chosen."""
+    _say(UNLOCK_GIVE_UP)
+    while True:
+        try:
+            answer = _choice(UNLOCK_CHOICE_PROMPT).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            return UNLOCK_QUIT_REASON
+        if answer in {"r", "reset"}:
+            return UNLOCK_RESET_REASON
+        if answer in {"q", "quit"}:
+            return UNLOCK_QUIT_REASON
+
+
+def startup_unlock() -> int | None:
+    """The one startup unlock, shared by ``tldw-cli`` and ``python -m tldw_chatbook.app``.
+
+    Runs the isolated pre-TUI preflight (strict decrypt), then admits startup
+    and installs the master password -- or performs the forgotten-password
+    reset -- through the normal config owner.
+
+    Returns:
+        None when ordinary startup may continue, else the exit status the
+        caller returns (a quit, a failed reset, or the recovery host's).
+    """
+    reason, password = startup_preflight()
+    if reason == UNLOCK_QUIT_REASON:
+        return 0
+    if reason is not None and reason != UNLOCK_RESET_REASON:
+        return minimal_recovery(reason)
+    from .storage_admission import admit_startup
+
+    admit_startup()
+    if reason == UNLOCK_RESET_REASON:
+        from tldw_chatbook.config import reset_encrypted_config_values
+
+        if not reset_encrypted_config_values():
+            _say(UNLOCK_RESET_FAILED)
+            return 1
+        _say(UNLOCK_RESET_DONE)
+    elif password is not None:
+        from tldw_chatbook.config import set_encryption_password
+
+        set_encryption_password(password)
+        password = None
+    return None
 
 
 def recovery_app(reason: str, *, restart_request=None):
@@ -120,14 +269,19 @@ def recovery_app(reason: str, *, restart_request=None):
         def compose(self):
             yield Static(
                 "Recovery mode — review replacement" if reason == "replacement_requested"
-                else "Recovery required: " + reason,
+                else _UNLOCK_RECOVERY_COPY.get(reason, "Recovery required: " + reason),
+                id="minimal-recovery-reason",
                 markup=False,
             )
             yield Button("Open Backup & Restore", id="minimal-recovery-open")
             yield Button("Exit", id="minimal-recovery-exit")
 
         def on_mount(self):
-            self.action_backup_restore()
+            # TASK-34100.4: an unlock problem is not a restore problem. Say
+            # what happened and let the user choose; Backup & Restore stays
+            # one button away.
+            if reason not in _UNLOCK_RECOVERY_COPY:
+                self.action_backup_restore()
 
         @on(Button.Pressed, "#minimal-recovery-open")
         def action_backup_restore(self):

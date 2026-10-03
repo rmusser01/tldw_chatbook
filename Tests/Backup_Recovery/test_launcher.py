@@ -183,21 +183,36 @@ if condition == 'uncertain':
     (bootstrap_root / 'unbound-owner').write_bytes(b'local pending ownership')
 observed = []
 launcher.minimal_recovery = lambda reason: observed.append(reason) or 17
+# TASK-34100.4: a wrong password re-prompts in place; an empty entry gives
+# up and offers [R]eset saved keys / [Q]uit.
+answers = {
+    'encrypted-good': ['unlock-sentinel'],
+    'encrypted-retry': ['wrong-sentinel', 'unlock-sentinel'],
+    'encrypted-wrong': ['wrong-sentinel', 'wrong-sentinel', ''],
+    'encrypted-reset': [''],
+}.get(condition, [])
+choices = {'encrypted-wrong': ['', 'q'], 'encrypted-reset': ['r']}.get(condition, [])
 def password(prompt):
+    assert 'master password' in prompt.lower(), prompt
     if condition == 'encrypted-cancel': raise EOFError
-    return 'unlock-sentinel' if condition == 'encrypted-good' else 'wrong-sentinel'
+    return answers.pop(0)
 launcher.getpass.getpass = password
+launcher._choice = lambda prompt: choices.pop(0)
+unlocked = ('encrypted-good', 'encrypted-retry')
 class ReachedApplication(Exception): pass
 original = builtins.__import__
 def guarded(name, *args, **kwargs):
     if name == 'tldw_chatbook.app':
-        if condition == 'encrypted-good':
+        if condition in unlocked:
             from tldw_chatbook import config
             assert config.get_encryption_password() == 'unlock-sentinel'
             assert config.chachanotes_db is None and config.media_db is None and config.prompts_db is None
+        if condition == 'encrypted-reset':
+            from tldw_chatbook import config
+            assert config.get_encryption_password() is None
         raise ReachedApplication
     if name == 'tldw_chatbook.config':
-        assert condition == 'encrypted-good', condition
+        assert condition in unlocked + ('encrypted-reset',), condition
     return original(name, *args, **kwargs)
 builtins.__import__ = guarded
 from tldw_chatbook.cli import main_cli_runner
@@ -205,14 +220,23 @@ sys.argv = ['tldw-chatbook']
 try:
     result = main_cli_runner()
 except ReachedApplication:
-    assert condition in ('missing', 'valid', 'encrypted-good'), condition
+    assert condition in ('missing', 'valid', 'encrypted-reset') + unlocked, condition
     assert not observed
 else:
-    assert condition in ('malformed', 'encrypted-wrong', 'encrypted-cancel', 'inaccessible', 'uncertain'), condition
-    assert result == 17 and observed
+    if condition in ('encrypted-wrong', 'encrypted-cancel'):
+        assert result == 0 and not observed, (result, observed)
+    else:
+        assert condition in ('malformed', 'inaccessible', 'uncertain'), condition
+        assert result == 17 and observed
     assert 'tldw_chatbook.config' not in sys.modules
+assert not answers and not choices, (answers, choices)
 if condition == 'inaccessible': selector.parent.chmod(0o700)
-assert (selector.read_bytes() if selector.exists() else None) == before
+if condition == 'encrypted-reset':
+    import tomllib
+    text = selector.read_text()
+    assert 'enc:' not in text and 'encryption' not in tomllib.loads(text), text
+else:
+    assert (selector.read_bytes() if selector.exists() else None) == before
 assert not blocked_attempts(), blocked_attempts()
 print('retired and reopened')
 """
@@ -225,7 +249,9 @@ print('retired and reopened')
         "valid",
         "malformed",
         "encrypted-good",
+        "encrypted-retry",
         "encrypted-wrong",
+        "encrypted-reset",
         "encrypted-cancel",
         "inaccessible",
         "uncertain",
