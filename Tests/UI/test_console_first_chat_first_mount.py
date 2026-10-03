@@ -129,6 +129,12 @@ async def test_start_chatting_through_consoles_first_mount_warns_nothing(
                 "custom",
                 "model-a",
             )
+            # Live 2026-10-03: once the handoff applied, the tab strip read
+            # 'Chat 1 ✕  Chat 1 ✕' -- the reserved first chat opened next to
+            # the untouched chat Console's own first mount had just made.
+            store = console._console_chat_store
+            tabs = [s.title for s in store.sessions() if not s.ephemeral]
+            assert len(tabs) == 1, tabs
 
 
 @pytest.mark.asyncio

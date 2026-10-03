@@ -1911,7 +1911,45 @@ class ConsoleSessionController:
                 "The first chat could not be acknowledged yet. It will retry.",
             )
         self._first_chat_handoff_notified_revision = None
+        if created_target is not None:
+            self._retire_untouched_first_mount_chat(
+                prior_active_id, intent.session_id, sync=not defer_presentation
+            )
         return True
+
+    def _retire_untouched_first_mount_chat(
+        self, prior_id: str | None, target_id: str, *, sync: bool
+    ) -> None:
+        """Drop the empty chat Console's first mount made next to the handoff's.
+
+        TASK-34100.5 AC#1: on a never-mounted Console the first-chat intent
+        reserves a new session, and Console's first mount had already opened
+        its own untouched 'Chat 1' -- the tab strip read 'Chat 1  Chat 1'.
+        Only an exact pristine, never-persisted session is removed; anything
+        with work, or saved from an earlier run, stays.
+        """
+        store = self._console_chat_store
+        prior = next(
+            (s for s in store.sessions() if s.id == prior_id and s.id != target_id),
+            None,
+        ) if store is not None else None
+        baseline = getattr(prior, "canonical_settings_baseline", None)
+        if prior is None or baseline is None:
+            return
+        if prior.ephemeral or prior.persisted_conversation_id is not None:
+            return
+        try:
+            removed = store.rollback_created_pristine_session(
+                prior.id,
+                expected_session=prior,
+                expected_settings=baseline,
+                prior_active_session_id=target_id,
+            )
+        except Exception as exc:  # noqa: BLE001 - an extra tab is not a failure
+            self._log_first_chat_handoff_exception("retire-first-mount-chat", exc)
+            return
+        if removed and sync and self._screen_mounted_accessor():
+            self._sync_console_chat_core_state()
 
     # -- Session-local character reactions ----------------------------------
 
