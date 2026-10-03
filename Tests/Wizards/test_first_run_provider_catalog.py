@@ -47,9 +47,9 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     ProviderChoiceList,
     ProviderStep,
     SetupWizardContainer,
-    _provider_group_option_id,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Wizards.first_run_provider_step import _provider_group_option_id
 
 _SIZE = (235, 52)
 
