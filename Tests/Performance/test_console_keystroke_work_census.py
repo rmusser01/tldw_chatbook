@@ -279,6 +279,69 @@ def _count_storage_units(
     monkeypatch.setitem(_OS_OPEN_AUDIT, "bump", bump)
 
 
+def _capture_media_cleanup_timer(
+    monkeypatch: pytest.MonkeyPatch, app_type: type[Any]
+) -> list[Any]:
+    """Capture the real startup cleanup callback for a separately billed phase.
+
+    TASK-33802: its five-second timer can otherwise open a SQLite helper on
+    an executor thread during typing. Keep the actual Textual timer and
+    callback; only its automatic firing is held still, like trace maintenance.
+
+    Args:
+        monkeypatch: Fixture that restores the original timer factory.
+        app_type: App class whose media-cleanup timer is being measured.
+
+    Returns:
+        Real startup callbacks to await in the cleanup phase.
+    """
+    callbacks: list[Any] = []
+    real_set_timer = app_type.set_timer
+
+    def set_timer(
+        app: Any,
+        delay: float,
+        callback: Any = None,
+        *,
+        name: str | None = None,
+        pause: bool = False,
+    ) -> Any:
+        if callback is not None and callback == app.perform_media_cleanup:
+            callbacks.append(callback)
+            pause = True
+        return real_set_timer(app, delay, callback, name=name, pause=pause)
+
+    monkeypatch.setattr(app_type, "set_timer", set_timer)
+    return callbacks
+
+
+@pytest.mark.asyncio
+async def test_media_cleanup_capture_holds_only_its_timer(monkeypatch) -> None:
+    """Other real timers fire; cleanup is awaited exactly once when driven."""
+    from textual.app import App
+
+    other_fired = asyncio.Event()
+    cleanup_calls: list[None] = []
+
+    class CleanupApp(App[None]):
+        async def perform_media_cleanup(self) -> None:
+            cleanup_calls.append(None)
+
+        def on_mount(self) -> None:
+            self.set_timer(0.001, self.perform_media_cleanup)
+            self.set_timer(0.001, other_fired.set)
+
+    callbacks = _capture_media_cleanup_timer(monkeypatch, CleanupApp)
+    app = CleanupApp()
+    async with app.run_test() as pilot:
+        await asyncio.wait_for(other_fired.wait(), 5)
+        await pilot.pause()
+        assert len(callbacks) == 1
+        assert not cleanup_calls
+        await callbacks[0]()
+        assert len(cleanup_calls) == 1
+
+
 async def _census(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -346,6 +409,7 @@ async def _census(
         "cost_projection_estimate_rows": 0,
         "context_rows": 0,
         "context_estimate_max_rows": 0,
+        "cleanup_candidate_queries_completed": 0,
     }
     counting = {"on": False}
 
@@ -446,8 +510,10 @@ async def _census(
     )
 
     trace_maintenance: list[tuple[Any, Any]] = []
+    media_cleanup: list[Any] = []
     if storage_units:
         _count_storage_units(monkeypatch, counts, counting)
+        media_cleanup = _capture_media_cleanup_timer(monkeypatch, TldwCli)
         # The 1 Hz legacy trace-maintenance loop (armed 5 s after ready,
         # runs forever) is wall-clock driven: left running, a slow machine
         # bills more of its ticks to whatever is being measured. Captured
@@ -464,6 +530,16 @@ async def _census(
         )
 
     app = TldwCli()
+    if storage_units:
+        real_candidates = app.media_db.get_deletion_candidates
+
+        def counted_candidates(*args: Any, **kwargs: Any) -> Any:
+            result = real_candidates(*args, **kwargs)
+            if counting["on"]:
+                counts["cleanup_candidate_queries_completed"] += 1
+            return result
+
+        monkeypatch.setattr(app.media_db, "get_deletion_candidates", counted_candidates)
     async with app.run_test(size=(170, 48)) as pilot:
         await _settle(pilot)
 
@@ -530,7 +606,7 @@ async def _census(
 
         if storage_units:
             await _census_idle_and_visit(
-                pilot, counts, counting, trace_maintenance, monkeypatch
+                pilot, counts, counting, trace_maintenance, monkeypatch, media_cleanup
             )
 
     return counts
@@ -583,6 +659,7 @@ async def _census_idle_and_visit(
     counting: dict[str, Any],
     trace_maintenance: list[tuple[Any, Any, Any, Any]],
     monkeypatch: pytest.MonkeyPatch,
+    media_cleanup: list[Any],
 ) -> None:
     """Census the typing pause, idle ticks and a warm visit in storage units.
 
@@ -603,6 +680,8 @@ async def _census_idle_and_visit(
       ``run_owned_db_call``'s owned connection).
     * ``gc:`` -- the production maintenance loop's first GC pass
       (TASK-33644): its graph-epoch read, collection and compaction attempt.
+    * ``cleanup:`` -- the captured startup media-cleanup callback, awaited
+      once with its real SQLite candidate query and connection cleanup.
     * ``visit:`` -- Console -> Library (uncounted) -> Console. The route is
       reusable (TASK-31520), so the return is a warm resume: no mount, only
       ``on_screen_resume`` and what it schedules.
@@ -625,6 +704,7 @@ async def _census_idle_and_visit(
             (owned-call wrapper, ready delay, held backup probe). The pass
             puts the wrapper and the probe back when it ends; the fixture
             undoes the rest at teardown.
+        media_cleanup: the captured real startup cleanup callback.
     """
     from textual import worker_manager
 
@@ -672,6 +752,10 @@ async def _census_idle_and_visit(
             counting["on"] = False
         if name is not None:
             phases.update({f"{name}:{unit}": counts[unit] for unit in IO_UNITS})
+        if name == "cleanup":
+            phases["cleanup:candidate_queries_completed"] = counts[
+                "cleanup_candidate_queries_completed"
+            ]
 
     async def typing_pause() -> None:
         spend_refresh = console._console_draft_spend_refresh
@@ -838,6 +922,8 @@ async def _census_idle_and_visit(
 
     worker_manager.WorkerManager._new_worker = recording_new_worker
     try:
+        assert len(media_cleanup) == 1, "startup media cleanup was not captured"
+        await phase("cleanup", media_cleanup[0])
         await phase("pause", typing_pause)
         await phase("idle", credential_ticks)
         await phase("trace", trace_ticks)
@@ -1274,6 +1360,11 @@ async def test_console_storage_units_stay_within_their_ratchets(
         ),
     }
     census: dict[str, Any] = {k: v[0] for k, v in measured.items()}
+    cleanup_units = {unit: counts[f"cleanup:{unit}"] for unit in IO_UNITS}
+    census["media cleanup"] = cleanup_units
+    census["media cleanup candidate queries completed"] = counts[
+        "cleanup:candidate_queries_completed"
+    ]
     request.node.user_properties.append(("storage_units", json.dumps(census)))
     # TASK-33643: every run reports its census -- before any assertion, so a
     # failing run reports too -- and CI ceilings are pinned from those lines;
@@ -1285,6 +1376,18 @@ async def test_console_storage_units_stay_within_their_ratchets(
     assert (
         counts["settings_readiness_builds"] / KEYSTROKES
         <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
+    )
+    request.node.user_properties.append(
+        ("media_cleanup_units", json.dumps(cleanup_units))
+    )
+    assert cleanup_units["storage_admissions"] >= 1, (
+        "the startup cleanup phase did not reach its real database operation"
+    )
+    assert counts["cleanup:candidate_queries_completed"] == 1, (
+        "startup cleanup did not complete exactly one real candidate query"
+    )
+    assert cleanup_units["helper_spawns"] >= 1, (
+        "the real startup cleanup query's cold SQLite helper was not counted"
     )
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (

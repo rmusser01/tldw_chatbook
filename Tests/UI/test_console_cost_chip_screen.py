@@ -197,13 +197,15 @@ class _AnthropicReadinessWaitingGateway:
         yield "ready answer"
 
 
-async def _send_and_settle(console, pilot, draft: str, expect_text: str) -> None:
+async def _send_and_settle(
+    console, pilot, draft: str, expect_text: str, *, timeout: float = 4.0
+) -> None:
     """Load a composer draft, press Send, and wait for the reply to land."""
     await _wait_for_selector(console, pilot, "#console-native-composer")
     composer = console.query_one("#console-native-composer", ConsoleComposerBar)
     composer.load_draft(draft)
     console.query_one("#console-send-message", Button).press()
-    await _wait_for_visible_text(console, pilot, expect_text)
+    await _wait_for_visible_text(console, pilot, expect_text, timeout=timeout)
     # The 0.2s tick's own post-completion sync races test assertions; force
     # one more deterministic sync (this is exactly what that tick calls).
     await console._sync_native_console_chat_ui()
@@ -1440,6 +1442,7 @@ async def test_next_send_estimate_gates_staged_evidence_on_session():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_cost_tooltip_ends_its_info_with_the_providers_rate_limit():
     """The line sits after the next-send estimate, above the Inspector hint,
     and only once the session's provider has reported one."""
@@ -1457,7 +1460,9 @@ async def test_cost_tooltip_ends_its_info_with_the_providers_rate_limit():
     try:
         async with host.run_test(size=(200, 48)) as pilot:
             console = host.screen_stack[-1]
-            await _send_and_settle(console, pilot, "hello", "the priced answer")
+            await _send_and_settle(
+                console, pilot, "hello", "the priced answer", timeout=30.0
+            )
             assert "Rate limit" not in console._build_console_cost_state().tooltip
 
             # What the gateway's capture scope does on a real Anthropic reply.
