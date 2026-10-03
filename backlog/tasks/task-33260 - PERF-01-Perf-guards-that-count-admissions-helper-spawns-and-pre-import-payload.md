@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-03 00:19'
+updated_date: '2026-10-03 00:53'
 labels:
   - performance
   - ci
@@ -79,6 +79,14 @@ Reason: Document existing fixture requirements only; no behavior, boundary, owne
 1. Read the three Close button tests and existing private-profile wrapper; add Google-style summaries and Args for every fixture parameter.
 2. Prove the entire test-module executable AST, decorators and signatures are unchanged after removing only the three new docstrings. Compile, collect the three existing nodes in a private profile and run zero-new lint, formatting/diff and artifact checks. Do not rerun unchanged native or147-case logic merely for docstrings.
 3. Record current byte/semantic identities, safe-push, reply/resolve the finding and require fresh final-head Qodo/all four gates before normal merge.
+
+Audit-only latest-dev integration (PR2925):
+ADR required: no
+ADR path: N/A
+Reason: Rebase unchanged Console patches onto audit-only dev; no application, test, CI or boundary change.
+1. Verify all seven upstream paths are audit files, retain the upstream audit changes and rebase all29 Console patches unchanged.
+2. Prove all233 qualified source pins unchanged, run fresh preflight and zero-new lint, and preserve prior147-case/native receipt identities without claiming a functional replay.
+3. Record the base/source proof, safe-push and require fresh final-head Qodo, all four gates and up-to-date dev before a normal protected merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -121,6 +129,8 @@ Final qualification on dev ecc0a531 at code anchor 17235d9d: all 25 patches reba
 Latest dev e6ab66b0 (PR2959/TASK33801 known-work idle-check optimization) integrates cleanly: all27 PR patches unchanged, changed worker/class AST exactly upstream and remaining modules/controller unchanged.147 fresh scoped cases pass with zero failures/errors/skips:110 real trace/write/lifetime/chat-create contracts plus all37 exact Perf Guard cases. Of230 prior pins,228 unchanged; two upstream trace-owner changes and two additional upstream regression-file pins identified (232 current). Zero-new Ruff34 and fresh preflight pass; original counters, ticks, canaries, caps, snapshots and CI settings remain. No new production patch or full suite. Prior native27/29 and46/65/230 receipts keep original identities; current worker owners have real SQLite and mounted performance evidence, with no new native replay claim. Existing ADR-097/126 apply. QA trace_work_base_final_followup records qualification/limits. Final published-head CI/Qodo/normal merge remains PR2953.
 
 Qodo c3c3fc77 documentation correction adds Google-style summaries/Args to three existing Close button tests, documenting request and saved-history tmp_path. Whole executable module AST, decorators and signatures remain identical after removing only the new docstrings; compile and private collection of all3 nodes pass. Audit finds no other modified private-profile tests missing request docs. Zero-new Ruff34, doc-range format/diff check and fresh preflight pass. All232 prior trace-work source pins unchanged, with the documented test file additionally pinned (233). Original147-case/native/46/65/230 receipts keep identities; collection is not functional replay and no logic/native rerun is claimed for strings. No ADR required (documentation only). QA fixture_doc_review_followup records hashes/limits; final published-head CI/Qodo/normal merge remains PR2953.
+
+Audit-only dev2612fc56 (PR2925) retained all seven upstream audit paths; all29 PR patches and233 qualified source pins unchanged. Fresh full preflight and zero-new Ruff34 pass. No app/test/CI/budget/boundary change or new ADR (N/A). Original147-case/native receipts retain identities; no functional replay claimed. Preceding c88 UI job hit20m at88% with no reported assertion failure and comparable groups25–34% slower than successful c814. Preserve limits/coverage and require fresh final-head gates/resolved Qodo before protected normal merge. QA audit_only_dev_rebase records proof and explicit limits.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

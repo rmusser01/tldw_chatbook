@@ -699,3 +699,19 @@ native/46/65/230 receipts keep their identities. Collection is not claimed as
 functional replay, and no runtime/native/performance rerun was made solely
 for docstrings. QA fixture_doc_review_followup records exact scope and hashes.
 Fresh final-published-head CI/Qodo still precede protected normal merge.
+
+
+Audit-only latest-dev rebase (PR2925, 2026-10-03 UTC)
+
+Dev2612fc56b26510630190ecacdc3855c4bffb1786 changes only seven audit
+paths. All29 Console patches rebase unchanged; all233 qualified source pins
+retain exact bytes. Fresh preflight and zero-new Ruff across34 modified
+Python files pass. No application, test, CI, boundary or budget change.
+Original147-case and native receipts retain their code/head identities;
+no functional replay is claimed for the audit-only base. QA
+`audit_only_dev_rebase` records exact paths, hashes and range-diff proof.
+
+The preceding c88 UI job hit its unchanged20-minute limit at88%, with no
+assertion failure reported. Comparable groups took25–34% longer than on
+the preceding successful c814 run. Limits and coverage remain unchanged;
+fresh final-head CI and clean/resolved Qodo are required before normal merge.
