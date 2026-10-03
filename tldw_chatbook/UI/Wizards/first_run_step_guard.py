@@ -43,9 +43,11 @@ module calls ``run_worker`` or ``@work`` directly.
 
 from __future__ import annotations
 
+import asyncio
 import functools
 import inspect
 import logging
+import threading
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Awaitable, Callable, Iterator
 
@@ -750,6 +752,52 @@ def run_wizard_worker(
         thread=thread,
         exit_on_error=False,
     )
+
+
+def off_loop(function: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
+    """Wrap an async function so each call runs on a worker thread's own loop.
+
+    Some first-run work is ``async`` but blocks before its first real await.
+    The localhost scan takes a storage admission (file I/O) and builds a TLS
+    client (SSL context, proxy lookup, a cold import). On the UI loop that
+    froze the screen for 0.4-1.3 s after choosing Full, so neither Provider
+    nor the busy line could paint (review round 1). Cancelling the awaiting
+    task cancels the work on its thread as well.
+
+    Args:
+        function: The async function to run off the UI loop.
+
+    Returns:
+        An async function taking the same arguments and returning its result.
+    """
+
+    @functools.wraps(function)
+    async def run(*args: Any, **kwargs: Any) -> Any:
+        state: dict[str, Any] = {}
+        lock = threading.Lock()
+
+        async def main() -> Any:
+            with lock:
+                if state.get("cancelled"):
+                    raise asyncio.CancelledError
+                state["loop"] = asyncio.get_running_loop()
+                state["task"] = asyncio.current_task()
+            return await function(*args, **kwargs)
+
+        try:
+            return await asyncio.to_thread(lambda: asyncio.run(main()))
+        except asyncio.CancelledError:
+            with lock:
+                state["cancelled"] = True
+                loop, task = state.get("loop"), state.get("task")
+            if loop is not None and task is not None:
+                try:
+                    loop.call_soon_threadsafe(task.cancel)
+                except RuntimeError:  # that loop has already finished
+                    pass
+            raise
+
+    return run
 
 
 def wizard_work(
