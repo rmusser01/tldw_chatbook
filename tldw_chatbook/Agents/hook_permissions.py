@@ -5,8 +5,10 @@ from __future__ import annotations
 import copy
 import fnmatch
 import json
+import os
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
@@ -30,6 +32,7 @@ from tldw_chatbook.Agents.run_hooks import (
     inspect_hooks_config,
 )
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
     atomic_private_write_text,
@@ -78,6 +81,40 @@ class HookReviewSnapshot:
 def default_hook_permissions_path() -> Path:
     """Resolve the live canonical profile directory, never a startup constant."""
     return Path(config.get_user_data_dir()) / "hook_permissions.json"
+
+
+#: A visit snapshot is kept only once both hook files' last change is this
+#: old (storage_admission's _EVIDENCE_SETTLE_NS): a same-size edit inside one
+#: coarse timestamp tick leaves an identical stamp.
+_VISIT_SETTLE_NS = 1_000_000_000
+
+
+def _file_stamp(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    """A file's type, identity, size and change times, without following links.
+
+    Args:
+        path: The file to observe.
+
+    Returns:
+        ``(st_mode, st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)`` of the
+        entry itself (so a symlink swapped in is a different stamp), or
+        ``None`` when it is absent.
+
+    Raises:
+        OSError: The file could not be observed for another reason.
+    """
+    try:
+        info = os.lstat(path)
+    except FileNotFoundError:
+        return None
+    return (
+        info.st_mode,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
 
 
 def _empty_state() -> dict:
@@ -140,6 +177,8 @@ class HookPermissions:
         self._closed = threading.Event()
         self._published: HookReviewSnapshot | None = None
         self._published_targets: tuple[HookTarget, ...] = ()
+        #: TASK-33642: ``(snapshot, stamp)`` a Console visit may reuse.
+        self._visit_reuse: tuple[HookReviewSnapshot, tuple] | None = None
 
     @contextmanager
     def _store_lock(self, path: Path) -> Iterator[None]:
@@ -412,6 +451,133 @@ class HookPermissions:
                     state = None
                     error = "Hook permission state could not be saved; retry."
             yield self._make_snapshot(cfg, path, state, error), state, precondition
+
+    def _visit_stamp(self, config_path: Path, store_path: Path) -> tuple:
+        """Everything a visit snapshot depends on, read without opening a file.
+
+        Args:
+            config_path: The config file holding the hook section.
+            store_path: The hook permission store.
+
+        Returns:
+            First, both files' type, identity and change times taken
+            without following links (``None`` for a missing file); the
+            config selection (the effective config path as well as the
+            loaded source), generation and the environment that selects the
+            data root; the no-follow posture of both lock files and of every
+            component of both parent directories (the full read refuses an
+            unsafe one); the storage admission epoch and the serving state of
+            its native holds; and last, the in-memory sealing, refresh and
+            closed state the snapshot also reflects (``_memory_state()``).
+            Admission records other processes keep on disk are not mirrored:
+            no authority derives from a visit snapshot, and Send and review
+            always run the full read.
+        """
+        from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
+
+        with self._cache_lock:
+            memory = self._memory_state()
+        with storage_admission._lock:
+            holds = tuple(
+                sorted(
+                    (str(key), storage_admission._hold_serving(hold))
+                    for key, hold in storage_admission._holds.items()
+                )
+            )
+        chain, posture = storage_admission._chain, storage_admission._posture
+        return (
+            (_file_stamp(config_path), _file_stamp(store_path)),
+            str(config.get_cli_config_path()),
+            config._CONFIG_CACHE_SOURCE,
+            config._CONFIG_GENERATION,
+            # The data root (and so the store) follows HOME and the XDG
+            # variables as well as config; a retarget forces a full read.
+            os.environ.copy(),
+            posture(config_path.with_name(config_path.name + ".lock")),
+            posture(store_path.with_name(store_path.name + ".lock")),
+            tuple(posture(part) for part in chain(config_path.parent)),
+            tuple(posture(part) for part in chain(store_path.parent)),
+            bootstrap._admission_epoch,
+            holds,
+            memory,
+        )
+
+    def _memory_state(self) -> tuple:
+        """Sealing, refresh and closed state; the caller holds ``_cache_lock``."""
+        return (
+            frozenset(self._sealed),
+            frozenset(self._refresh_pending),
+            self._closed.is_set(),
+        )
+
+    def visit_snapshot(self) -> HookReviewSnapshot:
+        """``snapshot()`` for a Console visit, reused while nothing it read moved.
+
+        TASK-33642: every Console visit re-read the hook section and the
+        permission store under their locks. A snapshot is reused only when
+        stamps taken before and after the read that produced it are equal and
+        still equal now, so a write at any time -- including during that read
+        -- forces a full read on the next visit. It is kept only once both
+        files' last change is ``_VISIT_SETTLE_NS`` old, so a same-size write
+        inside one timestamp tick cannot hide behind an equal stamp. Sending
+        and reviewing keep using ``snapshot()``.
+
+        Returns:
+            The current review state.
+        """
+        from tldw_chatbook.Backup_Recovery import storage_admission
+
+        with self._cache_lock:
+            reusable = self._visit_reuse
+            published = self._published
+        # A maintenance pause refuses the full read; show what it reports.
+        paused = storage_admission._pause is not None
+        if reusable is not None and reusable[0] is published and not paused:
+            try:
+                stamp = self._visit_stamp(
+                    published.config.config_path, published.store_path
+                )
+            except OSError:
+                stamp = None
+            if stamp is not None and stamp == reusable[1]:
+                # Re-read under the lock sealing takes: a hook sealed while
+                # the probes ran is never served as approved.
+                with self._cache_lock:
+                    if (
+                        self._visit_reuse is reusable
+                        and self._memory_state() == stamp[-1]
+                    ):
+                        return published
+        try:
+            # Validated as locked_hooks_config_snapshot validates it, before any
+            # metadata probe touches the environment-selected path.
+            selected = validate_path_simple(
+                config.get_cli_config_path(),
+                require_exists=False,
+                probe_existing=False,
+                reject_shell_metacharacters=False,
+            )
+            before = self._visit_stamp(selected, default_hook_permissions_path())
+        except (OSError, ValueError, RecoveryRequired):
+            before = None
+        snapshot = self.snapshot()
+        try:
+            after = self._visit_stamp(snapshot.config.config_path, snapshot.store_path)
+        except OSError:
+            after = None
+        settled = time.time_ns() - _VISIT_SETTLE_NS
+        keep = (
+            after is not None
+            and after == before
+            and all(
+                stamp is None or max(stamp[4], stamp[5]) <= settled
+                for stamp in after[0]
+            )
+            and not any(row.state == "recovery" for row in snapshot.rows)
+        )
+        with self._cache_lock:
+            self._visit_reuse = (snapshot, after) if keep else None
+        return snapshot
 
     def snapshot(self) -> HookReviewSnapshot:
         """Reconcile the current saved section and return review state."""
