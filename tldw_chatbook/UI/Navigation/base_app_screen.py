@@ -91,7 +91,11 @@ class BaseAppScreen(Screen):
         # renders F1 from getattr(screen, "BINDINGS") on ten screens, and
         # PersonasScreen and ChatScreen spread this list; without it the
         # "Copy selected text" row would vanish from their help.
-        *(binding for binding in Screen.BINDINGS if binding.key not in ("tab", "shift+tab")),
+        *(
+            binding
+            for binding in Screen.BINDINGS
+            if binding.key not in ("tab", "shift+tab")
+        ),
     ]
 
     def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs):
@@ -312,11 +316,7 @@ class BaseAppScreen(Screen):
             # Only a target inside the region: the default hook falls back to
             # the screen's first focusable widget (often the nav bar) when the
             # content holds nothing focusable yet.
-            if (
-                target is not None
-                and target.focusable
-                and match(selector_set, target)
-            ):
+            if target is not None and target.focusable and match(selector_set, target):
                 self.set_focus(target)
                 return self.focused
             selector = region

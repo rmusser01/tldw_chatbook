@@ -286,11 +286,7 @@ class AdaptivePaneGrip(Button):
         arrow = self.label.plain
         name = self.painted_name()
         lines = [
-            name[row]
-            if row < len(name)
-            else arrow
-            if row in arrow_rows
-            else " "
+            name[row] if row < len(name) else arrow if row in arrow_rows else " "
             for row in range(height)
         ]
         return Content.from_text("\n".join(lines))
