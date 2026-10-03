@@ -1594,12 +1594,27 @@ QWENCLOUD_API_MODE_HELP_COPY = (
     "replay; existing function tools work in both; QwenCloud built-in tools are "
     "excluded."
 )
-#: TASK-34201: Anthropic's "Sign in with" choice (owner-approved design,
-#: 2026-10-03) -- an API key, or the Claude subscription Claude Code holds.
-ANTHROPIC_AUTH_SOURCE_OPTIONS: tuple[tuple[str, str], ...] = (
-    ("API key", "api_key"),
-    ("Claude subscription", "claude_subscription"),
-)
+def _anthropic_auth_sources() -> tuple[str, str]:
+    """Return ``(api_key, subscription)``: the sign-in values Settings accepts.
+
+    The one allow-list for Anthropic's "Sign in with" choice (TASK-34201),
+    taken from the credential module so the two cannot drift. Imported
+    lazily: Settings must not add that module to the UI-ready set.
+    """
+    from ...LLM_Calls.anthropic_subscription import (
+        AUTH_SOURCE_API_KEY,
+        AUTH_SOURCE_SUBSCRIPTION,
+    )
+
+    return AUTH_SOURCE_API_KEY, AUTH_SOURCE_SUBSCRIPTION
+
+
+def _anthropic_auth_source_options() -> tuple[tuple[str, str], ...]:
+    """Return the "Sign in with" select options (owner-approved design, 2026-10-03)."""
+    api_key, subscription = _anthropic_auth_sources()
+    return (("API key", api_key), ("Claude subscription", subscription))
+
+
 ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY = (
     "Uses the credential Claude Code already holds (Keychain or "
     "~/.claude/.credentials.json). Chatbook reads it, never stores or "
@@ -4455,7 +4470,9 @@ class SettingsScreen(BaseAppScreen):
         )
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_readiness_app_config()
+            if category is SettingsCategoryId.OVERVIEW
+            else self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         observation = (category.value, provider, readiness.subscription_status)
@@ -12522,15 +12539,50 @@ class SettingsScreen(BaseAppScreen):
     def _provider_saved_auth_source(self, provider: object) -> str:
         """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
         if provider_config_key(str(provider or "")) != "anthropic":
-            return "api_key"
+            return _anthropic_auth_sources()[0]
         from ...LLM_Calls.anthropic_subscription import anthropic_auth_source
 
         return anthropic_auth_source(self._provider_config("anthropic"))
 
+    def _provider_auth_readiness_config(
+        self, provider: object, *, auth_source: str | None = None
+    ) -> Mapping[str, object]:
+        """Return readiness config with Anthropic's unsaved sign-in choice applied.
+
+        The credential status, placeholder, key status and the subscription
+        poller read this, so an unsaved choice shows at once and a cold
+        subscription check is followed to completion (Qodo #2990). Forcing
+        ``auth_source`` to the API key lets the saved-key check see a stored
+        key even while the saved choice is the subscription.
+
+        Args:
+            provider: The provider the panel shows.
+            auth_source: A choice to apply instead of the current one.
+
+        Returns:
+            The saved config, or a copy with the choice overlaid.
+        """
+        config = self._provider_readiness_app_config()
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return config
+        value = auth_source or self._provider_auth_source_value(provider)
+        if value == self._provider_saved_auth_source(provider):
+            return config
+        save_key, _config = self._provider_config_entry(str(provider))
+        return overlay_provider_draft_config(
+            config,
+            provider_save_key=save_key or "anthropic",
+            endpoint_key=self._provider_endpoint_setting_key(str(provider)),
+            draft_endpoint=None,
+            draft_env_var=None,
+            draft_api_key=None,
+            draft_auth_source=value,
+        )
+
     def _provider_auth_source_value(self, provider: object) -> str:
         """Resolve Anthropic's sign-in choice from the draft, then saved config."""
         if provider_config_key(str(provider or "")) != "anthropic":
-            return "api_key"
+            return _anthropic_auth_sources()[0]
         draft = self._provider_draft()
         draft_key = self._provider_auth_source_draft_key("anthropic")
         if draft is not None and draft_key in draft.values:
@@ -14248,9 +14300,13 @@ class SettingsScreen(BaseAppScreen):
         return app_config or {}
 
     def _provider_saved_api_key_present(self, provider: str) -> bool:
+        # Qodo #2990: judge the stored key with the API-key path, so a saved
+        # subscription choice cannot hide it (Clear stays usable).
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(
+                provider, auth_source=_anthropic_auth_sources()[0]
+            ),
             background_credentials=True,
         )
         return bool(
@@ -14265,7 +14321,7 @@ class SettingsScreen(BaseAppScreen):
             return REGISTRY_FIELD_PLACEHOLDER
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         if readiness.subscription_status is not None:
@@ -14279,7 +14335,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_credential_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         registry_status = self._provider_registry_credential_status(
@@ -14792,7 +14848,7 @@ class SettingsScreen(BaseAppScreen):
             return
         is_anthropic = provider_config_key(provider) == "anthropic"
         value = self._provider_auth_source_value(provider)
-        subscription = is_anthropic and value == "claude_subscription"
+        subscription = is_anthropic and value == _anthropic_auth_sources()[1]
         row.set_class(not is_anthropic, "settings-gated-profile-hidden")
         guidance.set_class(not is_anthropic, "settings-gated-profile-hidden")
         selector.disabled = not is_anthropic
@@ -14840,7 +14896,7 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             return
         value = self._select_value_text(selector.value)
-        if value in {"api_key", "claude_subscription"} and value != (
+        if value in _anthropic_auth_sources() and value != (
             self._provider_auth_source_value(provider)
         ):
             self._stage_provider_auth_source(provider, value)
@@ -15314,7 +15370,7 @@ class SettingsScreen(BaseAppScreen):
     def _provider_key_status(self, provider: str) -> str:
         readiness = get_provider_readiness(
             provider,
-            self._provider_readiness_app_config(),
+            self._provider_auth_readiness_config(provider),
             background_credentials=True,
         )
         registry_status = self._provider_registry_credential_status(
@@ -18092,7 +18148,8 @@ class SettingsScreen(BaseAppScreen):
             is_anthropic = provider_config_key(provider) == "anthropic"
             subscription_selected = (
                 is_anthropic
-                and self._provider_auth_source_value(provider) == "claude_subscription"
+                and self._provider_auth_source_value(provider)
+                == _anthropic_auth_sources()[1]
             )
             with Horizontal(
                 id="settings-provider-auth-source-row",
@@ -18104,7 +18161,7 @@ class SettingsScreen(BaseAppScreen):
             ):
                 yield Static("Sign in with", classes="settings-input-label")
                 yield Select(
-                    ANTHROPIC_AUTH_SOURCE_OPTIONS,
+                    _anthropic_auth_source_options(),
                     value=self._provider_auth_source_value(provider),
                     id="settings-provider-auth-source",
                     classes="settings-compact-select",
@@ -30555,7 +30612,12 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Select.Changed, "#settings-provider-auth-source")
     def handle_provider_auth_source_changed(self, event: Select.Changed) -> None:
-        """Stage Anthropic's sign-in choice as an ordinary unsaved edit."""
+        """Stage Anthropic's sign-in choice as an ordinary unsaved edit.
+
+        Args:
+            event: The "Sign in with" select's change; its value is one of
+                ``_anthropic_auth_sources()``, and anything else is ignored.
+        """
         event.stop()
         if self._syncing_provider_auth_source:
             return
@@ -30565,7 +30627,7 @@ class SettingsScreen(BaseAppScreen):
         if provider_config_key(provider) != "anthropic":
             return
         value = self._select_value_text(event.value)
-        if value not in {"api_key", "claude_subscription"}:
+        if value not in _anthropic_auth_sources():
             return
         self._stage_provider_auth_source(provider, value)
         self._update_provider_dynamic_widgets()
@@ -32059,12 +32121,12 @@ class SettingsScreen(BaseAppScreen):
                 and api_mode_draft_key in dirty_keys
                 and normalized_api_mode != self._provider_saved_api_mode_value(provider)
             )
-            auth_source = str(values.get("auth_source") or "api_key")
+            auth_source = str(values.get("auth_source") or _anthropic_auth_sources()[0])
             auth_source_dirty = bool(
                 provider_key == "anthropic"
                 and draft is not None
                 and self._provider_auth_source_draft_key(provider) in dirty_keys
-                and auth_source in {"api_key", "claude_subscription"}
+                and auth_source in _anthropic_auth_sources()
                 and auth_source != self._provider_saved_auth_source(provider)
             )
             selected_profile = self._provider_model_profile(provider, model)
