@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  N  Select a note to edit it here.                   │
+│ │ Navigation       Collapse      │  a  │ Library notes · Ready · Next: Create a note or add from      │  o                                                   │
+│ │     Import…                    │  v  │ files.                                                       │  t                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     │ Notes (123)                                                  │  e                                                   │
+│ │ ▊ Search Library…        ▎▊x▎  │     │ These notes live in the Library's own database — for notes   │  s                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     │ that live in a folder on disk, switch to Folder files. To    │                                                      │
+│ │                                │     │ copy or keep a folder synced, choose Add from files.         │                                                      │
+│ │ ─────────────────────────────  │     │                                                              │                                                      │
+│ │ Browse                    ▾    │     │ Filter                                                       │                                                      │
+│ │    Media (23) — your files     │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │    Conversations (12)          │     │ ▊ Filter notes… (Enter)                                    ▎ │                                                      │
+│ │  ▸ Notes (123)                 │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Prompts (10) — reuse        │     │      ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                               │
+│ │    Skills (4) — AI add-ons     │<--- │    Ne▊                                                              ▎                                               │
+│ │    Collections (6)             │     │    Ad▊  Add note to folder                                          ▎                                               │
+│ │    Search / RAG — find all     │     │ Folde▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▎                                               │
+│ │ ─────────────────────────────  │     │    Ne▊  ▊  Select                                             ▲  ▎  ▎                                               │
+│ │ Artifacts                 ▾    │     │    ○ ▊  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  ▎                                               │
+│ │    All artifacts               │     │      ▊  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  ▎                                               │
+│ │    Chatbooks                   │     │      ▊  ▊  Select                                                ▎  ▎                                               │
+│ │    Reports                     │     │  ▾ Un▊▁▁▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▁▁▎                                               │
+│ │ ─────────────────────────────  │     │    File me · now                                             │                                                      │
+│ │ Create                    ▾    │     │    Ideas inbox · 2h                                          │                                                      │
+│ │    New note                    │<--- │    Reading list · 3h                                         │                                                      │
+│ │    New prompt                  │     │    Index — start here · 1d                                   │                                                      │
+│ │    New skill                   │     │    Meeting Notes 2026-09-30 · 2d                             │                                                      │
+│ │ ─────────────────────────────  │     │    Gardening log · 4d                                        │                                                      │
+│ │ Study                     ▾    │     │    📚 Reading queue 2026 ✨ · 1w                             │                                                      │
+│ │    Study decks (0)             │     │    A very long note title that keeps going so we can test …  │                                                      │
+│ │    Flashcards due: 0           │     │    Daily log 2026-09-21 · 1w                                 │                                                      │
+│ │    Quizzes (0)                 │     │    Daily log 2026-09-20 · 1w                                 │                                                      │
+│ │ ─────────────────────────────  │     │    Daily log 2026-09-19 · 1w                                 │                                                      │
+│ │ Import / Export           ▾    │     │    Daily log 2026-09-18 · 2w                                 │                                                      │
+│ │    Import…                     │     │    Daily log 2026-09-17 · 2w                                 │                                                      │
+│ │    Export                      │     │    Trip planning: Lisbon · 2w                                │                                                      │
+│ │ ─────────────────────────────▇ │     │    Packing list · 2w                                         │                                                      │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n new note | / find note | g go to folder | esc focus rail | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

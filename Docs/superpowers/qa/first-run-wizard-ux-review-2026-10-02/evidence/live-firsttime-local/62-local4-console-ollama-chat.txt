@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ ╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮ │
+                       Context ◂  │ │ Trace capture blocked                                                                                                                                │ │
+   Terminal                       │ │ Owner: This Console send                                                                                                                             │ │
+ ───────────────────────────────  │ │ Problem: Trace capture could not be saved.                                                                                                           │ │
+ Workspaces                  ▸    │ │ Impact: The provider was not contacted. Choose how to continue.                                                                                      │ │
+ ───────────────────────────────  │ │ Choose one action.                                                                                                                                   │ │
+ Conversations               ▾    │ │                                                                                                                                                      │ │
+       Archive this chat          │ │                                                                    Retry capture                                                                     │ │
+         Archived chats           │ │                                                                 Send without capture                                                                 │ │
+       Search all chats…          │ │                                                                     Cancel send                                                                      │ │
+   Hello Ollama                   │ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯ │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │ Conversation | Hello Ollama                                                                                                                              │
+  ▊  Filter visible   ▎           │      Hello Ollama      ✕    New tab     Temporary                                                                                                        │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │
+   Hello Ollama             ⛔    │                                                                                                                                                          │
+   Blocked                        │                                                                                                                                                          │◂ Inspect
+                                  │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Character · No chats        ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Model                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Agent                       ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Details                     ▸    │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   User                                                                                                                                                   │
+                                  │   Hello Ollama                                                                                                                                           │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │  ▊ Assistant                                                                                                                                             │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ blocked
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Ollama     Model: llama3.1:8b     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                         Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

@@ -4384,15 +4384,18 @@ def chat_with_huggingface(
                 "HuggingFace: Posting streaming request to "
                 f"host={safe_llm_url_host(api_url)}"
             )
-            # Session might not be strictly necessary for a single streaming POST, but good for potential keep-alive
-            response = requests.post(
-                api_url,
-                headers=headers,
-                json=payload,
-                stream=True,
-                timeout=timeout_seconds,
-                verify=requests_verify(),
-            )
+            # The default session carries the app's response hooks (TASK-28229:
+            # rate-limit capture). Closing it after the POST is what
+            # requests.post does too; the open stream keeps its connection.
+            with create_default_session() as session:
+                response = session.post(
+                    api_url,
+                    headers=headers,
+                    json=payload,
+                    stream=True,
+                    timeout=timeout_seconds,
+                    verify=requests_verify(),
+                )
             response.raise_for_status()
 
             # Log streaming success metrics

@@ -1507,6 +1507,57 @@ instead of landing exactly at the local cap.
 
 ---
 
+## Environment redirection alone does not keep tests out of the real profile (TASK-33665, 2026-10-02)
+
+**Incident.** At 15:56 PDT a pytest run wrote to the owner's real profile.
+It rewrote `~/.config/tldw_cli/ui_state.toml` to an empty sidebar state and
+opened `default_user/tldw_chatbook_library_collections.db`, which deleted that
+database's `-wal`/`-shm` files on a clean close. The run came from an agent's
+scratch tree, corrupted into a mix of two commits after another agent reused
+the same generic `$SP/base` directory. The suite's only protection was
+environment redirection (HOME, TLDW_CONFIG_PATH), and each of these let the
+real profile through:
+- `pytest_sessionfinish` restored the real environment while late threads
+  still ran. The incident's writer, `ChatScreen._write_sidebar_state_snapshot`,
+  publishes through `os.open(name, dir_fd=…)` and dir-fd renames. Those audit
+  events carry only the leaf name, so the first version of the guard let the
+  writer through even when it was pointed at the real profile.
+- `config.DEFAULT_CONFIG_PATH` is frozen from HOME at first import, and
+  `Tests/UI/conftest.py` did not move HOME.
+- `_build_test_app` left `get_library_collections_db_path` and
+  `get_tts_profiles_db_path` unpatched.
+- XDG_* variables do nothing for app paths.
+
+**What to do.**
+- Session end no longer restores HOME, USERPROFILE, XDG_* or
+  TLDW_CONFIG_PATH. Late threads and atexit writers land in the dead sandbox.
+  This is the main defence; do not bring the restore back.
+- `Tests/real_profile_guard.py` is the backstop. Both conftests install a
+  `sys.addaudithook` guard first. It refuses write-mode opens, SQLite
+  connects, deletes, renames, links, mkdirs, rmtrees and metadata writes
+  (chmod, utime, chown, chflags, xattrs) under the real user's tldw
+  directories. It checks abspath and realpath, folds case on macOS, resolves
+  renames and deletes made relative to a dir fd, and refuses
+  `shutil.rmtree` or a rename of any directory that holds the profile.
+- The real home comes from `TLDW_TEST_REAL_HOME`, which the first process
+  exports, then from `pwd`; never from the sandboxed HOME. Each refusal is
+  recorded with its thread and stack. An autouse fixture fails the test even
+  when the writer swallowed the exception. Session end fails the run, and
+  under xdist the worker hands its refusals to the controller through
+  `workeroutput`. A refusal after that is printed to stderr at exit.
+- Known limits. An `open` relative to a dir fd carries only the leaf name, so
+  the guard misses it. Not restoring the environment is what covers that case.
+  Subprocesses that are not pytest are not guarded, and many tests spawn
+  Python. Writes made in C, and SQLite `ATTACH` or `VACUUM INTO` targets, never
+  reach an audit hook.
+- Never add an off switch. A test that needs a "real profile" must point the
+  guard's `_roots` at a temporary stand-in, as `Tests/test_real_profile_guard.py`
+  does.
+- On APFS a directory's link count counts every entry, not just
+  subdirectories: "72 → 68" meant 4 entries, not 4 deleted folders.
+
+---
+
 ## A boot census run from a worktree can measure the main checkout instead (TASK-33661, 2026-10-02)
 
 **Incident.** PR #2956 (Resend) added `Chat/console_turn_resend.py` and

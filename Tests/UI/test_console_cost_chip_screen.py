@@ -1434,3 +1434,46 @@ async def test_next_send_estimate_gates_staged_evidence_on_session():
 
         assert with_staging is not None and without_staging is not None
         assert with_staging > without_staging
+
+
+# --- TASK-28229: the provider's remaining rate limit, last info line --------
+
+
+@pytest.mark.asyncio
+async def test_cost_tooltip_ends_its_info_with_the_providers_rate_limit():
+    """The line sits after the next-send estimate, above the Inspector hint,
+    and only once the session's provider has reported one."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.Utils import egress
+
+    egress._LATEST_RATE_LIMITS.clear()
+    gateway = _AnthropicCostGateway(PRICED_USAGE, reply="the priced answer")
+    app = _build_test_app()
+    attach_chachanotes_db(app)
+    _configure_anthropic_ready_console(app)
+    app.console_provider_gateway_factory = lambda: gateway
+    host = ConsoleHarness(app)
+    try:
+        async with host.run_test(size=(200, 48)) as pilot:
+            console = host.screen_stack[-1]
+            await _send_and_settle(console, pilot, "hello", "the priced answer")
+            assert "Rate limit" not in console._build_console_cost_state().tooltip
+
+            # What the gateway's capture scope does on a real Anthropic reply.
+            with egress.capture_rate_limits_for("anthropic"):
+                egress._record_rate_limit_headers(
+                    SimpleNamespace(
+                        headers={
+                            "anthropic-ratelimit-requests-limit": "50",
+                            "anthropic-ratelimit-requests-remaining": "49",
+                        }
+                    )
+                )
+            lines = console._build_console_cost_state().tooltip.splitlines()
+            assert lines[-1].startswith("Open Conversation Inspector")
+            assert lines[-2].startswith("Rate limit at ")
+            assert lines[-2].endswith(": 49/50 requests left")
+            assert any(line.startswith("On next send") for line in lines[:-2])
+    finally:
+        egress._LATEST_RATE_LIMITS.clear()

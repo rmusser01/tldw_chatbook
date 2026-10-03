@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay   More ▾
+────────────────────────────────────────────────────────────
+ Library | Local
+  N    S  Select a skill to inspect it here.
+  a    k
+  v    i
+       l
+       l
+       s
+--->
+
+
+     --->
+
+
+--->
+
+
+
+
+
+
+  esc back to Library | F1 · F6 · Ctrl+P · Ctrl+Q

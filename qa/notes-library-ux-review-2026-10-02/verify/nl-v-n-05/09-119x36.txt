@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP   More ▾
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+  N   Library notes · Ready                                         N   Saved · Next: Keep editing; changes save
+  a                                                                 o   automatically.
+  v   Notes (122)                                                   t    ‹ Back to list    Advisor … Library notes
+      Filter  Filter notes… (Enter)                                 e   In the Library database only — no file on disk
+        New     Sort: Newest     Select                             s   Saved
+        Add from files…     Export                                         Edit     Preview     Info
+     Folders & placement                                                 ┃ Save ┃   Use in Console
+        New folder     Add to folder     Move note                      Title     Advisor meeting 2026-09-24
+        Remove placement                                                Keywords  meeting, thesis
+                                                                        Body
+--->  ▸ Agent_Lessons                                                  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎
+      ▸ Journal                                                        ▊ # Advisor meeting — 2026-09-24               ▎
+      ▾ Meetings                                                       ▊                                              ▎
+        Meeting notes 2026-09-30 · 2d                                  ▊ Attendees: me, Dr. Okafor                    ▎
+        Meeting: design critique — Library rail · 3d              <--- ▊                                              ▎
+        Advisor meeting 2026-09-24 · 1w                                ▊ ## Notes                                     ▎
+        ملاحظات الاجتماع — مراجعة المشروع · 2w                         ▊ - Chapter 2 is too broad; cut the history    ▎
+        Advisor meeting 2026-09-10 · 3w                                ▊ section.                                     ▎
+      ▸ Projects                                                       ▊ - Use the reranker results as the main       ▎
+--->  ▸ Recipes                                                        ▊ table.                                       ▎
+      ▸ Research                                                       ▊                                              ▎
+      ▸ Study                                                   ▄▄     ▊ ## Action items                              ▎
+      ▾ Unfiled                                                        ▊ - [ ] Trim lit review to 8k words            ▎
+        Ideas inbox · 2h                                               ▊ - [x] Send sweep results                     ▎
+        Reading list · 3h                                              ▊ - [ ] Draft method chapter by Oct 15         ▎
+        Index — start here · 1d                                        ▊                                              ▎
+        Meeting Notes 2026-09-30 · 2d                                  ▊ Previous: [[Advisor meeting               ▆▆ ▎
+        Gardening log · 4d                                             ▊ 2026-09-10]](note://a1fa6f7e-366e-41ee-b2c   ▎
+        📚 Reading queue 2026 ✨ · 1w                                  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎
+        A very long note title that keeps going so we can test…                                         60 words · 2:1
+  esc notes | enter save note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

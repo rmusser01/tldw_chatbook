@@ -1,0 +1,33 @@
+# Progress-tracker titled-vs-compact decision and step-body row budget (static derivation)
+
+## Inputs (code)
+- SetupWizardProgress._titled_track_width  FirstRunSetupWizard.py:336-349
+    item = max(_NUMBER_WIDTH=4, len(title)) + _ITEM_HORIZONTAL_MARGIN(2) + _ITEM_SAFETY_WIDTH(1); connectors = 4 * (n-1)
+- compact when self.size.width < titled width   FirstRunSetupWizard.py:351-357 (titles AND connectors hidden)
+- STEP_TITLES  first_run_setup_state.py:942-954
+- Container cap: BaseWizard.py:62-69  WizardScreen > WizardContainer { width: 90%; height: 90%; max-width: 120; border: solid; padding: 2 }
+  (no FirstRunSetupWizard override of width/max-width in css/features/_wizards.tcss; grep for max-width there finds only unrelated 560/853)
+- Progress row padding: _wizards.tcss:1315-1320 (padding 0 1)
+
+## Computed (python, titles verbatim)
+- Quick track (Welcome, Provider, Model, Voice, Protect, Summary): titled width = 77
+- Full track (11 steps):                                            titled width = 137
+- Max progress width available: 120 (cap) - 2 (border) - 4 (padding 2 each side) - 2 (progress padding) ~= 112 cells
+
+=> Full track can NEVER render titles (137 > ~112 at any terminal size); it always shows 11 anonymous
+   number boxes with no connectors. The code comment at 339-341 ("keeps its titles at 140 columns")
+   assumes a width the container cap never grants. Quick track shows titles from ~80+ cols.
+   (INFERRED from CSS/code; confirm with a live capture at >=140 cols on the Full track.)
+
+## Step body row budget at 80x24 (stock macOS Terminal; size hint fires below 100x30, FirstRunSetupWizard.py:10695-10712)
+- screen 24 rows; docked hint rows: #setup-key-hints (1) + #setup-size-hint (1, visible <30 rows)
+- container 90% height ~= 21 rows; minus border 2, padding 4 => ~15 inner rows
+- minus wizard title (3, _wizards.tcss:1393-1397), progress (box 3 + title 1 = 4, max 5), nav (4, _wizards.tcss:1405-1410)
+=> ~4 rows for the step body (pinned error strip / provider save status take more when shown)
+   (INFERRED; the wizard says "Everything still works; steps may scroll.")
+
+## Choice lists
+- .setup-choice-list { min-height: 5; max-height: 7 } incl. border  (_wizards.tcss:1148-1152) => ~5 visible rows
+- Applies to the Provider list (64 rows incl. 4 headings, see 01-provider-catalog-groups.txt), Model list
+  (<=20 rows, _PICKER_MODEL_LIMIT FirstRunSetupWizard.py:3313), RAG list (14 template models), Speech language (25),
+  Theme shortlist / all themes, Splash cards.

@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌────────────────────────────────────────────────────────────────┐  I  A field guide to Markdown tables               │
+│ │ Navigation                     │  a  │ Media (24)      Sets                                           │  t  Docs team                                      │
+│ │     Import…                    │  v  │ Media · 24 of 24 · all types · sort: Newest                    │  e    Find  Read later  Use in Console  More       │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ Clear filter   │  m    Read (selected)  Analysis  Highlights  Info  │
+│ │ ▊ Search Library…         ▎▊x▎ │     │  ▊  Title/keyword…                            ▎                │  s  ┌────────────────────────────────────────────┐ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                │     │ Several open problems remain, especially   │ │
+│ │                                │     │    type: All types    sort: Newest                             │     │ around evaluation. Practical guidance      │ │
+│ │ ────────────────────────────── │     │                                                                │     │ often lags behind the evidence.            │ │
+│ │ Browse                     ▾   │     │    Export…   ┃ Trash ┃   Select                                │     │ Researchers disagree about the main        │ │
+│ │  ▸ Media (24) — your files     │     │    Review these                                                │     │ drivers. Markdown tables has changed       │ │
+│ │    Conversations (12)          │     │    Old draft — delete candidate                                │     │ significantly over the past decade.        │ │
+│ │    Notes (122)                 │     │      document · updated just now                               │     │ Readers should treat early results with    │ │
+│ │    Prompts (10) — reuse        │     │  ▸ A field guide to Markdown tables                            │     │ caution.                                   │ │
+│ │    Skills (4) — AI add-ons     │<--- │      article · updated 2d · loaded                             │     │                                            │ │
+│ │    Collections (6)             │     │    Voice memo 2026-09-29                                       │     │ Several open problems remain, especially   │ │
+│ │    Search / RAG — find all     │     │      audio · updated 3d                                        │     │ around evaluation. Researchers disagree    │ │
+│ │ ────────────────────────────── │     │    学習メモ — 日本語の文法                                     │     │ about the main drivers. Practical          │ │
+│ │ Artifacts                  ▾   │     │      document · updated 4d                                     │     │ guidance often lags behind the evidence.   │ │
+│ │    All artifacts               │     │    Server logs excerpt 2026-09-27                              │<--- │ Markdown tables has changed                │ │
+│ │    Chatbooks                   │     │      plaintext · updated 5d                                    │     │ significantly over the past decade. This   │ │
+│ │    Reports                     │     │    Spaced repetition, explained                                │     │ section summarises the most cited          │ │
+│ │ ────────────────────────────── │     │      article · updated 5d                                      │     │ findings.                                  │ │
+│ │ Create                     ▾   │     │    Podcast: Deep Work revisited (ep. 112) — transcript         │     │                                            │ │
+│ │    New note                    │     │      audio · updated 1w                                        │     │ Practical guidance often lags behind the   │ │
+│ │    New prompt                  │<--- │    Grocery receipt (OCR text)                                ▄ │     │ evidence. Researchers disagree about the   │ │
+│ │    New skill                   │     │      plaintext · updated 1w                                    │     │ main drivers. Markdown tables has          │ │
+│ │ ────────────────────────────── │     │    Research notes — interview synthesis (export)               │     │ changed significantly over the past        │ │
+│ │ Study                      ▾   │     │      document · updated 1w                                     │     │ decade. Several open problems remain,      │ │
+│ │    Study decks (0)             │     │    How SQLite FTS5 ranks results                               │     │ especially around evaluation. Readers      │ │
+│ │    Flashcards due: 0           │     │      article · updated 1w                                      │     │ should treat early results with caution.   │ │
+│ │    Quizzes (0)                 │     │    Lecture 4 — Transformers (transcript)                       │     │                                            │ │
+│ │ ────────────────────────────── │     │      video · updated 2w                                        │     │ Researchers disagree about the main        │ │
+│ │ Import / Export            ▾   │     │    The Dispossessed — sample chapter                           │     │ drivers. Practical guidance often lags     │ │
+│ │    Import…                     │     │      ebook · updated 2w                                        │     │ behind the evidence. Several open          │ │
+│ │    Export                      │     │                    1-20 of 24 · Page 1 of 2                    │     │ problems remain, especially around         │ │
+│ │ ────────────────────────────── │     │                   Already on the first page.                   │     │ evaluation. Readers should treat early     │ │
+│ │ Details                    ▸   │     │                      ○ Previous     Next                       │     └────────────────────────────────────────────┘ │
+│ └────────────────────────────────┘     └────────────────────────────────────────────────────────────────┘                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | s select | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

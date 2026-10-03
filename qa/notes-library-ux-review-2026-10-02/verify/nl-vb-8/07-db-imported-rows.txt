@@ -1,0 +1,27 @@
+(30, 'team-handbook', 'python-docx', 'document', 248)
+(29, 'podcast-transcript-ep12', 'Unknown', 'plaintext', 5358)
+(28, 'paper-retrieval-practice', 'Unknown', 'pdf', 666)
+(27, 'article-local-first', 'Unknown', 'plaintext', 1096)
+(26, 'web-page-spaced-repetition', 'Unknown', 'html', 308)
+----HTML content (media id 26)----
+Spaced repetition, explained
+Spaced repetition, explained
+By N. Ahmed
+Spaced repetition schedules reviews just before you would forget.
+Why it works
+Each successful retrieval strengthens the memory trace.
+Short sessions
+Daily habit
+Honest grading
+Interval
+Days
+1
+1
+2
+3
+Site navigation that should be stripped
+----MD first lines----
+# The case for local-first software
+
+*By A. Author, 2026*
+----HTML chunks---- 0

@@ -1,0 +1,30 @@
+--- on launch: active screen = BackupRestoreScreen
+    Backup & Restore
+    [Button] Create backup
+    [Button] Inspect / restore
+    [Button] Recovery copies
+    [Button] Restored profiles
+    No operation started
+    Create a verified local backup, or inspect an archive before choosing where to restore it.
+    Profile configurations
+    All known local profiles, plus selected configurations:
+    [Button] Add profile configuration
+    Data to back up
+    Everything
+    ▼
+    ▐X▌ Settings
+    ▐X▌ Conversations, notes, and personas
+    ▐X▌ Media library
+    ▐X▌ Prompts and grammars
+    ▐X▌ Workspaces and agents
+    ▐X▌ Research and subscriptions
+    ▐X▌ Writing
+    ▐X▌ Evaluations
+    ▐X▌ Schedules, notifications, and sync
+    ▐X▌ Tools and skills
+    ▐X▌ Search and retrieval
+    ▐X▌ Audio and voices
+--- after Escape: active screen = Screen
+    Recovery required: configuration_unlock_failed
+    [Button] Open Backup & Restore
+    [Button] Exit

@@ -1,0 +1,50 @@
+                                        ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+                                        │                                                 Set up tldw chatbook                                                 │
+                                        │                                                                                                                      │
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+    ┌─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  🔎│Search for commands…                                                                                                                                                                             │
+    └─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  Media & Content: Open Media Library
+  Navigate to media library
+  Media & Content: Import New Media
+  Import new media file
+  Media & Content: Search Transcripts
+  Search through media transcripts
+  Theme: Change Theme
+  Open theme selection menu
+  Settings & Preferences: Backup & Restore
+  Create backups, inspect archives, and review recovery copies
+  Settings & Preferences: Open Settings Tab
+  Navigate to the Settings tab
+  Settings & Preferences: Open Config File
+  Open the configuration file for editing
+  Settings & Preferences: Show Database Stats
+  Show database size and statistics
+  Design System: Pattern Gallery                                                                                                                                                                      ▇▇
+  Browse every canonical component pattern live
+  Library: Chunking Lab
+  Compare local chunking recipes and save reusable templates
+  Library: Import…
+  Open Library and import content
+  Character/Persona Management: Open Character Tab
+  Navigate to Character Chat tab
+  Character/Persona Management: Create New Character
+  Create a new character or persona
+  Character/Persona Management: Show All Characters
+  Display all available characters
+  Developer/Debug Commands: Open Log File
+  Navigate to application logs
+  Developer/Debug Commands: Show App Info
+  Display application version and build info
+  Developer/Debug Commands: Show Keybindings
+▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁
+                                        │                                                                                                                      │
+                                        │                                                                                                                      │
+                                        │▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀▀│
+                                        │                                                                                                                      │
+                                        │    Step 1 of 6                                                            ← Back          Next →       Skip setup    │
+                                        │                                                                                                                      │
+                                        └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+                                                                           Enter / Ctrl+N next · Ctrl+B back · Esc skip setup
