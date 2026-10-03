@@ -2413,9 +2413,12 @@ def test_unknown_openai_model_uses_shared_unverified_api_fallback() -> None:
         model="unlisted-model",
     )
 
-    assert estimate.token_limit == 4096
+    # TASK-33940.5: no OpenAI-specific 4,096 row any more -- that left a fresh
+    # profile no input room at the shipped 4,096-token reservation. Unlisted
+    # OpenAI models take ADR-052's 32,000-token application fallback.
+    assert estimate.token_limit == 32000
     assert estimate.token_limit_verified is False
-    assert estimate.token_limit_source == "provider fallback"
+    assert estimate.token_limit_source == "application fallback"
     assert "estimated; model unverified" in estimate.label
 
 
