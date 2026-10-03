@@ -1,5 +1,27 @@
 # Lessons: what counts as evidence a change works
 
+## Grepping CI logs for "execnet" counts 4,230 noise lines — grep the signatures, not the transport
+
+**TASK-14876 audit, 2026-09-30.** Checking whether the 2026-08-09 xdist
+INTERNALERROR recurred, `gh run view --log-failed | grep -icE
+"dumperror|execnet|internalerror|realtime"` returned **4230** on the
+2026-09-08 core run — which reads as a massive recurrence. Splitting the
+patterns apart showed `DumpError` 0, `can't serialize` 0, `INTERNALERROR`
+0, and `execnet` 4230: every hit was either pip's "Installing collected
+packages: … execnet …" line (one giant line, matched once per shard) or
+full-process asyncio tracebacks that include the worker's own bootstrap
+frames (execnet/remote.py) when pytest-asyncio prints an unretrieved task
+exception. The transport library's name is structurally over-represented
+in CI logs; the crash's specific signatures are not. The incident's
+original job log also gave the package set (websockets 16.1.1 /
+execnet 2.1.2 / pytest-xdist 3.8.0 / pytest-json-report 1.5.0), which let
+the repro run on the exact incident environment. And the fastest way to
+enumerate an old incident's failures turned out to be its own uploaded
+json-report artifact (still downloadable 7 weeks later via the check-run's
+details_url → run → artifact id), which named the 22 failures exactly —
+none of them the test the INTERNALERROR was attributed to.
+
+---
 ## A prompt that tells the model where things are must be tested by doing what it says
 
 **TASK-33940.1, 2026-10-02.** The workspace system-prompt note listed bound folders "relative
