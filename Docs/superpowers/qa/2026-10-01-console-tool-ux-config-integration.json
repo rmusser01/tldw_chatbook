@@ -2153,5 +2153,50 @@
     "new_ruff_diagnostics": 0,
     "changed_python_files": 34,
     "limits": "Original native27/29 and46/65/230-case receipts keep prior head/byte identities. No current native replay is claimed for the inherited worker optimization. Current runtime/maintenance owners are qualified by real SQLite worker/write regressions, lifetime contracts and mounted performance tests. No new production patch, budget, snapshot, CI setting, authority or full-suite sweep; fresh published-head gates/Qodo still required."
+  },
+  "fixture_doc_review_followup": {
+    "proof": {
+      "prior_head": "2f995ad8309ba8319ea471e09a9002e1cf55f467",
+      "file": "Tests/UI/test_console_button_routing.py",
+      "tests": [
+        "test_close_tab_button_confirms_before_dropping_a_session_with_messages",
+        "test_close_empty_session_with_queue_warns_without_exposing_prompt_text",
+        "test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history"
+      ],
+      "entire_module_ast_otherwise_identical": true,
+      "compile_pass": true,
+      "remaining_missing_request_docs": []
+    },
+    "command": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "pytest",
+      "-p",
+      "pytest_asyncio.plugin",
+      "-p",
+      "pytest_timeout",
+      "-p",
+      "no:cacheprovider",
+      "--collect-only",
+      "-q",
+      "Tests/UI/test_console_button_routing.py::test_close_tab_button_confirms_before_dropping_a_session_with_messages",
+      "Tests/UI/test_console_button_routing.py::test_close_empty_session_with_queue_warns_without_exposing_prompt_text",
+      "Tests/UI/test_console_button_routing.py::test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history"
+    ],
+    "exit_code": 0,
+    "requested_nodes": 3,
+    "all_requested_nodes_collected": true,
+    "log": "/tmp/console-tool-ux-fixture-doc-collection-d3wdo1hc/collect.log",
+    "source_sha256": "fbe5231ec8d10c67a15ef722b87cdfd0319c9ffdbb5acfcabb947caee9c320c8",
+    "limits": "Collection and compile/AST checks only; no fresh functional, native or147-case replay claim for docstrings.",
+    "base": "e6ab66b0a9f950a56de80fb6b1bfa7dfbee3df7d",
+    "prior_head": "2f995ad8309ba8319ea471e09a9002e1cf55f467",
+    "all232_prior_pins_unchanged": true,
+    "current_source_pin_count": 233,
+    "original_test_file_sha256": "13f38f314052b38b9b1da2d596e60d87f30a4aeac30a9ddb7e6efd45fc32efb2",
+    "lint": "/tmp/console-tool-ux-fixture-doc-final-lint.json",
+    "new_ruff_diagnostics": 0,
+    "preflight": "/tmp/console-tool-ux-fixture-doc-preflight.txt",
+    "preflight_pass": true
   }
 }

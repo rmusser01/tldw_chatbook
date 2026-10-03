@@ -681,3 +681,21 @@ trace owners. Their two upstream regression files are additionally pinned,
 for232 current source pins. Code anchor:2942fc3a8a315c12289f9dd153fe2f5a249afe45.
 Original native27/29 and46/65/230-case receipts keep prior head/byte identities. No current native replay is claimed for the inherited worker optimization. Current runtime/maintenance owners are qualified by real SQLite worker/write regressions, lifetime contracts and mounted performance tests. No new production patch, budget, snapshot, CI setting, authority or full-suite sweep; fresh published-head gates/Qodo still required.
 QA trace_work_base_final_followup records receipts and explicit scope.
+
+
+Qodo fixture-documentation correction (c3c3fc77, 2026-10-03 UTC)
+
+Three existing Close button tests now have Google-style summaries and Args
+entries for every fixture, including request and the saved-history tmp_path.
+The entire executable module AST, decorators and signatures are identical
+after removing only those three new strings. Compile and private collection
+of all three requested nodes pass; an audit finds no remaining missing request
+docs among modified private-profile tests. Zero-new Ruff34, doc-range format,
+diff check and fresh full artifact preflight pass.
+
+All232 trace-work qualification pins remain byte-identical; the documented
+test file is additionally pinned (233 current). The147-case proof and original
+native/46/65/230 receipts keep their identities. Collection is not claimed as
+functional replay, and no runtime/native/performance rerun was made solely
+for docstrings. QA fixture_doc_review_followup records exact scope and hashes.
+Fresh final-published-head CI/Qodo still precede protected normal merge.

@@ -586,6 +586,11 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
 @pytest.mark.asyncio
 @private_profile_test
 async def test_close_tab_button_confirms_before_dropping_a_session_with_messages(request):
+    """Confirm Close before removing a session with unsaved messages.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -621,6 +626,11 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 @pytest.mark.asyncio
 @private_profile_test
 async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text(request):
+    """Warn about queued work without exposing its prompt, then preserve it on Stay.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+    """
     app = _build_test_app()
     host = ConsoleHarness(app)
 
@@ -846,6 +856,12 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
 @pytest.mark.asyncio
 @private_profile_test
 async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(request, tmp_path):
+    """Warn about the draft and preserve saved history after Close.
+
+    Args:
+        request: Supplies the node identity for private-profile execution.
+        tmp_path: Holds the isolated saved-conversation database.
+    """
     from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
     from tldw_chatbook.Chat.console_chat_models import ConsoleChatMessage
     from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB

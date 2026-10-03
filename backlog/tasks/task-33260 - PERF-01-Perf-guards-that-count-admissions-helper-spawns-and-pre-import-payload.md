@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-03 00:03'
+updated_date: '2026-10-03 00:19'
 labels:
   - performance
   - ci
@@ -71,6 +71,14 @@ Reason: Qualify the inherited known-work idle-check optimization unchanged; no n
 1. Read the upstream task/runtime/maintenance and real-write regressions; prove all27 PR patches unchanged and the two changed worker owners retain exactly the upstream method/class semantics.
 2. Run affected full trace migration/parking, runtime shutdown and chat-create integration contracts, followed serially by all three exact Perf Guard groups in private profiles. Preserve timers, real seams, canaries, caps and all original receipts.
 3. Record current source hashes and fresh lint/preflight. Existing native receipts retain original runtime bytes and are historical; no new native UI claim for this upstream worker optimization. Safe-push the qualified combined head and require fresh final-head Qodo and all four gates before normal merge.
+
+Qodo fixture-doc follow-up (c3c3fc77-c6f0-479b-ad04-5b17f2972d6c):
+ADR required: no
+ADR path: N/A
+Reason: Document existing fixture requirements only; no behavior, boundary, ownership or budget change.
+1. Read the three Close button tests and existing private-profile wrapper; add Google-style summaries and Args for every fixture parameter.
+2. Prove the entire test-module executable AST, decorators and signatures are unchanged after removing only the three new docstrings. Compile, collect the three existing nodes in a private profile and run zero-new lint, formatting/diff and artifact checks. Do not rerun unchanged native or147-case logic merely for docstrings.
+3. Record current byte/semantic identities, safe-push, reply/resolve the finding and require fresh final-head Qodo/all four gates before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -111,6 +119,8 @@ Remaining UI timeout grouping locally qualified: nine unchanged scenario bodies/
 Final qualification on dev ecc0a531 at code anchor 17235d9d: all 25 patches rebase unchanged and all eight upstream files match dev. Fresh 65 scoped cases pass with zero failures/errors/skips, including all mounted Close/projection/compact-approval groups, upstream memo/readiness contracts and all three exact Perf Guard groups. Native approval27 (nine journeys) and Close29 (six real closes plus geometry) pass; independently verified source pins/origins, normal process/socket cleanup, no egress and real-profile invariance. A post-completion shell capacity error is preserved separately; space recovered without pruning or rerunning. Preflight, zero-new Ruff across 34 files, range format and independent review pass; ceilings, snapshots, counters, canaries, ticks and deadlines remain unchanged. Original receipts retain their identities and explicit limits. Existing ADR-094/097/126 apply; no new ADR. QA path_memo_base_final_followup records evidence. PR2953 still requires fresh final-head CI/Qodo and normal protected merge. No full suite.
 
 Latest dev e6ab66b0 (PR2959/TASK33801 known-work idle-check optimization) integrates cleanly: all27 PR patches unchanged, changed worker/class AST exactly upstream and remaining modules/controller unchanged.147 fresh scoped cases pass with zero failures/errors/skips:110 real trace/write/lifetime/chat-create contracts plus all37 exact Perf Guard cases. Of230 prior pins,228 unchanged; two upstream trace-owner changes and two additional upstream regression-file pins identified (232 current). Zero-new Ruff34 and fresh preflight pass; original counters, ticks, canaries, caps, snapshots and CI settings remain. No new production patch or full suite. Prior native27/29 and46/65/230 receipts keep original identities; current worker owners have real SQLite and mounted performance evidence, with no new native replay claim. Existing ADR-097/126 apply. QA trace_work_base_final_followup records qualification/limits. Final published-head CI/Qodo/normal merge remains PR2953.
+
+Qodo c3c3fc77 documentation correction adds Google-style summaries/Args to three existing Close button tests, documenting request and saved-history tmp_path. Whole executable module AST, decorators and signatures remain identical after removing only the new docstrings; compile and private collection of all3 nodes pass. Audit finds no other modified private-profile tests missing request docs. Zero-new Ruff34, doc-range format/diff check and fresh preflight pass. All232 prior trace-work source pins unchanged, with the documented test file additionally pinned (233). Original147-case/native/46/65/230 receipts keep identities; collection is not functional replay and no logic/native rerun is claimed for strings. No ADR required (documentation only). QA fixture_doc_review_followup records hashes/limits; final published-head CI/Qodo/normal merge remains PR2953.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
