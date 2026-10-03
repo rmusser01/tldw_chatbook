@@ -14,9 +14,12 @@ from collections.abc import Mapping
 from datetime import datetime, timezone
 from numbers import Real
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Union
 
 from loguru import logger
+
+if TYPE_CHECKING:
+    from ..Utils.egress import UrlProvenance
 
 # Per-format processing libraries (process_pdf/process_document/process_ebook/
 # LocalAudioProcessor/LocalVideoProcessor) are intentionally NOT imported at
@@ -966,8 +969,9 @@ def parse_local_file_for_ingest(
         url_provenance: (TASK-20973) How this process came to hold the
             source when it is a URL. Only
             ``Utils.egress.UrlProvenance.USER_ENTERED`` lets a private
-            host through the video arm's egress check; ``None`` (the
-            default) means UNKNOWN and fails closed. This function is a
+            host through the egress check of any URL arm (video, audio,
+            article); ``None`` (the default) means UNKNOWN and fails
+            closed. This function is a
             shared pipeline, not a trust boundary -- it never mints trust
             itself. The Library ingest queue is the caller that knows the
             answer, and the spawn-pool worker transports it here through
@@ -1421,6 +1425,9 @@ def parse_local_file_for_ingest(
                 ),
                 custom_title=title,
                 author=author,
+                # (TASK-20973) Same rule as the video arm: only a URL the
+                # user entered may vouch for its own private origin.
+                url_provenance=url_provenance,
                 **(
                     {"transcription_progress_callback": transcription_progress}
                     if progress_callback is not None
@@ -1670,7 +1677,9 @@ def parse_local_file_for_ingest(
             )
             from .web_article_ingestion import extract_article_for_ingest
 
-            result = extract_article_for_ingest(raw_source, options)
+            result = extract_article_for_ingest(
+                raw_source, options, url_provenance=url_provenance
+            )
             source_url = result.get("url", source_url)  # canonical post-redirect URL
 
         # Check if processing was successful. NOTE: some processors (e.g.

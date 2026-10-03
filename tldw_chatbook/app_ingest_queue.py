@@ -2284,7 +2284,7 @@ class LibraryIngestQueueMixin:
             "keywords": list(job.keywords) or None,
             "perform_analysis": perform_analysis,
             # (TASK-20973) Mint the URL-provenance fact HERE, where the
-            # submission's lineage is known, so the video arm's egress
+            # submission's lineage is known, so each URL arm's egress
             # check trusts a private host only for a URL the user actually
             # entered. A general Library-import submission IS user entry
             # (the source string came from the import form); a

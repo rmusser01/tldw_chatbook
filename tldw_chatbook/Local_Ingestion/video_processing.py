@@ -59,7 +59,7 @@ def check_media_url_egress(
     The media arm of ingest never consulted ``Utils/egress.py`` (TASK-19556
     (b)), while the article arm of the same entry point did, and
     ``audio_processing.download_audio_file`` guards its own plain-HTTP branch
-    with ``guarded_fetch_requests(..., trusted_origins=origin_set(url))``.
+    with ``guarded_fetch_requests`` (seeded from the same provenance).
     This is that same check, applied at the two yt-dlp seams, so both arms
     behave identically.
 
