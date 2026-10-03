@@ -59,22 +59,22 @@ class _ChipApp(ConsolidatedCSSApp):
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto off · Agent blocked",
+            "Library · Auto off · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.NEVER,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto off · Agent allowed",
+            "Library · Auto off · Agent access on",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.BLOCKED,
-            "Library · Auto on · Agent blocked",
+            "Library · Auto on · Agent access off",
         ),
         (
             ConsoleAutoRetrieve.AUTOMATIC,
             ConsoleAssistantLibraryAccess.ALLOWED,
-            "Library · Auto on · Agent allowed",
+            "Library · Auto on · Agent access on",
         ),
     ),
 )
@@ -134,7 +134,7 @@ async def test_manual_search_is_available_with_safe_defaults_and_preserves_draft
         console = host.screen_stack[-1]
         await _wait_for_selector(console, pilot, "#console-command-input")
         assert ConsoleControlState.from_values().rag_label == (
-            "Library · Auto off · Agent blocked"
+            "Library · Auto off · Agent access off"
         )
         console.query_one(ConsoleComposerBar).load_draft(draft)
 

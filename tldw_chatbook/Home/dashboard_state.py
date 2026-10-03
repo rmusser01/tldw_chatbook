@@ -1229,7 +1229,8 @@ def _item_row(item: HomeActiveWorkItem, section_id: str, now: datetime) -> HomeR
 
 
 def _header_line(state: HomeDashboardInput) -> str:
-    readiness = "Ready" if state.model_ready else "Blocked"
+    # TASK-34100.5 AC#9: a skipped setup is not set up, not "Blocked".
+    readiness = "Ready" if state.model_ready else "Not set up"
     source = str(state.runtime_source or RUNTIME_SOURCE_LOCAL).strip().lower()
     if source == RUNTIME_SOURCE_SERVER:
         label = str(state.server_label or "").strip()
