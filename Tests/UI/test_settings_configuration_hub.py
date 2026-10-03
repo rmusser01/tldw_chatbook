@@ -11537,7 +11537,14 @@ async def test_settings_first_slice_categories_have_real_content(
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip():
+@private_profile_test
+async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_wip(
+    request,
+):
+    # TASK-34100.4 review round 1 (F3): a private profile, because
+    # `_build_test_app` reloads app config and trips ADR-126's
+    # raw_source_selection_changed under the per-test redirect -- without it
+    # this test never reached the Encryption card assertion.
     app = _build_test_app()
     host = DestinationHarness(app, "settings")
 
@@ -11609,7 +11616,10 @@ def _strip_sensitive_config_sections(app_config: dict) -> None:
 
 
 @pytest.mark.asyncio
-async def test_settings_privacy_security_renders_guided_redacted_posture(monkeypatch):
+@private_profile_test
+async def test_settings_privacy_security_renders_guided_redacted_posture(
+    request, monkeypatch
+):
     app = _build_test_app()
     # task-15270: the posture counts sensitive leaves across the WHOLE config
     # (`_sensitive_config_field_count` walks every leaf), so an absolute "2

@@ -33,6 +33,17 @@ class _Host(App):
         self.result = value
 
 
+class _NoAutoFocusHost(_Host):
+    """A host that focuses nothing by itself (review round 1, F7).
+
+    Under the default ``App.AUTO_FOCUS = '*'`` the first input gets focus
+    even without the dialog's own ``AUTO_FOCUS``; here only the dialog's
+    setting can put the caret in its first field.
+    """
+
+    AUTO_FOCUS = None
+
+
 FIRST_FIELD = {
     "setup": "#password-input",
     "unlock": "#password-input",
@@ -41,9 +52,10 @@ FIRST_FIELD = {
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("host", [_Host, _NoAutoFocusHost], ids=["app-default", "no-app-autofocus"])
 @pytest.mark.parametrize("mode", ["setup", "unlock", "change"])
-async def test_typing_without_tab_fills_the_first_password_field(mode) -> None:
-    app = _Host(mode)
+async def test_typing_without_tab_fills_the_first_password_field(mode, host) -> None:
+    app = host(mode)
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)
         dialog = app.screen
@@ -66,14 +78,21 @@ async def test_show_password_toggle_is_the_shared_glyph_checkbox() -> None:
         await pilot.pause(0.1)
         toggle = app.screen.query_one("#show-password-toggle")
         assert isinstance(toggle, StateCheckbox)
-        toggle._button
-        off = toggle.BUTTON_INNER
+        # What the widget actually paints, not the glyph seam it reads
+        # (review round 1, F6/F8): the box part precedes the label.
+        off = _painted_box(toggle)
         toggle.value = True
         await pilot.pause(0.05)
-        toggle._button
-        on = toggle.BUTTON_INNER
-        assert off != on
-        assert on == "✓"
+        on = _painted_box(toggle)
+        assert "✓" in on
+        assert "✓" not in off and "X" not in off
+        assert "X" not in on
+
+
+def _painted_box(toggle) -> str:
+    rendered = toggle.render()
+    text = getattr(rendered, "plain", None) or str(rendered)
+    return text.split("Show password", 1)[0]
 
 
 async def _fill_change(pilot, dialog, current: str, new: str, confirm: str) -> None:
