@@ -8548,8 +8548,10 @@ ConsoleSettingsModal Collapsible > Contents {
     background: $ds-surface-panel;
 }
 
+
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;

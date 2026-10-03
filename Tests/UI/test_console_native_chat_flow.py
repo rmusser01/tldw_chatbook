@@ -1380,6 +1380,20 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         }
 
 
+async def _click_configure_credential(pilot, modal: ConsoleSettingsModal) -> None:
+    """Click Configure credential where it paints, and require the hit.
+
+    TASK-33006.2: at 100x30 the Model view body is eight rows, and the
+    Sampling line naming the hidden fields wraps, so the button opens below
+    the fold. A click at its unscrolled position used to land on whatever
+    painted there (the Esc hint, then Cancel); scroll it into view first.
+    """
+    button = modal.query_one("#console-settings-configure-credential")
+    button.scroll_visible(animate=False, immediate=True)
+    await pilot.pause()
+    assert await pilot.click(button)
+
+
 @pytest.mark.asyncio
 async def test_conversation_settings_return_real_navigation_restores_fresh_console_modal(
     monkeypatch,
@@ -1429,7 +1443,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
         assert isinstance(app.screen, ConsoleSettingsModal)
         original_modal = app.screen
         original_modal.query_one("#console-settings-model-picker").focus_input()
-        await pilot.click("#console-settings-configure-credential")
+        await _click_configure_credential(pilot, original_modal)
 
         fresh_settings = None
         for _ in range(200):
@@ -2231,7 +2245,7 @@ async def test_dirty_return_confirmation_survives_real_router_navigation_away_an
                 break
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
-        await pilot.click("#console-settings-configure-credential")
+        await _click_configure_credential(pilot, app.screen)
 
         original_settings = None
         for _ in range(200):

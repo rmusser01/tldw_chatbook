@@ -173,6 +173,7 @@ from .console_settings_field_row import (
     SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS,
     SAMPLING_FOCUS_IDS,
+    SAMPLING_TITLE,
     ConsoleSettingsFieldRowsMixin,
     connection_blocked,
 )
@@ -851,15 +852,6 @@ _PROVIDER_CHOICE_VALUES: dict[str, tuple[str, ...]] = {
 PROVIDER_CHOICE_INPUTS = tuple(
     (label, input_id, ", ".join(_SNAPSHOT_SETTING_CHOICE_DOMAINS[control]))
     for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
-)
-PROVIDER_CHOICE_NO_EFFECT_SUFFIX = " (no effect on this provider)"
-GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
-_GENERATION_CONTROL_INPUTS: tuple[tuple[str, ConsoleGenerationControl], ...] = (
-    ("console-settings-reasoning-effort", "reasoning_effort"),
-    ("console-settings-reasoning-summary", "reasoning_summary"),
-    ("console-settings-verbosity", "verbosity"),
-    ("console-settings-thinking-effort", "thinking_effort"),
-    ("console-settings-thinking-budget-tokens", "thinking_budget_tokens"),
 )
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
     "Use: this conversation only. Defaults: future provider conversations."
@@ -1701,7 +1693,7 @@ class ConsoleSettingsModal(
                     for name in CORE_FIELDS:
                         yield self._field_row(name)
                 with Collapsible(
-                    title="Sampling",
+                    title=SAMPLING_TITLE,
                     collapsed=not self._advanced_generation_disclosed,
                     id=SAMPLING_DISCLOSURE_ID,
                     classes="console-settings-model-view",
@@ -4761,19 +4753,10 @@ class ConsoleSettingsModal(
             )
             if hint is not None:
                 return " / ".join(sorted(hint)) + " (consumed by this model)"
+        # An unsupported choice is hidden and named on the Sampling line
+        # (TASK-33006.2), so its tooltip only lists the accepted values.
         for _label, choice_input_id, placeholder in PROVIDER_CHOICE_INPUTS:
             if choice_input_id == input_id:
-                control = dict(_GENERATION_CONTROL_INPUTS).get(input_id)
-                if (
-                    control is not None
-                    and console_generation_control_support(
-                        self._active_provider,
-                        self._model_for_provider(self._active_provider),
-                        control,
-                    )
-                    == "unsupported"
-                ):
-                    return placeholder + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
                 return placeholder
         return ""
 
@@ -4836,37 +4819,6 @@ class ConsoleSettingsModal(
         self._cancel_generation_test()
         self._remember_generation_test_became_stale()
         self._sync_readiness_display()
-
-    def _sync_generation_control_support(self) -> None:
-        """Apply authoritative support without rewriting retained draft values."""
-        model = self._current_model_value()
-        focused = self.app.focused
-        hid_focused_control = False
-        for input_id, control in _GENERATION_CONTROL_INPUTS:
-            support = console_generation_control_support(
-                self._active_provider,
-                model,
-                control,
-            )
-            row = self.query_one(f"#{input_id}-row", Horizontal)
-            note = self.query_one(f"#{input_id}-support", Static)
-            if support == "unsupported":
-                current: Widget | None = focused
-                while current is not None:
-                    if current is row:
-                        hid_focused_control = True
-                        break
-                    parent = current.parent
-                    current = parent if isinstance(parent, Widget) else None
-                row.display = False
-                note.display = False
-                continue
-            row.display = True
-            note.display = support == "unknown"
-            if support == "unknown":
-                note.update(GENERATION_CONTROL_UNKNOWN_COPY)
-        if hid_focused_control:
-            self.call_after_refresh(self._focus_highest_priority_connection)
 
     @on(Input.Changed)
     @on(Select.Changed)
@@ -5041,9 +4993,7 @@ class ConsoleSettingsModal(
                 self.query_one(f"#{input_id}", Input).value = self._format_value(
                     getattr(state.settings, name)
                 )
-            for control_id, control in _GENERATION_CONTROL_INPUTS:
-                if control == "thinking_budget_tokens":
-                    continue
+            for _label, control_id, control in _PROVIDER_CHOICE_CONTROLS:
                 value = getattr(state.settings, control)
                 normalized = str(value or "").strip().lower()
                 choices = _PROVIDER_CHOICE_VALUES[control_id]
@@ -5073,6 +5023,7 @@ class ConsoleSettingsModal(
         finally:
             self._updating_controls = False
         self._sync_readiness_display()
+        self._sync_generation_control_support()  # a pick re-decides hidden fields
         self._sync_default_readiness()
         self._sync_visual_representation_availability()
         self.call_after_refresh(self._clear_rebase_event_guard)
@@ -7485,8 +7436,7 @@ class ConsoleSettingsModal(
 
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
-        for label, input_id, _placeholder in PROVIDER_CHOICE_INPUTS:
-            control = dict(_GENERATION_CONTROL_INPUTS)[input_id]
+        for label, input_id, control in _PROVIDER_CHOICE_CONTROLS:
             if (
                 console_generation_control_support(
                     self._active_provider,

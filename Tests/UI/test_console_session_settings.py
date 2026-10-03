@@ -115,13 +115,13 @@ from tldw_chatbook.Widgets.Console.console_provider_picker import (
 )
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
+    GENERATION_CONTROL_UNKNOWN_COPY,
     SAMPLING_DISCLOSURE_ID,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
     CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
-    PROVIDER_CHOICE_NO_EFFECT_SUFFIX,
     ConsoleModelDiscoveryIdentity,
     ConsoleSettingsCredentialRequest,
     ConsoleSettingsDraftSnapshot,
@@ -6493,6 +6493,9 @@ async def test_console_settings_modal_hides_only_authoritatively_unsupported_con
 async def test_console_settings_modal_keeps_unknown_support_visible_with_neutral_copy() -> (
     None
 ):
+    """Rewritten on purpose by TASK-33006.2 (AC#4/#5): the neutral copy moved
+    from a separate per-row ``-support`` static into the row's own help
+    line; an unknown control still stays visible (TASK-30012 AC#3)."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="openai",
@@ -6512,12 +6515,14 @@ async def test_console_settings_modal_keeps_unknown_support_visible_with_neutral
         await pilot.pause()
 
         reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
-        note = app.screen.query_one(
-            "#console-settings-reasoning-effort-support", Static
+        help_line = app.screen.query_one(
+            "#console-settings-reasoning-effort-help", Static
         )
         assert reasoning.parent is not None and reasoning.parent.display is True
-        assert str(note.renderable) == "Support not verified for this model."
-        assert note.display is True
+        assert GENERATION_CONTROL_UNKNOWN_COPY == "Support not verified for this model."
+        assert str(help_line.renderable).startswith(GENERATION_CONTROL_UNKNOWN_COPY)
+        assert help_line.display is True
+        assert not app.screen.query("#console-settings-reasoning-effort-support")
 
 
 @pytest.mark.asyncio
@@ -13496,6 +13501,10 @@ async def test_console_settings_modal_streaming_is_an_on_off_choice() -> None:
 
 @pytest.mark.asyncio
 async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -> None:
+    """Rewritten on purpose by TASK-33006.2: an unsupported choice is hidden
+    and named on the Sampling line, so no tooltip carries the old
+    "(no effect on this provider)" suffix; every tooltip lists the accepted
+    values."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -13505,25 +13514,20 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
         )
         await pilot.pause()
         # llama.cpp is a local thinking provider: only the reasoning-effort
-        # level is consumed, so the other choice inputs carry the no-effect
-        # suffix.
+        # level is consumed; the other choice rows are hidden.
         placeholders = {
             "console-settings-reasoning-effort": "none, minimal, low, medium, high, xhigh",
-            "console-settings-reasoning-summary": (
-                "auto, concise, detailed, none" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
-            ),
-            "console-settings-verbosity": (
-                "low, medium, high" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
-            ),
-            "console-settings-thinking-effort": (
-                "off, low, medium, high, xhigh, max" + PROVIDER_CHOICE_NO_EFFECT_SUFFIX
-            ),
+            "console-settings-reasoning-summary": "auto, concise, detailed, none",
+            "console-settings-verbosity": "low, medium, high",
+            "console-settings-thinking-effort": "off, low, medium, high, xhigh, max",
         }
         for input_id, expected in placeholders.items():
             control = app.screen.query_one(f"#{input_id}", Select)
-            accepted_copy = expected.removesuffix(PROVIDER_CHOICE_NO_EFFECT_SUFFIX)
-            assert _select_ordered_values(control) == tuple(accepted_copy.split(", "))
+            assert _select_ordered_values(control) == tuple(expected.split(", "))
             assert control.tooltip == expected
+            assert control.parent.display is (
+                input_id == "console-settings-reasoning-effort"
+            )
 
 
 @pytest.mark.asyncio
@@ -14851,11 +14855,15 @@ async def test_single_model_discovery_refreshes_generation_control_support(
             return "unsupported"
         return "unknown"
 
-    monkeypatch.setattr(
-        settings_modal_module,
-        "console_generation_control_support",
-        model_dependent_support,
-    )
+    # Patched where each module looks it up: TASK-33006.2 moved the row
+    # visibility sync into console_settings_field_row.py; the modal keeps
+    # the draft-retention reads.
+    import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row_module
+
+    for module in (settings_modal_module, field_row_module):
+        monkeypatch.setattr(
+            module, "console_generation_control_support", model_dependent_support
+        )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)

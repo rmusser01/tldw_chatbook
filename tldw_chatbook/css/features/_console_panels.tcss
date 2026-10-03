@@ -77,8 +77,11 @@ ConsoleSettingsModal Collapsible > Contents {
     background: $ds-surface-panel;
 }
 
+/* TASK-33006.2: a disclosure title spans its row and wraps, so the Sampling
+   line naming the hidden fields ends inside the frame, not under it. */
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
