@@ -27,6 +27,22 @@ and Next goes on without a provider, as if you had skipped the step. A
 failure after the new provider is already selected leaves it selected, and
 the line then names no other provider.
 
+While a Next is saving, **← Back**, **Next →** and **Skip setup** / **Exit
+setup** are disabled and drawn dimmed. A Next that takes longer than about half a second also shows a
+line just above them that names the work: "Preparing the Full setup…" after
+Welcome, "Saving the OpenAI connection…" after Provider, "Saving the provider
+and model…" after Model, "Saving voice settings…" after Voice (that save can
+take up to 30 seconds), and "Saving *step* settings…" elsewhere. After two
+seconds the line also counts the seconds ("Saving voice settings… 4 s"). It
+goes away as soon as the next step opens or the step explains why it can't
+move on. A quick Next shows no line at all.
+
+The model list that the Provider step fetches is kept for that provider, key
+and address. Going Back to Provider and forward again reuses it, even when
+that check failed, instead of waiting for the server again. **Retry** on the
+Model step (shown when the server couldn't be reached) checks again, and a
+different key or address counts as a new check.
+
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the
 arrow keys and set up here, hosted presets included (Together, Fireworks,
