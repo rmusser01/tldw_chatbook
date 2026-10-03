@@ -1188,6 +1188,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
             "test_hosted_chat.py", "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
+
             # The sentinel redaction tests drive the real OpenAI adapter into
             # its ConnectionError branch; the adapter's session construction
             # goes through create_default_session -> get_config_value on the
@@ -1195,11 +1196,13 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # test_hosted_chat.py above). They fake load_settings, not the
             # config getters, so they keep the bootstrap profile.
             "test_sensitive_llm_logging.py",
+
             # The mocked local-service connection test drives chat_api_call
             # for koboldcpp, whose handler reads settings through the guarded
             # config loader under the per-test redirect (same admission
             # signature as test_hosted_chat.py above).
             "test_chat_unit_mocked_APIs.py",
+
             # The catalog client-factory tests build real httpx clients
             # through the TLS-trust factory, whose trust/timeout reads go
             # through the guarded config loader under the per-test redirect
@@ -1208,6 +1211,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_server_llm_provider_catalog_service.py",
             "test_summarization_diagnostic_privacy.py",
             "test_summarization_model_capabilities.py",
+
             # TASK-32853/32854: the analyze boundary and the local config
             # suites read provider settings through get_cli_setting on their
             # hot paths (same admission signature as the two above).
@@ -1216,12 +1220,14 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kobold_tabby_config.py",
             "test_custom_openai_credential_resolution.py",
             "test_summarization_request_timeouts.py",
+
             # TASK-32864: the Console/Library modal dismissal inventories
             # import every modal module under Widgets/Console and
             # UI/Library_Modules (real config participants on their import
             # path); same admission signature as the suites above.
             "test_console_modal_dismissal.py",
             "test_library_modal_dismissal.py",
+
             # TASK-32856 follow-up trial: media-generation suites import the
             # real app (config participants on the import path); same
             # admission signature as the suites above.
@@ -1243,23 +1249,27 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_novita_adapter.py",
             "test_config_projection.py",
             "test_comfyui_workflow_distribution.py",
+
             # TASK-32873: the runtime-ownership and viewless suites mount
             # real apps end to end; same config-participant admission
             # signature as above. (The few pure-unit tests inside the
             # ownership suite were fixed to be profile-agnostic.)
             "test_console_runtime_ownership.py",
             "test_console_viewless_hooks.py",
+
             # TASK-32873: same signature, discovered while re-verifying --
             # install_skill dispatch drives scripted agent runs whose config
             # reads go through the config-participant admission.
             "test_install_skill_runtime_tool.py",
             "test_console_chat_create_integration.py",
+
             # ADR-179 Task 4: the engine resolution suite drives
             # resolve_hosted_request without app_config on its preset-rule
             # cases, which reads get_runtime_config_snapshot on the guarded
             # config loader (same admission signature as test_hosted_chat.py
             # above).
             "test_hosted_provider_engine_resolution.py",
+
             # ADR-179 Task 11: three pre-existing red suites with the same
             # admission signature -- the Kimi/Z.ai native-tool suite drives
             # the real hosted handlers (owned_json_post session construction
@@ -1271,6 +1281,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+
             # TASK-592/609 (egress hardening arc): the three SSRF/egress
             # regression suites -- every guarded_fetch_* helper and
             # create_default_session reads get_cli_setting through the
@@ -1292,6 +1303,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_github_api_client.py",
             "test_download_caps_wiring.py",
             "test_settings_probe_egress.py",
+
             # TASK-21233: the subscriptions FTS-backfill collision canary
             # drives the real SubscriptionsDB from a worker thread; the
             # thread-local connection created there resolves config through
@@ -1301,6 +1313,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # tests are tmp_path DB-level tests that do not depend on the
             # redirect.
             "test_fts_backfill.py",
+
             # TASK-22302: the real-stack citation persistence suite drives the
             # real Console controller submit path, whose hook-consent admission
             # (`_hook_admission_reason` -> `read_hooks_config_snapshot`) reads
@@ -1312,6 +1325,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # the two console continuation suites above, red since the
             # hook-consent gate landed (aed1b13501).
             "test_console_terminal_citation_persistence.py",
+
             # TASK-19425: the Console hook-consent send gate (aed1b13501)
             # reads the saved [hooks] section through the guarded config
             # loader on EVERY controller submit_draft/queue_prompt. Under
@@ -1325,7 +1339,15 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # measures). Same admission signature as the continuation
             # suites above; the suite never re-selects a config itself.
             "test_console_local_citation_boundary.py",
-        }
+
+            # TASK-19642.19.2: the reranker system-prompt contract suite
+            # constructs a real PointwiseReranker, whose __init__ resolves
+            # the registry default through get_internal_prompt ->
+            # get_cli_setting on the guarded config loader (same admission
+            # signature as test_hosted_chat.py above). The file's fixture
+            # fakes load_settings, not the config getters, so it keeps the
+            # bootstrap profile.
+            "test_reranker_system_prompt.py",        }
     )
     test_data_dir = (
         _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
