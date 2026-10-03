@@ -144,3 +144,21 @@ def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() ->
     )
 
     assert f"Stop: {STOP_RUN_KEY_LABEL}" in late
+
+
+def test_a_first_send_with_no_published_usage_still_times_the_wait() -> None:
+    """Live (2026-10-03): the first send of a new conversation showed a bare
+    'Generating…' for 230 s -- the bridge had published no usage for it, so
+    nothing could time the wait. The view's own run-start time is the base."""
+    from tldw_chatbook.UI.Console_Modules.agent import console_turn_activity_text
+
+    unpublished = SimpleNamespace(status="idle", steps=(), turn_usage=None)
+    running = SimpleNamespace(status="running", steps=(), turn_usage=None)
+
+    assert console_turn_activity_text(unpublished, now=50.0) == ""
+    for snapshot in (unpublished, running):
+        line = console_turn_activity_text(snapshot, now=50.0, turn_started_at=10.0)
+        assert line.startswith("Waiting for the model to start answering"), line
+        assert "40s" in line
+    finished = SimpleNamespace(status="done", steps=(), turn_usage=None)
+    assert console_turn_activity_text(finished, now=50.0, turn_started_at=10.0) == ""

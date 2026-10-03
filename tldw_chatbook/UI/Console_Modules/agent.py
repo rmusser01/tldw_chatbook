@@ -142,6 +142,7 @@ from typing import Any, Dict, Iterable, TYPE_CHECKING
 
 import re
 import time
+from types import SimpleNamespace
 from time import monotonic as _run_log_clock
 
 from loguru import logger
@@ -431,6 +432,7 @@ def console_turn_activity_text(
     children: Sequence[Any] = (),
     pending_approval: bool = False,
     pending_copy: str = "",
+    turn_started_at: float | None = None,
 ) -> str:
     """Return the live activity line for one in-flight Console turn.
 
@@ -501,6 +503,8 @@ def console_turn_activity_text(
         pending_approval: Whether an approval-like round is outstanding for
             this session (``ConsoleChatController.has_pending_approval_
             round``) -- never inferred from a tool name.
+        turn_started_at: TASK-34100.5 -- when the view first saw this
+            turn running; the elapsed base before any call usage exists.
         pending_copy: Qodo #4 -- the waiting label for the KIND of round
             actually outstanding (``console_chat_models.console_pending_
             round_copy_for``): "Waiting for your answer" for an ask_user
@@ -528,7 +532,11 @@ def console_turn_activity_text(
             else CONSOLE_TURN_ACTIVITY_SETUP
         )
     if getattr(snapshot, "status", "idle") != "running":
-        return ""
+        if turn_started_at is None or getattr(snapshot, "status", "idle") != "idle":
+            return ""
+        # TASK-34100.5: nothing published for this conversation yet (its
+        # first send) -- still time the wait from when the view saw it run.
+        snapshot = SimpleNamespace(status="running", steps=(), turn_usage=None)
     step = next(
         (
             candidate
@@ -553,6 +561,10 @@ def console_turn_activity_text(
         if fleet:
             return fleet
     usage = getattr(snapshot, "turn_usage", None)
+    if usage is None and turn_started_at is not None:
+        usage = SimpleNamespace(
+            started_at=turn_started_at, output_tokens=0, source="local"
+        )
     usage_label = _live_usage_label(usage)
     if step is None:
         label = CONSOLE_GENERATING_PLACEHOLDER
@@ -883,6 +895,10 @@ class ConsoleAgentController:
         self._console_agent_full_log_probe_generation = 0
         self._console_agent_full_log_probe_pending: int | None = None
         self._console_agent_full_log_probe_worker: Any = None
+        #: TASK-34100.5 AC#5: when this view first saw the viewed session's
+        #: run active -- the elapsed base while the bridge has published no
+        #: usage yet (a just-created conversation's first send).
+        self._console_turn_seen_active: tuple[Any, float] | None = None
         self._console_agent_full_log_retry_at = 0.0
         #: The batched `[N Sub-Agents]` badge-count cache and its two
         #: invalidation keys. Also cluster-private.
@@ -1049,8 +1065,14 @@ class ConsoleAgentController:
 
         controller = self._console_chat_controller
         run_state = getattr(controller, "run_state", None) if controller else None
+        # getattr/vars: partial gate doubles call this unbound (see below).
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
+            vars(self)["_console_turn_seen_active"] = None
             return ""
+        viewed = getattr(getattr(controller, "store", None), "active_session_id", None)
+        seen = getattr(self, "_console_turn_seen_active", None)
+        if seen is None or seen[0] != viewed:
+            seen = vars(self)["_console_turn_seen_active"] = (viewed, time.monotonic())
         bridge = self._console_agent_bridge
         if bridge is None:
             return ""
@@ -1096,6 +1118,7 @@ class ConsoleAgentController:
             children=children,
             pending_approval=pending_approval,
             pending_copy=pending_copy,
+            turn_started_at=seen[1],
         )
 
     def console_turn_activity_abandon_action(self) -> str:
