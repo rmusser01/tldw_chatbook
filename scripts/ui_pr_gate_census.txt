@@ -1,8 +1,10 @@
+Tests/UI/test_adaptive_pane_shell.py
 Tests/UI/test_app_instance_warning.py
 Tests/UI/test_app_query_one_fallback.py
 Tests/UI/test_approval_action_ownership.py
 Tests/UI/test_approval_argument_budget.py
 Tests/UI/test_approval_context_lines.py
+Tests/UI/test_base_app_screen_tab_region.py
 Tests/UI/test_buddy_entry_points.py
 Tests/UI/test_buddy_workspace_modal.py
 Tests/UI/test_bulk_selection_tooltips.py
@@ -49,6 +51,7 @@ Tests/UI/test_console_voice_accessibility.py
 Tests/UI/test_console_workspace_details_tray.py
 Tests/UI/test_css_generated_comments.py
 Tests/UI/test_design_style_utilities.py
+Tests/UI/test_destination_rail_row.py
 Tests/UI/test_dictation_export_path.py
 Tests/UI/test_disabled_action_recovery_tooltips.py
 Tests/UI/test_enhanced_file_dialog_bundle_css.py
