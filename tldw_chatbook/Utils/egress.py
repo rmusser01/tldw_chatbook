@@ -9,6 +9,9 @@ even for trusted origins; only the config allowlist overrides them.
 Shared pipeline code must NEVER auto-trust its own input URL — trust is
 seeded only at boundaries where user intent is known and threaded down
 (see Docs/superpowers/specs/2026-07-23-web-fetch-hardening-design.md).
+``UrlProvenance``/``trusted_origins_for`` are the threaded-down spelling
+of that rule (TASK-20973): a seam that cannot establish provenance passes
+nothing and gets ``frozenset()``.
 
 Non-goals (documented residual risk): DNS-rebinding IP pinning (we
 resolve-and-check; the HTTP client re-resolves to connect), proxy-aware
@@ -38,6 +41,7 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Iterable, Iterator, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
@@ -46,6 +50,57 @@ from loguru import logger
 
 from ..config import get_cli_setting
 from ..Metrics.metrics_logger import log_counter
+
+
+class UrlProvenance(Enum):
+    """How this process came to hold a URL -- the fact that seeds self-trust.
+
+    This module's contract says trust is seeded ONLY at boundaries where
+    user intent is known, and threaded down; pipeline code must never
+    auto-trust its own input URL. TASK-19556's media guard computed
+    ``trusted_origins=origin_set(url)`` unconditionally, which made that
+    contract true by wiring (only the user-entered ingest form reached it)
+    rather than by invariant. TASK-20973 replaced the unconditional
+    self-trust with this explicit provenance parameter at every seam, so a
+    URL arriving from anywhere else -- config, an API payload, a feed, an
+    agent tool -- fails closed instead of vouching for itself.
+
+    Membership rule for new values: a variant may be added only when some
+    boundary can ESTABLISH that fact about the URL at the moment it
+    receives it, and only variants that justify private-IP fetches belong
+    here at all.
+    """
+
+    #: The user typed/pasted this URL at an input this app owns (the
+    #: Library ingest form, or a job created from that submission). An
+    #: explicitly entered URL is a configured URL: ``[web_security]``
+    #: permits it to be private (an intranet media server is a legitimate
+    #: source).
+    USER_ENTERED = "user_entered"
+    #: Nobody established user intent for this URL. The default at every
+    #: seam, deliberately: private/internal targets are refused and must
+    #: resolve public (or be listed in ``[web_security] allowed_hosts``).
+    UNKNOWN = "unknown"
+
+
+def trusted_origins_for(url: str, provenance: UrlProvenance) -> frozenset:
+    """The egress ``trusted_origins`` a URL's provenance actually earns.
+
+    The single spelling of the self-trust decision (TASK-20973): a URL is
+    its own trusted origin only when its provenance establishes user
+    intent; every other provenance gets the empty set, so the caller's URL
+    cannot vouch for itself.
+
+    Args:
+        url: The URL about to be handed to a fetcher.
+        provenance: How this process came to hold ``url``.
+
+    Returns:
+        ``origin_set(url)`` for ``USER_ENTERED``, else ``frozenset()``.
+    """
+    if provenance is UrlProvenance.USER_ENTERED:
+        return origin_set(url)
+    return frozenset()
 
 # Cloud metadata endpoints: blocked even for trusted origins.
 _METADATA_IPS = frozenset(

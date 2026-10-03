@@ -14,6 +14,7 @@ from loguru import logger
 from tldw_chatbook.DB.Client_Media_DB_v2 import DatabaseError as MediaDatabaseError
 from tldw_chatbook.DB.Client_Media_DB_v2 import MediaDatabase as Database
 from tldw_chatbook.Media.media_reading_scope_service import MediaReadingScopeService
+from tldw_chatbook.Utils.egress import UrlProvenance
 
 
 _MODULE_PATH = (
@@ -1824,6 +1825,9 @@ def test_local_service_processes_audio_and_video_without_persisting(
         {
             "inputs": [str(video_path)],
             "download_video_flag": False,
+            # (TASK-20973) The provenance threads explicitly to the video
+            # processor; the service seam's default is fail-closed UNKNOWN.
+            "url_provenance": UrlProvenance.UNKNOWN,
             "transcription_model": "tiny",
             "perform_analysis": False,
         },

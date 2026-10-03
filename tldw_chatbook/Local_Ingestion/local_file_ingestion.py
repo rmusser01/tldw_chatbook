@@ -918,6 +918,7 @@ def parse_local_file_for_ingest(
     *,
     transcription_runner: Optional[Callable[..., Dict[str, Any]]] = None,
     progress_callback: Callable[[str, str, float | None], None] | None = None,
+    url_provenance: Optional["UrlProvenance"] = None,
 ) -> Dict[str, Any]:
     """
     Parse a local file into a picklable payload, performing no database I/O.
@@ -968,6 +969,17 @@ def parse_local_file_for_ingest(
         progress_callback: Optional best-effort callback receiving a controlled
             phase, user-facing message, and truthful stage percentage when one
             is observable.
+        url_provenance: (TASK-20973) How this process came to hold the
+            source when it is a URL. Only
+            ``Utils.egress.UrlProvenance.USER_ENTERED`` lets a private
+            host through the video arm's egress check; ``None`` (the
+            default) means UNKNOWN and fails closed. This function is a
+            shared pipeline, not a trust boundary -- it never mints trust
+            itself. The Library ingest queue is the caller that knows the
+            answer, and the spawn-pool worker transports it here through
+            ``options["url_provenance"]`` (translated by
+            ``ingest_parse_worker.run_parse_job``, which accepts the enum
+            only).
 
     Returns:
         A payload dict consumed by ``persist_parsed_media``:
@@ -1014,6 +1026,14 @@ def parse_local_file_for_ingest(
         "inspecting",
         "Inspecting source",
     )
+    # (TASK-20973) Normalize the threaded provenance ONCE, lazily (this
+    # module's import weight is budgeted -- see the import-deferral block
+    # above): ``None`` (direct callers, or a worker that found nothing in
+    # ``options``) means UNKNOWN and fails closed at the egress check.
+    if url_provenance is None:
+        from ..Utils.egress import UrlProvenance as _UrlProvenance
+
+        url_provenance = _UrlProvenance.UNKNOWN
     raw_source = str(file_path)
     is_url = _is_http_url(raw_source)
     if is_url:
@@ -1468,6 +1488,14 @@ def parse_local_file_for_ingest(
             results = video_processor.process_videos(
                 inputs=[str(file_path)],
                 download_video_flag=False,  # Extract audio only for transcription
+                # (TASK-20973) A URL source here is an ingest source, and
+                # the trust question for it is answered by the CALLER, not
+                # by this shared pipeline: ``url_provenance`` arrives from
+                # the ingest queue (USER_ENTERED for form submissions,
+                # UNKNOWN for research-catalog URLs) or defaults to
+                # UNKNOWN for direct programmatic callers -- the pipeline
+                # itself never mints trust.
+                url_provenance=url_provenance,
                 transcription_provider=options.get(
                     "transcription_provider", "faster-whisper"
                 ),

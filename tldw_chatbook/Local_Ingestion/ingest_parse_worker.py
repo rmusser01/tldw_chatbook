@@ -37,6 +37,15 @@ process boundary -- workers never touch the media DB):
         "analysis_skipped_reason": str | None,
     }
 
+(TASK-20973) One more key rides this dict for the video arm:
+``url_provenance`` carries the ``Utils.egress.UrlProvenance`` the parent
+minted for this submission (``USER_ENTERED`` for general Library-import
+jobs, ``UNKNOWN`` for research-source jobs). It is transport only --
+``run_parse_job`` pops it and hands it to
+``parse_local_file_for_ingest`` as the explicit ``url_provenance``
+parameter, and honors it only when it is a genuine enum instance (an
+enum pickles by name across the spawn boundary, so this is lossless).
+
 The Library ingest queue coordinator (F3 Task 4) builds this dict from a
 ``LibraryIngestJob``'s fields via ``app_ingest_queue.py``'s
 ``_ingest_job_options``.
@@ -225,13 +234,28 @@ def run_parse_job(
         # this function as the pool's target.
         from .local_file_ingestion import parse_local_file_for_ingest
 
+        # (TASK-20973) Translate the provenance the parent minted out of
+        # the pickled transport dict and into the explicit parameter --
+        # accepting the enum ONLY. ``options`` is caller-shaped data; a
+        # plain string ("USER_ENTERED") must not be able to launder trust,
+        # so anything that is not a genuine ``UrlProvenance`` (including a
+        # forged-looking value) drops to the seam's fail-closed default.
+        from ..Utils.egress import UrlProvenance as _UrlProvenance
+
+        provenance = options.pop("url_provenance", None)
+        if not isinstance(provenance, _UrlProvenance):
+            provenance = None
+
         if progress_callback is None:
-            payload = parse_local_file_for_ingest(file_path, options)
+            payload = parse_local_file_for_ingest(
+                file_path, options, url_provenance=provenance
+            )
         else:
             payload = parse_local_file_for_ingest(
                 file_path,
                 options,
                 progress_callback=progress_callback,
+                url_provenance=provenance,
             )
     except Exception as exc:  # noqa: BLE001 - must never raise across the process boundary
         message = str(exc).strip() or exc.__class__.__name__
