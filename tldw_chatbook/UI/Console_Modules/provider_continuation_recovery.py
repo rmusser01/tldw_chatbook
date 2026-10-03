@@ -58,6 +58,11 @@ def trace_call_recovery_state(
         or preparation.pause_kind
         not in {
             ConsolePreparationPauseKind.TRACE_CALL,
+            # TASK-33940.3: a durable first send whose provenance could not be
+            # saved pauses with exactly this card's actions (retry,
+            # send_without_capture, cancel), but was never projected, so the
+            # send just sat "Blocked" with no way to see why or move on.
+            ConsolePreparationPauseKind.TRACE_PROVENANCE,
             ConsolePreparationPauseKind.TEMPORARY_CAPTURE,
         }
     ):

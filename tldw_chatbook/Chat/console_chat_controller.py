@@ -2716,6 +2716,37 @@ PROVIDER_CONTINUATION_RECOVERY_REQUIRED = (
 # annotations and provider serialization strips every private key.
 NATIVE_MESSAGE_ID_KEY = "_native_message_id"
 
+
+def _unsaved_trace_artifact_source(
+    row: Mapping[str, Any], *, is_last: bool
+) -> TraceProvenanceSource:
+    """Label one provider row that has no saved revision, by its role.
+
+    TASK-33940.3: the durable first-send builder used to label every unsaved
+    row ACTIVE_REQUEST. The request's ``system`` category accepts only
+    RENDERED_SYSTEM, so any Capture-On chat with a system prompt (a workspace
+    persona, a character) failed provenance and was silently blocked. This is
+    the voice-capture builder's mapping, now shared by both builders.
+
+    Args:
+        row: The provider-visible row.
+        is_last: Whether the row is the request's final (active) row.
+
+    Returns:
+        The artifact source its request category accepts.
+    """
+    role = row.get("role")
+    if is_last:
+        return TraceProvenanceSource.ACTIVE_REQUEST
+    if role == ConsoleMessageRole.SYSTEM.value:
+        return TraceProvenanceSource.RENDERED_SYSTEM
+    if role == ConsoleMessageRole.TOOL.value:
+        return TraceProvenanceSource.TOOL_RESULT
+    if role == ConsoleMessageRole.ASSISTANT.value and row.get("tool_calls"):
+        return TraceProvenanceSource.TOOL_CALL
+    return TraceProvenanceSource.ACTIVE_REQUEST
+
+
 def _build_speculative_voice_capture_request(
     *,
     messages: Sequence[Mapping[str, Any]],
@@ -2739,18 +2770,7 @@ def _build_speculative_voice_capture_request(
                 raise TraceProvenancePersistenceError()
             descriptors.append(saved)
             continue
-        role = row.get("role")
-        source = (
-            TraceProvenanceSource.ACTIVE_REQUEST
-            if index == len(rows) - 1
-            else TraceProvenanceSource.RENDERED_SYSTEM
-            if role == ConsoleMessageRole.SYSTEM.value
-            else TraceProvenanceSource.TOOL_RESULT
-            if role == ConsoleMessageRole.TOOL.value
-            else TraceProvenanceSource.TOOL_CALL
-            if role == ConsoleMessageRole.ASSISTANT.value and row.get("tool_calls")
-            else TraceProvenanceSource.ACTIVE_REQUEST
-        )
+        source = _unsaved_trace_artifact_source(row, is_last=index == len(rows) - 1)
         descriptors.append(ProviderArtifactTraceProvenance(source, capture_policy))
 
     from tldw_chatbook.Chat.console_prepared_request import build_console_request
@@ -8409,8 +8429,8 @@ class ConsoleChatController:
                     else ConsoleRequestRoute.FRESH
                 ),
             )
-        except Exception:
-            return self._handle_durable_trace_provenance_failure(continuation)
+        except Exception as exc:
+            return self._handle_durable_trace_provenance_failure(continuation, exc)
         with self.store.durable_preparation_lock:
             current = self._durable_postcommit_continuations.get(
                 preparation.preparation_id
@@ -11089,6 +11109,21 @@ class ConsoleChatController:
                 else:
                     raise ValueError("hook_continuation_input_missing")
             trace_source_messages = tuple(dict(row) for row in provider_messages)
+            # TASK-33940.4: a custodied turn that needed no preparation (e.g. a
+            # "/" or "$" draft with Capture off) has no continuation to carry
+            # its staged launch, so it gets its own lease -- captured on the
+            # frozen route and released at acceptance like a prepared one.
+            custody_evidence_lease = (
+                _PreparedEvidenceLease(
+                    staged_evidence_launch,
+                    capture=staged_evidence_capture,
+                    release=staged_evidence_release,
+                )
+                if custodied_inputs
+                and prepared_continuation is None
+                and staged_evidence_launch is not None
+                else None
+            )
             (
                 provider_messages,
                 refuse,
@@ -11119,10 +11154,17 @@ class ConsoleChatController:
                 citation_context = format_evidence_for_cited_answer(
                     preparation_outcome.evidence_bundle
                 )
-            elif (
-                origin is not ConsoleSubmissionOrigin.AGENT_WAKE
-                and prepared_continuation is not None
-                and prepared_continuation.staged_evidence_frozen
+            elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE and (
+                # TASK-33940.4: a custodied turn froze its evidence decision at
+                # admission (its staged launch, or none), so it never asks the
+                # live seam -- which, on runtime-owned controllers, is the
+                # three-argument frozen capture and raised TypeError on every
+                # ordinary send. Non-custodied callers keep the live route.
+                custodied_inputs
+                or (
+                    prepared_continuation is not None
+                    and prepared_continuation.staged_evidence_frozen
+                )
             ):
                 (
                     citation_context,
@@ -11132,7 +11174,11 @@ class ConsoleChatController:
                 ) = await self._capture_frozen_rag_context(
                     clean_draft,
                     turn_context,
-                    prepared_continuation,
+                    (
+                        prepared_continuation.staged_evidence
+                        if prepared_continuation is not None
+                        else custody_evidence_lease
+                    ),
                 )
             elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE:
                 # PR3a-2 Task 5: a wake notice is a delivery, not a query
@@ -11583,6 +11629,7 @@ class ConsoleChatController:
                 frozen_next_trace_privacy_revision=next_trace_privacy_revision,
             )
             self._release_prepared_evidence(prepared_continuation)
+            self._release_evidence_lease(custody_evidence_lease)
             if not custodied_inputs:
                 for pending in pendings:
                     self.store.consume_pending_attachment(
@@ -12213,7 +12260,10 @@ class ConsoleChatController:
         descriptors = tuple(
             saved_by_position.get(index)
             or ProviderArtifactTraceProvenance(
-                TraceProvenanceSource.ACTIVE_REQUEST,
+                _unsaved_trace_artifact_source(
+                    visible_messages[index],
+                    is_last=index == len(visible_messages) - 1,
+                ),
                 policy,
             )
             for index in range(len(visible_messages))
@@ -12286,9 +12336,24 @@ class ConsoleChatController:
     def _handle_durable_trace_provenance_failure(
         self,
         continuation: _DurablePostcommitContinuation,
+        error: BaseException | None = None,
     ) -> ConsoleSubmitResult:
-        """Pause manual recovery or terminally retire an autonomous failure."""
+        """Pause manual recovery or terminally retire an autonomous failure.
 
+        Args:
+            continuation: The frozen durable turn whose request could not be
+                captured.
+            error: The swallowed failure. TASK-33940.3: it used to vanish
+                without a trace; only its type is logged, never its text, which
+                can quote request content.
+        """
+
+        if error is not None:
+            logger.warning(
+                "Console trace provenance could not be saved; "
+                "exception_type={}",
+                type(error).__name__,
+            )
         visible_copy = (
             "Trace provenance could not be saved. Retry, Send without capture, "
             "or Cancel."
@@ -12644,8 +12709,8 @@ class ConsoleChatController:
                     else ConsoleRequestRoute.FRESH
                 ),
             )
-        except Exception:
-            return self._handle_durable_trace_provenance_failure(continuation)
+        except Exception as exc:
+            return self._handle_durable_trace_provenance_failure(continuation, exc)
         if trace_request is not None:
             with self.store.durable_preparation_lock:
                 current = self._durable_postcommit_continuations.get(
@@ -24673,10 +24738,11 @@ class ConsoleChatController:
         except asyncio.CancelledError:
             record("retrieval_failed", "Retrieval cancelled", "cancelled")
             raise
-        except Exception:
+        except Exception as exc:
             logger.error(
                 "Console RAG capture unavailable; "
-                f"reason=capture_provider_failure; draft_length={len(draft)}"
+                "reason=capture_provider_failure; "
+                f"exception_type={type(exc).__name__}; draft_length={len(draft)}"
             )
             record("retrieval_failed", "Retrieval failed", "failed")
             return None, None, None, None
@@ -24694,16 +24760,20 @@ class ConsoleChatController:
         self,
         draft: str,
         turn_context: ConsoleTurnExecutionContext,
-        continuation: _PreparedSendContinuation,
+        lease: _PreparedEvidenceLease | None,
     ) -> tuple[
         str | None,
         CitationTraceBuilder | None,
         str | None,
         CitationRepairContract | None,
     ]:
-        """Capture only evidence frozen at original send admission."""
+        """Capture only evidence frozen at original send admission.
 
-        lease = continuation.staged_evidence
+        ``lease`` is the prepared continuation's, or -- for a custodied turn
+        that needed no preparation (TASK-33940.4) -- one built from the staged
+        launch the turn was admitted with. ``None`` means nothing was staged.
+        """
+
         if lease is None:
             return None, None, None, None
         provider = lease.capture
@@ -24720,10 +24790,11 @@ class ConsoleChatController:
             )
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             logger.error(
                 "Frozen Console RAG capture unavailable; "
-                f"reason=capture_provider_failure; draft_length={len(draft)}"
+                "reason=capture_provider_failure; "
+                f"exception_type={type(exc).__name__}; draft_length={len(draft)}"
             )
             return None, None, None, None
         lease.capture_result = captured
@@ -24734,7 +24805,14 @@ class ConsoleChatController:
     ) -> None:
         """Release a captured launch at the exact accepted-turn boundary."""
 
-        lease = continuation.staged_evidence if continuation is not None else None
+        self._release_evidence_lease(
+            continuation.staged_evidence if continuation is not None else None
+        )
+
+    @staticmethod
+    def _release_evidence_lease(lease: _PreparedEvidenceLease | None) -> None:
+        """Release one captured launch exactly once (TASK-33940.4 shared seam)."""
+
         if lease is None or lease.released or lease.capture_result is None:
             return
         release = lease.release
