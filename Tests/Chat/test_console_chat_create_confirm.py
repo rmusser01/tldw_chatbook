@@ -96,18 +96,10 @@ def test_remember_grants_session_scope(make_controller):
     assert decision == {"allow": True, "remember": True}
     assert controller.pending_chat_create_payloads == payloads_before_second
 
-    # Different tool in the same session still confirms.
-    def second_tool():
-        with use_run_id("run-x"):
-            results.append(controller.request_chat_create_confirm(
-                _payload(tool="new_chat"), session_id="s1"))
-
-    t2 = threading.Thread(target=second_tool)
-    t2.start()
-    _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
-    controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
-    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
-    assert results[-1] == {"allow": True, "remember": False}
+    # A fork grant cannot authorize an unprepared new-chat payload.
+    assert controller.request_chat_create_confirm(
+        _payload(tool="new_chat"), session_id="s1"
+    ) == {"allow": False, "remember": False}
 
 
 def test_no_ui_fails_closed_immediately(make_controller):
@@ -263,8 +255,7 @@ def test_fork_card_payload_keeps_explicit_title(real_db_confirm):
 def test_new_chat_card_payload_gets_default_title(real_db_confirm):
     controller, db = real_db_confirm
     session = controller.store.create_session(title="Any")
-    card, _ = _arm_and_capture(
-        controller,
+    card = controller._enrich_chat_create_confirm_payload(
         {
             "tool": "new_chat",
             "session_id": session.id,
@@ -273,7 +264,6 @@ def test_new_chat_card_payload_gets_default_title(real_db_confirm):
             "opening_prompt": "",
             "instructions": "",
         },
-        session.id,
     )
     assert card["title"] == "New Chat"
     assert "fork_source_title" not in card

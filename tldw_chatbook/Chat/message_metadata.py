@@ -32,6 +32,49 @@ from tldw_chatbook.Chat.conversation_local_marks_service import (
     ConversationLocalMarksService,
 )
 
+
+@dataclass(frozen=True, slots=True)
+class AgentHandoffLaunchMetadata:
+    """Bounded saved launch display facts; never execution authorization."""
+
+    mode: str
+    status: str
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode not in {"draft", "start"} or self.status not in {
+            "draft",
+            "not_started",
+            "started",
+            "review_required",
+        }:
+            raise ValueError("invalid handoff launch status")
+        if self.reason is not None and (
+            not isinstance(self.reason, str)
+            or re.fullmatch(r"[a-z][a-z0-9_]{0,63}", self.reason) is None
+        ):
+            raise ValueError("invalid handoff launch reason")
+
+    @property
+    def label(self) -> str:
+        """Return existing status vocabulary without revealing draft text."""
+        return {
+            "draft": "Draft",
+            "not_started": "Not started",
+            "started": "Started",
+            "review_required": "Review required",
+        }[self.status]
+
+    @classmethod
+    def read(cls, value: object) -> "AgentHandoffLaunchMetadata | None":
+        if not isinstance(value, dict) or set(value) != {"mode", "status", "reason"}:
+            return None
+        try:
+            return cls(**value)
+        except (TypeError, ValueError):
+            return None
+
+
 #: Closed vocabulary for ``MessageMetadata.transcript_status``.
 #:
 #: - ``""``      -- not a transcribed turn (every non-voice row).
@@ -59,6 +102,8 @@ TEMPLATE_KINDS: frozenset[str] = frozenset({"", "character_greeting"})
 #: (exports, resume, any future "who wrote this row" logic) read THIS, not
 #: the row's visible copy.
 MESSAGE_ORIGIN_AGENT_WAKE = "agent_wake"
+MESSAGE_ORIGIN_AGENT_CHAT_START = "agent_chat_start"
+MESSAGE_ORIGIN_UNTRUSTED = "untrusted"
 
 #: ``MessageMetadata.origin`` value for a row written by the run-hooks
 #: layer (spec 2026-09-11, Task 7): the SYSTEM-class transcript row a
@@ -85,7 +130,13 @@ MESSAGE_ORIGIN_HOOK = "hook"
 #: confined to the device that downgraded; accepted rather than gated on a
 #: schema bump.
 MESSAGE_ORIGINS: frozenset[str] = frozenset(
-    {"", MESSAGE_ORIGIN_AGENT_WAKE, MESSAGE_ORIGIN_HOOK}
+    {
+        "",
+        MESSAGE_ORIGIN_AGENT_WAKE,
+        MESSAGE_ORIGIN_HOOK,
+        MESSAGE_ORIGIN_AGENT_CHAT_START,
+        MESSAGE_ORIGIN_UNTRUSTED,
+    }
 )
 
 
@@ -112,6 +163,23 @@ _EXPRESSION_KEY_RE = re.compile(
 _TOPIC_RE = re.compile(r"[a-z0-9]{1,40}\Z")
 _CANVAS_CARD_STATUSES = frozenset({"updated", "temporary", "discarded", "failed"})
 _CANVAS_ERROR_RE = re.compile(r"[a-z][a-z0-9_]{0,63}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class AgentChatStartMetadata:
+    """Bounded provenance for a native machine-authored request."""
+
+    attempt_id: str
+    source_run_id: str
+    source_conversation_id: str
+
+    def __post_init__(self) -> None:
+        for value in (self.attempt_id, self.source_run_id, self.source_conversation_id):
+            if (
+                type(value) is not str
+                or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,199}", value) is None
+            ):
+                raise ValueError("invalid agent chat start provenance")
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,12 +405,17 @@ class MessageMetadata:
     template_kind: str = ""
     template_source: str = ""
     origin: str = ""
+    agent_chat_start: AgentChatStartMetadata | None = None
     character_emote: CharacterEmoteMetadata | None = None
     canvas_cards: tuple[CanvasCardMetadata, ...] = ()
     terminal_receipt_id: str = ""
     root_fork: bool = False
 
     def __post_init__(self) -> None:
+        if (self.origin == MESSAGE_ORIGIN_AGENT_CHAT_START) != isinstance(
+            self.agent_chat_start, AgentChatStartMetadata
+        ):
+            raise ValueError("machine origin requires exact chat-start provenance")
         if self.transcript_status not in TRANSCRIPT_STATUSES:
             raise ValueError(
                 "transcript_status must be one of "
@@ -411,6 +484,8 @@ class MessageMetadata:
         payload = asdict(self)
         if not self.root_fork:
             del payload["root_fork"]
+        if self.agent_chat_start is None:
+            del payload["agent_chat_start"]
         return json.dumps(payload, sort_keys=True)
 
     def remap_canvas_origins(self, message_ids: Mapping[str, str]) -> "MessageMetadata":
@@ -455,6 +530,25 @@ class MessageMetadata:
             return None
         if not isinstance(data, dict):
             return None
+        provenance = None
+        if (
+            data.get("origin") == MESSAGE_ORIGIN_AGENT_CHAT_START
+            or data.get("agent_chat_start") is not None
+        ):
+            value = data.get("agent_chat_start")
+            try:
+                if (
+                    data.get("origin") != MESSAGE_ORIGIN_AGENT_CHAT_START
+                    or not isinstance(value, dict)
+                    or set(value)
+                    != {"attempt_id", "source_run_id", "source_conversation_id"}
+                ):
+                    raise ValueError("invalid machine provenance")
+                provenance = AgentChatStartMetadata(**value)
+            except (TypeError, ValueError):
+                # Corrupt machine requests remain untrusted on every reader,
+                # including readers that use a missing metadata value as human.
+                return cls(origin=MESSAGE_ORIGIN_UNTRUSTED)
         template_kind = _as_template_kind(data.get("template_kind"))
         template_source = _as_template_source(
             template_kind, data.get("template_source")
@@ -473,6 +567,7 @@ class MessageMetadata:
                 template_kind=template_kind,
                 template_source=template_source,
                 origin=_as_origin(data.get("origin")),
+                agent_chat_start=provenance,
                 character_emote=_as_character_emote(data.get("character_emote")),
                 canvas_cards=_as_canvas_cards(data.get("canvas_cards")),
                 terminal_receipt_id=_as_terminal_receipt_id(

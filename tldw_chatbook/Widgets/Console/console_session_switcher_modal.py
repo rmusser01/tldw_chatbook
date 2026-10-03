@@ -1261,6 +1261,10 @@ class ConsoleSessionSwitcherModal(
             "Console tab" if getattr(entry, "native_session_id", None) else "Saved chat"
         )
 
+        launch_status = str(getattr(entry, "lifecycle", "") or "").casefold()
+        if launch_status in {"draft", "started", "not started", "review required"}:
+            parts.append(launch_status.capitalize())
+
         recency = ""
         for candidate in reversed(
             str(getattr(entry, "subtitle", "") or "").split(" · ")

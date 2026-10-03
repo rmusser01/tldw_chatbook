@@ -772,3 +772,27 @@ CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
         row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
     )
 )
+
+
+# ADR-211: exact constructor-captured v76 deltas; retain both qualified v75 catalogs.
+CHACHANOTES_V75_SCHEMA = next(
+    row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
+)
+CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+_CHACHANOTES_V76_REPLACEMENTS = {
+    "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n  ON console_dispatch_checkpoints(user_message_id)": "CREATE INDEX idx_console_dispatch_checkpoints_user_message\n    ON console_dispatch_checkpoints(user_message_id)",
+    "CREATE TABLE console_dispatch_checkpoints (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued')),\n    queue_entry_id TEXT,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP\n)": "CREATE TABLE \"console_dispatch_checkpoints\" (\n    assistant_message_id TEXT PRIMARY KEY\n        REFERENCES messages(id) ON DELETE CASCADE,\n    user_message_id TEXT NOT NULL\n        REFERENCES messages(id) ON DELETE CASCADE,\n    conversation_id TEXT NOT NULL\n        REFERENCES conversations(id) ON DELETE CASCADE,\n    schema_version INTEGER NOT NULL DEFAULT 1\n        CHECK(schema_version > 0),\n    preparation_id TEXT NOT NULL UNIQUE,\n    attempt_id TEXT NOT NULL,\n    state TEXT NOT NULL\n        CHECK(state IN ('accepted', 'dispatch_started')),\n    checkpoint_revision INTEGER NOT NULL DEFAULT 1\n        CHECK(checkpoint_revision > 0),\n    user_message_version INTEGER NOT NULL\n        CHECK(user_message_version > 0),\n    assistant_message_version INTEGER NOT NULL\n        CHECK(assistant_message_version > 0),\n    origin TEXT NOT NULL CHECK(origin IN ('manual', 'queued', 'agent_chat_start')),\n    queue_entry_id TEXT,\n    agent_chat_start_attempt_id TEXT UNIQUE,\n    frozen_authority_json TEXT NOT NULL,\n    resolved_destination_json TEXT NOT NULL,\n    reconstructability_json TEXT NOT NULL,\n    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,\n    CHECK ((origin = 'queued' AND queue_entry_id IS NOT NULL)\n        OR (origin IN ('manual', 'agent_chat_start') AND queue_entry_id IS NULL)),\n    CHECK ((origin = 'agent_chat_start' AND agent_chat_start_attempt_id IS NOT NULL\n            AND length(agent_chat_start_attempt_id) BETWEEN 1 AND 200)\n        OR (origin IN ('manual', 'queued') AND agent_chat_start_attempt_id IS NULL))\n)",
+}
+CHACHANOTES_V76_SCHEMA = tuple(
+    _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql) for sql in CHACHANOTES_V75_SCHEMA
+)
+CORE_SCHEMAS = tuple(
+    (owner, 76, CHACHANOTES_V76_SCHEMA)
+    if owner == "db.chachanotes.primary"
+    else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
+    _CHACHANOTES_V76_REPLACEMENTS.get(sql, sql)
+    for sql in CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA
+)

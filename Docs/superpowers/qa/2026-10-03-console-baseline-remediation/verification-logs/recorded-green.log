@@ -1,0 +1,9 @@
+.....................                                                    [100%]
+============================= slowest 25 durations =============================
+13.53s call     Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+5.30s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll
+1.71s call     Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once
+1.41s teardown Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab
+
+(21 durations < 1s hidden.)
+21 passed in 32.18s

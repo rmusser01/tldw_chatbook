@@ -386,3 +386,33 @@ def test_checker_is_stdlib_only_and_never_imports_the_package():
     )
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert "all present in VALID_TABLES['chachanotes']" in completed.stdout
+
+
+@pytest.mark.parametrize(
+    "rename, accepted", [("canonical", True), ("unexpected", False), (None, False)]
+)
+def test_rebuild_is_scanned_under_its_actual_rename_destination(
+    tmp_path, rename, accepted
+):
+    sql = "CREATE TABLE staging(id INTEGER PRIMARY KEY);"
+    if rename is not None:
+        sql += f" ALTER TABLE staging RENAME TO {rename};"
+    checker = _fake_tree(
+        tmp_path, migration_sql=sql, allowlisted=["from_python_literal", "canonical"]
+    )
+    declared = set(checker.declared_tables(checker.SCHEMAS[0]))
+    assert (declared == {"from_python_literal", "canonical"}) is accepted
+    if not accepted:
+        assert declared - checker.allowlisted_tables("chachanotes")
+
+
+def test_a_pre_create_rename_does_not_change_the_new_table_name(tmp_path):
+    checker = _fake_tree(
+        tmp_path,
+        migration_sql="ALTER TABLE canonical RENAME TO retired; CREATE TABLE canonical(id INTEGER PRIMARY KEY); DROP TABLE retired;",
+        allowlisted=["from_python_literal", "canonical"],
+    )
+    assert set(checker.declared_tables(checker.SCHEMAS[0])) == {
+        "from_python_literal",
+        "canonical",
+    }

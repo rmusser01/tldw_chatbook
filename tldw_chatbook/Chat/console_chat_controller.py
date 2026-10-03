@@ -143,6 +143,12 @@ from tldw_chatbook.Chat.console_capture_policy_repository import (
     CapturePolicyWriteStatus,
     ConsoleCapturePolicyRepository,
 )
+from tldw_chatbook.Chat.console_chat_start import (
+    AgentChatStartAuthorization,
+    AgentChatStartRequest,
+    ConsoleChatStartCoordinator,
+)
+from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata
 from tldw_chatbook.Chat.console_command_grammar import COMMAND_PREFIX
 from tldw_chatbook.Chat.console_history_budget import (
     DEFAULT_RESPONSE_RESERVATION,
@@ -4292,6 +4298,7 @@ class _DurablePostcommitContinuation:
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
     hook_continuation: bool = False
+    explicit_manual_retry: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -4764,6 +4771,17 @@ _REVOCATION_STAMPS: dict[str, Callable[[dict[str, Any]], None]] = {
     "skill_script": _stamp_skill_script_round_closed,
     "question": _stamp_question_round_closed,
 }
+
+
+class _ChatCreationToken:
+    """Controller-local approval identity, never supplied through tool arguments."""
+
+    def __init__(self, owner: Any) -> None:
+        self._owner = owner
+
+    def close(self) -> None:
+        with self._owner._pending_chat_create_lock:
+            self._owner._chat_creation_records.pop(self, None)
 
 
 class ConsoleChatController:
@@ -5518,6 +5536,8 @@ class ConsoleChatController:
         #: state`'s terminal retry hook always has it; registered on the
         #: bridge fan-out next to the usage fold above.
         self._fleet_wake = ConsoleFleetWakeCoordinator(self)
+        self._chat_start = ConsoleChatStartCoordinator(self)
+        self.store._agent_handoff_changed = self._chat_start.withdraw_prepared
         #: PR3a-2 Task 5, user-wins-ties: screen-wired probe returning
         #: True while the USER holds a claim on sending (a non-empty
         #: composer draft -- which also covers the dispatch gap, since the
@@ -5688,7 +5708,8 @@ class ConsoleChatController:
         #: Retained payload per ROUND, keyed by `request_id` -- the mounted
         #: card is the session's FIFO head, exactly like the sibling maps.
         self._parked_chat_create_payloads: dict[str, dict[str, Any]] = {}
-        self._chat_create_session_grants: dict[str, set[str]] = {}
+        self._chat_create_session_grants: dict[str, set[object]] = {}
+        self._chat_creation_records: dict[object, dict[str, Any]] = {}
         #: UI-thread callback that pushes/clears the pending chat-create
         #: confirm payload into the owning screen's state. Invoked through
         #: self.app.call_from_thread from request_chat_create_confirm.
@@ -6523,6 +6544,7 @@ class ConsoleChatController:
         eligible = origin in {
             ConsoleSubmissionOrigin.MANUAL,
             ConsoleSubmissionOrigin.QUEUED,
+            ConsoleSubmissionOrigin.AGENT_CHAT_START,
         }
         try:
             session = next(
@@ -6712,7 +6734,18 @@ class ConsoleChatController:
 
         if self.store.dispatch_recovery_needs_queue_hydration(session_id):
             self._hydrate_dispatch_recovery_queue(session_id)
-        return self.prompt_queue_coordinator.activity(session_id)
+        activity = self.prompt_queue_coordinator.activity(session_id)
+        session = self.store._sessions.get(session_id)
+        launch = session.agent_handoff_launch if session is not None else None
+        # Rows retain launch history; only unresolved handoffs need live attention.
+        unresolved = session is not None and session.agent_handoff_state in {
+            "pending",
+            "review_required",
+        }
+        return replace(
+            activity,
+            agent_handoff_status=launch.label if launch and unresolved else "",
+        )
 
     def _hydrate_dispatch_recovery_queue(
         self,
@@ -6805,6 +6838,7 @@ class ConsoleChatController:
             self._maintenance_calls
             or self._maintenance_background
             or self._fleet_wake._delivery_tasks
+            or self._chat_start.tasks()
         ):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -7831,13 +7865,19 @@ class ConsoleChatController:
                 "Queued messages control the next turn. "
                 "Resume or manage the queue first."
             )
-        if not self.run_state_for(session_id).is_send_allowed:
+        if not self.run_state_for(
+            session_id
+        ).is_send_allowed and not self._chat_start.is_prepared(session_id):
             return "A run is already running in this tab."
         if self.store.dispatch_recovery_blocks_submission(session_id):
             return (
                 "Finish or discard the pending response before sending another message."
             )
-        busy_ids = self._live_busy_session_ids()
+        busy_ids = [
+            sid
+            for sid in self._live_busy_session_ids()
+            if sid != session_id or not self._chat_start.is_prepared(session_id)
+        ]
         if len(busy_ids) < self.max_parallel_runs:
             return None
         live_sessions = {session.id: session for session in self.store.sessions()}
@@ -9365,6 +9405,8 @@ class ConsoleChatController:
     ) -> bool:
         """Closed Task-13 admission map; unknown future kinds skip spending."""
 
+        if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
+            return bool(draft.strip())
         admitted_origins = {
             ConsoleSubmissionOrigin.MANUAL: True,
             ConsoleSubmissionOrigin.QUEUED: True,
@@ -10076,6 +10118,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
         accepted_attachments: tuple[PendingAttachment, ...] | None = None,
@@ -10101,6 +10144,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
                 accepted_attachments=accepted_attachments,
@@ -10131,6 +10175,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
         accepted_attachments: tuple[PendingAttachment, ...] | None = None,
@@ -10184,6 +10229,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
                 accepted_attachments=accepted_attachments,
@@ -10204,6 +10250,7 @@ class ConsoleChatController:
                 queue_entry_id=queue_entry_id,
                 queue_authorization=queue_authorization,
                 wake_authorization=wake_authorization,
+                chat_start_authorization=chat_start_authorization,
                 preserve_composer=preserve_composer,
                 configuration=configuration,
                 accepted_attachments=accepted_attachments,
@@ -10281,6 +10328,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
         accepted_attachments: tuple[PendingAttachment, ...] | None = None,
@@ -10300,7 +10348,11 @@ class ConsoleChatController:
 
         scope = (
             nullcontext()
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE
+            if origin
+            in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
             else manual_work_scope()
         )
         try:
@@ -10312,6 +10364,7 @@ class ConsoleChatController:
                     queue_entry_id=queue_entry_id,
                     queue_authorization=queue_authorization,
                     wake_authorization=wake_authorization,
+                    chat_start_authorization=chat_start_authorization,
                     preserve_composer=preserve_composer,
                     configuration=configuration,
                     accepted_attachments=accepted_attachments,
@@ -10369,6 +10422,7 @@ class ConsoleChatController:
         queue_entry_id: str | None = None,
         queue_authorization: QueueGenerationAuthorization | None = None,
         wake_authorization: AgentWakeAuthorization | None = None,
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
         preserve_composer: bool = False,
         configuration: ConsoleTurnConfigurationSnapshot | None = None,
         accepted_attachments: tuple[PendingAttachment, ...] | None = None,
@@ -10434,6 +10488,15 @@ class ConsoleChatController:
         if not isinstance(origin, ConsoleSubmissionOrigin):
             raise ValueError("origin must be an explicit ConsoleSubmissionOrigin")
         target_id = session_id or self.store.active_session_id or ""
+        if origin is ConsoleSubmissionOrigin.MANUAL and target_id:
+            await self._chat_start.withdraw_for_manual(target_id)
+            if not await self.store.drain_agent_handoff(target_id):
+                return ConsoleSubmitResult(
+                    False, False, "Draft custody is unconfirmed."
+                )
+        if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
+            if not self._chat_start.authorizes(chat_start_authorization, target_id):
+                raise PermissionError("agent chat start requires coordinator authority")
         resumed_preparation = (
             self._preparation_by_id(_resume_preparation_id)
             if _resume_preparation_id is not None
@@ -10591,7 +10654,14 @@ class ConsoleChatController:
         admitted_prefill: str | None = None
         admitted_prefill_from_one_shot = False
         admitted_prefill_revision: int | None = None
-        if origin is not ConsoleSubmissionOrigin.AGENT_WAKE and custodied_inputs:
+        if (
+            origin
+            not in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
+            and custodied_inputs
+        ):
             if captured_one_shot_prefill:
                 admitted_prefill = captured_one_shot_prefill
                 admitted_prefill_from_one_shot = True
@@ -10604,7 +10674,11 @@ class ConsoleChatController:
             else list(accepted_attachments or ())
             if custodied_inputs
             else self.store.pending_attachments(session.id)
-            if origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            if origin
+            not in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
             and not preserve_composer
             else []
         )
@@ -10621,12 +10695,19 @@ class ConsoleChatController:
         )
         if machine_input is not None:
             clean_draft, validation_error = str(machine_input), None
-        elif origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        elif origin in {
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.AGENT_CHAT_START,
+        }:
             # The notice is machine-composed from DB text and bounded by
             # `compose_wake_notice`'s own result budget; `_validated_draft`
             # exists to validate USER drafts (its length cap and markup
             # rules are composer policy, not payload policy).
-            clean_draft = str(draft or "").strip()
+            clean_draft = (
+                draft
+                if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                else str(draft or "").strip()
+            )
             validation_error = None if clean_draft else "Empty wake notice."
         else:
             clean_draft, validation_error = self._validated_draft(
@@ -10648,7 +10729,11 @@ class ConsoleChatController:
         # it would inject every referenced file a second time. Expand only on
         # the first pass.
         if (
-            origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            origin
+            not in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
             and machine_input is None
             and resumed_preparation is None
         ):
@@ -10734,6 +10819,11 @@ class ConsoleChatController:
                 # The queue holds this slot across terminal settlement. Its
                 # claimed next turn must reuse that reservation, not compete
                 # with itself during H4 provisional initialization.
+                busy = [identity for identity in busy if identity != session.id]
+            if (
+                origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                and self._chat_start.authorizes(chat_start_authorization, session.id)
+            ):
                 busy = [identity for identity in busy if identity != session.id]
             if session.id in busy or len(busy) >= self.max_parallel_runs:
                 return ConsoleSubmitResult(False, False, "A run is already preparing.")
@@ -10837,7 +10927,11 @@ class ConsoleChatController:
         durable_turn = bool(
             not session.ephemeral
             and origin
-            in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+            in {
+                ConsoleSubmissionOrigin.MANUAL,
+                ConsoleSubmissionOrigin.QUEUED,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
         )
         if durable_turn and not callable(durable_commit):
             # TASK-22030: a refusal the user cannot see is indistinguishable
@@ -10850,7 +10944,11 @@ class ConsoleChatController:
             )
         staged_title = session.title
         if (
-            origin is not ConsoleSubmissionOrigin.AGENT_WAKE
+            origin
+            not in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }
             and resumed_preparation is None
         ):
             derived_title = (
@@ -10897,7 +10995,18 @@ class ConsoleChatController:
                     role=ConsoleMessageRole.USER,
                     content=clean_draft,
                     metadata=(
-                        MessageMetadata(origin=MESSAGE_ORIGIN_HOOK)
+                        MessageMetadata(
+                            origin="agent_chat_start",
+                            agent_chat_start=AgentChatStartMetadata(
+                                chat_start_authorization.request.attempt_id,
+                                chat_start_authorization.request.source_run_id,
+                                self.store._sessions[
+                                    chat_start_authorization.request.source_session_id
+                                ].persisted_conversation_id,
+                            ),
+                        )
+                        if origin is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                        else MessageMetadata(origin=MESSAGE_ORIGIN_HOOK)
                         if machine_input is not None
                         else None
                     ),
@@ -10928,6 +11037,8 @@ class ConsoleChatController:
             ConsoleRunState(ConsoleRunStatus.VALIDATING, "Validating provider."),
             session_id=session.id,
         )
+        if chat_start_authorization is not None:
+            chat_start_authorization.validating_state = self.run_state_for(session.id)
         try:
             resolution = (
                 _resume_resolution
@@ -11040,6 +11151,7 @@ class ConsoleChatController:
                     in {
                         ConsoleSubmissionOrigin.MANUAL,
                         ConsoleSubmissionOrigin.QUEUED,
+                        ConsoleSubmissionOrigin.AGENT_CHAT_START,
                     }
                     and admission_policy.effective_capture_enabled
                     # TASK-25814: policy alone is not enough -- the RUNTIME has
@@ -11246,6 +11358,8 @@ class ConsoleChatController:
                     False,
                     "Another send is still preparing for this conversation.",
                 )
+            if chat_start_authorization is not None:
+                chat_start_authorization.preparation_id = preparation.preparation_id
             if origin is ConsoleSubmissionOrigin.QUEUED and (
                 queue_entry_id is None
                 or not self.prompt_queue_coordinator.bind_claimed_preparation(
@@ -11563,7 +11677,10 @@ class ConsoleChatController:
                     source_event_id=attached_event_id,
                     sensitivity="system_context",
                 )
-            if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+            if origin in {
+                ConsoleSubmissionOrigin.AGENT_WAKE,
+                ConsoleSubmissionOrigin.AGENT_CHAT_START,
+            }:
                 # The one-shot prefill is USER-staged state; a wake must
                 # not consume (and thereby destroy) it.
                 prefill, prefill_from_one_shot, one_shot_prefill_revision = (
@@ -11805,6 +11922,7 @@ class ConsoleChatController:
                 committed_context_epoch=committed_context_epoch,
                 custody_acceptance_hook=custody_acceptance_hook,
                 hook_context=hook_context,
+                chat_start_authorization=chat_start_authorization,
             )
         # TASK-1364: record the accepted send to the shared prompt history.
         # Same placement rule as the accepted-hook above: only a send that is
@@ -11914,7 +12032,11 @@ class ConsoleChatController:
             if (
                 session.ephemeral
                 and origin
-                in {ConsoleSubmissionOrigin.MANUAL, ConsoleSubmissionOrigin.QUEUED}
+                in {
+                    ConsoleSubmissionOrigin.MANUAL,
+                    ConsoleSubmissionOrigin.QUEUED,
+                    ConsoleSubmissionOrigin.AGENT_CHAT_START,
+                }
                 and preparation is not None
             ):
                 self.store.register_ephemeral_dispatch_recovery(
@@ -12777,6 +12899,63 @@ class ConsoleChatController:
             provider_started=False,
         )
 
+    def _native_start_project_required_action(
+        self, session, resolution, turn_context
+    ) -> str | None:
+        """Refuse setup/consent before acceptance, without opening a target dialog."""
+        snapshot = turn_context.project_authority
+        state = session.project_instruction_state
+        if snapshot is not None:
+            state = ProjectInstructionControlState(
+                snapshot.enabled,
+                snapshot.working_folder_binding_id,
+                snapshot.working_folder_locator_fingerprint,
+                snapshot.project_instruction_notice_key,
+            )
+        if not state.project_instructions_enabled:
+            return None
+        registry = getattr(self.app, "workspace_registry_service", None)
+        try:
+            if snapshot is not None:
+                if snapshot.selected is None:
+                    raise ProjectInstructionBindingRecovery("choose_binding")
+                selection = _project_selection_from_snapshot(snapshot.selected)
+            else:
+                selection = resolve_project_instruction_binding(session, registry)
+        except ProjectInstructionBindingRecovery:
+            try:
+                options = (
+                    snapshot.options
+                    if snapshot is not None
+                    else list_project_instruction_bindings(session, registry)
+                )
+            except ProjectInstructionBindingRecovery:
+                return "project_binding_required"
+            if state.working_folder_binding_id is None and not options:
+                return None  # The existing scratch-only case needs no folder decision.
+            return "project_binding_required"
+        if selection is None:
+            return None
+        notice_key = project_instruction_notice_key(
+            selection.locator_fingerprint,
+            str(
+                getattr(resolution, "execution_key", "")
+                or getattr(resolution, "provider", "")
+                or "agent"
+            ),
+            getattr(resolution, "base_url", None),
+        )
+        if state.project_instruction_notice_key != notice_key:
+            return "project_consent_required"
+        if not project_instruction_authority_is_current(
+            store=self.store,
+            session_id=session.id,
+            registry=registry,
+            expected_selection=selection,
+        ):
+            return "project_binding_required"
+        return None
+
     async def _accept_durable_turn(
         self,
         *,
@@ -12803,8 +12982,21 @@ class ConsoleChatController:
         committed_context_epoch: int,
         custody_acceptance_hook: Callable[[], None] | None,
         hook_context: str = "",
+        chat_start_authorization: AgentChatStartAuthorization | None = None,
     ) -> ConsoleSubmitResult:
         """Commit one durable owner, then enter its idempotent effect chain."""
+        if chat_start_authorization is not None:
+            required_action = self._native_start_project_required_action(
+                session, resolution, turn_context
+            )
+            if required_action is not None:
+                chat_start_authorization.withdrawal_reason = required_action
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Background start needs project setup.",
+                    session_id=session.id,
+                )
 
         staged_identity = self.store.staged_durable_turn_identity_for(
             preparation.preparation_id
@@ -12885,9 +13077,34 @@ class ConsoleChatController:
             continuation_receipt=self.prompt_queue_coordinator.continuation_receipt(
                 session.id, queue_entry_id
             ),
+            agent_chat_start_attempt_id=(
+                chat_start_authorization.request.attempt_id
+                if chat_start_authorization
+                else None
+            ),
+            agent_chat_start=(
+                echoed_user.metadata.agent_chat_start
+                if chat_start_authorization
+                else None
+            ),
+            handoff_draft_revision=session.agent_handoff_revision
+            if session.agent_handoff_state == "pending"
+            else None,
         )
         from .console_send_diagnostics import record_send_stage
 
+        if chat_start_authorization is not None:
+            if not await self._chat_start.accept(chat_start_authorization):
+                return ConsoleSubmitResult(
+                    False,
+                    False,
+                    "Background start was withdrawn.",
+                    session_id=session.id,
+                )
+        elif not await self.store.drain_agent_handoff(session.id):
+            return ConsoleSubmitResult(
+                False, False, "Draft custody is unconfirmed.", session_id=session.id
+            )
         record_send_stage("durable_commit")
         try:
             # TASK-22205: the ~10-statement BEGIN IMMEDIATE turn commit runs
@@ -12956,6 +13173,14 @@ class ConsoleChatController:
                 origin=origin,
                 queue_entry_id=queue_entry_id,
                 preparation_id=preparation.preparation_id,
+            )
+        if acceptance.handoff_draft_revision is not None:
+            self.store.publish_agent_handoff_consumed(
+                session.id, acceptance.handoff_draft_revision
+            )
+        if chat_start_authorization is not None:
+            await self._chat_start.confirm_receipt(
+                chat_start_authorization, commit.checkpoint
             )
         # The durable turn now exists even if later publication needs recovery.
         # Arm once here; replaying postcommit effects must not rearm a settled turn.
@@ -13325,7 +13550,8 @@ class ConsoleChatController:
         async def prompt_history() -> None:
             history = self.prompt_history
             if (
-                history is not None
+                continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START
+                and history is not None
                 and continuation.clean_draft.strip()
                 and not continuation.hook_continuation
             ):
@@ -13572,7 +13798,26 @@ class ConsoleChatController:
                     propagate_trace_call_persistence_errors=(
                         continuation.origin is ConsoleSubmissionOrigin.MANUAL
                     ),
-                    trusted_profile_user_message_id=commit.user_message_id,
+                    trusted_profile_user_message_id=(
+                        commit.user_message_id
+                        if continuation.origin
+                        is not ConsoleSubmissionOrigin.AGENT_CHAT_START
+                        else None
+                    ),
+                    work_origin=(
+                        WorkOrigin.AUTOMATIC
+                        if continuation.origin
+                        is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                        and not continuation.explicit_manual_retry
+                        else WorkOrigin.MANUAL
+                    ),
+                    work_chain_id=(
+                        self._chat_start._active[session_id].context.chain_id
+                        if continuation.origin
+                        is ConsoleSubmissionOrigin.AGENT_CHAT_START
+                        and not continuation.explicit_manual_retry
+                        else None
+                    ),
                 ),
                 fingerprint=fingerprint,
             )
@@ -13970,6 +14215,7 @@ class ConsoleChatController:
         session_id: str,
     ) -> ConsoleSubmitResult:
         """Explicitly retry one accepted/indeterminate owner without new rows."""
+        from tldw_chatbook.Agents.automatic_work_runtime import manual_work_scope
 
         recovery = self.store.dispatch_recovery_for_session(session_id)
         if recovery is None:
@@ -14007,7 +14253,13 @@ class ConsoleChatController:
                     raise _DispatchRecoveryRefusal(
                         "Committed turn continuation is unavailable."
                     )
-                result = await self.resume_durable_postcommit(preparation_id)
+                continuation = self._durable_postcommit_continuations[preparation_id]
+                if continuation.origin is ConsoleSubmissionOrigin.AGENT_CHAT_START:
+                    self._durable_postcommit_continuations[preparation_id] = replace(
+                        continuation, explicit_manual_retry=True
+                    )
+                with manual_work_scope():
+                    result = await self.resume_durable_postcommit(preparation_id)
                 if self.store.dispatch_recovery_for_session(session_id) is not None:
                     return result
                 notice = await self._settle_recovered_queue_owner(
@@ -14055,14 +14307,15 @@ class ConsoleChatController:
                     authority,
                     context.resolution,
                 )
-            result = await self._stream_assistant_response(
-                route=ConsoleRequestRoute.RETRY,
-                resolution=context.resolution,
-                provider_messages=context.provider_messages,
-                assistant_message_id=claimed.assistant_message_id,
-                turn_context=turn_context,
-                generation_token=generation_token,
-            )
+            with manual_work_scope():
+                result = await self._stream_assistant_response(
+                    route=ConsoleRequestRoute.RETRY,
+                    resolution=context.resolution,
+                    provider_messages=context.provider_messages,
+                    assistant_message_id=claimed.assistant_message_id,
+                    turn_context=turn_context,
+                    generation_token=generation_token,
+                )
         except asyncio.CancelledError:
             if self._retry_checkpoint_cas_completed(
                 session_id,
@@ -15202,6 +15455,9 @@ class ConsoleChatController:
     ) -> ConsoleChatSession | None:
         """Delete a session only after its runtime-owned work was drained."""
 
+        # ADR-150: session-scoped chat-create remember grants die with the session.
+        self._chat_create_session_grants.pop(ticket.session_id, None)
+
         state = self._session_close_states.pop(ticket.close_id, None)
         if state is None or state[0] != ticket:
             raise RuntimeError("Console session close ticket is stale.")
@@ -15300,6 +15556,12 @@ class ConsoleChatController:
         """Snapshot controller-owned tasks that must settle before deletion."""
 
         tasks = set(self._submit_tasks_for_session(session_id))
+        item = self._chat_start._active.get(session_id)
+        if item is not None and item.task is not None:
+            tasks.add(item.task)
+        writer = self.store._agent_handoff_writes.get(session_id)
+        if writer is not None and writer["task"] is not None:
+            tasks.add(writer["task"])
         stream_task = self._active_stream_tasks.get(session_id)
         if stream_task is not None:
             tasks.add(stream_task)
@@ -15415,6 +15677,11 @@ class ConsoleChatController:
         it is signalling -- there is deliberately no active-session
         fallback here, unlike ``_set_run_state``.
         """
+        self._chat_start.withdraw_prepared(session_id, "source_or_target_stopped")
+        with self._pending_chat_create_lock:
+            for token, record in tuple(self._chat_creation_records.items()):
+                if record["payload"]["session_id"] == session_id:
+                    self._chat_creation_records.pop(token, None)
         self._stop_requested = True
         cancel_event = self._active_cancel_events.get(session_id)
         if cancel_event is None:
@@ -15750,6 +16017,12 @@ class ConsoleChatController:
             hold the fail-closed ``"deny"`` default of a round nobody
             answered, not a user refusal -- see that class.
         """
+        start = self._chat_start._active.get(session_id)
+        if start is not None and not start.accepted:
+            start.withdrawal_reason = "target_consent_required"
+            return {
+                str(call.call_id or "") or call.llm_name: "deny" for call in pending
+            }
         unique_keys: list[str] = []
         seen: set[str] = set()
         call_by_key: dict[str, "MCPPendingCall"] = {}
@@ -19236,6 +19509,422 @@ class ConsoleChatController:
             )
         return enriched
 
+    def _chat_creation_source_live(self, payload: Mapping[str, Any]) -> bool:
+        """Require live primary execution and this exact source object lifetime."""
+        session = self.store._sessions.get(str(payload.get("session_id") or ""))
+        run_id = payload.get("source_run_id")
+        bridge = self._agent_bridge
+        if self._disposed or session is None or not run_id or bridge is None:
+            return False
+        if (
+            payload.get("source_incarnation", session.incarnation_id)
+            != session.incarnation_id
+        ):
+            return False
+        cancel = self._active_cancel_events.get(session.id)
+        if cancel is None or cancel.is_set():
+            return False
+        if self._active_assistant_message_ids.get(session.id) != payload.get(
+            "source_message_id"
+        ):
+            return False
+        try:
+            if bridge.live_primary_run_id(session.persisted_conversation_id) != run_id:
+                return False
+            row = bridge.runs_db.get_run(run_id)
+            return bool(
+                row
+                and row["conversation_id"] == session.persisted_conversation_id
+                and row["agent_kind"] == "primary"
+                and row["status"] not in {"done", "error", "cancelled", "abandoned"}
+            )
+        except Exception:
+            return False
+
+    def _chat_creation_destination_available(
+        self, *, scope_type: str, workspace_id: str | None
+    ) -> bool:
+        """Require the captured new-chat destination without redirecting it."""
+        persistence = self.store.persistence
+        if persistence is None:
+            return False
+        try:
+            persistence.validate_workspace_target(
+                scope_type=scope_type, workspace_id=workspace_id
+            )
+            if scope_type == "global":
+                return workspace_id is None
+            workspace = persistence.workspace_registry.get_workspace(workspace_id)
+            return workspace is not None and not workspace.archived
+        except Exception:
+            return False
+
+    def _resolve_new_chat_routing(self, settings, public):
+        """Apply gated generation routing to the fresh destination snapshot."""
+        provider, model, preset = (
+            public[key].strip() for key in ("provider", "model", "preset")
+        )
+        if not (provider or model or preset):
+            return settings
+        from tldw_chatbook.Agents.agent_models import definition_from_row
+        from tldw_chatbook.Agents.agent_routing import (
+            RoutingError,
+            load_agents_routing_config,
+            resolve_spawn_target,
+        )
+        from .console_session_settings import build_default_console_session_settings
+        from tldw_chatbook.config import load_settings
+
+        definition = None
+        if preset:
+            database = getattr(self._agent_bridge, "agent_runs_db", None)
+            rows = (
+                database.list_agent_definitions(enabled_only=True) if database else []
+            )
+            row = next((row for row in rows if row.get("name") == preset), None)
+            if row is None:
+                raise RoutingError(
+                    "unknown_preset",
+                    f"no enabled agent preset named '{preset}'",
+                    level="preset",
+                )
+            definition = definition_from_row(row)
+            if not (definition.provider or definition.model):
+                raise RoutingError(
+                    "preset_unrouted",
+                    f"preset '{preset}' sets no provider/model",
+                    level="preset",
+                )
+        config = load_settings()
+        target = resolve_spawn_target(
+            config,
+            parent_provider=settings.provider,
+            parent_model=settings.model or "",
+            preset=definition,
+            override_provider=provider,
+            override_model=model,
+            routing=replace(
+                load_agents_routing_config(),
+                subagent_default_provider="",
+                subagent_default_model="",
+            ),
+        )
+        routed = build_default_console_session_settings(
+            config,
+            provider=target.provider,
+            model=target.model or None,
+            extra_sources=((dict(target.params),) if target.params else ()),
+        )
+        # The resolver has already applied preset > configured sampling layers.
+        # Reapply that resolved result after the builder's lower-priority extras.
+        routed = replace(routed, **dict(target.params))
+        return replace(
+            routed,
+            system_prompt=settings.system_prompt,
+            character_label=settings.character_label,
+            pinned_prefill=settings.pinned_prefill,
+            persona_memory_mode=settings.persona_memory_mode,
+        )
+
+    def prepare_agent_chat_create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Freeze source authority, destination and defaults before approval."""
+        from .console_agent_bridge import validate_new_chat_arguments
+        from .console_session_settings import blank_console_session_settings
+
+        public = validate_new_chat_arguments(payload)
+        if not self._chat_creation_source_live(
+            payload
+        ) or current_run_id() != payload.get("source_run_id"):
+            raise PermissionError("source_unavailable")
+        source = self.store._sessions.get(payload["session_id"])
+        workspace = (
+            CONSOLE_GLOBAL_WORKSPACE_ID
+            if public["destination"] == "casual"
+            else source.workspace_id
+        )
+        scope = (
+            "global"
+            if workspace in (None, CONSOLE_GLOBAL_WORKSPACE_ID)
+            else "workspace"
+        )
+        workspace = None if scope == "global" else workspace
+        persistence = self.store.persistence
+        if persistence is None:
+            raise PermissionError("persistence_unavailable")
+        if not self._chat_creation_destination_available(
+            scope_type=scope, workspace_id=workspace
+        ):
+            raise PermissionError("destination_unavailable")
+        runtime = getattr(self.app, "console_runtime", None)
+        if runtime is None:
+            raise PermissionError("runtime_unavailable")
+        settings = (
+            self._default_session_settings()
+            if self._default_session_settings
+            else blank_console_session_settings(getattr(self.app, "app_config", {}))
+        )
+        if public["instructions"].strip():
+            settings = replace(settings, system_prompt=public["instructions"])
+        startup = runtime._resolve_new_console_assistant(
+            workspace or CONSOLE_GLOBAL_WORKSPACE_ID, settings
+        )
+        startup = replace(
+            startup, settings=self._resolve_new_chat_routing(startup.settings, public)
+        )
+        grant = (source.incarnation_id, "new_chat", scope, workspace, public["mode"])
+        prepared = {
+            **public,
+            "tool": "new_chat",
+            "session_id": source.id,
+            "source_run_id": payload["source_run_id"],
+            "source_message_id": payload["source_message_id"],
+            "source_incarnation": source.incarnation_id,
+            "source_workspace_id": source.workspace_id,
+            "scope_type": scope,
+            "workspace_id": workspace,
+            "_grant_scope": grant,
+            "assistant": startup.assistant_id,
+            "assistant_default_notice": startup.notice,
+            "provider": startup.settings.provider,
+            "model": startup.settings.model or "",
+            "resolved_instructions": startup.settings.system_prompt,
+            "instructions": public["instructions"],
+        }
+        with self._pending_chat_create_lock:
+            if len(self._chat_creation_records) >= 64:
+                raise PermissionError("creation_capacity")
+            token = _ChatCreationToken(self)
+            prepared["_creation_token"] = token
+            self._chat_creation_records[token] = {
+                "payload": dict(prepared),
+                "startup": startup,
+                "approved": grant
+                in self._chat_create_session_grants.get(source.id, set()),
+            }
+        return prepared
+
+    def _chat_creation_record(
+        self, payload: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        with self._pending_chat_create_lock:
+            record = self._chat_creation_records.get(payload.get("_creation_token"))
+            if record is None or any(
+                payload.get(key) != value for key, value in record["payload"].items()
+            ):
+                return None
+            source = self.store._sessions.get(record["payload"]["session_id"])
+            if (
+                not self._chat_creation_source_live(record["payload"])
+                or source is None
+                or source.workspace_id != record["payload"]["source_workspace_id"]
+            ):
+                return None
+            return record
+
+    def _start_created_chat(
+        self, approved: Mapping[str, Any], target: ConsoleChatSession
+    ) -> dict[str, Any]:
+        """Wait on the owning loop only until the new chat's acceptance outcome."""
+        loop = self._owner_loop
+        if loop is None or loop.is_closed():
+            return {"launch_status": "not_started", "reason": "runtime_unavailable"}
+
+        async def start():
+            if self.store.library_policy_coordinator is not None:
+                await self.store.library_policy_coordinator.capture_for_execution(
+                    target.id
+                )
+            request = AgentChatStartRequest(
+                str(uuid4()),
+                approved["source_run_id"],
+                approved["session_id"],
+                approved["source_incarnation"],
+                target.persisted_conversation_id,
+                target.id,
+                target.incarnation_id,
+                target.agent_handoff_revision,
+                self.store.conversation_context_epoch(target.id),
+                approved["opening_prompt"],
+                self.resolve_turn_configuration_snapshot(target.id),
+                approved["workspace_id"] or CONSOLE_GLOBAL_WORKSPACE_ID,
+            )
+            return await self._chat_start.start(request)
+
+        outcome = asyncio.run_coroutine_threadsafe(start(), loop).result()
+        return {"launch_status": outcome.launch_status, "reason": outcome.reason}
+
+    def _execute_prepared_chat_create(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Save an approved new destination before requesting any background work."""
+        from .console_agent_bridge import validate_new_chat_arguments
+        from .console_generation_settings_metadata import (
+            ConsoleGenerationSettingsReadStatus,
+            merge_console_generation_settings,
+            snapshot_from_session_settings,
+        )
+
+        token = payload.get("_creation_token")
+        try:
+            validate_new_chat_arguments(payload)
+            record = self._chat_creation_record(payload)
+            if record is None or not record["approved"]:
+                return {
+                    "ok": False,
+                    "kind": "approval_required",
+                    "error": "live exact approval required",
+                }
+            approved = record["payload"]
+            startup = record["startup"]
+            snapshot = (
+                snapshot_from_session_settings(startup.settings)
+                if startup.settings.provider.strip()
+                else None
+            )
+            metadata = (
+                merge_console_generation_settings({}, snapshot) if snapshot else {}
+            )
+            metadata["console_agent_handoff"] = {
+                "version": 2,
+                "created_via": "new_chat",
+                "state": "pending",
+                "draft_revision": 1,
+                "draft": approved["opening_prompt"],
+                "source_run_id": approved["source_run_id"],
+                "launch": {
+                    "mode": approved["mode"],
+                    "status": "draft"
+                    if approved["mode"] == "draft"
+                    else "review_required",
+                    "reason": None
+                    if approved["mode"] == "draft"
+                    else "outcome_unconfirmed",
+                },
+            }
+            title = approved["title"] or "New Chat"
+            from .console_library_policy import ConsoleLibraryPolicyCandidate
+
+            defaults = (
+                self.store._library_policy_defaults_provider()
+                if self.store._library_policy_defaults_provider
+                else self.store._library_policy_defaults
+            )
+            conversation_id = str(uuid4())
+            if not self._chat_creation_destination_available(
+                scope_type=approved["scope_type"],
+                workspace_id=approved["workspace_id"],
+            ):
+                raise PermissionError("destination_unavailable")
+            self.store.persistence.persist_console_conversation_with_policy(
+                conversation_id=conversation_id,
+                policy_candidate=ConsoleLibraryPolicyCandidate(
+                    defaults.auto_retrieve, defaults.assistant_access
+                ),
+                conversation_kwargs={
+                    "conversation_title": title,
+                    "scope_type": approved["scope_type"],
+                    "workspace_id": approved["workspace_id"],
+                    "system_prompt": startup.settings.system_prompt,
+                    "assistant_kind": startup.assistant_kind,
+                    "assistant_id": startup.assistant_id,
+                    "persona_memory_mode": startup.persona_memory_mode,
+                    "metadata": metadata,
+                },
+            )
+            result = {
+                "ok": True,
+                "title": title,
+                "conversation_id": conversation_id,
+                "scope_type": approved["scope_type"],
+                "workspace_id": approved["workspace_id"],
+                "destination": approved["destination"],
+                "mode": approved["mode"],
+                "copied_messages": 0,
+                "draft_set": bool(approved["opening_prompt"]),
+                "launch_status": "draft"
+                if approved["mode"] == "draft"
+                else "not_started",
+            }
+            try:
+
+                def restore():
+                    created_session = self.store.restore_persisted_session(
+                        title=title,
+                        workspace_id=approved["workspace_id"]
+                        or CONSOLE_GLOBAL_WORKSPACE_ID,
+                        persisted_conversation_id=conversation_id,
+                        all_nodes=[],
+                        activate=False,
+                        settings=startup.settings,
+                        generation_durable_snapshot=snapshot,
+                        generation_metadata_status=(
+                            ConsoleGenerationSettingsReadStatus.VALID
+                            if snapshot
+                            else ConsoleGenerationSettingsReadStatus.ABSENT
+                        ),
+                        assistant_kind=startup.assistant_kind,
+                        assistant_id=startup.assistant_id,
+                        persona_memory_mode=startup.persona_memory_mode,
+                        assistant_default_notice=startup.notice,
+                    )
+                    created_session.project_instruction_state = (
+                        ProjectInstructionControlState.new_session()
+                    )
+                    self.store._project_workspace_membership_after_commit(
+                        created_session
+                    )
+                    return created_session
+
+                target = self.app.call_from_thread(restore)
+                if approved["mode"] == "start":
+                    result.update(self._start_created_chat(approved, target))
+            except Exception:
+                result["reason"] = "restore_unavailable"
+                if approved["mode"] == "start":
+                    result["launch_status"] = "not_started"
+            if result.get("reason") in {"restore_unavailable", "runtime_unavailable"}:
+                from .message_metadata import AgentHandoffLaunchMetadata
+
+                try:
+                    launch = AgentHandoffLaunchMetadata(
+                        approved["mode"], result["launch_status"], result["reason"]
+                    )
+                    self.store.persistence.update_agent_handoff_launch(
+                        conversation_id, launch
+                    )
+                    if result["reason"] == "runtime_unavailable":
+                        self.app.call_from_thread(
+                            setattr, target, "agent_handoff_launch", launch
+                        )
+                except Exception:
+                    result.update(
+                        launch_status="review_required", reason="outcome_unconfirmed"
+                    )
+            if self.complete_agent_chat_create is not None:
+                try:
+                    self.app.call_from_thread(
+                        self.complete_agent_chat_create,
+                        session_id=approved["session_id"],
+                        conversation_id=conversation_id,
+                        title=title,
+                        tool="new_chat",
+                        opening_prompt=approved["opening_prompt"],
+                        workspace_id=approved["workspace_id"]
+                        or CONSOLE_GLOBAL_WORKSPACE_ID,
+                        launch_status=result["launch_status"],
+                        reason=result.get("reason"),
+                    )
+                except Exception:
+                    pass
+            return result
+        except (ValueError, PermissionError):
+            return {
+                "ok": False,
+                "kind": "creation_refused",
+                "error": "creation validation failed",
+            }
+        finally:
+            if isinstance(token, _ChatCreationToken):
+                token.close()
+
     def request_chat_create_confirm(
         self, payload: dict[str, Any], *, session_id: str | None = None
     ) -> dict[str, bool]:
@@ -19282,9 +19971,6 @@ class ConsoleChatController:
         from tldw_chatbook.Agents.human_input_wait import use_human_input_wait
         from tldw_chatbook.Agents.agent_models import AGENT_KIND_PRIMARY
 
-        if self.app is None or self.set_pending_chat_create is None:
-            return {"allow": False, "remember": False}
-
         owning_session_id = (
             session_id
             if session_id is not None
@@ -19308,7 +19994,9 @@ class ConsoleChatController:
         requesting_kind = "unknown"
         requesting_parent: str | None = None
         requesting_task = ""
-        agent_db = getattr(self._agent_bridge, "agent_runs_db", None)
+        agent_db = getattr(self._agent_bridge, "runs_db", None) or getattr(
+            self._agent_bridge, "agent_runs_db", None
+        )
         get_run = getattr(agent_db, "get_run", None)
         if true_run_id and callable(get_run):
             try:
@@ -19327,19 +20015,28 @@ class ConsoleChatController:
             "agent_task": requesting_task,
         }
         # Session-scoped remember: a standing grant for this (session, tool)
-        # pair short-circuits -- no card is armed at all. TASK-32531: a
-        # SUB-AGENT requester never rides one -- children share the session
-        # with the primary, so the user's session grant must not silently
-        # auto-allow child-run chat creation; every child call confirms.
+        # pair short-circuits -- no card is armed at all.
         with self._pending_chat_create_lock:
             if owning_session_id in self._session_close_generations:
                 return {"allow": False, "remember": False}
-            if (
-                requesting_kind == AGENT_KIND_PRIMARY
-                and tool
-                in self._chat_create_session_grants.get(owning_session_id, set())
-            ):
-                return {"allow": True, "remember": True}
+        record = self._chat_creation_record(payload) if tool == "new_chat" else None
+        if tool == "new_chat" and record is None:
+            token = payload.get("_creation_token")
+            if isinstance(token, _ChatCreationToken):
+                token.close()
+            return {"allow": False, "remember": False}
+        grant = payload["_grant_scope"] if record is not None else tool
+        if (
+            requesting_kind == AGENT_KIND_PRIMARY
+            and grant in self._chat_create_session_grants.get(owning_session_id, set())
+        ):
+            if record is not None:
+                record["approved"] = True
+            return {"allow": True, "remember": True}
+        if self.app is None or self.set_pending_chat_create is None:
+            if record is not None:
+                payload["_creation_token"].close()
+            return {"allow": False, "remember": False}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
         # round is armed -- fork_source_title/fork_message_count (the card's
@@ -19438,12 +20135,18 @@ class ConsoleChatController:
                 remember = bool(decision.get("remember", False))
                 # Decide and remember atomically with the Close/revocation sweep.
                 # A remembered deny must never become a standing grant.
+                if allow and tool == "new_chat":
+                    allow = self._chat_creation_record(payload) is record
+                    if allow:
+                        record["approved"] = True
                 if allow and remember:
                     self._chat_create_session_grants.setdefault(
                         owning_session_id, set()
-                    ).add(tool)
+                    ).add(grant)
                 return {"allow": allow, "remember": remember}
         finally:
+            if record is not None and not record["approved"]:
+                payload["_creation_token"].close()
             with self._pending_chat_create_lock:
                 self._pending_chat_create_rounds.pop(request_id, None)
             # Drop exactly THIS round's retained payload -- each round owns
@@ -19633,6 +20336,9 @@ class ConsoleChatController:
             CHAT_CREATE_TITLE_MAX,
         )
         from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
+
+        if payload.get("tool") == "new_chat":
+            return self._execute_prepared_chat_create(payload)
 
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
@@ -20589,6 +21295,16 @@ class ConsoleChatController:
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
+        start = self._chat_start._active.get(session_id)
+        if (
+            start is not None
+            and start.task is not None
+            and self._active_assistant_message_ids.get(session_id) is None
+        ):
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
+            self._signal_stop(session_id=session_id)
+            start.task.cancel()
+            return True
         repair_session = self._active_citation_repair_sessions.get(session_id)
         if repair_session is not None and repair_session.selection_committed:
             return False
@@ -20702,6 +21418,10 @@ class ConsoleChatController:
         boundary for the same app-owned controller.
         """
         self.begin_shutdown()
+        if self._chat_start.tasks():
+            await asyncio.gather(*self._chat_start.tasks(), return_exceptions=True)
+        for live_session in tuple(self.store.sessions()):
+            await self.store.drain_agent_handoff(live_session.id)
         for message_id in tuple(self._original_attempts):
             self.clear_original_attempt(message_id)
         submit_tasks = self._submit_tasks_snapshot()
@@ -20788,7 +21508,9 @@ class ConsoleChatController:
         """
 
         self._disposed = True
+        self._chat_creation_records.clear()
         self._visit_open = False
+        self._chat_start.dispose()
         self._fleet_wake.dispose()
         self._shutdown_requested.set()
         unreachable_preparations = self._detach_closed_submit_tasks()
@@ -29994,6 +30716,10 @@ class ConsoleChatController:
                 ):
                     project_selection = None
                 else:
+                    if self._chat_start.is_accepted(session_id):
+                        return self._refuse_turn_for_project_setup(
+                            assistant_message_id, session_id, "project_binding_required"
+                        )
                     callback = self._select_project_instruction_binding
                     if callback is None:
                         return self._refuse_turn_for_project_setup(
@@ -30147,6 +30873,8 @@ class ConsoleChatController:
                     initial = on_owning_loop(lambda: commit_and_record(None))
                     if initial != "prompt":
                         return initial
+                    if self._chat_start.is_accepted(session_id):
+                        return "cancel"
                     callback = self._confirm_project_instruction_dispatch
                     notice = build_project_instruction_dispatch_notice(
                         snapshot,
@@ -30500,6 +31228,7 @@ class ConsoleChatController:
                     candidate = self.store.get_message(trusted_profile_user_message_id)
                     if (
                         candidate.role is ConsoleMessageRole.USER
+                        and not getattr(candidate.metadata, "origin", None)
                         and self.store.session_id_for_message(candidate.id)
                         == session_id
                     ):
@@ -30559,7 +31288,7 @@ class ConsoleChatController:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
-            run_id, outcome = await self._run_maintenance_agent_call(
+            provider_worker = self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
                 work_chain_id=work_chain_id,
@@ -30667,14 +31396,9 @@ class ConsoleChatController:
                     functools.partial(
                         self.request_chat_create_confirm, session_id=session_id
                     )
-                    if self.set_pending_chat_create is not None
-                    else None
                 ),
-                execute_agent_chat_create=(
-                    self.execute_agent_chat_create
-                    if self.complete_agent_chat_create is not None
-                    else None
-                ),
+                execute_agent_chat_create=self.execute_agent_chat_create,
+                prepare_agent_chat_create=self.prepare_agent_chat_create,
                 # TASK-28238 phase 2 Task 6/Task 7: same "advertised must
                 # equal usable" gate as `request_skill_script_confirm`
                 # above. Task 5 originally advertised
@@ -30732,6 +31456,9 @@ class ConsoleChatController:
                 trace_request=trace_request,
                 _generation_handoff=_generation_handoff,
                 profile_context_service=profile_context_service,
+            )
+            run_id, outcome = await self._chat_start.run_provider_worker(
+                session_id, provider_worker
             )
         except asyncio.CancelledError:
             if work_origin is WorkOrigin.AUTOMATIC:

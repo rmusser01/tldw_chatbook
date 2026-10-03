@@ -306,57 +306,36 @@ def test_execute_payload_too_large(real_db_controller):
     controller, db = real_db_controller
     session = controller.store.create_session(title="S")
     outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "x",
-         "opening_prompt": "y" * 20_001, "instructions": ""})
-    assert not outcome["ok"] and outcome["kind"] == "payload_too_large"
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "x",
+            "opening_prompt": "y" * 20_001,
+            "instructions": "",
+        }
+    )
+    assert not outcome["ok"] and outcome["kind"] == "creation_refused"
 
 
-def test_execute_new_chat_creates_conversation_and_completion(real_db_controller):
+def test_execute_new_chat_requires_live_prepared_approval(real_db_controller):
     controller, db = real_db_controller
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
     session = controller.store.create_session(title="S")
     outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "Fresh",
-         "opening_prompt": "hello there", "instructions": "be brief", "run_id": "run-9"}
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "Fresh",
+            "opening_prompt": "hello there",
+            "instructions": "be brief",
+            "run_id": "run-9",
+        }
     )
-    assert outcome["ok"], outcome
-    assert outcome["copied_messages"] == 0
-    assert outcome["title"] == "Fresh"
-    created = db.get_conversation_by_id(outcome["conversation_id"])
-    assert created is not None and created["system_prompt"] == "be brief"
-    metadata = json.loads(created["metadata"])
-    assert metadata["console_agent_handoff"] == {
-        "draft": "hello there", "created_via": "new_chat", "source_run_id": "run-9"
-    }
-    # The executor marshaled exactly one UI completion with the marshal
-    # kwargs (_FakeApp's call_from_thread invokes immediately).
-    # PR reviews #1/#8: the completion now carries the session's identity
-    # fields and a NON-None workspace id (global resolves to the Console's
-    # global workspace id), plus the worker-side hydrated nodes/leaf.
-    assert completed == [{
-        "session_id": session.id,
-        "conversation_id": outcome["conversation_id"],
-        "title": "Fresh",
-        "tool": "new_chat",
-        "opening_prompt": "hello there",
-        "workspace_id": session.workspace_id or "global",
-        "nodes": [],
-        "active_leaf_persisted_id": None,
-        "settings": None,
-        "assistant_kind": session.assistant_kind,
-        "assistant_id": session.assistant_id,
-        "assistant_authority_id": session.assistant_authority_id,
-        "persona_memory_mode": None,
-        "character_id": None,
-        "character_name": None,
-    }]
-    # The new conversation is NOT wired onto any session yet (Task 8 owns
-    # session placement) -- verify no session claims it.
-    assert all(
-        s.persisted_conversation_id != outcome["conversation_id"]
-        for s in controller.store.sessions()
-    )
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not completed
+    assert len(controller.store.sessions()) == 1
+
 
 def test_execute_fork_read_failure_maps_to_execution_failed(
     real_db_controller, monkeypatch
@@ -402,14 +381,14 @@ async def test_chat_create_callbacks_reach_bridge_when_ui_sinks_wired(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_chat_create_callbacks_absent_without_ui_sinks(tmp_path):
+async def test_chat_create_callbacks_remain_available_for_remembered_grants(tmp_path):
     from Tests.Chat.test_console_skill_script_confirm import _bridged_controller
 
     controller, captured = _bridged_controller(tmp_path)
     result = await controller.submit_draft("hi")
     assert result.accepted is True, result
-    assert captured[0]["request_chat_create_confirm"] is None
-    assert captured[0]["execute_agent_chat_create"] is None
+    assert captured[0]["request_chat_create_confirm"] is not None
+    assert captured[0]["execute_agent_chat_create"] is not None
 
 
 def test_execute_fork_merges_source_metadata(real_db_controller):
@@ -548,6 +527,70 @@ def _routed_session(controller):
     )
 
 
+def _prepared_execute(controller, payload):
+    """Exercise actual preparation and an exact controller approval round."""
+    from types import SimpleNamespace
+    from threading import Event
+    from tldw_chatbook.Agents.run_context import use_run_id
+    from tldw_chatbook.Agents.agent_routing import RoutingError
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    session = controller.store._sessions[payload["session_id"]]
+    if not session.persisted_conversation_id:
+        session.persisted_conversation_id = (
+            controller.store.persistence.create_conversation(
+                conversation_title="source"
+            )
+        )
+    controller._active_cancel_events[session.id] = Event()
+    controller._active_assistant_message_ids[session.id] = "source-message"
+    bridge = controller._agent_bridge or SimpleNamespace()
+    bridge.live_primary_run_id = lambda conversation: "source-run"
+    bridge.runs_db = SimpleNamespace(
+        get_run=lambda run_id: {
+            "id": run_id,
+            "conversation_id": session.persisted_conversation_id,
+            "agent_kind": "primary",
+            "status": "running",
+        }
+    )
+    controller._agent_bridge = bridge
+    controller.app.app_config = _FAKE_APP_CONFIG
+    runtime = SimpleNamespace(_app=controller.app)
+    runtime._resolve_new_console_assistant = lambda workspace, settings: (
+        ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+    )
+    controller.app.console_runtime = runtime
+    controller._default_session_settings = lambda: ConsoleSessionSettings(
+        provider="llama_cpp",
+        model="destination-model",
+        system_prompt="destination instructions",
+    )
+
+    def approve(pending):
+        if pending:
+            controller.resolve_pending_chat_create(True, False, pending["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_id("source-run"):
+        try:
+            prepared = controller.prepare_agent_chat_create(
+                {
+                    **payload,
+                    "source_run_id": "source-run",
+                    "source_message_id": "source-message",
+                }
+            )
+        except RoutingError as error:
+            return {"ok": False, "kind": error.code}
+        except ValueError as error:
+            return {"ok": False, "kind": str(error).split(":", 1)[0]}
+        controller._last_routing_prepared = dict(prepared)
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+        return controller.execute_agent_chat_create(prepared)
+
+
 def test_execute_routing_override_disabled(real_db_controller, monkeypatch):
     controller, db = real_db_controller
     _routing(monkeypatch, enabled=False, allowlist=())
@@ -555,9 +598,17 @@ def test_execute_routing_override_disabled(real_db_controller, monkeypatch):
     session = controller.store.create_session(title="S")
     conv = controller.store.persistence.create_conversation(conversation_title="S")
     session.persisted_conversation_id = conv
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": "llama_cpp",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "override_disabled"
 
 
@@ -566,9 +617,17 @@ def test_execute_routing_not_allowlisted(real_db_controller, monkeypatch):
     _routing(monkeypatch, enabled=True, allowlist=("openai",))
     _app_config(monkeypatch)
     session = controller.store.create_session(title="S")
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": "llama_cpp"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": "llama_cpp",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
 
 
@@ -579,9 +638,17 @@ def test_execute_routing_final_guard_on_model_only(real_db_controller, monkeypat
     _routing(monkeypatch, enabled=True, allowlist=("llama_cpp/m1",))
     _app_config(monkeypatch)
     session = _routed_session(controller)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "model": "m2"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "model": "m2",
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "provider_not_allowlisted"
 
 
@@ -592,11 +659,23 @@ def test_execute_routing_override_builds_settings(real_db_controller, monkeypatc
     session = _routed_session(controller)
     completed = []
     controller.complete_agent_chat_create = lambda **kw: completed.append(kw)
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "model": "m2"})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "model": "m2",
+        },
+    )
     assert outcome["ok"], outcome
-    settings = completed[0]["settings"]
+    settings = next(
+        s.settings
+        for s in controller.store.sessions()
+        if s.persisted_conversation_id == outcome["conversation_id"]
+    )
     assert settings is not None
     assert settings.provider == "llama_cpp"
     assert settings.model == "m2"
@@ -618,13 +697,29 @@ def test_execute_routing_unknown_and_unrouted_preset(real_db_controller, monkeyp
                 ]
 
     controller._agent_bridge = _Bridge()
-    out1 = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "preset": "ghost"})
+    out1 = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "preset": "ghost",
+        },
+    )
     assert not out1["ok"] and out1["kind"] == "unknown_preset"
-    out2 = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "preset": "cloudy"})
+    out2 = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "preset": "cloudy",
+        },
+    )
     assert not out2["ok"] and out2["kind"] == "preset_unrouted"
 
 
@@ -680,9 +775,17 @@ def test_execute_routing_rejects_non_string_inputs(real_db_controller):
     reachable from callers other than the closures)."""
     controller, db = real_db_controller
     session = controller.store.create_session(title="S")
-    outcome = controller.execute_agent_chat_create(
-        {"tool": "new_chat", "session_id": session.id, "title": "N",
-         "opening_prompt": "", "instructions": "", "provider": ["x"]})
+    outcome = _prepared_execute(
+        controller,
+        {
+            "tool": "new_chat",
+            "session_id": session.id,
+            "title": "N",
+            "opening_prompt": "",
+            "instructions": "",
+            "provider": ["x"],
+        },
+    )
     assert not outcome["ok"] and outcome["kind"] == "invalid_args"
 
 
@@ -982,3 +1085,99 @@ def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
     assert len(placed) == 1
     assert placed[0] in controller.store.sessions()
     assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None
+
+
+def test_prepared_new_chat_destination_routing_disclosed_and_durable(
+    real_db_controller, monkeypatch
+):
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    source = _routed_session(controller)
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "model": "m2"}
+    )
+    assert result["ok"], result
+    prepared = controller._last_routing_prepared
+    assert prepared["provider"] == "llama_cpp" and prepared["model"] == "m2"
+    assert prepared["resolved_instructions"] == "destination instructions"
+    row = db.get_conversation_by_id(result["conversation_id"])
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        parse_console_generation_settings,
+    )
+
+    snapshot = parse_console_generation_settings(row["metadata"]).snapshot
+    assert snapshot.provider == "llama_cpp" and snapshot.model == "m2"
+
+
+def test_prepared_new_chat_model_only_uses_destination_provider(
+    real_db_controller, monkeypatch
+):
+    from dataclasses import replace
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=True, allowlist=("llama_cpp",))
+    _app_config(monkeypatch)
+    source = _routed_session(controller)
+    source.settings = replace(source.settings, provider="openai", model="source-only")
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "model": "m2"}
+    )
+    assert result["ok"], result
+    assert controller._last_routing_prepared["provider"] == "llama_cpp"
+
+
+def test_prepared_new_chat_preset_params_win_over_config_and_keep_destination_identity(
+    real_db_controller, monkeypatch
+):
+    from types import SimpleNamespace
+    from tldw_chatbook import config
+
+    controller, db = real_db_controller
+    _routing(monkeypatch, enabled=False, allowlist=())
+    configured = {
+        **_FAKE_APP_CONFIG,
+        "chat_defaults": {"temperature": 0.9},
+        "console": {"provider_defaults": {"llama_cpp": {"temperature": 0.8}}},
+    }
+    monkeypatch.setattr(config, "load_settings", lambda: configured)
+    controller._agent_bridge = SimpleNamespace(
+        agent_runs_db=SimpleNamespace(
+            list_agent_definitions=lambda enabled_only: [
+                {
+                    "name": "tuned",
+                    "description": "d",
+                    "instructions": "preset persona must not ride",
+                    "tool_allowlist": [],
+                    "provider": "llama_cpp",
+                    "model": "m1",
+                    "enabled": 1,
+                    "params": {"temperature": 0.2, "top_p": 0.4, "max_tokens": 123},
+                }
+            ]
+        )
+    )
+    source = _routed_session(controller)
+    result = _prepared_execute(
+        controller, {"tool": "new_chat", "session_id": source.id, "preset": "tuned"}
+    )
+    assert result["ok"], result
+    target = next(
+        s
+        for s in controller.store.sessions()
+        if s.persisted_conversation_id == result["conversation_id"]
+    )
+    assert target.settings.temperature == 0.2
+    assert target.settings.top_p == 0.4 and target.settings.max_tokens == 123
+    assert target.settings.system_prompt == "destination instructions"
+    from tldw_chatbook.Chat.console_generation_settings_metadata import (
+        parse_console_generation_settings,
+    )
+
+    row = db.get_conversation_by_id(result["conversation_id"])
+    durable = parse_console_generation_settings(row["metadata"]).snapshot
+    assert (
+        durable.temperature == 0.2
+        and durable.top_p == 0.4
+        and durable.max_tokens == 123
+    )

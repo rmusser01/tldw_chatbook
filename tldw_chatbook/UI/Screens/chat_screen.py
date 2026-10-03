@@ -15048,8 +15048,14 @@ class ChatScreen(BaseAppScreen):
             )
         )
         run_allows_send = (
-            bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
-        )
+            bool(getattr(run_state, "is_send_allowed", True))
+            or (
+                controller is not None
+                and controller._chat_start.is_prepared(
+                    controller.store.active_session_id or ""
+                )
+            )
+        ) and not image_edit_active
         can_send = (
             has_draft
             and not bool(self._console_setup_blocked_reason())
@@ -20371,6 +20377,16 @@ class ChatScreen(BaseAppScreen):
                 wake.retry_soon()
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
+        # A pending handoff owns durable draft custody, including empty edits.
+        # Read the current composer, not an older queued Input.Changed value.
+        if (
+            session_id is not None
+            and session_id == self._console_visible_draft_session_id
+            and store._sessions[session_id].agent_handoff_state == "pending"
+        ):
+            composer = self._console_composer_or_none()
+            if composer is not None:
+                store.set_session_draft(session_id, composer.draft_text())
         controller = self._console_chat_controller
         self._console_draft_spend_refresh.route_edit(
             run_active=bool(
@@ -22370,6 +22386,7 @@ class ChatScreen(BaseAppScreen):
             run_active = bool(getattr(run_state, "is_stop_allowed", False))
             send_blocked = not bool(getattr(run_state, "is_send_allowed", True))
             active_id = controller.store.active_session_id or ""
+            run_active = run_active or controller._chat_start.is_accepted(active_id)
             if active_id:
                 queue_presentation = self._prompt_queue.presentation_for(
                     active_id,
@@ -24708,6 +24725,8 @@ class ChatScreen(BaseAppScreen):
         persona_memory_mode: "str | None" = None,
         character_id: "int | None" = None,
         character_name: "str | None" = None,
+        launch_status: str = "draft",
+        reason: str | None = None,
     ) -> None:
         """TASK-32482 Task 7: land a confirmed agent-created chat as a session.
 
@@ -24762,32 +24781,41 @@ class ChatScreen(BaseAppScreen):
             return
         store = controller.store
         try:
-            session = store.restore_persisted_session(
-                title=title,
-                workspace_id=workspace_id,
-                persisted_conversation_id=conversation_id,
-                all_nodes=nodes or [],
-                active_leaf_persisted_id=active_leaf_persisted_id,
-                settings=settings,
-                assistant_kind=assistant_kind,
-                assistant_id=assistant_id,
-                assistant_authority_id=assistant_authority_id,
-                persona_memory_mode=persona_memory_mode,
-                character_id=character_id,
-                character_name=character_name,
-                activate=False,
-            )
-            # Single write path: the restore rehydrates the draft from
-            # the persisted console_agent_handoff key; this fill only
-            # covers a degraded restore-side read (empty draft).
-            if opening_prompt and not session.draft:
-                store.set_session_draft(session.id, opening_prompt)
+            if tool == "fork_chat":
+                session = store.restore_persisted_session(
+                    title=title,
+                    workspace_id=workspace_id,
+                    persisted_conversation_id=conversation_id,
+                    all_nodes=nodes or [],
+                    active_leaf_persisted_id=active_leaf_persisted_id,
+                    settings=settings,
+                    assistant_kind=assistant_kind,
+                    assistant_id=assistant_id,
+                    assistant_authority_id=assistant_authority_id,
+                    persona_memory_mode=persona_memory_mode,
+                    character_id=character_id,
+                    character_name=character_name,
+                    activate=False,
+                )
+                if opening_prompt and not session.draft:
+                    store.set_session_draft(session.id, opening_prompt)
             self._workspace._invalidate_console_persisted_rows_cache()
             self.run_worker(
                 self._sync_native_console_chat_ui, exclusive=True, group="console-sync"
             )
-            verb = "Forked" if tool == "fork_chat" else "New"
-            self.app_instance.notify(f"{verb} chat created: {title}")
+            if tool == "fork_chat":
+                notice = f"Forked chat created: {title}"
+            else:
+                status = {
+                    "draft": "Draft",
+                    "started": "Started",
+                    "not_started": "Not started",
+                    "review_required": "Review required",
+                }.get(launch_status, "Review required")
+                notice = f"{status}: {title}"
+                if reason:
+                    notice += f" ({reason.replace('_', ' ')})"
+            self.app_instance.notify(notice)
         except Exception:  # noqa: BLE001 -- PR review #10: never strand the chat
             logger.opt(exception=True).error(
                 "chat_create: UI completion failed after durable create",

@@ -2005,77 +2005,90 @@ source ▸ Tool gates ▸ **Character cards (character_\*)**.
 
 ### Chat creation tools (fork_chat / new_chat)
 
-An agent can prepare a parallel workstream for you instead of tangling two
-threads inside one conversation: `fork_chat` copies the current chat's active
-message history verbatim into a brand-new chat, and `new_chat` creates a
-fresh, empty one. Both take a short `title`, an `opening_prompt`, and
-optional standing `instructions` (the new chat's system prompt). Neither
-tool is available to sub-agents — only the primary agent you're talking to
-proposes chats.
+A primary Console agent can propose a fresh chat with `new_chat`, or copy the
+current active message branch with `fork_chat`. Both accept a `title`, an
+`opening_prompt`, and optional standing `instructions`. Sub-agents cannot use
+these tools. Your current chat, workspace, composer and focus stay in place.
 
-- **Every call asks first.** A confirm card appears above the transcript —
-  "An agent wants to fork this chat: <title>" (or "…create a new chat: …")
-  — showing the full facts before anything is created: for a fork, how many
-  messages it would copy and from which chat; which agent run asked for it;
-  the exact opening prompt ("Opening prompt (draft for the input box):");
-  and any instructions. When the agent didn't name the new chat, the card
-  shows the default title it would get ("Fork of <source chat>" for a fork,
-  "New Chat" otherwise). Buttons: **Allow** / **Allow for this session** /
-  **Deny**. Stopping the run or closing its source tab cancels the
-  confirmation: nothing is created. Switching tabs keeps the decision with
-  its source tab; return there to answer it. Delayed updates from that tab
-  cannot replace another tab's live confirmation.
-- **"Allow for this session" is per tool and ends with the session.**
-  `fork_chat` and `new_chat` are remembered separately, a remembered tool
-  skips its card for the rest of the Console session, and the next session
-  starts fresh with cards again. There is no "Always allow" — chat creation
-  is never remembered past the session.
-- **The opening prompt is a draft, not a message.** It lands in the new
-  chat's input box for you to review, edit, and send yourself — it is never
-  sent automatically, and the source chat is untouched. An unopened draft
-  survives an app restart: it is stored with the conversation and reloads
-  the first time you open that chat; once the chat has been opened, the
-  draft is never re-filled again.
-- **The fork is a snapshot at the moment of the call.** The agent's
-  in-progress reply — the very reply proposing the workstreams — is *not*
-  in the fork, nor is the tool call's own marker; only what was already on
-  the active branch is copied. To fork from an earlier point, rewind first,
-  then ask.
-- **The new chat opens in the background.** It is created in the same
-  workspace (a fork keeps the source chat's workspace scope), your current
-  view does not switch away from the chat you're in, a toast announces it
-  ("Forked chat created: <title>" / "New chat created: <title>"), and the
-  workspace's chat listing shows the new row immediately.
-- **Character chats keep their persona.** Forking a character-bound chat
-  with agent `instructions` is refused — the tool error tells the agent to
-  fork without instructions. A character fork otherwise carries the
-  character and its persona over.
-- **Temporary chats can't be forked.** `fork_chat` on an unsaved
-  (ephemeral) chat is refused with "the current chat is temporary; nothing
-  to fork" — save the chat first. `new_chat` always creates a durable chat.
-  An empty history is likewise refused with "nothing to fork yet; use
-  new_chat".
-- **Two denials turn the tool off for the rest of the run.** After you deny
-  the same tool twice, further calls in that run fail immediately with
-  "the user declined twice; chat creation is disabled for the rest of this
-  run" — the agent is told once and is expected not to retry.
-- **Forks record their lineage.** The new chat stores its parent
-  conversation and the fork point, and the copy preserves the active branch
-  verbatim — nothing is removed from or renumbered in the source chat.
-- A `title` longer than 120 characters is truncated to 120 (not refused);
-  an `opening_prompt` or `instructions` over 20,000 characters comes back
-  as a tool error the agent can fix and re-propose (a fresh card, since
-  nothing was created).
+`new_chat` has two independent options:
+
+| Option | Values | Default |
+| --- | --- | --- |
+| `destination` | `same_workspace`, `casual` | `same_workspace` |
+| `mode` | `draft`, `start` | `draft` |
+
+A casual chat is saved outside named workspaces. A same-workspace chat uses the
+requesting chat's workspace, including casual scope when the source is casual.
+The fresh chat uses destination assistant and generation defaults. Explicit
+nonblank instructions replace its standing prompt. Source personas, folder
+bindings, staged inputs and permissions do not transfer. A destination without a
+configured provider still saves its draft; reopening uses the ordinary
+unconfigured-provider fallback until you choose settings.
+
+- **Approval shows the whole request.** The card shows destination, draft/start
+  mode, assistant/model, true requesting run, complete opening prompt and
+  standing instructions, labeling supplied instructions as an explicit override.
+  An unavailable workspace Persona falls back to the plain assistant with a notice.
+  Choose **Allow**, **Allow for this session**, or
+  **Deny**. A stale decision after Stop cannot create a chat. Closing the source tab
+  cancels its pending confirmation. Switching tabs keeps the decision with its
+  source tab; delayed updates cannot replace another tab's live confirmation.
+- **Remembered approval is specific.** For `new_chat`, it covers the same live
+  source session, resolved destination and mode, including later supplied opening
+  prompts and instructions without another card. Allowing a workspace draft
+  does not allow a casual draft or a start. Grants end with the session or app
+  restart. A new required approval needs a visible Console card.
+- **Saved launch status stays visible.** Chat rows and History retain Draft,
+  Started, Not started, or Review required after reopening. Blocked or uncertain
+  starts appear in the existing attention activity while the handoff is unresolved.
+  A successful manual Send consumes the handoff and clears that launch attention;
+  the original launch label remains in chat rows and History. These saved labels
+  never start or retry work.
+- **Drafts remain editable and durable.** New-chat drafts save edits and explicit
+  clears, including after opening and across restart. They remain drafts until
+  accepted consumption or explicit discard. Older unversioned handoffs, including
+  existing forks, retain their earlier first-open behavior.
+- **Start requests one background turn.** A start needs a nonblank opening
+  prompt. It uses the source's shared automatic allowance and shares automatic
+  capacity with fleet wakes, preserving a manual slot. Normal provider readiness,
+  project instructions, capture, retrieval, hooks and permissions still apply.
+  Slash and @ text in the handoff are literal input. The transcript labels the
+  request **Agent handoff**; it cannot authorize profile changes as a human prompt.
+- **The outcome says what happened.** `draft` means saved for later;
+  `not_started` means saved but blocked or refused before acceptance; `started`
+  confirms both durable acceptance receipts; `review_required` means ownership
+  or dispatch could not be confirmed. Provider work may still be running after
+  `started`. Capacity or approval pauses leave a draft and add no retry timer.
+  Never repeat creation to recover a known saved chat: open it and use Send or
+  the existing recovery controls. An explicit human Retry creates manual work
+  while retaining the original machine provenance and earlier charges.
+- **Manual intent wins before acceptance.** Editing, clearing, manual Send or
+  source cancellation withdraws a still-prepared start. After acceptance, the
+  target is independent of source Stop and can be stopped or closed itself.
+  Interrupted work never replays automatically after restart.
+- **Forks retain their existing contract.** A fork copies only the active history
+  already committed when requested, keeps its source workspace/assistant and
+  records parent lineage. The in-progress proposal is excluded. Character forks
+  refuse replacement instructions. Unsaved chats or empty histories cannot be
+  forked. Fork opening prompts remain drafts; `destination` and `mode` apply only
+  to `new_chat`.
+- **Limits are bounded.** New-chat titles over 120 characters and prompt or
+  instruction fields over 20,000 characters are refused before approval. Fork
+  titles retain their existing truncation behavior. Two denials disable that tool
+  for the rest of the run, across new-chat destinations and modes.
 
 ### Routing a created chat onto a specific provider (TASK-32874)
 
-`fork_chat` and `new_chat` accept two OPTIONAL routing argument groups;
-without them the new chat uses your normal defaults (nothing changes from
-the base behavior):
+`fork_chat` and `new_chat` accept two optional routing argument groups.
+A fresh `new_chat` uses destination defaults as its base, including when an
+override omits the provider or model. Fork routing keeps its existing source
+settings as the base. With no routing arguments, each tool follows its normal
+creation behavior:
 
 - `preset` — the name of a routed agent preset (Settings > Agents); the
-  new chat starts on that preset's provider/model. Presets are
-  user-authored, so this is always available when routed presets exist.
+  new chat uses that preset's provider/model and configured generation
+  parameters. Presets are user-authored, so this is available when routed
+  presets exist. Routing does not copy the preset's persona or instructions.
 - `provider` / `model` — ad-hoc target selection. These are
   model-generated and therefore gated exactly like `spawn_subagent`
   overrides: they require `[agents] spawn_override_enabled = true` AND the

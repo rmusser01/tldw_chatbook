@@ -4798,6 +4798,11 @@ class ConsoleRuntime:
         controller = self._chat_controller
         if controller is None:
             raise RuntimeError("Console controller is unavailable.")
+        drain_handoff = getattr(controller.store, "drain_agent_handoff", None)
+        if callable(drain_handoff) and not await drain_handoff(session_id):
+            raise RuntimeError(
+                "Draft custody must be confirmed before closing this chat."
+            )
         self._admission_fenced_sessions.add(session_id)
         try:
             ticket = controller.begin_session_close(

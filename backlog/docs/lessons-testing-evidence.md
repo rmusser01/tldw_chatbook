@@ -18399,3 +18399,16 @@ The same test hook assumed every native UI sync had a current Worker. Real attac
 ## A matching filename baseline can still embed shifted source locations (PR3011, 2026-10-04)
 
 **Incident.** The Console-command integration on tested `37340608a7233c74b7e6bb94751fcfaa7052851b` had286 Ruff findings on both it and dev `8c4dfe59a243ce0cec8e131aff3935646c64b298`, using the same real module filenames and repository configuration. A comparison of complete messages still reported one introduced F811 because its existing duplicate `on_button_pressed` warning embeds the earlier definition's line number, shifted by the retained Buddy edits. The paired warning kept the same code, function and occurrence count. Normalizing only that F811 reference-location field gave zero introduced findings; the raw location difference is retained in `pr3011-command-dev-20261004.json`. Compare diagnostic identity and multiplicity under matching filename context, and preserve explicitly checked location differences in the receipt.
+## Visible Stop needs an inside-parent geometry assertion (TASK-33805, 2026-10-02)
+
+The isolated real Console rendered an accepted background chat as Agent running,
+but its Stop button was missing at the terminal edge. The button had display=true
+and width6: an existing Redirect button used10 cells that the composer action row
+never reserved. A mounted regression measured Stop's right edge169 against its
+parent's159, then clicked Stop after the width fix and verified the target's saved
+stopped state. Checking button presence/display alone would have missed the bug.
+
+The same run found that Ctrl+U cleared a version-2 handoff visibly while the saved
+revision stayed unchanged, although direct store edit/clear tests passed. Exercise
+the mounted composer event and reopen the actual database: persistence must be
+wired to the empty edit event, not only to activation or nonblank input.

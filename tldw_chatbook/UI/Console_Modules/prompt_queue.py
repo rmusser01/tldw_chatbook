@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum
 from typing import Any, TYPE_CHECKING
 
@@ -757,7 +757,7 @@ class ConsolePromptQueueUIController:
             and snapshot.pause_reason is PromptQueuePauseReason.FAILED
             else None
         )
-        return derive_prompt_queue_presentation(
+        presentation = derive_prompt_queue_presentation(
             snapshot,
             activity,
             composer_collapsed=composer_collapsed,
@@ -774,6 +774,19 @@ class ConsolePromptQueueUIController:
                 failed_turn.preview if failed_turn is not None else None
             ),
         )
+        if controller._chat_start.is_prepared(session_id):
+            return replace(
+                presentation,
+                send_label="Send",
+                send_enabled=True,
+                send_tooltip="Send this draft and withdraw the prepared background start.",
+            )
+        if controller._chat_start.is_accepted(session_id):
+            # Native starts own no FIFO chain; they have already been accepted.
+            return replace(
+                presentation, send_label="Running", send_enabled=False, send_tooltip=""
+            )
+        return presentation
 
     def recovery_turn(
         self, session_id: str, *, action: str
@@ -1050,6 +1063,9 @@ class ConsolePromptQueueUIController:
         controller = self._chat_controller_accessor()
         if session_id is None:
             session_id = controller.store.active_session_id or ""
+        chat_start = getattr(controller, "_chat_start", None)
+        if chat_start is not None:
+            await chat_start.withdraw_for_manual(session_id)
         snapshot = controller.prompt_queue_registry.snapshot(session_id)
         activity = controller.activity_for(session_id)
 
