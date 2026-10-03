@@ -9,6 +9,11 @@ from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission as storag
 from Tests.Backup_Recovery.test_participant_lifetimes import local_root
 
 
+def _fixture_config(data):
+    """Use the existing JSON string spelling for portable TOML fixture paths."""
+    return "[paths]\ndata_dir = " + json.dumps(str(data), ensure_ascii=False) + "\n"
+
+
 @pytest.fixture
 def mcp_sources(tmp_path, monkeypatch, local_root):
     from Tests.Backup_Recovery.config_test_support import install_config_source
@@ -21,7 +26,7 @@ def mcp_sources(tmp_path, monkeypatch, local_root):
     data = tmp_path / "data"
     data.mkdir(mode=0o700)
     target = tmp_path / "config.toml"
-    target.write_text(f'[paths]\ndata_dir = "{data}"\n')
+    target.write_text(_fixture_config(data), encoding="utf-8")
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(target))
     config = install_config_source(monkeypatch)
     data = config.get_user_data_dir()
@@ -281,6 +286,9 @@ def _private_child(request, kind):
 
     if os.environ.get("TASK10_MCP_CHILD") == kind:
         return False
+    private = Path(
+        request.config.option.basetemp or request.getfixturevalue("tmp_path")
+    )
     result = subprocess.run(
         [
             sys.executable,
@@ -297,14 +305,14 @@ def _private_child(request, kind):
                 / ("child-" + kind)
             ),
             "-o",
-            "cache_dir=/private/tmp/task10-phase11-child-cache",
+            "cache_dir=" + str(private / "child-cache"),
         ],
         env={**os.environ, "TASK10_MCP_CHILD": kind, "PYTHONDONTWRITEBYTECODE": "1"},
         capture_output=True,
         text=True,
         timeout=45,
     )
-    Path(f"/private/tmp/task10-phase11-child-{kind}.log").write_text(
+    (private / f"task10-phase11-child-{kind}.log").write_text(
         result.stdout + result.stderr
     )
     assert result.returncode == 0, result.stdout + result.stderr

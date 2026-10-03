@@ -226,6 +226,9 @@ _SELECTABLE_GROUP_TESTS = (
     "Tests/UI/test_backup_data_groups.py",
 )
 _PRODUCT_SELECTIONS = {
+    # Resolved per native OS below; ordinary source tests and installed F9
+    # remain explicitly distinct in the existing runner receipts.
+    "admission-amortization": (),
     "native-credentials-source": (
         "Tests/ProductionApp/test_native_credential_recovery.py::test_native_credential_source",
     ),
@@ -354,6 +357,132 @@ _PRODUCT_SELECTIONS = {
         "Tests/Backup_Recovery/test_mounted_console_backup.py::test_mounted_console_complete_capture_and_resumed_writes[library]",
     ),
 }
+
+
+def admission_selection(system: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Finite accepted Task2/3 routes; Windows admits only native cold storage."""
+    if system not in ("Darwin", "Linux", "Windows"):
+        raise ValueError("unsupported_admission_platform")
+    shared = (
+        *_RESTORE_DIAGNOSTIC_TESTS,
+        *(
+            "Tests/Backup_Recovery/test_runtime_native_poll.py::" + name
+            for name in (
+                "test_monitor_remains_responsive_during_one_blocked_native_probe",
+                "test_monitor_cancellation_waits_for_native_probe_release",
+                "test_probe_failure_is_mapped_on_monitor_task_and_retried",
+                "test_requested_pause_keeps_runtime_coordination_on_monitor_task",
+                "test_the_unpatched_monitor_probes_about_once_a_second",
+                "test_monitor_initial_probe_is_immediate",
+                "test_monitor_local_pause_transition_wakes_without_transaction_churn",
+                "test_monitor_deadline_counts_time_spent_in_previous_probe",
+                "test_monitor_subscription_retains_snapshot_wait_race_and_cleans_callbacks",
+                "test_lifecycle_pulse_finishes_while_coordinator_mutex_is_held",
+            )
+        ),
+        *(
+            "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::" + name
+            for name in (
+                "test_guarded_json_reuses_parse_but_reads_current_bytes",
+                "test_guarded_json_same_metadata_bytes_and_nested_returns",
+                "test_warm_permission_parse_never_supplies_last_good_policy",
+                "test_guarded_permission_strict_inventory_bytes_and_policy_stay_distinct",
+                "test_guarded_parse_pause_invalidates_and_oversize_keeps_legacy_policy",
+                "test_guarded_parse_migration_does_not_publish_prewrite_bytes",
+                "test_guarded_parse_unknown_read_close_never_publishes_or_retries",
+                "test_guarded_parse_last_owner_retirement_and_selection_error_discard",
+                "test_guarded_json_replacement_after_read_refuses_detached_bytes",
+                "test_guarded_parse_config_generation_change_requires_fresh_parse",
+                "test_guarded_json_target_shape_fallback_never_publishes",
+            )
+        ),
+        *(
+            "Tests/MCP/test_local_store.py::" + name
+            for name in (
+                "test_legacy_schema_migrates_durably_and_reopens",
+                "test_unknown_or_malformed_schema_is_not_rewritten",
+                "test_migration_refuses_malformed_authoritative_sections",
+                "test_malformed_owned_profile_preserves_source_bytes",
+                "test_legacy_schema_cannot_import_owned_authority",
+                "test_owned_profile_roundtrip_preserves_literal_argv",
+                "test_malformed_owned_literal_headers_preserve_source",
+            )
+        ),
+        "Tests/Backup_Recovery/test_scheduler_native_pause_intent.py::test_native_pause_intent_preserves_due_work_until_config_readmission",
+        "Tests/Backup_Recovery/test_runtime_cache_revisit.py::test_monitor_revisits_only_after_foreign_operation_finishes",
+        "Tests/Backup_Recovery/test_runtime_producer_settlement.py::test_actual_app_drains_sync_tail_and_idle_mcp_before_storage",
+        "Tests/Backup_Recovery/test_runtime_producer_settlement.py::test_mcp_cancelled_or_uncertain_cleanup_keeps_capture_closed",
+        "Tests/Backup_Recovery/test_runtime_producer_settlement.py::test_unknown_connection_ownership_keeps_resume_fenced",
+    )
+    cold = (
+        "Tests/Backup_Recovery/test_related_path_admission.py::test_related_paths_retain_native_exclusion_until_close",
+        "Tests/Backup_Recovery/test_related_path_admission.py::test_related_paths_refuse_local_pause_during_acquisition",
+        "Tests/Backup_Recovery/test_related_path_admission.py::test_related_paths_recheck_pending_recovery_after_native_acquisition",
+        "Tests/Backup_Recovery/test_bootstrap_registry_reader.py::test_startup_never_repairs_missing_or_unsafe_registry_lock",
+    )
+    if system == "Windows":
+        return _NATIVE_TESTS, (
+            *shared,
+            *cold,
+            "Tests/Backup_Recovery/test_admission_amortization_native.py::test_windows_cold_acquisition_rederives_and_refuses_changed_current_control",
+        )
+    native = (
+        "Tests/Backup_Recovery/test_admission_closed_gate.py::test_uncancellable_busy_gate_wait_uses_native_blocking_lock",
+        "Tests/Backup_Recovery/test_admission_closed_gate.py::test_normal_waits_at_closed_requested_gate_before_scanning_roots",
+    )
+    mutations = (
+        "ancestor-made-group-writable",
+        "bootstrap-root-removed",
+        "config-selector-edited",
+        "control-no-change",
+        "data-dir-renamed-and-recreated",
+        "data-dir-swapped-for-symlink",
+        "enrollment-marker-replaced",
+        "pending-record-from-subprocess",
+        "profile-record-edited-in-place",
+        "registry-intent-file",
+        "registry-replaced-from-subprocess",
+        "unrelated-pending-from-subprocess",
+    )
+    warm = tuple(
+        "Tests/Backup_Recovery/test_admission_evidence_reuse.py::test_reused_evidence_matches_the_full_derivation"
+        f"[{mutation}-{bound}]"
+        for mutation in mutations
+        for bound in ("bound", "unbound")
+        if not (mutation == "profile-record-edited-in-place" and bound == "unbound")
+    )
+    warm += tuple(
+        "Tests/Backup_Recovery/test_admission_evidence_reuse.py::" + name
+        for name in (
+            "test_warm_admission_reads_current_complete_control_bytes",
+            "test_same_inode_bytes_cannot_hide_behind_equal_change_stamps",
+            "test_warm_admission_refuses_replaced_native_lock_before_write",
+            "test_borrowed_nonempty_lock_bytes_still_require_current_full_read",
+            "test_lent_lock_replacement_never_authorizes_detached_description",
+            "test_blocked_scope_validation_allows_unrelated_transaction",
+            "test_warm_observation_rechecks_selection_and_cancellation_before_io",
+            "test_candidate_observation_reserves_last_owner_before_using_pins",
+            "test_prederivation_observation_cannot_confirm_a_replacement_hold",
+            "test_candidate_selection_cwd_failure_does_not_leak_observation_reservation",
+            "test_installed_relative_acquisition_selects_outside_coordinator_mutex",
+            "test_concurrent_derivations_keep_confirmed_evidence",
+            "test_cold_scope_cannot_continue_a_retired_incumbent",
+            "test_counted_borrower_retains_predecessors_until_positive_close",
+            "test_uncertain_predecessor_close_retains_native_exclusion",
+            "test_temporary_unknown_close_fences_actual_hold",
+            "test_content_error_unknown_close_is_not_optional_ineligibility",
+            "test_transaction_reuses_only_its_already_locked_file_descriptions",
+            "test_independent_borrow_frames_survive_another_borrowers_read_exception",
+        )
+    )
+    return native, (
+        *shared,
+        *cold,
+        *warm,
+        "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_guarded_parse_fork_cannot_use_inherited_evidence",
+    )
+
+
 _SYNTHETIC_CREDENTIALS = (
     "test-only-new-safety-password",
     "test-only-later-safety-password",
@@ -1545,6 +1674,9 @@ def run(
 ) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
     product_tests = _PRODUCT_SELECTIONS[product_selection]
+    native_tests = _NATIVE_TESTS
+    if product_selection == "admission-amortization":
+        native_tests, product_tests = admission_selection(platform.system())
     native_credentials = product_selection.startswith("native-credentials-")
     if native_credentials:
         if not os.environ.get("TLDW_CREDENTIAL_TRANSFER_ROOT"):
@@ -1640,7 +1772,7 @@ def run(
         artifacts=artifacts,
         environment=environment,
         phase="native",
-        tests=_NATIVE_TESTS,
+        tests=native_tests,
         noconftest=True,
         timeout_seconds=10 * 60,
     )
@@ -1675,7 +1807,7 @@ def run(
     summary = {
         "schema": 2,
         "product_selection": product_selection,
-        "tests": [*_NATIVE_TESTS, *product_tests],
+        "tests": [*native_tests, *product_tests],
         "phases": phases,
         "effective_returncode": 1 if effective_failure else 0,
         "installed_package_receipts": len(installed),
