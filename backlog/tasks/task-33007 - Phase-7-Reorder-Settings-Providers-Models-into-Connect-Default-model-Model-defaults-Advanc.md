@@ -103,6 +103,6 @@ Baseline reds: task-15512 lists Settings provider-default contract tests that ar
 - [ ] #13 The boot CSS bytes, ui-ready module census and screen pre-import payload ratchets are not raised (ADR-097).
 - [ ] #14 Keyboard-only live captures are attached to the PR at 211x44 and 235x52, using the real stylesheet and a scratch TLDW_CONFIG_PATH. They cover the card at rest, the model picker open, one Advanced disclosure open, and Console Behavior's fallback section.
 - [ ] #15 Every existing test this phase rewrites on purpose is named in the PR description with the reason. Failing Settings test names match dev's baseline reds (task-15512), and no new test fails.
-- [ ] #16 Docs/User_Guide pages updated: settings.md Providers & Models and Console Behavior sections, with a new Verified-against stamp.
+- [ ] #16 Docs/User_Guide pages updated: settings.md Providers & Models and Console Behavior sections (content only; verification is recorded in the task notes, never as a "Verified against" paragraph, per CLAUDE.md).
 - [ ] #17 ./scripts/preflight.sh passes.
 <!-- AC:END -->
