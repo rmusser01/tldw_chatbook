@@ -105,7 +105,9 @@ _MARKDOWN_HYPERLINKS = False
 #: here.
 _APP_DEFAULT_CAST_LABEL = "App default (single narrator)"
 
-_NO_KEPT_BRIEFINGS = "No kept briefings yet. Press Keep on a completed briefing to add one."
+_NO_KEPT_BRIEFINGS = (
+    "No kept briefings yet. Press Keep on a completed briefing to add one."
+)
 _NO_SELECTION = "Select a kept briefing to read it."
 
 #: Mirrors `ArtifactsPane._SCRIPT_UNREADABLE_TURNS`/`_SCRIPT_NO_TURNS` --
@@ -156,7 +158,9 @@ def _kept_list_label(row: Mapping[str, Any]) -> Text:
     return label
 
 
-def _kept_detail_renderable(kept: Mapping[str, Any] | None, has_any: bool) -> RenderableType:
+def _kept_detail_renderable(
+    kept: Mapping[str, Any] | None, has_any: bool
+) -> RenderableType:
     """What the detail region shows for the selected kept briefing.
 
     Args:
@@ -395,17 +399,16 @@ class KeptBriefingsModal(ModalScreen[None]):
                             # pattern task-2310 removed from the Artifacts
                             # pane's own, structurally identical
                             # `#artifacts-preset-select`. Same label idiom.
-                            yield Static("Preset", classes="watchlists-inline-select-label")
+                            yield Static(
+                                "Preset", classes="watchlists-inline-select-label"
+                            )
                             yield PruneSafeSelect(
                                 self._preset_select_options(),
                                 value=self._cast_preset_id,
                                 id="kbm-preset-select",
                                 allow_blank=False,
                                 compact=True,
-                                tooltip=(
-                                    "The preset to cast this kept briefing "
-                                    "with."
-                                ),
+                                tooltip=("The preset to cast this kept briefing with."),
                             )
                             yield Button(
                                 "Cast",
@@ -434,9 +437,7 @@ class KeptBriefingsModal(ModalScreen[None]):
                                     id="kbm-scripts-overflow",
                                 )
                         else:
-                            yield Static(
-                                _NO_KEPT_SCRIPTS, id="kbm-scripts-empty"
-                            )
+                            yield Static(_NO_KEPT_SCRIPTS, id="kbm-scripts-empty")
             with Horizontal(id="kbm-actions"):
                 yield Button("Close", id="kbm-close")
 
@@ -472,8 +473,12 @@ class KeptBriefingsModal(ModalScreen[None]):
             rows = []
         self._kept_overflow = len(rows) > _KEPT_LIST_DISPLAY_CAP
         self._kept = [dict(row) for row in rows[:_KEPT_LIST_DISPLAY_CAP]]
-        if self._selected_kept_id is not None and not any(row["id"] == self._selected_kept_id for row in self._kept):
-            selected = await asyncio.to_thread(self.chacha_db.get_kept_briefing, self._selected_kept_id)
+        if self._selected_kept_id is not None and not any(
+            row["id"] == self._selected_kept_id for row in self._kept
+        ):
+            selected = await asyncio.to_thread(
+                self.chacha_db.get_kept_briefing, self._selected_kept_id
+            )
             if selected is not None:
                 self._kept.insert(0, dict(selected))
 
@@ -745,9 +750,7 @@ class KeptBriefingsModal(ModalScreen[None]):
                 logger.warning(
                     f"Kept-briefing cast failed for {kept_id}: {type(exc).__name__}"
                 )
-                self._show_error(
-                    f"Could not cast a script: {type(exc).__name__}"
-                )
+                self._show_error(f"Could not cast a script: {type(exc).__name__}")
                 return
             # Success: only repaint if the selection is still THIS kept
             # briefing -- switching away mid-cast must not have an older
