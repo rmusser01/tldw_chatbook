@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 03:47'
+updated_date: '2026-10-03 05:08'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -118,6 +118,16 @@ Reason: preserve incoming test/fixture/documentation files and deletion exactly,
 3. Run incoming capture-tool loopback tests and offline parser/replay/no-auth-fixture/preset tests only. Their existing skipped cases remain skipped and disclosed; do not run capture.py, touch user keys or call live providers. Reproduce affected task/artifact/static checks, authenticate the union manifest and complete independent immutable source/evidence review with inherited Roleplay limits retained.
 4. After all root consumers/review/artifact activity settles, run the ORIGINAL five budget cases on the final candidate unchanged, with exact REPO_ROOT cwd/PYTHONPATH. Record count/ceiling warnings and all positive/NON-GREEN/skip limits. Close TASK33664 AC3 via CLI only after its original guards and independent review approve; documentation-only closure must preserve every final reviewed hash.
 5. Publish once with exact observed637ebd161272e0ab903bee5ac587205b52d8d5fb lease; verify remote head/base/body/Qodo and four fresh jobs. Do not rebase a newly published head while its jobs run. Normal protected --match-head-commit merge requires fresh-head Qodo/no actionable threads, all four jobs and actual strict up-to-date state; verify MERGED parents/tree/concurrent changes then pause heartbeat.
+
+## Strict-base Roleplay frame documentation preservation — October 2
+
+ADR required: no new ADR
+ADR path: existing ADR031/097/199 remain applicable to unchanged shipped sources; the incoming Roleplay-frame spec owns its prospective slice governance.
+Reason: preserve 31 newly landed Markdown records exactly, without implementing the Roleplay programme or changing any source, permission, owner, schema, dependency or guard.
+1. All four published231d30d jobs PASS and exact-head Qodo is clear before this update. Live dev1d566b9 (PR2960) is BEHIND under actual strict up-to-date protection enforced for administrators. Reopen TASK33664 AC3 through CLI and capture all177 reviewed hashes, prior tree entries, 31 incoming additions and the existing capture_cloud.py deletion. No patch/manifest overlap exists.
+2. Rebase onto exact1d566b9 only. Preserve every prior tracked path except the four owned qualification records; preserve all31 incoming spec/review/task Markdown files byte-exact, including all29 TASK33910 records as shipped To Do/unchecked. No Roleplay implementation, new ADR or source repair is in scope.
+3. Authenticate Git/disk hashes and modes/blob IDs, the complete prior tree, unchanged package/native/Packaging/Performance and derived-artifact source trees, and exact incoming additions/deletion. Run the actual task-ID/path/readability guards and whitespace check. Obtain focused independent immutable preservation/evidence review. Previous original five budgets107.713s and all functional positive/NON-GREEN/skip evidence carry forward by exact source identity; no new runtime or performance measurement is claimed for documentation-only additions.
+4. Record actual qualification and inherited limitations, recheck/close AC3 through CLI after guards/review, then documentation closure preserves the final manifest. Publish once with EXACT observed231d30d810d17c41030bc9fe6813bd03761852b4 lease. Require fresh-head Qodo/no actionable threads, all four jobs and live strict protection before normal --match-head-commit merge; verify MERGED parents/tree/concurrent changes and pause heartbeat.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
