@@ -191,7 +191,7 @@ answers = {
     'encrypted-wrong': ['wrong-sentinel', 'wrong-sentinel', ''],
     'encrypted-reset': [''],
 }.get(condition, [])
-choices = {'encrypted-wrong': ['', 'q'], 'encrypted-reset': ['r']}.get(condition, [])
+choices = {'encrypted-wrong': ['', 'q'], 'encrypted-reset': ['r', '']}.get(condition, [])
 def password(prompt):
     assert 'master password' in prompt.lower(), prompt
     if condition == 'encrypted-cancel': raise EOFError

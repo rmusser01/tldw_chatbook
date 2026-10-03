@@ -627,7 +627,31 @@ def _report_config_path_posture(
 
 
 # --- Encryption support ---
-_ENCRYPTION_PASSWORD = None  # Cached password for the session
+
+
+def _take_startup_unlock() -> tuple[Optional[str], bool]:
+    """The startup unlock's outcome, if it is running (TASK-34100.4 round 2).
+
+    `Backup_Recovery.launcher.startup_unlock` imports this module only after
+    the master password was typed; taking it here, before the module-level
+    load below, means that load decrypts instead of warning "no password is
+    set" right after the right password. Read through ``sys.modules`` so
+    config never imports the launcher itself.
+
+    Returns:
+        ``(password, pending)`` from ``launcher.take_startup_unlock()``, or
+        ``(None, False)`` when no startup unlock is in progress.
+    """
+    launcher = sys.modules.get("tldw_chatbook.Backup_Recovery.launcher")
+    take = getattr(launcher, "take_startup_unlock", None)
+    if not callable(take):
+        return None, False
+    return take()
+
+
+# Cached password for the session; True while a startup reset or re-key is
+# about to finish the unlock (the locked import-time load is then expected).
+_ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING = _take_startup_unlock()
 _ENCRYPTION_MODULE = None  # Lazily loaded encryption module
 _CONFIG_GENERATION = 0
 _CONFIG_PERSISTENCE_ERROR = None
@@ -1018,7 +1042,9 @@ def set_encryption_password(password: str):
     re-decrypted on the next load.
     """
     global _ENCRYPTION_PASSWORD, _SETTINGS_CACHE, _CONFIG_CACHE
+    global _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = password
+    _STARTUP_UNLOCK_PENDING = False
     _SETTINGS_CACHE = None
     _CONFIG_CACHE = None
     logger.info("Encryption password set for current session")
@@ -1031,8 +1057,9 @@ def get_encryption_password() -> Optional[str]:
 
 def clear_encryption_password():
     """Clear the encryption password from memory."""
-    global _ENCRYPTION_PASSWORD
+    global _ENCRYPTION_PASSWORD, _STARTUP_UNLOCK_PENDING
     _ENCRYPTION_PASSWORD = None
+    _STARTUP_UNLOCK_PENDING = False
     logger.info("Encryption password cleared from memory")
 
 
@@ -1052,9 +1079,15 @@ def _decrypt_config_section_with_status(
 
     password = get_encryption_password()
     if not password:
-        logger.warning(
-            "Encryption is enabled but no password is set. Cannot decrypt config."
-        )
+        if _STARTUP_UNLOCK_PENDING:
+            # A startup reset or re-key installs its outcome right after this
+            # import; a locked load now is expected, not a problem to report
+            # under the prompt (TASK-34100.4 review round 2).
+            logger.debug("Encrypted config loaded before the startup unlock finished.")
+        else:
+            logger.warning(
+                "Encryption is enabled but no password is set. Cannot decrypt config."
+            )
         return _ConfigDecryptionResult(config_data, True)
 
     try:

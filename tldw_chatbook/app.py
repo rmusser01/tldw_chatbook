@@ -7,6 +7,12 @@ if __name__ == "__main__":
     # pre-TUI startup unlock as `tldw-cli`, and at the same point: before this
     # module imports config, which would otherwise load the still-encrypted
     # file (and warn) ahead of the prompt. Spawn workers (`__mp_main__`) skip it.
+    # The terminal is quieted first, as `tldw-cli` does before its unlock:
+    # installing the password imports config, whose DEBUG/INFO wall otherwise
+    # printed between the prompt and the app (TASK-34100.4 review round 2).
+    from tldw_chatbook.Utils.startup_logging import quiet_startup_stderr
+
+    quiet_startup_stderr()
     from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
 
     _unlock_exit = startup_unlock()

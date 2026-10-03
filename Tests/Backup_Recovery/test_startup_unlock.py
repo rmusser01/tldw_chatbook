@@ -19,6 +19,7 @@ choice scripted:
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -82,12 +83,13 @@ answers = {
     'served': [],
     'no-terminal': [],
 }[condition]
+# After a reset, '' answers "Press Enter to start chatbook." (round 2).
 choices = {
     'wrong-then-quit': ['q'],
-    'reset': ['r'],
+    'reset': ['r', ''],
     'stranded': ['q'],
-    'stranded-reset': ['r'],
-    'no-verifier': ['r'],
+    'stranded-reset': ['r', ''],
+    'no-verifier': ['r', ''],
 }.get(condition, [])
 def secret(prompt):
     if 'CONFIG_IMPORTED_BEFORE_PROMPT' not in seen:
@@ -103,6 +105,15 @@ launcher._can_answer = lambda: condition != 'no-verifier-headless'
 launcher._choice = lambda prompt: (sys.stderr.write(prompt), choices.pop(0))[1]
 observed = []
 launcher.minimal_recovery = lambda reason: observed.append(reason) or 17
+# Both entries import startup_unlock at call time, so this wrapper is what
+# they run: it marks where the pre-TUI unlock ends in stderr.
+_real_startup_unlock = launcher.startup_unlock
+def _marked_startup_unlock():
+    try:
+        return _real_startup_unlock()
+    finally:
+        sys.stderr.write('\nUNLOCK_FINISHED\n')
+launcher.startup_unlock = _marked_startup_unlock
 if condition == 'forced-failure':
     def failing(self, password, verifier):
         raise RuntimeError('verifier read failed')
@@ -118,30 +129,48 @@ if condition == 'interrupt-during-check':
     ConfigEncryption.verify_password = interrupted
 class ReachedApplication(Exception):
     pass
+# 'module' drives `python -m tldw_chatbook.app`; 'cli' drives the packaged
+# `tldw-cli` entry (cli.main_cli_runner). Both run the same startup_unlock.
+entry = os.environ.get('UNLOCK_ENTRY', 'module')
+def reached_application():
+    sys.stderr.write('\nAPPLICATION_STARTS_HERE\n')
+    from tldw_chatbook import config
+    loaded = config.load_cli_config_and_ensure_existence()
+    key = loaded['api_settings']['openai'].get('api_key')
+    print('PASSWORD_SET=' + str(config.get_encryption_password() == 'unlock-sentinel'))
+    print('PASSWORD_RECOVERED=' + str(config.get_encryption_password() == 'stranded-sentinel'))
+    print('PASSWORD_CLEARED=' + str(config.get_encryption_password() is None))
+    print('KEY_DECRYPTED=' + str(key == 'sentinel-key'))
+    print('KEY_USABLE=' + str(config.resolve_provider_api_key(key) is not None))
+    raise ReachedApplication
 original = builtins.__import__
 def guarded(name, globals=None, locals=None, fromlist=(), level=0):
     # `_run_module_main` imports this right after the unlock and config load.
     if (
-        level == 1 and name == 'Utils.terminal_utils'
+        entry == 'module' and level == 1 and name == 'Utils.terminal_utils'
         and (globals or {}).get('__name__') == 'tldw_chatbook.app_entry'
     ):
-        from tldw_chatbook import config
-        loaded = config.load_cli_config_and_ensure_existence()
-        key = loaded['api_settings']['openai'].get('api_key')
-        print('PASSWORD_SET=' + str(config.get_encryption_password() == 'unlock-sentinel'))
-        print('PASSWORD_CLEARED=' + str(config.get_encryption_password() is None))
-        print('KEY_DECRYPTED=' + str(key == 'sentinel-key'))
-        print('KEY_USABLE=' + str(config.resolve_provider_api_key(key) is not None))
-        raise ReachedApplication
+        reached_application()
+    # `tldw-cli` imports the application right after the unlock.
+    if entry == 'cli' and level == 0 and name == 'tldw_chatbook.app':
+        reached_application()
     return original(name, globals, locals, fromlist, level)
 builtins.__import__ = guarded
-sys.argv = ['tldw_chatbook.app']
-try:
-    runpy.run_module('tldw_chatbook.app', run_name='__main__', alter_sys=True)
-except ReachedApplication:
-    print('REACHED_APPLICATION')
-except SystemExit as stop:
-    print('EXIT=' + str(stop.code))
+if entry == 'cli':
+    from tldw_chatbook.cli import main_cli_runner
+    sys.argv = ['tldw-cli']
+    try:
+        print('EXIT=' + str(main_cli_runner()))
+    except ReachedApplication:
+        print('REACHED_APPLICATION')
+else:
+    sys.argv = ['tldw_chatbook.app']
+    try:
+        runpy.run_module('tldw_chatbook.app', run_name='__main__', alter_sys=True)
+    except ReachedApplication:
+        print('REACHED_APPLICATION')
+    except SystemExit as stop:
+        print('EXIT=' + str(stop.code))
 builtins.__import__ = original
 assert not answers and not choices, (answers, choices)
 print('RECOVERY=' + ','.join(observed))
@@ -163,7 +192,9 @@ assert not blocked_attempts(), blocked_attempts()
 """
 
 
-def _run_module_entry(tmp_path: Path, condition: str) -> tuple[subprocess.CompletedProcess, str]:
+def _run_module_entry(
+    tmp_path: Path, condition: str, *, entry: str = "module"
+) -> tuple[subprocess.CompletedProcess, str]:
     root = tmp_path.resolve()
     for name in ("home", "config", "data"):
         (root / name).mkdir(mode=0o700)
@@ -179,7 +210,9 @@ def _run_module_entry(tmp_path: Path, condition: str) -> tuple[subprocess.Comple
         TLDW_DISABLE_CONFIG_WATCH="1",
         PYTHON_KEYRING_BACKEND="keyring.backends.null.Keyring",
         VERIFIER_FILE=str(verifier_file),
+        UNLOCK_ENTRY=entry,
     )
+    environment.pop("TLDW_VERBOSE_STARTUP", None)
     result = subprocess.run(
         [sys.executable, "-c", _MODULE_ENTRY, condition],
         cwd=_REPO,
@@ -205,9 +238,29 @@ def _secrets_absent(result: subprocess.CompletedProcess, verifier: str) -> None:
     assert "stranded-sentinel" not in output
 
 
+_LOG_LINE = re.compile(r"\| (TRACE|DEBUG|INFO|SUCCESS|WARNING|ERROR|CRITICAL) +\|")
+
+
+def _unlock_output(result: subprocess.CompletedProcess) -> str:
+    """Everything printed before the pre-TUI unlock returned."""
+    assert "UNLOCK_FINISHED" in result.stderr, result.stderr[-4000:]
+    return result.stderr.split("UNLOCK_FINISHED", 1)[0]
+
+
+def _assert_no_log_lines(region: str) -> None:
+    # Review round 2 (R2-F6/F-R2-4): installing the password (or resetting)
+    # imported config while the file was still locked, so two "Encryption is
+    # enabled but no password is set" WARNINGs printed right after the RIGHT
+    # password -- and under `python -m`, ~40 DEBUG/INFO lines too.
+    assert "no password is set" not in region, region[-3000:]
+    lines = [line for line in region.splitlines() if _LOG_LINE.search(line)]
+    assert not lines, lines
+
+
 @pytest.mark.timeout(240)
-def test_module_entry_unlocks_with_the_right_password(tmp_path):
-    result, verifier = _run_module_entry(tmp_path, "good")
+@pytest.mark.parametrize("entry", ["module", "cli"])
+def test_module_entry_unlocks_with_the_right_password(tmp_path, entry):
+    result, verifier = _run_module_entry(tmp_path, "good", entry=entry)
     out = result.stdout
     assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
     assert "PASSWORD_SET=True" in out
@@ -223,6 +276,7 @@ def test_module_entry_unlocks_with_the_right_password(tmp_path):
     above_prompt = result.stderr.split("Your saved API keys are encrypted.", 1)[0]
     assert "no password is set" not in above_prompt, above_prompt[-2000:]
     assert "CONFIG_IMPORTED_BEFORE_PROMPT=False" in out
+    _assert_no_log_lines(_unlock_output(result))
     _secrets_absent(result, verifier)
 
 
@@ -251,8 +305,9 @@ def test_module_entry_give_up_and_quit_leaves_everything_untouched(tmp_path):
 
 
 @pytest.mark.timeout(240)
-def test_module_entry_reset_strips_encrypted_keys_and_opens_the_app(tmp_path):
-    result, verifier = _run_module_entry(tmp_path, "reset")
+@pytest.mark.parametrize("entry", ["module", "cli"])
+def test_module_entry_reset_strips_encrypted_keys_and_opens_the_app(tmp_path, entry):
+    result, verifier = _run_module_entry(tmp_path, "reset", entry=entry)
     out = result.stdout
     assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
     assert "PASSWORD_CLEARED=True" in out
@@ -260,6 +315,12 @@ def test_module_entry_reset_strips_encrypted_keys_and_opens_the_app(tmp_path):
     assert "FILE_HAS_CIPHERTEXT=False" in out
     assert "FILE_HAS_ENCRYPTION=False" in out
     assert "Saved keys were reset" in result.stderr
+    # Review round 2 (F-R2-4): the confirmation is the last thing before a
+    # pause, not buried under log lines and painted over by the TUI.
+    region = _unlock_output(result)
+    _assert_no_log_lines(region)
+    done = region.index("Saved keys were reset")
+    assert region.index("Press Enter to start chatbook.", done) > done
     # Chats, notes and documents are untouched: the reset writes only the
     # encrypted values and [encryption] out of config.toml.
     assert "DB_SETTINGS_KEPT=True" in out

@@ -58,6 +58,32 @@ UNLOCK_RESET_DONE = (
 UNLOCK_RESET_FAILED = (
     "Resetting the saved keys failed; config.toml was left as it was."
 )
+#: Holds an outcome sentence on screen; the TUI would cover it within a
+#: second (review round 2, F-R2-4).
+UNLOCK_CONTINUE_PROMPT = "Press Enter to start chatbook. "
+
+#: The unlock's outcome for ``tldw_chatbook.config``, read once as config
+#: first loads (`take_startup_unlock`). Config's import-time load used to run
+#: before the password was installed and warned "no password is set" right
+#: after the RIGHT password (review round 2, R2-F6). ``(password,)`` installs
+#: the master password before that load; ``(None,)`` marks a reset or re-key
+#: that finishes right after the import, so the locked load is expected.
+_STARTUP_UNLOCK: tuple[str | None] | None = None
+
+
+def take_startup_unlock() -> tuple[str | None, bool]:
+    """Hand ``tldw_chatbook.config`` the startup unlock's outcome, once.
+
+    Returns:
+        ``(password, pending)``: the master password typed at startup, or
+        None; and whether a reset or re-key finishes the unlock after
+        config's import (config then logs its locked load quietly).
+    """
+    global _STARTUP_UNLOCK
+    slot, _STARTUP_UNLOCK = _STARTUP_UNLOCK, None
+    if slot is None:
+        return None, False
+    return slot[0], slot[0] is None
 
 #: Opening a profile hands the terminal to it; a browser session has none.
 PROFILE_OPEN_NEEDS_TERMINAL = (
@@ -316,6 +342,7 @@ def startup_unlock() -> int | None:
         None when ordinary startup may continue, else the exit status the
         caller returns (a quit, a failed reset, or the recovery host's).
     """
+    global _STARTUP_UNLOCK
     reason, password = startup_preflight()
     if reason == UNLOCK_QUIT_REASON:
         return 0
@@ -324,18 +351,46 @@ def startup_unlock() -> int | None:
     from .storage_admission import admit_startup
 
     admit_startup()
-    if reason == UNLOCK_RESET_REASON:
-        from tldw_chatbook.config import reset_encrypted_config_values
+    if reason is None and password is None:
+        return None  # encryption is off: nothing to unlock
+    _STARTUP_UNLOCK = (password if reason is None else None,)
+    try:
+        if reason == UNLOCK_RESET_REASON:
+            from tldw_chatbook.config import reset_encrypted_config_values
 
-        if not reset_encrypted_config_values():
-            _say(UNLOCK_RESET_FAILED)
-            return 1
-        _say(UNLOCK_RESET_DONE)
-    elif password is not None:
-        from tldw_chatbook.config import set_encryption_password
+            if not reset_encrypted_config_values():
+                _say(UNLOCK_RESET_FAILED)
+                return 1
+            _say(UNLOCK_RESET_DONE)
+            return _paused()
+        from tldw_chatbook.config import (
+            get_encryption_password,
+            set_encryption_password,
+        )
 
-        set_encryption_password(password)
+        # Normally config already took the password as it loaded; this
+        # covers a config module that was imported earlier.
+        if get_encryption_password() != password:
+            set_encryption_password(password)
+        return None
+    finally:
+        _STARTUP_UNLOCK = None
         password = None
+
+
+def _paused() -> int | None:
+    """Wait for Enter so an outcome sentence is read before the TUI starts.
+
+    Returns:
+        None to start the app, or 0 when the user quits here instead.
+    """
+    try:
+        _choice(UNLOCK_CONTINUE_PROMPT)
+    except EOFError:
+        pass
+    except KeyboardInterrupt:
+        _say("")
+        return 0
     return None
 
 
