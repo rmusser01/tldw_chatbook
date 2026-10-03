@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 16:00'
+updated_date: '2026-10-03 17:11'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -240,6 +240,31 @@ Reason: preserve shipped TASK32369 local validation and TASK33921 Voice-step ext
 5. Preserve incoming TASK32369 and33921 Done/three checked each, all seven new follow-up tasks To Do and their unchecked criteria, plus all existing separate states including33662 Done and33665/33666/33667 To Do. Authenticate402 union hashes/full planned tree/index plus only explicitly qualified composition/test changes. Check affected Python fatal/added-line/format proportionately, preserve incoming inherited style/format debt, actual diagnostics/worker/DOM custody and task/whitespace guards. Existing CSS/native/schema/progress/recovery/original guard qualifications carry by exact source identity.
 6. Obtain independent read-only immutable source/targeted-functional/artifact review. Only after ALL functional/artifact/review activity settles run ORIGINAL five unchanged tested/untested storage/app-import/UI-ready/boot-CSS cases at exact REPO_ROOT cwd/PYTHONPATH and full-process task-owned outer profile. No pins/ceilings/counts/timeouts/warmup/work changes. Supplemental independent source/hash/raw/XML/count review precedes CLI closure and four-owned-document-only update.
 7. Publish once using EXACT observed1955793ece2701b19a780b6da7a8b1218d377a1a lease and concise body after live refs/reviews/gates. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs before any next actual strict-base action or normal protected --match-head-commit merge. Verify MERGED actual parents/tree/concurrency before pausing heartbeat. Retain every positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter and optional/runtime/style/profile/cleanup/resource/physical/wider limits.
+
+## Provider rate-limit telemetry preserving integration — October 3
+
+**Goal:** Satisfy live strict up-to-date protection while preserving approved orchestration behavior and incoming TASK28229 telemetry plus review-only records.
+**Architecture:** Compose the existing gateway and Console screen with the exact incoming response-scope and tooltip additions. The Hugging Face change is also a manifest overlap, but has no feature-patch intersection. Keep the lazy numeric/time-only telemetry formatter and existing content-free durable diagnostics.
+**Tech Stack:** Python3.12, Textual8, requests, SQLite, Pydantic.
+**Spec:** TASK28229's incoming implementation plan and the existing orchestration plan/ADR211.
+ADR required: no new ADR
+ADR path: backlog/decisions/063-hosted-provider-wire-and-durable-tool-continuation.md; backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; backlog/decisions/097-boot-budget-ratchets.md.
+Reason: preserve shipped telemetry and existing gateway/audit/UI boundaries mechanically; introduce no root owner, schema, authority, dependency or service contract.
+
+### Preserving integration and qualification
+
+Files: compose tldw_chatbook/Chat/console_provider_gateway.py, tldw_chatbook/LLM_Calls/LLM_API_Calls.py and tldw_chatbook/UI/Screens/chat_screen.py; retain the other912 incoming paths exactly, including the new provider_rate_limits module, egress scope/hook, spend projection, context controls and two test modules. Only the four owned canonical Markdown records receive root planning/qualification updates.
+Interfaces: incoming capture_rate_limits_for(provider_key), latest_rate_limit_headers(provider_key), format_rate_limit_line(headers,captured_at), console_rate_limit_line(provider_key); existing typed queue/default exception semantics and transient Console copy remain authoritative.
+
+- [x] Read fresh published4b CI/Qodo/threads/actual refs before action. At16:57 all FOUR exact-head jobs PASS; Qodo has four zero counters/four resolved threads and complete pagination. Live strict protection is enforced for administrators and requires the BEHIND update. Capture actualdev8a019511d763f77084928133a02cd32fed98c7cb and exact observed4b lease. No rebase began while CI ran.
+- [x] Authenticate402 approved disk/Git hashes/modes/blob addresses and915 incoming paths. Three manifest overlaps independently reproduce clean three-way bytes;399 prior non-overlap and912 incoming non-overlap paths stay exact, yielding1314 union entries. Initial read-only bulk cat-file stalled and was interruptedexit130; completed archive/disk/recomputed-blob proof replaces it. Two feature overlaps versus three manifest overlaps are distinct metadata, not a source defect.
+- [ ] Reopen TASK33664 AC3/In Progress through CLI, append this prospective plan and commit the two owned plan/task records before rebase. AC4 stays checked. Run git rebase --onto 8a019511d763f77084928133a02cd32fed98c7cb f0ffcf9e819b577bd38c416f38550969c75fb5a0. Require the three independently expected bytes, all non-overlap identities and full prospective tree/index/modes/blob addresses afterward; preserve capture_cloud.py deletion.
+- [ ] Run unchanged Tests/Chat/test_provider_rate_limits.py with private outer HOME/TLDW/XDG and fake adapter/no live network. Qualify bounded gateway/typed-failure/local-refusal/real SQLite audit and spend/context consumers. Run the one new mounted cost-tooltip node unchanged; if it fails, preserve raw/XML and compare the exact node on exact incoming8a source without marker, profile/readiness/source bypass. No cause or mounted behavior claim follows from a pre-delivery failure.
+- [ ] Authenticate prior typed projector/classifier/default diagnostics, schema76/stamp/frozen AgentRuns/AGENT_WAKE/refund/nonreplay/child-scoped peers/authority/finite SQL custody/shared Send/hook/replay/readiness/HELD recovery and three deferred Resend imports. Verify incoming/composed fatal and added-line style/format proportionately; preserve exact inherited whole-file debt. Check actual diagnostics/worker artifacts, supportedPython3.12 task-ID/path/readability, owned whitespace and unchanged guard/pin sources. Preserve all incoming task states and QA records as historical only, including new first-run and Notes/Library backlog records and ADR031's shipped editor Save refinement; implement none of those followups.
+- [ ] Commit immutable composed source and obtain independent read-only source/targeted-functional/artifact/evidence approval. After ALL functional/artifact/review activity settles, run the ORIGINAL five unchanged storage/app-import/UI-ready/bootCSS cases ONCE for this new source at exact REPO_ROOT cwd/PYTHONPATH and full outer private profile. Historical03b5PASS92.256 evidence stays unchanged. Read fresh counts and warnings; change no pin/ceiling/count/warmup/timeout/measured work. Obtain supplemental independent source/hash/raw/XML/count approval.
+- [ ] Only after both approvals, CLI close AC3/Done and update the four owned canonical records, preserving all reviewed source hashes/deletion/full tree outside those records. Publish ONCE with EXACT observed4b2c318d521148e76f34a09a1d91e382b8510e84 lease and concise PR body; verify actual remote/GitHub/body after any lag without a second push. Require fresh new-head Qodo/no actionable threads and ALL FOUR jobs before another strict-base action. Normal protected --match-head-commit merge only after qualification/live protection; verify MERGED parents/tree/current concurrency then pause heartbeat/report.
+
+No full suite, live provider/key, physicalCtrlQ/relaunch, real voice provisioning/download/service/playback, Windows, aggregate-resource/package/index/installed/native-release/wider-audit certification, admin bypass, weakened gate, shared stash or foreign cleanup. Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction and rejected uncreated-unexecuted readiness adapter remains preserved; overlapping selections are never summed.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
