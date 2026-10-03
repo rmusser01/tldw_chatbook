@@ -36,10 +36,22 @@ _EXPECTED_ROOTS = {
         "upstream_revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85",
         "reference_revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
         "files": {
-            "config.json": (97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-            "vocab.txt": (9384, "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
-            "encoder-model.int8.onnx": (652184014, "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155"),
-            "decoder_joint-model.int8.onnx": (8998286, "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3"),
+            "config.json": (
+                97,
+                "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+            ),
+            "vocab.txt": (
+                9384,
+                "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+            ),
+            "encoder-model.int8.onnx": (
+                652184014,
+                "3e0581fda6ab843888b51e56d7ee78b6d5bc3237ec113af1f732d1d5286aa155",
+            ),
+            "decoder_joint-model.int8.onnx": (
+                8998286,
+                "a449f49acd68979d418651dd2dcb737cc0f1bf0225e009e29ee326354edbf7d3",
+            ),
         },
     },
     ("nemo-parakeet-tdt-0.6b-v2", "f32"): {
@@ -47,11 +59,26 @@ _EXPECTED_ROOTS = {
         "upstream_revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85",
         "reference_revision": "0bbb45a3365852604aef28b538a8f066f4ccaa85-vad-b3e3ee3cce4c",
         "files": {
-            "config.json": (97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-            "vocab.txt": (9384, "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d"),
-            "encoder-model.onnx": (41770866, "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3"),
-            "encoder-model.onnx.data": (2435420160, "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41"),
-            "decoder_joint-model.onnx": (35792059, "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191"),
+            "config.json": (
+                97,
+                "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+            ),
+            "vocab.txt": (
+                9384,
+                "ec182b70dd42113aff6c5372c75cac58c952443eb22322f57bbd7f53977d497d",
+            ),
+            "encoder-model.onnx": (
+                41770866,
+                "3987bcd28175d829d12888a996a84e8f62a0e374d9ffd640662c1515adc679d3",
+            ),
+            "encoder-model.onnx.data": (
+                2435420160,
+                "4dab7362d4874d85965045b1e41b2d61dd2cc0fb25671a7f6b3dc47bf120cc41",
+            ),
+            "decoder_joint-model.onnx": (
+                35792059,
+                "cbb52a07bd70ab5b67f8439d4b3cd8704b18467b4430bcacb5adabe154b8d191",
+            ),
         },
     },
     ("nemo-parakeet-tdt-0.6b-v3", "int8"): {
@@ -59,10 +86,22 @@ _EXPECTED_ROOTS = {
         "upstream_revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
         "reference_revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
         "files": {
-            "config.json": (97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-            "vocab.txt": (93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
-            "encoder-model.int8.onnx": (652183999, "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09"),
-            "decoder_joint-model.int8.onnx": (18202004, "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70"),
+            "config.json": (
+                97,
+                "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+            ),
+            "vocab.txt": (
+                93939,
+                "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+            ),
+            "encoder-model.int8.onnx": (
+                652183999,
+                "6139d2fa7e1b086097b277c7149725edbab89cc7c7ae64b23c741be4055aff09",
+            ),
+            "decoder_joint-model.int8.onnx": (
+                18202004,
+                "eea7483ee3d1a30375daedc8ed83e3960c91b098812127a0d99d1c8977667a70",
+            ),
         },
     },
     ("nemo-parakeet-tdt-0.6b-v3", "f32"): {
@@ -70,11 +109,26 @@ _EXPECTED_ROOTS = {
         "upstream_revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce",
         "reference_revision": "8f23f0c03c8761650bdb5b40aaf3e40d2c15f1ce-vad-b3e3ee3cce4c",
         "files": {
-            "config.json": (97, "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466"),
-            "vocab.txt": (93939, "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d"),
-            "encoder-model.onnx": (41770866, "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1"),
-            "encoder-model.onnx.data": (2435420160, "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36"),
-            "decoder_joint-model.onnx": (72520893, "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1"),
+            "config.json": (
+                97,
+                "666903c76b9798caf2c210afd4f6cd60b08a8dbf9800ec8d7a3bc0d2148ac466",
+            ),
+            "vocab.txt": (
+                93939,
+                "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+            ),
+            "encoder-model.onnx": (
+                41770866,
+                "98a74b21b4cc0017c1e7030319a4a96f4a9506e50f0708f3a516d02a77c96bb1",
+            ),
+            "encoder-model.onnx.data": (
+                2435420160,
+                "9a22d372c51455c34f13405da2520baefb7125bd16981397561423ed32d24f36",
+            ),
+            "decoder_joint-model.onnx": (
+                72520893,
+                "e978ddf6688527182c10fde2eb4b83068421648985ef23f7a86be732be8706c1",
+            ),
         },
     },
 }
@@ -188,7 +242,9 @@ def test_descriptor_provenance_is_curated_and_locally_recorded_not_verified() ->
     assert ProvenanceClass.INTEGRITY_VERIFIED not in descriptor.provenance
 
 
-def test_source_map_covers_every_declared_file_with_credential_free_https_urls() -> None:
+def test_source_map_covers_every_declared_file_with_credential_free_https_urls() -> (
+    None
+):
     ref = artifact.parakeet_v2_reference()
     source_map = artifact.parakeet_v2_source_map()
 
@@ -204,7 +260,9 @@ def test_source_map_covers_every_declared_file_with_credential_free_https_urls()
         assert not parsed.query and not parsed.fragment
 
 
-def test_catalog_returns_descriptor_for_known_ref_and_raises_keyerror_otherwise() -> None:
+def test_catalog_returns_descriptor_for_known_ref_and_raises_keyerror_otherwise() -> (
+    None
+):
     catalog = artifact.ParakeetV2Catalog()
     ref = artifact.parakeet_v2_reference()
 
@@ -308,7 +366,11 @@ def test_active_managed_dir_finds_ready_active_root_using_only_service_api(
         supported_os=("linux",),
         supported_architectures=("x86-64",),
         provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-        files=(ArtifactFile("config.json", len(payload), hashlib.sha256(payload).hexdigest()),),
+        files=(
+            ArtifactFile(
+                "config.json", len(payload), hashlib.sha256(payload).hexdigest()
+            ),
+        ),
         expected_installed_bytes=len(payload),
         dependencies=(),
     )
@@ -323,7 +385,9 @@ def test_active_managed_dir_finds_ready_active_root_using_only_service_api(
     assert resolved == core.artifact_path(ref)
 
 
-def test_active_managed_dir_ignores_non_parakeet_active_artifact(tmp_path: Path) -> None:
+def test_active_managed_dir_ignores_non_parakeet_active_artifact(
+    tmp_path: Path,
+) -> None:
     from tldw_chatbook.Model_Artifacts.service import (
         ArtifactDescriptor,
         ArtifactFile,
@@ -355,7 +419,11 @@ def test_active_managed_dir_ignores_non_parakeet_active_artifact(tmp_path: Path)
         supported_os=("linux",),
         supported_architectures=("x86-64",),
         provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-        files=(ArtifactFile("model.bin", len(payload), hashlib.sha256(payload).hexdigest()),),
+        files=(
+            ArtifactFile(
+                "model.bin", len(payload), hashlib.sha256(payload).hexdigest()
+            ),
+        ),
         expected_installed_bytes=len(payload),
         dependencies=(),
     )
@@ -417,7 +485,11 @@ def test_active_managed_dir_rejects_same_id_different_revision(tmp_path: Path) -
         supported_os=("linux",),
         supported_architectures=("x86-64",),
         provenance=(ProvenanceClass.CHATBOOK_CURATED,),
-        files=(ArtifactFile("config.json", len(payload), hashlib.sha256(payload).hexdigest()),),
+        files=(
+            ArtifactFile(
+                "config.json", len(payload), hashlib.sha256(payload).hexdigest()
+            ),
+        ),
         expected_installed_bytes=len(payload),
         dependencies=(),
     )
@@ -513,7 +585,9 @@ async def test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture
         assert report.download_bytes == sum(
             len(payload) for payload in (*payloads.values(), *vad_payloads.values())
         )
-        assert report.destination == core.artifact_path(artifact.parakeet_v2_reference())
+        assert report.destination == core.artifact_path(
+            artifact.parakeet_v2_reference()
+        )
 
         installed_dir = await artifact.run_parakeet_v2_provision(
             report,
@@ -581,8 +655,9 @@ async def test_vad_only_preflight_and_provision_never_include_a_parakeet_root(
 def test_vad_catalog_rejects_every_parakeet_root_reference() -> None:
     catalog = artifact.ParakeetVadCatalog()
 
-    assert catalog.descriptor(
-        artifact.parakeet_vad_reference()
-    ) == artifact.parakeet_vad_descriptor()
+    assert (
+        catalog.descriptor(artifact.parakeet_vad_reference())
+        == artifact.parakeet_vad_descriptor()
+    )
     with pytest.raises(KeyError):
         catalog.descriptor(artifact.parakeet_v2_reference())

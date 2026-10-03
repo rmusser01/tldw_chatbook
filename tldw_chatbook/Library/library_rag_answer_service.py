@@ -657,9 +657,7 @@ async def generate_library_rag_answer(
 
         body = extract_response_content(raw).strip()
         if not body:
-            logger.warning(
-                f"library rag answer: {provider} returned an empty response"
-            )
+            logger.warning(f"library rag answer: {provider} returned an empty response")
             return LibraryRagAnswer(
                 status=ANSWER_STATUS_FAILED,
                 text="",

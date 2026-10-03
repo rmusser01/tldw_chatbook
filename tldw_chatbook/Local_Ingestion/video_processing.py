@@ -212,13 +212,9 @@ class LocalVideoProcessor:
             try:
                 cookie_dict = json.loads(cookies)
             except json.JSONDecodeError as exc:
-                raise VideoDownloadError(
-                    f"Cookies file not found: {cookies}"
-                ) from exc
+                raise VideoDownloadError(f"Cookies file not found: {cookies}") from exc
             if not isinstance(cookie_dict, dict):
-                raise VideoDownloadError(
-                    f"Cookies file not found: {cookies}"
-                )
+                raise VideoDownloadError(f"Cookies file not found: {cookies}")
             temp_path = self._write_temp_cookiefile(cookie_dict)
             return temp_path, temp_path
 

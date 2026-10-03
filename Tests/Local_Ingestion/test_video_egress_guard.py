@@ -112,9 +112,7 @@ def test_download_video_refuses_a_cloud_metadata_endpoint(
     processor = LocalVideoProcessor(None)
     with pytest.raises(VideoDownloadError):
         processor.download_video(METADATA_URL, str(tmp_path))
-    assert recording_ytdlp == [], (
-        f"an unchecked URL reached yt-dlp: {recording_ytdlp}"
-    )
+    assert recording_ytdlp == [], f"an unchecked URL reached yt-dlp: {recording_ytdlp}"
 
 
 def test_download_video_refuses_a_non_http_scheme(

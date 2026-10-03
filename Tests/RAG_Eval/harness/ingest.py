@@ -48,6 +48,7 @@ indexing under `asyncio.run(...)` and then searching under a second
 `asyncio.run(...)` raises "attached to a different loop" — an error that
 looks like a harness bug but is really a loop-ownership bug.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -502,9 +503,7 @@ def build_eval_runtime(
             # indexing_db=None on purpose: the incremental-skip state DB
             # lives under the user data dir and would make a rerun's
             # "indexed" count depend on a previous run's leftovers.
-            batch_summary = loop.run_until_complete(
-                index_entries(service, None, batch)
-            )
+            batch_summary = loop.run_until_complete(index_entries(service, None, batch))
             for key in ("indexed", "skipped", "failed"):
                 summary[key] += batch_summary[key]
             summary["errors"].extend(batch_summary["errors"])

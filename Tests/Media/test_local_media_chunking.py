@@ -1,5 +1,6 @@
 # Tests/Media/test_local_media_chunking.py
 """Q6 ruling: the char-slicer converges onto the engine (no mid-word splits)."""
+
 import pytest
 from tldw_chatbook.Media.local_media_reading_service import LocalMediaReadingService
 
@@ -15,17 +16,22 @@ def test_no_mid_word_splits():
     for c in chunks:
         # the old slicer cut at raw char boundaries; the engine splits on units
         assert not c["text"].startswith(" "), "mid-word split detected"
-        assert not c["text"].endswith("word"[len(c["text"].split()[-1]):]) or True
+        assert not c["text"].endswith("word"[len(c["text"].split()[-1]) :]) or True
     # every chunk is a whole-word boundary slice of the original
     for c in chunks:
         start, end = c["start_char"], c["end_char"]
-        assert TEXT[start:end] == c["text"].strip() or TEXT[start:end].strip() == c["text"]
+        assert (
+            TEXT[start:end] == c["text"].strip() or TEXT[start:end].strip() == c["text"]
+        )
 
 
 def test_perform_chunking_false_returns_empty():
-    assert LocalMediaReadingService._chunk_text(
-        TEXT, perform_chunking=False, chunk_size=50, chunk_overlap=10
-    ) == []
+    assert (
+        LocalMediaReadingService._chunk_text(
+            TEXT, perform_chunking=False, chunk_size=50, chunk_overlap=10
+        )
+        == []
+    )
 
 
 # --- Task 9 extensions: pin the legacy dict contract the callers consume ---
@@ -83,6 +89,9 @@ def test_degenerate_inputs_are_normalized_not_raised():
     )
     assert chunks and all(c["text"] for c in chunks)
     clamped = LocalMediaReadingService._chunk_text(
-        "alpha beta gamma delta epsilon", perform_chunking=True, chunk_size=2, chunk_overlap=99
+        "alpha beta gamma delta epsilon",
+        perform_chunking=True,
+        chunk_size=2,
+        chunk_overlap=99,
     )
     assert clamped and all(c["text"] for c in clamped)

@@ -17,6 +17,7 @@ from textual.widgets import Button, Input, OptionList, Static
 from textual.widgets.option_list import Option
 
 from tldw_chatbook.Audio.meeting_session import normalize_speaker_name
+
 # Re-exported (TASK-31745 moved these out of this module unchanged) so every
 # existing importer -- and this canvas's own hidden legend -- keeps working.
 from tldw_chatbook.Library.meeting_speaker_rename import (  # noqa: F401
@@ -640,7 +641,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         widget_id = event.input.id or ""
         if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
             return
-        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX) :]
         name = normalize_speaker_name(event.value)
         event.input.value = ""
         if self.media_db is None or self.speaker_rename_media_id is None:
@@ -666,9 +667,15 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # filesystem failure's `str()` embeds the meeting folder path
             # (task-9 diagnostic inventory review) -- redact it, mirroring
             # `meetings_screen.py`'s own rename-persist failure log.
-            logger.warning("Library media speaker rename failed: {}", redact_user_paths(str(exc)))
-            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
-        self.app.call_from_thread(self._apply_speaker_rename_outcome, cluster_id, outcome)
+            logger.warning(
+                "Library media speaker rename failed: {}", redact_user_paths(str(exc))
+            )
+            outcome = SpeakerRenameResult(
+                False, f"unexpected error ({type(exc).__name__})"
+            )
+        self.app.call_from_thread(
+            self._apply_speaker_rename_outcome, cluster_id, outcome
+        )
 
     def _apply_speaker_rename_outcome(
         self, cluster_id: str, outcome: SpeakerRenameResult
@@ -679,7 +686,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         log, so the user saw the old name and no explanation.
         """
         if not outcome.ok:
-            self.app.notify(f"Couldn't rename this speaker: {outcome.reason}.", severity="warning")
+            self.app.notify(
+                f"Couldn't rename this speaker: {outcome.reason}.", severity="warning"
+            )
             return
         if not self.is_mounted:
             return
@@ -704,7 +713,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             pass
         try:
             speaker_rows = dict(
-                _meeting_speaker_legend_rows(self.media_db, self.speaker_rename_media_id)
+                _meeting_speaker_legend_rows(
+                    self.media_db, self.speaker_rename_media_id
+                )
             )
             label_widget = self.query_one(
                 f"#library-media-speaker-label-{cluster_id}", Static
@@ -717,9 +728,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         """Patch mounted Media density and preview participation in place."""
         self.compact = compact
         select_mode = getattr(self.canvas, "select_mode", False)
-        row_height = (
-            _MEDIA_ROW_COMPACT_HEIGHT if compact else _MEDIA_ROW_WIDE_HEIGHT
-        )
+        row_height = _MEDIA_ROW_COMPACT_HEIGHT if compact else _MEDIA_ROW_WIDE_HEIGHT
         for button in self.query(".library-media-row"):
             title = button._library_media_title
             secondary = button._library_media_secondary
@@ -990,7 +999,9 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         Returns:
             ComposeResult for the media canvas.
         """
-        title_count = self.pager.title_count if self.pager is not None else self.canvas.count
+        title_count = (
+            self.pager.title_count if self.pager is not None else self.canvas.count
+        )
         title = "Media" if title_count is None else f"Media ({title_count})"
         select_mode = getattr(self.canvas, "select_mode", False)
         fresh_zero = (
@@ -1171,9 +1182,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # task-28013: sort chooser opener -- hidden in select mode like
         # Export/Trash (Select's toolbar acts on the selection).
         sort_btn = Button(
-            library_choice_label(
-                "sort", sort_labels.get(current_sort, "Newest")
-            ),
+            library_choice_label("sort", sort_labels.get(current_sort, "Newest")),
             id="library-media-sort",
             classes="library-canvas-action",
             compact=True,
@@ -1263,9 +1272,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         select_btn.disabled = select_disabled
         if select_disabled:
             select_btn.tooltip = LIBRARY_SELECT_TOGGLE_DISABLED_TOOLTIP
-        self._gate_stale_action(
-            select_btn, "Done" if select_mode else "Select"
-        )
+        self._gate_stale_action(select_btn, "Done" if select_mode else "Select")
         # task-30043 (critique P1): at the items pane's ~40-col real width
         # one Horizontal cannot render six labels (live capture: ``t so E Tr
         # R Se``), so the browse actions split into rows of readable labels.
@@ -1528,9 +1535,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
             # AFTER the select-mode block is the only slot that collides
             # with nothing. Rendered outside the ``confirming_bulk_delete``
             # branch above, because Done must stay pressable mid-confirm.
-            done_row = Horizontal(
-                id="library-media-select-done", classes="ds-toolbar"
-            )
+            done_row = Horizontal(id="library-media-select-done", classes="ds-toolbar")
             done_row.add_class("h-auto")
             with done_row:
                 yield select_btn
@@ -1577,9 +1582,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                     classes="library-toolbar-count library-media-receipt-copy",
                     markup=False,
                 )
-                actions = Horizontal(
-                    classes="ds-toolbar library-media-receipt-actions"
-                )
+                actions = Horizontal(classes="ds-toolbar library-media-receipt-actions")
                 actions.add_class("h-auto")
                 with actions:
                     # task-31220: NOT ``_gate_stale_action``. Undo restores
@@ -1610,9 +1613,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
         # grammar as the bulk-delete receipt above, because a one-click
         # dismissal of a mid-walk set (with its done-marks) must be
         # recoverable right where the user lands after the picker closes.
-        dismissed_set_name = getattr(
-            self.canvas, "review_dismiss_receipt_name", ""
-        )
+        dismissed_set_name = getattr(self.canvas, "review_dismiss_receipt_name", "")
         if dismissed_set_name:
             dismiss_receipt = Vertical(
                 id="library-media-review-dismiss-receipt",
@@ -1671,9 +1672,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # R3: no dangling dash -- the buttons are on the row BELOW,
                 # so a trailing "— " pointed at nothing. ``analyze_total``
                 # is the pressed selection's own size on this path.
-                analyze_copy = (
-                    f"{analyze_choice} of {analyze_total} already analyzed"
-                )
+                analyze_copy = f"{analyze_choice} of {analyze_total} already analyzed"
             elif analyze_running:
                 # 1-based position of the item being analyzed right now.
                 position = min(analyze_done + analyze_failed + 1, analyze_total)
@@ -1685,8 +1684,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 # replaces here.
                 glyph = "✓" if analyze_done else "✗"
                 analyze_copy = (
-                    f"{glyph} analyzed · {analyze_done} of {analyze_total}"
-                    f"{failed_copy}"
+                    f"{glyph} analyzed · {analyze_done} of {analyze_total}{failed_copy}"
                 )
             analyze_receipt = Vertical(
                 id="library-media-analyze-receipt",
@@ -1898,9 +1896,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                         # the stale gate the open is how you recover from.
                         # Only the mutating actions (Select/Export/sort/
                         # Delete/Undo) stay behind ``_gate_stale_action``.
-                        yield self._gate_mutation_action(
-                            button, label_rest.lstrip()
-                        )
+                        yield self._gate_mutation_action(button, label_rest.lstrip())
                 if self.pager is not None:
                     yield from self._compose_pager(self.pager)
 
@@ -2033,9 +2029,7 @@ class LibraryMediaCanvas(PostRecomposeCallback, RecomposeCaptureGuard, Vertical)
                 return
             with Horizontal(classes="library-source-pager-controls"):
                 previous = Button(
-                    library_disabled_action_label(
-                        "Previous", pager.previous_disabled
-                    ),
+                    library_disabled_action_label("Previous", pager.previous_disabled),
                     id="library-media-previous",
                     classes="library-canvas-action",
                     compact=True,

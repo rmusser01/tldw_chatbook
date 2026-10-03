@@ -13,12 +13,15 @@ def _clone(repo_url, ref=None):
     )
 
 
-@pytest.mark.parametrize("repo_url", [
-    "ext::sh -c 'touch /tmp/pwn'",
-    "file:///etc/passwd",
-    "-upload-pack=/bin/sh",
-    "git@github.com:owner/repo.git",
-])
+@pytest.mark.parametrize(
+    "repo_url",
+    [
+        "ext::sh -c 'touch /tmp/pwn'",
+        "file:///etc/passwd",
+        "-upload-pack=/bin/sh",
+        "git@github.com:owner/repo.git",
+    ],
+)
 def test_malicious_repo_url_rejected_before_subprocess(repo_url):
     with patch("subprocess.run") as mock_run:
         with pytest.raises((ValidationError, ValueError, RuntimeError)):

@@ -29,7 +29,12 @@ class _FakeChat:
 
     def __call__(self, messages, model, temperature, max_tokens, seed):
         self.calls.append(
-            {"messages": messages, "model": model, "seed": seed, "temperature": temperature}
+            {
+                "messages": messages,
+                "model": model,
+                "seed": seed,
+                "temperature": temperature,
+            }
         )
         if self._fail_on is not None and len(self.calls) == self._fail_on:
             raise RuntimeError("provider exploded")
@@ -41,9 +46,7 @@ def _card(card_id=1):
 
 
 def _config(**overrides):
-    base = dict(
-        name="b", probe_set_id="ps", character_ids=(1,), target_ids=("t-1",)
-    )
+    base = dict(name="b", probe_set_id="ps", character_ids=(1,), target_ids=("t-1",))
     base.update(overrides)
     return CharacterProbeConfig(**base)
 
@@ -173,7 +176,9 @@ def test_the_grid_covers_cards_probes_targets_and_samples(db):
             [_card(1), _card(2)],
             probe_set,
             two_targets,
-            _config(character_ids=(1, 2), target_ids=("t-1", "t-2"), samples_per_cell=2),
+            _config(
+                character_ids=(1, 2), target_ids=("t-1", "t-2"), samples_per_cell=2
+            ),
         )
     )
     assert len(conversations) == 2 * 2 * 2 * 2
@@ -333,7 +338,9 @@ def test_the_blocking_chat_callable_never_runs_on_the_event_loop(targets):
         return "ok"
 
     probe_set = ProbeSet(probes=(Probe(turns=("One",)),))
-    asyncio.run(CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config()))
+    asyncio.run(
+        CharacterProbeRunner(chat).run([_card()], probe_set, targets, _config())
+    )
     assert seen["on_loop"] is False
 
 
@@ -346,7 +353,11 @@ def test_progress_callback_reports_running_totals(targets):
 
     asyncio.run(
         CharacterProbeRunner(chat).run(
-            [_card()], probe_set, targets, _config(), progress=lambda done, total: calls.append((done, total))
+            [_card()],
+            probe_set,
+            targets,
+            _config(),
+            progress=lambda done, total: calls.append((done, total)),
         )
     )
     # concurrency=1 (config default) makes this deterministic.

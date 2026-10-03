@@ -33,6 +33,7 @@ from tldw_chatbook.Library.library_rag_state import (
     LIBRARY_RAG_ROUTE_NOTES_KEY,
     LIBRARY_RAG_SERVICE_ERROR_SELECTOR,
 )
+
 # TASK-21731: read the mode vocabulary from the stdlib-only `search_modes`
 # module, NOT from `simplified.active_config` -- this module is on the app's
 # import path, and active_config drags the whole simplified service tree
@@ -97,6 +98,7 @@ from tldw_chatbook.RAG_Search.ingestion_indexing import (
     get_shared_rag_service,
     shared_rag_service_generation,
 )
+
 # One staleness rule for the `app._rag_service` cache, shared with the chat/
 # Search resolver (`resolve_semantic_rag_service`): a profile switch resets
 # the shared singleton, and both app-level caches must notice.
@@ -198,9 +200,7 @@ _SEMANTICALLY_COVERABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversatio
 # and has no vector index at all, so a prompt reaches hybrid results through
 # this leg alone (rescued by the fusion weighting) and must never appear in
 # a semantic-coverage claim.
-_FTS_SERVABLE_SOURCE_TYPES = frozenset(
-    {"media", "notes", "conversations", "prompts"}
-)
+_FTS_SERVABLE_SOURCE_TYPES = frozenset({"media", "notes", "conversations", "prompts"})
 # Library scope identifier -> the ENGINE's keyword-leg vocabulary
 # (`rag_service.SOURCE_TYPE_*`, singular). The Library speaks plurals
 # (`notes`, `conversations`); the engine's FTS sub-legs are selected -- and
@@ -384,9 +384,7 @@ class LibraryLocalRagSearchService:
         profile_mode = _resolve_profile_search_mode(rag_service)
 
         if profile_mode == "plain":
-            result = await self._search_keyword(
-                query, source_types, top_k, scope=scope
-            )
+            result = await self._search_keyword(query, source_types, top_k, scope=scope)
             return _with_route_notes(
                 result,
                 (
@@ -500,7 +498,8 @@ class LibraryLocalRagSearchService:
         # for the same reason the scope slot is (task-9 review finding): two
         # seams can fail in one call and neither may overwrite the other.
         failed_seams = sorted(
-            name for name, (state, _rows) in outcomes.items()
+            name
+            for name, (state, _rows) in outcomes.items()
             if state is SeamState.FAILED
         )
         for name in failed_seams:
@@ -517,9 +516,7 @@ class LibraryLocalRagSearchService:
             # eval harness, which until TASK-18255 could not tell an unwired
             # seam from an empty one); this sentence is what the user reads.
             diagnostics.setdefault(LIBRARY_RAG_ROUTE_NOTES_KEY, []).append(
-                ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(
-                    seams=", ".join(failed_seams)
-                )
+                ROUTE_NOTE_SEAMS_FAILED_TEMPLATE.format(seams=", ".join(failed_seams))
             )
 
         if not any(state is SeamState.AVAILABLE for state, _rows in outcomes.values()):
@@ -695,7 +692,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: notes seam failed."
@@ -732,7 +731,9 @@ class LibraryLocalRagSearchService:
             return [_media_row(item) for item in items if isinstance(item, Mapping)]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: media seam failed."
@@ -779,7 +780,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: conversations seam failed."
@@ -813,7 +816,9 @@ class LibraryLocalRagSearchService:
             ]
 
         try:
-            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(query, run_match)
+            return SeamState.AVAILABLE, await _rows_with_prefix_fallback(
+                query, run_match
+            )
         except Exception:
             logger.opt(exception=True).warning(
                 "Library keyword search: prompts seam failed."
@@ -1650,7 +1655,9 @@ def _raw_semantic_score(item: Any) -> float:
     per-type merge (``_search_semantic``) can sort mixed-shape results from
     ``rag_service.search`` without first normalizing every item.
     """
-    value = item.get("score") if isinstance(item, Mapping) else getattr(item, "score", None)
+    value = (
+        item.get("score") if isinstance(item, Mapping) else getattr(item, "score", None)
+    )
     return _coerce_score(value) or float("-inf")
 
 

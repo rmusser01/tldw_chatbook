@@ -55,6 +55,7 @@ module-level `pytestmark` here, which would silently take these pins down
 with it (`harness/environment.py:harness_gate`'s own docstring names that
 trap).
 """
+
 from __future__ import annotations
 
 import sqlite3
@@ -303,9 +304,7 @@ def test_index_terms_agree_with_the_engines_own_term_key() -> None:
     ]
 
     for sample in samples:
-        assert _index_terms(sample) == RAGService._fts5_term_key(
-            sample
-        ).split(), sample
+        assert _index_terms(sample) == RAGService._fts5_term_key(sample).split(), sample
 
 
 def test_no_documents_yields_no_terms() -> None:
@@ -317,9 +316,7 @@ def test_no_documents_yields_no_terms() -> None:
     never a crash and never a term.
     """
     assert (
-        derive_expansion_terms(
-            [], query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS
-        )
+        derive_expansion_terms([], query_terms=(), n_terms=8, stopwords=_FTS5_STOPWORDS)
         == ()
     )
     assert (
@@ -354,9 +351,7 @@ def test_prf_expression_ors_the_query_content_terms_with_the_expansion_terms() -
     derived order -- so a table row's expression can be read against the
     term list that produced it.
     """
-    expression = compose_prf_expression(
-        "the lathe spindle", ("runout", "carriage")
-    )
+    expression = compose_prf_expression("the lathe spindle", ("runout", "carriage"))
 
     assert expression == '"lathe" OR "spindle" OR "runout" OR "carriage"'
 
@@ -446,9 +441,7 @@ def test_the_only_operator_in_the_expression_is_the_one_the_probe_put_there() ->
         # Query side: the `Obsidian-3` incident.
         with pytest.raises(sqlite3.OperationalError):
             _match(conn, "Obsidian-3 OR lathe")
-        assert _match(conn, compose_prf_expression("Obsidian-3 lathe", ())) == [
-            (1,)
-        ]
+        assert _match(conn, compose_prf_expression("Obsidian-3 lathe", ())) == [(1,)]
 
         # Expansion side: a literal `OR` derived from a document is a
         # search term, never a disjunction. (It cannot arrive from
@@ -475,9 +468,7 @@ def test_feedback_expression_is_the_content_token_or() -> None:
     results -- which is why it is a separate function rather than a
     change to anything the product runs.
     """
-    assert compose_feedback_expression("the lathe spindle") == (
-        '"lathe" OR "spindle"'
-    )
+    assert compose_feedback_expression("the lathe spindle") == ('"lathe" OR "spindle"')
     assert compose_feedback_expression("Obsidian-3") == '"Obsidian-3"'
 
 

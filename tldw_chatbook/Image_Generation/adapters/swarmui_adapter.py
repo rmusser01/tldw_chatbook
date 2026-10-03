@@ -19,7 +19,10 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_SWARMUI_TIMEOUT_SECONDS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 from tldw_chatbook.Utils.egress import origin_set, same_origin
 
@@ -58,7 +61,9 @@ class SwarmUIAdapter:
             raise ImageGenerationError("SwarmUI did not return any images")
 
         if image_ref.startswith("data:"):
-            content, content_type = decode_shared_data_url(image_ref, max_bytes=self._max_output_bytes())
+            content, content_type = decode_shared_data_url(
+                image_ref, max_bytes=self._max_output_bytes()
+            )
             content, content_type = validate_and_convert_image_output(
                 content,
                 content_type,
@@ -158,12 +163,16 @@ class SwarmUIAdapter:
                 payload[key] = value
         return payload
 
-    def _post_generate(self, url: str, payload: dict[str, Any], trusted_origins: frozenset) -> dict[str, Any]:
+    def _post_generate(
+        self, url: str, payload: dict[str, Any], trusted_origins: frozenset
+    ) -> dict[str, Any]:
         data = self._post_json(url, payload, trusted_origins)
         error_id = data.get("error_id") if isinstance(data, dict) else None
         if error_id == "invalid_session_id":
             logger.info("SwarmUI session invalid; refreshing session_id")
-            self._session_id = self._request_session_id(self._resolve_base_url(), trusted_origins)
+            self._session_id = self._request_session_id(
+                self._resolve_base_url(), trusted_origins
+            )
             retry_payload = dict(payload)
             retry_payload["session_id"] = self._session_id
             data = self._post_json(url, retry_payload, trusted_origins)
@@ -176,14 +185,17 @@ class SwarmUIAdapter:
                 raise ImageGenerationError(str(data.get("error")))
         return data if isinstance(data, dict) else {}
 
-    def _post_json(self, url: str, payload: dict[str, Any], trusted_origins: frozenset) -> dict[str, Any]:
+    def _post_json(
+        self, url: str, payload: dict[str, Any], trusted_origins: frozenset
+    ) -> dict[str, Any]:
         try:
             data = fetch_json(
                 method="POST",
                 url=url,
                 json=payload,
                 cookies=self._cookies(),
-                timeout=self._config.swarmui_timeout_seconds or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
+                timeout=self._config.swarmui_timeout_seconds
+                or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
                 trusted_origins=trusted_origins,
             )
         except Exception as exc:
@@ -221,12 +233,15 @@ class SwarmUIAdapter:
         encoded_path = "/".join(quote(part) for part in path.split("/"))
         return f"{base_url.rstrip('/')}/{encoded_path}"
 
-    def _fetch_image_bytes(self, url: str, trusted_origins: frozenset) -> tuple[bytes, str]:
+    def _fetch_image_bytes(
+        self, url: str, trusted_origins: frozenset
+    ) -> tuple[bytes, str]:
         try:
             return fetch_shared_image_bytes(
                 url,
                 cookies=self._cookies(),
-                timeout=self._config.swarmui_timeout_seconds or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
+                timeout=self._config.swarmui_timeout_seconds
+                or DEFAULT_SWARMUI_TIMEOUT_SECONDS,
                 max_bytes=self._max_output_bytes(),
                 trusted_origins=trusted_origins,
             )

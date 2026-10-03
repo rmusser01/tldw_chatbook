@@ -111,9 +111,9 @@ async def test_permission_prompt_recommendations_uses_log_catalog_and_effective_
 
     report = await service.permission_prompt_recommendations()
 
-    assert [(r.server_key, r.tool_name, r.approved_count) for r in report.recommendations] == [
-        ("local:docs", "search", 2)
-    ]
+    assert [
+        (r.server_key, r.tool_name, r.approved_count) for r in report.recommendations
+    ] == [("local:docs", "search", 2)]
     assert report.recommendations[0].last_seen == "2026-08-01T20:05:00+00:00"
 
 
@@ -197,6 +197,4 @@ async def test_apply_permission_prompt_recommendation_requires_permission_store(
     service.local_service.store = None
 
     with pytest.raises(RuntimeError, match="MCP permission store unavailable"):
-        await service.apply_permission_prompt_recommendation(
-            "local:docs", "search"
-        )
+        await service.apply_permission_prompt_recommendation("local:docs", "search")

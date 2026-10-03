@@ -20,7 +20,10 @@ from tldw_chatbook.Image_Generation.config import (
     DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
     get_image_generation_config,
 )
-from tldw_chatbook.Image_Generation.exceptions import ImageBackendUnavailableError, ImageGenerationError
+from tldw_chatbook.Image_Generation.exceptions import (
+    ImageBackendUnavailableError,
+    ImageGenerationError,
+)
 from tldw_chatbook.Image_Generation.request_validation import effective_inline_max_bytes
 from tldw_chatbook.Utils.egress import origin_set
 
@@ -48,7 +51,8 @@ class TogetherImageAdapter:
                 url=url,
                 headers=self._headers(api_key),
                 json=payload,
-                timeout=self._config.together_image_timeout_seconds or DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
+                timeout=self._config.together_image_timeout_seconds
+                or DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
                 # url is built from the configured base_url, not API-returned
                 # data, so its host is trusted.
                 trusted_origins=origin_set(url),
@@ -63,7 +67,9 @@ class TogetherImageAdapter:
             output_format,
             max_bytes=self._max_output_bytes(),
         )
-        return ImageGenResult(content=content, content_type=content_type, bytes_len=len(content))
+        return ImageGenResult(
+            content=content, content_type=content_type, bytes_len=len(content)
+        )
 
     def _max_output_bytes(self) -> int:
         return effective_inline_max_bytes(self._config)
@@ -73,7 +79,9 @@ class TogetherImageAdapter:
         if not api_key:
             api_key = (os.getenv("TOGETHER_API_KEY") or "").strip()
         if not api_key:
-            raise ImageBackendUnavailableError("together image api key is not configured")
+            raise ImageBackendUnavailableError(
+                "together image api key is not configured"
+            )
         return api_key
 
     def _resolve_base_url(self) -> str:
@@ -84,7 +92,9 @@ class TogetherImageAdapter:
         )
         cleaned = str(raw).strip()
         if not cleaned:
-            raise ImageBackendUnavailableError("together image base URL is not configured")
+            raise ImageBackendUnavailableError(
+                "together image base URL is not configured"
+            )
         if not cleaned.startswith("http://") and not cleaned.startswith("https://"):
             cleaned = f"https://{cleaned}"
         return cleaned.rstrip("/")
@@ -148,7 +158,9 @@ class TogetherImageAdapter:
             for key in ("b64_json", "image_base64", "base64", "image_b64"):
                 value = node.get(key)
                 if isinstance(value, str) and value.strip():
-                    return decode_base64_image(value.strip(), max_bytes=self._max_output_bytes()), "image/png"
+                    return decode_base64_image(
+                        value.strip(), max_bytes=self._max_output_bytes()
+                    ), "image/png"
             for key in ("url", "image_url", "image"):
                 if key in node:
                     extracted = self._extract_from_link_value(node.get(key))
@@ -190,7 +202,8 @@ class TogetherImageAdapter:
             # trusted_origins, fully subject to the egress policy.
             return fetch_image_bytes(
                 raw,
-                timeout=self._config.together_image_timeout_seconds or DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
+                timeout=self._config.together_image_timeout_seconds
+                or DEFAULT_TOGETHER_IMAGE_TIMEOUT_SECONDS,
                 max_bytes=self._max_output_bytes(),
             )
         decoded = maybe_decode_base64_image(raw, max_bytes=self._max_output_bytes())

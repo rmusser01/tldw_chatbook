@@ -408,17 +408,14 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         )
         self.query_one("#library-prompt-keywords").display = effective == "advanced"
         self.query_one("#library-prompt-author").display = effective == "advanced"
-        self.query_one("#library-prompt-author-label").display = (
-            effective == "advanced"
-        )
-        self.query_one("#library-prompt-advanced-extras").display = (
-            effective in {"advanced", "info"}
-        )
+        self.query_one("#library-prompt-author-label").display = effective == "advanced"
+        self.query_one("#library-prompt-advanced-extras").display = effective in {
+            "advanced",
+            "info",
+        }
         for selector in ("#library-prompt-system", "#library-prompt-user"):
             self.query_one(selector, TextArea).read_only = (
-                effective != "basic"
-                or self.bulk_read_only
-                or self.identity_mismatch
+                effective != "basic" or self.bulk_read_only or self.identity_mismatch
             )
         if focused_will_hide:
             self.call_after_refresh(
@@ -521,9 +518,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         clean_saved = not self.conflict and not is_new and not self.dirty
         save = self.query_one("#library-prompt-save", Button)
         save.display = not self.conflict and (is_new or self.dirty)
-        save.disabled = busy or (
-            not is_new and not self.can_update_original
-        )
+        save.disabled = busy or (not is_new and not self.can_update_original)
         use_console = self.query_one("#library-prompt-insert-console", Button)
         use_console.display = clean_saved
         use_console.disabled = busy
@@ -557,9 +552,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         if self.bulk_read_only:
             return
         self.more_actions_open = not self.more_actions_open
-        self.query_one("#library-prompt-more-actions-region").display = (
-            self.more_actions_open
-        )
+        self.query_one(
+            "#library-prompt-more-actions-region"
+        ).display = self.more_actions_open
 
     def on_key(self, event: events.Key) -> None:
         if event.key != "escape" or not self.more_actions_open:
@@ -584,7 +579,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             return
         browse_result = self.browse_result
         pager = self.pager
-        total: int | str | None = pager.title_count if pager is not None else state.count
+        total: int | str | None = (
+            pager.title_count if pager is not None else state.count
+        )
         if pager is None and browse_result is not None:
             total = (
                 "…"
@@ -741,9 +738,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         page_unavailable = bool(
             browse_result is not None and browse_result.status in {"loading", "error"}
         )
-        page_actions_disabled = (
-            self.mutation_in_flight or self.page_actions_disabled
-        )
+        page_actions_disabled = self.mutation_in_flight or self.page_actions_disabled
         page_action_reason = (
             _MUTATION_PROGRESS
             if self.mutation_in_flight
@@ -923,9 +918,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         classes="library-canvas-action",
                         compact=True,
                         disabled=disabled,
-                        tooltip=(
-                            page_action_reason if disabled else None
-                        ),
+                        tooltip=(page_action_reason if disabled else None),
                     )
             if not page_actions_disabled and select_disabled:
                 selection_reason = _NOTHING_TO_SELECT
@@ -1129,9 +1122,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     classes="library-canvas-action",
                     compact=True,
                     disabled=self.mutation_in_flight,
-                    tooltip=(
-                        _MUTATION_PROGRESS if self.mutation_in_flight else None
-                    ),
+                    tooltip=(_MUTATION_PROGRESS if self.mutation_in_flight else None),
                 )
 
     def _compose_paging(self, result: PromptBrowseResult) -> ComposeResult:
@@ -1251,9 +1242,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
             else self.editor_mode
         )
         item_locked = (
-            self.mutation_in_flight
-            or self.bulk_read_only
-            or self.identity_mismatch
+            self.mutation_in_flight or self.bulk_read_only or self.identity_mismatch
         )
         with Vertical(id="library-prompt-editor-shell"):
             with VerticalScroll(id="library-prompt-editor-content"):
@@ -1292,9 +1281,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                         compact=True,
                     )
                 yield Button(
-                    library_disabled_action_label(
-                        "‹ Back to list", item_locked
-                    ),
+                    library_disabled_action_label("‹ Back to list", item_locked),
                     id="library-prompt-back",
                     classes="library-canvas-action",
                     compact=True,
@@ -1450,8 +1437,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                item_locked
-                                or not editor_state.can_convert_as_new
+                                item_locked or not editor_state.can_convert_as_new
                             ),
                         )
                         if convert.disabled:
@@ -1603,8 +1589,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                             classes="library-canvas-action",
                             compact=True,
                             disabled=(
-                                item_locked
-                                or not self.membership_state.can_apply
+                                item_locked or not self.membership_state.can_apply
                             ),
                         )
                         yield Static(
@@ -1677,10 +1662,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                     id="library-prompt-discard",
                     classes="library-canvas-action",
                     compact=True,
-                    disabled=(
-                        item_locked
-                        or self.write_in_flight
-                    ),
+                    disabled=(item_locked or self.write_in_flight),
                     tooltip=(
                         PROMPT_DISCARD_TOOLTIP_BUSY
                         if self.mutation_in_flight or self.write_in_flight
@@ -1703,10 +1685,26 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 with more_region:
                     for label, widget_id, classes in (
                         ("Export…", "library-prompt-export", "library-canvas-action"),
-                        ("Copy Markdown", "library-prompt-copy", "library-canvas-action"),
-                        ("Duplicate", "library-prompt-duplicate", "library-canvas-action"),
-                        ("Collections", "library-prompt-more-collections", "library-canvas-action"),
-                        ("History", "library-prompt-more-history", "library-canvas-action"),
+                        (
+                            "Copy Markdown",
+                            "library-prompt-copy",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "Duplicate",
+                            "library-prompt-duplicate",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "Collections",
+                            "library-prompt-more-collections",
+                            "library-canvas-action",
+                        ),
+                        (
+                            "History",
+                            "library-prompt-more-history",
+                            "library-canvas-action",
+                        ),
                         (
                             "Delete",
                             "library-prompt-delete",
@@ -1780,9 +1778,9 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
         manage.disabled = interaction_locked or not (
             state.can_manage or state.can_retry_load
         )
-        self.query_one(
-            "#library-prompt-memberships-apply", Button
-        ).disabled = interaction_locked or not state.can_apply
+        self.query_one("#library-prompt-memberships-apply", Button).disabled = (
+            interaction_locked or not state.can_apply
+        )
 
     def on_prompt_block_editor_block_field_changed(
         self, event: PromptBlockEditor.BlockFieldChanged
@@ -1835,9 +1833,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 for block in definition_lane.blocks
             }
             block_id = (
-                preferred_id
-                if preferred_id not in existing_ids
-                else f"basic-{lane_id}"
+                preferred_id if preferred_id not in existing_ids else f"basic-{lane_id}"
             )
             state = add_block(
                 current.block_editor_state,
@@ -1846,9 +1842,7 @@ class LibraryPromptsListCanvas(PostRecomposeCallback, Vertical):
                 content=text,
                 block_id=block_id,
             )
-        block_editor = self.query_one(
-            "#library-prompt-block-editor", PromptBlockEditor
-        )
+        block_editor = self.query_one("#library-prompt-block-editor", PromptBlockEditor)
         await block_editor.replace_block_state(block_id, state)
         self._sync_block_preview(state)
         self.post_message(

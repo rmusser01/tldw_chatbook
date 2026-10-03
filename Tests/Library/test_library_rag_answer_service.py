@@ -141,7 +141,9 @@ class _FakeChat:
     event loop would freeze the UI.
     """
 
-    def __init__(self, *, reply: object = GROUNDED_ANSWER, error: Exception | None = None):
+    def __init__(
+        self, *, reply: object = GROUNDED_ANSWER, error: Exception | None = None
+    ):
         self.reply = reply
         self.error = error
         self.calls: list[dict] = []
@@ -561,7 +563,9 @@ async def test_a_bundle_build_failure_is_also_contained(monkeypatch):
 # --- Contract 5: an empty reply is a failure, not a silent success ------
 
 
-@pytest.mark.parametrize("reply", ["", "   \n  ", None, {}], ids=["empty", "blank", "none", "no_content"])
+@pytest.mark.parametrize(
+    "reply", ["", "   \n  ", None, {}], ids=["empty", "blank", "none", "no_content"]
+)
 async def test_an_empty_model_reply_is_a_failure(reply):
     answer = await generate_library_rag_answer(
         query=QUERY,
@@ -614,7 +618,10 @@ async def test_an_uncited_answer_stays_ready_but_carries_the_recovery_copy():
 
     assert answer.status == ANSWER_STATUS_READY
     assert answer.citation_status == "uncited"
-    assert answer.citation_recovery == "The answer does not cite available staged evidence."
+    assert (
+        answer.citation_recovery
+        == "The answer does not cite available staged evidence."
+    )
 
 
 async def test_an_invented_citation_label_is_reported_as_unverified():
@@ -688,8 +695,14 @@ def test_insufficient_evidence_validation_counts_as_an_abstention():
     """
     assert _is_abstention("Some text with no support.", "insufficient_evidence") is True
     assert _is_abstention(LIBRARY_RAG_NO_EVIDENCE_TEXT, "uncited") is True
-    assert _is_abstention("Nothing in your library supports an answer to that", "uncited") is True
-    assert _is_abstention("An expired credential caused the incident [S1].", "validated") is False
+    assert (
+        _is_abstention("Nothing in your library supports an answer to that", "uncited")
+        is True
+    )
+    assert (
+        _is_abstention("An expired credential caused the incident [S1].", "validated")
+        is False
+    )
 
 
 # --- Contract 7: the answer keeps what the provider told it (PR-T2 task 2) -
@@ -1032,7 +1045,9 @@ def test_the_system_prompt_pins_the_honesty_contract():
 
 
 def test_resolve_provider_reads_the_configured_default_endpoint(monkeypatch):
-    monkeypatch.setattr(app_config, "default_api_endpoint", "local-llama", raising=False)
+    monkeypatch.setattr(
+        app_config, "default_api_endpoint", "local-llama", raising=False
+    )
 
     provider, model = resolve_library_rag_answer_provider()
 
@@ -1200,9 +1215,7 @@ def test_provider_gate_names_the_provider_and_stays_silent_when_ready(monkeypatc
     monkeypatch.setattr(
         app_config,
         "load_settings",
-        lambda *a, **k: {
-            "api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}
-        },
+        lambda *a, **k: {"api_settings": {"anthropic": {"api_key": "sk-ant-test-key"}}},
     )
 
     gate = library_rag_answer_provider_gate()

@@ -169,7 +169,7 @@ def test_parakeet_buffer_transcription_writes_a_wav_and_passes_the_path(
     monkeypatch.setattr(
         service_module,
         "_ensure_parakeet_mlx_import",
-        lambda: (lambda model, dtype=None: _FakeParakeetModel()),
+        lambda: lambda model, dtype=None: _FakeParakeetModel(),
     )
 
     result = service._transcribe_buffer_with_parakeet_mlx(
@@ -226,7 +226,7 @@ def test_parakeet_buffer_temp_file_has_an_identifying_prefix_and_owner_only_perm
     monkeypatch.setattr(
         service_module,
         "_ensure_parakeet_mlx_import",
-        lambda: (lambda model, dtype=None: _FakeParakeetModel()),
+        lambda: lambda model, dtype=None: _FakeParakeetModel(),
     )
 
     service._transcribe_buffer_with_parakeet_mlx(
@@ -277,7 +277,7 @@ def test_parakeet_buffer_temp_file_is_removed_even_when_transcribe_raises(
     monkeypatch.setattr(
         service_module,
         "_ensure_parakeet_mlx_import",
-        lambda: (lambda model, dtype=None: _FakeParakeetModel()),
+        lambda: lambda model, dtype=None: _FakeParakeetModel(),
     )
 
     with pytest.raises(service_module.TranscriptionError):

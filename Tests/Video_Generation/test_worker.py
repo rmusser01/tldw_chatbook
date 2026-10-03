@@ -4,6 +4,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _reset():
     from tldw_chatbook.Video_Generation import adapter_registry as r
+
     r.reset_registry()
     yield
     r.reset_registry()
@@ -11,6 +12,7 @@ def _reset():
 
 def _request(**overrides):
     from tldw_chatbook.Video_Generation.worker import build_request
+
     kwargs = {"backend": "fake", "prompt": "a kite over the harbor"}
     kwargs.update(overrides)
     return build_request(**kwargs)

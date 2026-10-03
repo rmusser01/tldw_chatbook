@@ -229,7 +229,9 @@ async def test_kill_mid_fetch_valid_sidecar_survives_and_fresh_provision_resumes
         catalog = DictCatalog({descriptor.reference: descriptor})
         root_ref = ArtifactRef(*ref_parts)
         svc = ArtifactAcquisitionService(
-            core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
+            core,
+            free_bytes_probe=lambda _p: 10**12,
+            trusted_origins=frozenset({trusted}),
         )
         consent = grant_consent(svc, root_ref, catalog)
 
@@ -337,7 +339,9 @@ async def test_kill_between_install_and_activate_fresh_provision_activates_with_
         )
         catalog = DictCatalog({dep_ref: dep_descriptor, root_ref: root_descriptor})
         svc = ArtifactAcquisitionService(
-            core, free_bytes_probe=lambda _p: 10**12, trusted_origins=frozenset({trusted})
+            core,
+            free_bytes_probe=lambda _p: 10**12,
+            trusted_origins=frozenset({trusted}),
         )
         # Both dep_ref and root_ref are already installed at this point (see
         # the assertion above), so _aggregate_closure resolves no sources
@@ -347,11 +351,15 @@ async def test_kill_between_install_and_activate_fresh_provision_activates_with_
         consent = grant_consent(svc, root_ref, catalog)
 
         events = []
-        activated = await svc.provision(root_ref, consent, catalog, progress=events.append)
+        activated = await svc.provision(
+            root_ref, consent, catalog, progress=events.append
+        )
 
         assert activated == root_ref
         assert [event.phase for event in events] == ["activate"]
-        assert {path: len(reqs) for path, reqs in srv.requests.items()} == requests_before
+        assert {
+            path: len(reqs) for path, reqs in srv.requests.items()
+        } == requests_before
 
         with core.acquire(root_ref) as handle:
             assert handle.handle.root == root_ref

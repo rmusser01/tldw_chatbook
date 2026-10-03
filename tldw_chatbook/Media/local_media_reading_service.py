@@ -251,9 +251,7 @@ class LocalMediaReadingService:
 
     # --- Library read seams (task-1337) ---
 
-    def list_library_media(
-        self, *, limit: int = 20, offset: int = 0
-    ) -> dict[str, Any]:
+    def list_library_media(self, *, limit: int = 20, offset: int = 0) -> dict[str, Any]:
         """Page the active local media library for agent-facing list tools.
 
         Args:
@@ -430,7 +428,9 @@ class LocalMediaReadingService:
 
         families = sorted(
             {
-                row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL
+                row["chunk_type"]
+                if row["chunk_type"] is not None
+                else _PRIMARY_FAMILY_LABEL
                 for row in rows
             }
         )
@@ -456,7 +456,9 @@ class LocalMediaReadingService:
                 metadata = {}
             return {
                 "chunk_index": int(row["chunk_index"]),
-                "chunk_type": row["chunk_type"] if row["chunk_type"] is not None else _PRIMARY_FAMILY_LABEL,
+                "chunk_type": row["chunk_type"]
+                if row["chunk_type"] is not None
+                else _PRIMARY_FAMILY_LABEL,
                 "text": text,
                 "start_char": row["start_char"],
                 "end_char": row["end_char"],
@@ -645,10 +647,9 @@ class LocalMediaReadingService:
             # a preformatted ``fts_match_query`` makes ``search_media_db``
             # drop the title/content LIKE legs, and the probe's
             # "under-report, never over-report" argument rests on them.
-            if (
-                tuple(filters.get("fields") or ()) == LIBRARY_BROWSE_SEARCH_FIELDS
-                and not filters.get("fts_match_query")
-            ):
+            if tuple(
+                filters.get("fields") or ()
+            ) == LIBRARY_BROWSE_SEARCH_FIELDS and not filters.get("fts_match_query"):
                 payload["match_reasons"] = db.library_browse_keyword_only_matches(
                     [row["id"] for row in items], query
                 )

@@ -149,8 +149,7 @@ def save_bench(db: EvalsDB, config: BenchConfig, task_id: Optional[str] = None) 
             # resolvable, means every caller gets the same honest failure
             # rather than each having to re-derive it from a boolean.
             raise RuntimeError(
-                "This bench no longer exists; it may have been deleted "
-                "elsewhere."
+                "This bench no longer exists; it may have been deleted elsewhere."
             )
         return task_id
     return db.create_task(
@@ -289,8 +288,11 @@ def _snapshot(
         "sampler": dict(NEUTRAL_SAMPLER),
         "targets": [
             {
-                "id": t.id, "name": t.name, "provider": t.provider,
-                "model_id": t.model_id, "prefix": t.prefix,
+                "id": t.id,
+                "name": t.name,
+                "provider": t.provider,
+                "model_id": t.model_id,
+                "prefix": t.prefix,
                 "system_prompt": t.system_prompt,
             }
             for t in targets
@@ -336,7 +338,9 @@ def create_run_group(
     target_ids = [t.id for t in targets]
     if len(set(target_ids)) != len(target_ids):
         duplicates = sorted({tid for tid in target_ids if target_ids.count(tid) > 1})
-        raise ValueError(f"targets must have unique ids, got duplicates: {duplicates!r}")
+        raise ValueError(
+            f"targets must have unique ids, got duplicates: {duplicates!r}"
+        )
 
     group_id = uuid.uuid4().hex
     snapshot = _snapshot(config, targets, snippets, preflight)
@@ -363,8 +367,10 @@ def save_cell(
     """Persist one cell. Failures are written as rows so that 'failed' and
     'not yet run' remain distinguishable in a partial grid."""
     if isinstance(result, CellError):
-        payload = {"schema": "word_bench/1", "error": {
-            "reason": result.reason, "detail": result.detail}}
+        payload = {
+            "schema": "word_bench/1",
+            "error": {"reason": result.reason, "detail": result.detail},
+        }
     else:
         payload = {
             "schema": result.schema,
@@ -373,8 +379,12 @@ def save_cell(
             "k_returned": result.k_returned,
             "content_offset": result.content_offset,
             "top_k": [
-                {"id": t.token_id, "token": t.token,
-                 "logprob": t.logprob, "bytes": list(t.bytes_)}
+                {
+                    "id": t.token_id,
+                    "token": t.token,
+                    "logprob": t.logprob,
+                    "bytes": list(t.bytes_),
+                }
                 for t in result.top_k
             ],
             "canary": result.canary,
@@ -417,8 +427,10 @@ def _cell_from_payload(payload: dict[str, Any]) -> CellCapture | CellError:
         content_offset=payload.get("content_offset", 0),
         top_k=tuple(
             TokenProb(
-                token=t["token"], logprob=t["logprob"],
-                bytes_=tuple(t.get("bytes") or ()), token_id=t.get("id"),
+                token=t["token"],
+                logprob=t["logprob"],
+                bytes_=tuple(t.get("bytes") or ()),
+                token_id=t.get("id"),
             )
             for t in payload["top_k"]
         ),
