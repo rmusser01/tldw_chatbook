@@ -72,7 +72,12 @@ class _BuiltinLikeProvider:
         return ToolResult(ok=True, content="ok")
 
 
-def _plan(window: ContextWindowResolution | None, *, max_tokens: int = 4096):
+def _plan(
+    window: ContextWindowResolution | None,
+    *,
+    max_tokens: int = 4096,
+    message: str = "Reply with just: hi",
+):
     registry = ToolCatalogRegistry()
     registry.register_provider(_BuiltinLikeProvider())
     allowed = tuple(entry.name for entry in registry.list_catalog())
@@ -109,7 +114,7 @@ def _plan(window: ContextWindowResolution | None, *, max_tokens: int = 4096):
         fork_chat_enabled=True,
         new_chat_enabled=True,
         worktree_merge_enabled=True,
-        agent_messages=[{"role": "user", "content": "Reply with just: hi"}],
+        agent_messages=[{"role": "user", "content": message}],
         fleet_max_live=4,
     )
 
@@ -174,3 +179,20 @@ def test_callers_without_a_window_keep_the_legacy_plan(window) -> None:
     plan = _plan(window)
 
     assert plan.schemas.runtime_schemas, "legacy planning still discloses tools"
+
+
+def test_a_long_message_to_an_unverified_window_is_not_refused_by_the_planner() -> None:
+    """The conservative window only shapes tool disclosure. Whether a long
+    message fits a window nobody verified is the send preflight's call: the
+    earlier live slow-model run sent a ~4,400-token prompt to a server that
+    took it, and the planner must not refuse that first request."""
+
+    long_message = "Summarize this paragraph about rivers and their banks. " * 400
+    plan = _plan(
+        ContextWindowResolution(32000, "application fallback", False),
+        message=long_message,
+    )
+
+    assert plan.schemas.runtime_schemas == ()
+    assert plan.schemas.active_schemas == ()
+    assert plan.schemas.request_fits

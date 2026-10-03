@@ -1003,12 +1003,25 @@ def build_first_request_schema_plan(
         from .first_request_window import planning_window
 
         # TASK-34100.5 AC#6: plan against the send's own window when known.
+        unclamped = config
         planned = planning_window(context_window, config.response_reserve_tokens)
         if planned is not None:
             context_limit = planned[0]
             config = dataclasses.replace(config, response_reserve_tokens=planned[1])
         else:
             context_limit = get_model_token_limit(config.model, api_endpoint)
+
+        def settle(plan: FirstRequestSchemaPlan) -> FirstRequestSchemaPlan:
+            # A guessed window only shapes tool disclosure; whether the request
+            # fits a window nobody verified is the send preflight's call.
+            if plan.request_fits or planned is None or getattr(
+                context_window, "verified", False
+            ) is True:
+                return plan
+            return dataclasses.replace(plan, request_fits=_first_request_plan_fits(
+                plan, config=unclamped, api_endpoint=api_endpoint,
+                messages=messages, context_limit=context_window.tokens,
+            ))
         if type(context_limit) is not int or context_limit <= 0:
             return discovery
         schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)
@@ -1025,7 +1038,7 @@ def build_first_request_schema_plan(
             ),
         )
         if active is None:
-            return validated_fallback(context_limit)
+            return settle(validated_fallback(context_limit))
         direct = make_plan(active, False, direct_prompt)
         if not _first_request_plan_fits(
             direct,
@@ -1034,7 +1047,7 @@ def build_first_request_schema_plan(
             messages=messages,
             context_limit=context_limit,
         ):
-            return validated_fallback(context_limit)
+            return settle(validated_fallback(context_limit))
         return direct
     except Exception:
         return discovery
