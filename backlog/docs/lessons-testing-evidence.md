@@ -183,6 +183,20 @@ four more comments that were false for some of the cases below them
 silent at Y" claim is evidence like any other. Generate it from that
 per-head table, and name the table or the case it covers.
 
+## A pin below an already-red assertion goes stale unseen; measure it, never edit it by delta (TASK-33622.15, 2026-10-03)
+
+**Incident.** Adding two modal classes to the Console launch graph, the first attempt bumped
+`test_console_modal_inventory_matches_runtime_ast_and_transitive_launches`' pin
+`len(reachable_modal_types) == 49` to `51`. That edit added this change's +2 to the old number.
+The test fails on dev at an earlier inventory assertion (18 unrelated modals), so the pin is
+never reached. A throwaway probe under `Tests/` that called the test's own walk measured
+**51 on dev** and **53 on the branch**. The pin had been stale on dev all along, and the delta
+edit would have shipped a second wrong number.
+
+**What to do.** When you edit an assertion that sits below a line already failing at the merge
+base, measure its value on both trees with a probe that reuses the test's helpers. Pin the
+measured value, and say in the comment where it was measured.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
