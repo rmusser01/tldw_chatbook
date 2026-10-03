@@ -9,7 +9,7 @@ references:
 - https://github.com/rmusser01/tldw_chatbook/pull/2968
 modified_files:
 - Tests/tldw_api/test_lorebook_diagnostics_transport.py
-updated_date: 2026-10-03 01:28
+updated_date: 2026-10-03 02:14
 ---
 
 ## Description
@@ -24,19 +24,13 @@ Workspace-chat lorebook diagnostics exports through the Chatbook API client fail
 - [x] #2 Calls without scope retain their existing pagination-only request and response behavior.
 - [x] #3 Invalid scope combinations fail before network dispatch through existing validation.
 - [x] #4 Targeted regressions and read-only live-server compatibility checks pass, and a companion PR is created.
+- [x] #5 The owning service-wiring regression reaches its existing assertions using an isolated real SQLite database and closes the database after the test.
 <!-- AC:END -->
 
 ## Implementation Plan
 
 <!-- SECTION:PLAN:BEGIN -->
-1. Trace diagnostics export callers and compare existing conversation-scope client methods on dev2612fc56.
-2. Add failing client regressions, then reuse existing scope normalization in export_lorebook_diagnostics without changing positional arguments.
-3. Run targeted client/service regressions, static checks, and authenticated read-only live-server positive/negative controls without mocks.
-4. Commit the atomic fix and task record, publish a companion PR against dev, and cross-link server PR3071.
-ADR required: no
-ADR path: N/A
-Reason: Routine compatibility fix using the existing ConversationScopeParams contract; no server authorization, storage, or ownership change.
-Qodo follow-up: expand Google-style scope documentation and commit HTTP-transport integration coverage. Reverify the real API separately; test fixtures are not UAT.
+Stage 1: Rebase the existing commits onto latest dev and verify range-diff equivalence. Status: Complete. Stage 2: Re-run targeted tests, static/security checks, and read-only real authenticated API checks; evaluate and remediate verified PR findings. Status: Complete. Stage 3: Publish with an exact lease, wait for latest-head Qodo and CI, then merge the exact qualified head and confirm remote dev integration. Status: In Progress. ADR required: no; ADR path: N/A; this is an existing-contract compatibility fix and its requested integration.
 <!-- SECTION:PLAN:END -->
 ## Implementation Notes
 
@@ -50,6 +44,9 @@ Published companion PR2968 against dev: https://github.com/rmusser01/tldw_chatbo
 Qodo posted two verified review comments on PR2968: missing Google-style public docstring sections (4171087200) and no committed HTTP transport integration test (4171087202). Addressing both within existing scope before handoff.
 Addressed Qodo docstring4171087200 with Google-style Args/Returns/Raises, including scope inference, ignored global workspace IDs, and validation/network/server errors. Addressed transport coverage4171087202 with two committed tests through the unmodified public client, real HTTPX socket transport, and an owned stdlib loopback fixture endpoint. The receiving endpoint records exact scope and pagination query fields. Both tests fail against the exact original client and pass against the fix. This fixture-based integration coverage is explicitly not live-server UAT; independent authenticated no-mock real-server checks pass again with unchanged history.
 Final five-file run:101passed and the same one pre-existing app-wiring Mock/is_memory_db failure. Client/schema/transport subset:48passing cases. New transport file has zero Ruff findings and passes formatting; changed production block formatting passes. Application behavior is unchanged from the qualified scope fix. Full-suite sweep not requested; CI/latest-head review and human merge-summary gate remain pending.
+Requester supplied the human-written Change summary; installed verbatim in PR2968 and read back exactly. Requester now explicitly authorizes rebasing, addressing Qodo feedback, and merging this companion PR. Clean rebase from base2612fc56 onto dev2d34cbf80d1d7569abf0490e5c9821101d892661 produced7f8b9e18c89080119dd121e142c37c11cd957a0f; all three commits are range-diff equivalent. Preserved pre-rebase head in codex/backup-lorebook-pre-rebase-3a95247b. No source conflicts or unrelated edits.
+Fresh rebase run retained the known class-spec DB mock failure: participants._core_operation requires the instance-owned is_memory_db attribute, which Mock(spec=CharactersRAGDB) omits. Replace only the wiring-test DB fixture with real in-memory CharactersRAGDB and guaranteed finalizer cleanup; keep all production recovery checks and wiring assertions unchanged. Two additional transport setup errors are sandbox bind PermissionError, not application failures; repeat with approved real numeric-loopback access. Failed attempt retained in rebase-tests.log/.xml.
+Rebased qualification:102/102 targeted tests pass after replacing the wiring-test DB mock with isolated in-memory SQLite and a pytest finalizer that closes it. No production recovery guards or existing assertions changed. Read-only no-mock real authenticated API checks execute this exact checkout: explicit/inferred scope200 matching raw endpoint, missing/wrong scope404, protected history byte-equivalent with prior SHA256. Added-line Ruff findings0; changed blocks/new file formatting and compilation pass; production client Bandit0findings/0errors. Existing filewide Ruff debt remains and is not claimed clean. Stage3 is now awaiting exact-lease publication, current-head hosted CI and Qodo, and requested merge.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
