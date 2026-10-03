@@ -39,12 +39,62 @@ def _tree(path: Path) -> ast.AST:
     return ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
 
 
+def _is_mounted_reads(tree: ast.AST) -> list[int]:
+    """Lines reading ``is_mounted``: ``x.is_mounted`` or ``getattr(x, "is_mounted")``."""
+    return [
+        node.lineno
+        for node in ast.walk(tree)
+        if (isinstance(node, ast.Attribute) and node.attr == "is_mounted")
+        or (isinstance(node, ast.Constant) and node.value == "is_mounted")
+    ]
+
+
+def _worker_names(tree: ast.AST) -> tuple[set[str], set[str]]:
+    """Local names bound to ``textual.work`` and to ``textual.worker.Worker``."""
+    work, worker = {"work"}, {"Worker"}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ImportFrom) or not node.module:
+            continue
+        for alias in node.names:
+            bound = alias.asname or alias.name
+            if node.module == "textual" and alias.name == "work":
+                work.add(bound)
+            if node.module == "textual.worker" and alias.name == "Worker":
+                worker.add(bound)
+    return work, worker
+
+
+def _called_name(node: ast.AST) -> str:
+    target = node.func if isinstance(node, ast.Call) else node
+    if isinstance(target, ast.Name):
+        return target.id
+    return getattr(target, "attr", "")
+
+
+def _direct_workers(tree: ast.AST) -> list[str]:
+    """Workers started without the shared helper: ``run_worker(...)``,
+    ``@work`` under any alias, or a ``Worker(...)`` built by hand."""
+    work, worker = _worker_names(tree)
+    found = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            name = _called_name(node)
+            if name == "run_worker":
+                found.append(f"{node.lineno} run_worker(...)")
+            elif name in worker:
+                found.append(f"{node.lineno} {name}(...)")
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            for deco in node.decorator_list:
+                if _called_name(deco) in work:
+                    found.append(f"{node.lineno} @{_called_name(deco)}")
+    return found
+
+
 def test_no_wizard_module_reads_is_mounted() -> None:
     offenders = [
-        f"{path.relative_to(_REPO)}:{node.lineno}"
+        f"{path.relative_to(_REPO)}:{line}"
         for path in sorted(_WIZARDS.rglob("*.py"))
-        for node in ast.walk(_tree(path))
-        if isinstance(node, ast.Attribute) and node.attr == "is_mounted"
+        for line in _is_mounted_reads(_tree(path))
     ]
 
     assert offenders == [], (
@@ -55,25 +105,11 @@ def test_no_wizard_module_reads_is_mounted() -> None:
 
 
 def test_first_run_modules_start_no_worker_outside_the_shared_helper() -> None:
-    offenders = []
-    for path in _first_run_modules():
-        for node in ast.walk(_tree(path)):
-            if (
-                isinstance(node, ast.Call)
-                and isinstance(node.func, ast.Attribute)
-                and node.func.attr == "run_worker"
-            ):
-                offenders.append(f"{path.name}:{node.lineno} run_worker(...)")
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                for deco in node.decorator_list:
-                    target = deco.func if isinstance(deco, ast.Call) else deco
-                    name = (
-                        target.id
-                        if isinstance(target, ast.Name)
-                        else getattr(target, "attr", "")
-                    )
-                    if name == "work":
-                        offenders.append(f"{path.name}:{node.lineno} @work")
+    offenders = [
+        f"{path.name}:{found}"
+        for path in _first_run_modules()
+        for found in _direct_workers(_tree(path))
+    ]
 
     assert offenders == [], (
         "Start first-run background work with "
@@ -81,6 +117,33 @@ def test_first_run_modules_start_no_worker_outside_the_shared_helper() -> None:
         "exits the app and reports on the pinned strip:\n  "
         + "\n  ".join(offenders)
     )
+
+
+def test_the_guards_see_through_aliases_and_getattr() -> None:
+    """Review round 1: the scans must not be dodged by spelling.
+
+    ``getattr(x, "is_mounted")``, ``from textual import work as w`` and a
+    hand-built ``Worker(...)`` read and start exactly what the rules forbid.
+    """
+    source = """
+from textual import work as background
+from textual.worker import Worker as W
+
+class Step:
+    def alive(self):
+        return getattr(self, "is_mounted", False)
+
+    @background(thread=True)
+    def load(self):
+        pass
+
+    def start(self):
+        W(self, self.load)
+"""
+    tree = ast.parse(source)
+
+    assert _is_mounted_reads(tree) == [7]
+    assert sorted(_direct_workers(tree)) == ["10 @background", "14 W(...)"]
 
 
 def test_the_shared_helper_never_lets_a_worker_exit_the_app() -> None:
