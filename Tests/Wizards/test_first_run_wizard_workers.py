@@ -6,6 +6,11 @@ escaped error on the pinned status strip. These tests run a real wizard in a
 headless app that has NOT opted into the production keep-alive policy, which
 is exactly where a worker started with Textual's default used to take the
 whole app down.
+
+The app stays up, but the test run still hears about it (review round 1):
+in a headless run an escaped worker error is recorded in ``App._exception``,
+the slot ``run_test`` re-raises from, as the old exit did. These tests expect
+their error, so each takes it back with ``_take_recorded_error``.
 """
 
 from __future__ import annotations
@@ -56,6 +61,16 @@ def _strip(wizard: FirstRunSetupWizard) -> Static:
     return wizard.query_one("#setup-step-error-pinned", Static)
 
 
+def _take_recorded_error(app: App) -> BaseException | None:
+    """Return the error recorded for the test run, and clear it.
+
+    ``run_test`` re-raises ``App._exception`` when the app shuts down; a test
+    that expects its error takes it back first.
+    """
+    recorded, app._exception = app._exception, None
+    return recorded
+
+
 @pytest.mark.asyncio
 async def test_a_next_whose_commit_raises_keeps_the_app_and_explains_it(
     monkeypatch,
@@ -75,6 +90,7 @@ async def test_a_next_whose_commit_raises_keeps_the_app_and_explains_it(
         await _settle(pilot, app)
 
         assert app.is_running, "a raising Next took the app down"
+        assert isinstance(_take_recorded_error(app), RuntimeError)
         assert isinstance(container.steps[container.current_step], WelcomeStep)
         strip = _strip(wizard)
         assert not strip.has_class("hidden")
@@ -102,6 +118,7 @@ async def test_a_raising_async_wizard_worker_reports_on_the_pinned_strip():
         await _settle(pilot, app)
 
         assert app.is_running
+        assert isinstance(_take_recorded_error(app), ValueError)
         assert worker.state is WorkerState.ERROR
         strip = _strip(wizard)
         assert not strip.has_class("hidden")
@@ -130,6 +147,7 @@ async def test_a_raising_thread_wizard_worker_reports_on_the_pinned_strip():
         await _settle(pilot, app)
 
         assert app.is_running
+        assert isinstance(_take_recorded_error(app), OSError)
         assert worker.state is WorkerState.ERROR
         strip = _strip(wizard)
         assert not strip.has_class("hidden")
@@ -160,5 +178,84 @@ async def test_a_hidden_steps_failing_worker_does_not_flag_the_step_on_screen():
         await _settle(pilot, app)
 
         assert app.is_running
+        assert isinstance(_take_recorded_error(app), ValueError)
         assert worker.state is WorkerState.ERROR
         assert _strip(wizard).has_class("hidden")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kept_alive", [False, True])
+async def test_a_headless_run_still_hears_about_a_worker_error(kept_alive: bool):
+    """The first error is recorded where ``run_test`` re-raises it.
+
+    Review round 1: with ``exit_on_error=False`` everywhere, a worker bug
+    only logged and showed on the strip, so a test that never looked at the
+    strip passed. Workers used to exit the app whatever its keep-alive
+    choice, so the error is recorded with or without it.
+    """
+    from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
+
+    wizard = _wizard()
+    app = _Host(wizard)
+    app._keep_screen_alive_on_handler_error = kept_alive
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+
+        async def _fails() -> None:
+            raise KeyError("first")
+
+        async def _fails_again() -> None:
+            raise LookupError("second")
+
+        run_wizard_worker(container, _fails(), group="test-signal-1")
+        await _settle(pilot, app)
+        run_wizard_worker(container, _fails_again(), group="test-signal-2")
+        await _settle(pilot, app)
+
+        assert app.is_running
+        recorded = _take_recorded_error(app)
+        assert isinstance(recorded, KeyError), "the first error is the one kept"
+
+
+@pytest.mark.asyncio
+async def test_a_kept_alive_run_contains_a_raising_next_without_recording_it(
+    monkeypatch,
+):
+    """A Next that raises keeps the handler policy: kept alive means contained.
+
+    Before TASK-34100.1 a raising Next re-raised only when the app did not
+    keep its UI alive; the provider-catalog tests rely on that opt-in.
+    """
+
+    async def _boom(self):
+        raise RuntimeError("commit exploded")
+
+    monkeypatch.setattr(WelcomeStep, "commit", _boom)
+    wizard = _wizard()
+    app = _Host(wizard)
+    app._keep_screen_alive_on_handler_error = True
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        await pilot.press("ctrl+n")
+        await _settle(pilot, app)
+
+        assert app.is_running and app._exception is None
+        assert "setup stayed here" in str(_strip(wizard).content)
+
+
+def test_a_production_app_never_records_a_worker_error() -> None:
+    """Only a headless (test) run records; a real app has nothing to re-raise."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Wizards import first_run_step_guard as guard
+
+    app = SimpleNamespace(
+        is_headless=False, _exception=None, _keep_screen_alive_on_handler_error=True
+    )
+    guard._record_for_test_run(SimpleNamespace(app=app), ValueError("x"))
+
+    assert app._exception is None
+

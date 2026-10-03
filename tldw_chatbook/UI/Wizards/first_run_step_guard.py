@@ -34,7 +34,9 @@ its default ``exit_on_error=True`` takes the whole app down whatever the
 app's keep-alive policy says. ``run_wizard_worker`` and ``@wizard_work`` are
 the one way first-run code starts a worker. Both always pass
 ``exit_on_error=False`` and report an error that escapes the work on the
-pinned status strip, in headless runs too.
+pinned status strip, in headless runs too. A headless run also records the
+error where ``run_test`` re-raises it (``_record_for_test_run``), so the
+suite keeps the failure signal the old exit gave it.
 ``Tests/Architecture/test_wizard_lifecycle_guards.py`` pins that no first-run
 module calls ``run_worker`` or ``@work`` directly.
 """
@@ -579,13 +581,16 @@ def report_advance_error(
     re-raised otherwise, out of a worker started with ``exit_on_error=True``.
     In a headless run that exited the app, and it was the one advance path
     that could. Background work now never exits the app (see the module
-    docstring).
+    docstring); a headless run that did not opt in still gets the error
+    recorded for ``run_test``, the signal that re-raise gave it.
 
     Args:
         container: The ``SetupWizardContainer`` whose advance raised.
         error: The exception.
         started_at: ``current_step`` when the advance began.
     """
+    if not contains_wizard_errors(container):
+        _record_for_test_run(container, error)
     committing = None
     if started_at is not None and started_at != container.current_step:
         try:
@@ -610,12 +615,36 @@ def _report_target(node: Any) -> Any:
         return node
 
 
+def _record_for_test_run(node: Any, error: BaseException) -> None:
+    """Hand a contained error to a headless test run, as the old exit did.
+
+    A worker started with Textual's default ``exit_on_error=True`` exited
+    the app on an error, and ``run_test`` re-raised it, failing the test.
+    Wizard work no longer exits the app, so without this a worker bug in a
+    test only logged and showed on the strip, and the test passed (review
+    round 1). The first error goes in ``App._exception``, the slot
+    ``run_test`` re-raises from; the app stays up, and the suite's
+    ``app._exception is None`` checks see it. A production app is never
+    headless, so it never records anything.
+    """
+    try:
+        app = node.app
+        if not app.is_headless or not isinstance(error, Exception):
+            return
+        if getattr(app, "_exception", None) is None:
+            app._exception = error
+    except Exception:  # noqa: BLE001 - no app: nothing to record against.
+        return
+
+
 def _report_worker_error(node: Any, error: BaseException, category: str) -> None:
     """Log a worker's escaped error and show it on the pinned strip.
 
     A node that has already left the DOM (the user moved on, or dismissed
-    setup) only logs: there is no strip of its own left to show.
+    setup) only logs: there is no strip of its own left to show. Either way
+    a headless run records it (``_record_for_test_run``).
     """
+    _record_for_test_run(node, error)
     try:
         attached = bool(node.is_attached)
     except Exception:  # noqa: BLE001 - no app: treat as detached.
