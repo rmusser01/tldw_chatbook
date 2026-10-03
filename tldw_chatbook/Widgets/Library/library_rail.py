@@ -32,6 +32,7 @@ from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_MIN_WIDTH,
     OrdinaryRailStyleContract,
 )
+
 # Re-exported: library_search_rag_panel.py imports it from here, and
 # Tests/Widgets/Library/test_library_rail.py pins that both names are one object.
 from tldw_chatbook.Widgets.adaptive_pane_shell import SelectAllOnFocusingClickInput
@@ -426,9 +427,7 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
                 once the box already has focus.
             **kwargs: Keyword arguments forwarded to ``Input.__init__``.
         """
-        super().__init__(
-            *args, swallow_slash_on_focus=swallow_slash_on_focus, **kwargs
-        )
+        super().__init__(*args, swallow_slash_on_focus=swallow_slash_on_focus, **kwargs)
 
 
 class LibraryRailRowButton(Button):

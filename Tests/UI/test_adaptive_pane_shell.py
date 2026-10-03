@@ -51,7 +51,9 @@ PROBE_CLASSES = shared.AdaptivePaneClasses(
 )
 
 
-def _layout(*, nav_open: bool = True, items_open: bool = True) -> ars.AdaptivePaneLayout:
+def _layout(
+    *, nav_open: bool = True, items_open: bool = True
+) -> ars.AdaptivePaneLayout:
     return ars.AdaptivePaneLayout(
         library_open=nav_open,
         items_open=items_open,
@@ -223,7 +225,9 @@ async def test_closing_a_focused_pane_moves_focus_to_its_grip() -> None:
         assert app.focused is shell.library_grip
 
 
-def test_the_shared_module_carries_no_library_class_and_imports_no_library_code() -> None:
+def test_the_shared_module_carries_no_library_class_and_imports_no_library_code() -> (
+    None
+):
     """Roleplay imports this module: it must never pull the Library in.
 
     Class tokens are checked in string constants, not as a substring of the
@@ -320,15 +324,21 @@ def test_library_message_names_are_the_shared_message_objects() -> None:
 
 
 def test_library_widgets_are_thin_subclasses_of_the_shared_widgets() -> None:
-    assert issubclass(library_shell.LibraryAdaptiveReaderShell, shared.AdaptivePaneShell)
-    assert issubclass(library_shell.LibraryAdaptiveReaderPaneGrip, shared.AdaptivePaneGrip)
+    assert issubclass(
+        library_shell.LibraryAdaptiveReaderShell, shared.AdaptivePaneShell
+    )
+    assert issubclass(
+        library_shell.LibraryAdaptiveReaderPaneGrip, shared.AdaptivePaneGrip
+    )
     assert (
         library_shell.LibraryAdaptiveReaderShell.grip_type
         is library_shell.LibraryAdaptiveReaderPaneGrip
     )
-    assert library_shell.LIBRARY_ADAPTIVE_READER_GRIP_CLASS == (
-        library_shell.LIBRARY_ADAPTIVE_READER_CLASSES.grip
-    ) == "library-adaptive-reader-pane-grip"
+    assert (
+        library_shell.LIBRARY_ADAPTIVE_READER_GRIP_CLASS
+        == (library_shell.LIBRARY_ADAPTIVE_READER_CLASSES.grip)
+        == "library-adaptive-reader-pane-grip"
+    )
     # Textual dispatches these once per MRO class that defines one.
     for handler in ("on_mount", "on_resize", "on_descendant_focus"):
         assert handler not in vars(library_shell.LibraryAdaptiveReaderShell), handler
@@ -411,7 +421,9 @@ class _LibraryAliasHost(App):
         self.events.append("resized:media")
 
 
-async def test_library_handlers_bound_to_aliases_still_fire_for_the_shared_shell() -> None:
+async def test_library_handlers_bound_to_aliases_still_fire_for_the_shared_shell() -> (
+    None
+):
     app = _LibraryAliasHost()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -433,7 +445,10 @@ async def test_library_handlers_bound_to_aliases_still_fire_for_the_shared_shell
 
 
 def test_library_rail_re_exports_the_shared_search_input() -> None:
-    assert library_rail.SelectAllOnFocusingClickInput is shared.SelectAllOnFocusingClickInput
+    assert (
+        library_rail.SelectAllOnFocusingClickInput
+        is shared.SelectAllOnFocusingClickInput
+    )
     assert issubclass(
         library_rail.LibraryRailSearchInput, shared.SelectAllOnFocusingClickInput
     )
@@ -475,7 +490,9 @@ class _InputApp(App):
         "library-notes-filter-types",
     ],
 )
-async def test_slash_in_a_focused_box_follows_swallow_slash_on_focus(factory, expected) -> None:
+async def test_slash_in_a_focused_box_follows_swallow_slash_on_focus(
+    factory, expected
+) -> None:
     app = _InputApp(factory)
     async with app.run_test(size=(40, 5)) as pilot:
         box = app.query_one("#box", Input)
@@ -522,7 +539,9 @@ def test_the_boot_bundle_carries_only_the_grip_state_pair_of_the_shell_rules() -
     into boot fails here before the byte census does."""
     bundle = BUNDLED_STYLESHEET.read_text(encoding="utf-8")
     lines = [
-        line.strip() for line in bundle.splitlines() if ".library-adaptive-reader-" in line
+        line.strip()
+        for line in bundle.splitlines()
+        if ".library-adaptive-reader-" in line
     ]
     assert lines == [
         ".library-adaptive-reader-shell > .library-adaptive-reader-pane-grip:hover,",
@@ -558,7 +577,9 @@ async def test_a_focused_library_grip_resolves_the_lazy_sheet_focus_rule() -> No
         grip.focus()
         await pilot.pause()
         assert "reverse" in str(grip.styles.text_style)
-        assert "reverse" not in str(app.query_one("#styled-items-grip").styles.text_style)
+        assert "reverse" not in str(
+            app.query_one("#styled-items-grip").styles.text_style
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -589,7 +610,9 @@ def test_b0_production_modules_carry_no_python_style_violation() -> None:
     assert {module: found for module, found in violations.items() if found} == {}
 
 
-def test_panes_family_is_registered_in_the_registry_the_catalog_and_the_gallery() -> None:
+def test_panes_family_is_registered_in_the_registry_the_catalog_and_the_gallery() -> (
+    None
+):
     registry = json.loads(
         (ROOT / "tldw_chatbook/css/patterns.json").read_text(encoding="utf-8")
     )
