@@ -5353,6 +5353,7 @@ class ConsoleProviderGateway:
                             self._complete_sensitive_sync,
                             kwargs,
                             admission,
+                            resolution.provider,
                         )
                         if call_signals is not None and isinstance(response, Mapping):
                             _maybe_record_usage(response, call_signals)
@@ -5445,10 +5446,16 @@ class ConsoleProviderGateway:
         self,
         kwargs: Mapping[str, Any],
         admission: _ProviderAdapterAdmission,
+        provider: str = "",
     ) -> Any:
-        """Invoke the final synchronous adapter under the sensitive policy."""
+        """Invoke the final synchronous adapter under the sensitive policy.
 
-        provider_key = provider_config_key(str(kwargs.get("api_endpoint") or ""))
+        ``provider`` is the session-facing provider the cost tooltip looks up
+        (TASK-28229), not ``api_endpoint``: for a custom endpoint that is the
+        shared execution handler, so its readings would land in one bucket.
+        """
+
+        provider_key = provider_config_key(provider)
         with sensitive_llm_request(), capture_rate_limits_for(provider_key):
             _check_automatic_dispatch()
             return self._enter_provider_adapter(

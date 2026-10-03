@@ -305,3 +305,94 @@ def test_without_a_reading_the_tooltip_is_unchanged() -> None:
     without = _spend_state(None).tooltip
     assert "Rate limit" not in without
     assert _spend_state(line).tooltip.replace(f"\n{line}", "") == without
+
+
+# -- Qodo #2981 -------------------------------------------------------------------
+
+
+def test_values_are_bounded_by_the_validation_types() -> None:
+    """Out-of-range counts and non-finite resets are dropped (Qodo #2981, 1)."""
+    (window,) = parse_rate_limit_headers(
+        {
+            "x-ratelimit-remaining-requests": "7",
+            "x-ratelimit-limit-requests": str(10**13),
+            "x-ratelimit-reset-requests": "nan",
+        },
+        T0,
+    )
+    assert (window.remaining, window.limit, window.reset_at) == (7, None, None)
+
+
+def test_a_reset_a_week_or_more_away_shows_its_date() -> None:
+    """A weekday alone is ambiguous for weekly/monthly windows (Qodo #2981, 3)."""
+    reset = T0 + 20 * 24 * 3600
+    line = format_rate_limit_line(
+        {"x-ratelimit-remaining-tokens-month": "5", "x-ratelimit-reset-tokens-month": str(reset)},
+        T0,
+    )
+    assert line.endswith(
+        f"5 tokens per month left (resets {time.strftime('%b %d %H:%M', time.localtime(reset))})"
+    )
+
+
+def test_hugging_face_streams_go_through_the_capturing_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its streaming POST used module-level requests.post (Qodo #2981, 2).
+
+    Args:
+        monkeypatch: Mounts a fake adapter on the handler's default session.
+    """
+    import io
+
+    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+
+    body = b'data: {"choices":[{"delta":{"content":"hi"}}]}\n\ndata: [DONE]\n\n'
+
+    class _StreamAdapter(_HeaderAdapter):
+        def send(self, request: Any, **kwargs: Any) -> requests.Response:
+            response = super().send(request, **kwargs)
+            response._content = False
+            response._content_consumed = False
+            response.raw = io.BytesIO(body)
+            return response
+
+    real_factory = LLM_API_Calls.create_default_session
+
+    def factory(**kwargs: Any) -> Any:
+        session = real_factory(**kwargs)
+        session.mount("https://", _StreamAdapter(OPENAI_HEADERS))
+        return session
+
+    monkeypatch.setattr(LLM_API_Calls, "create_default_session", factory)
+    with capture_rate_limits_for("huggingface"):
+        stream = LLM_API_Calls.chat_with_huggingface(
+            input_data=[{"role": "user", "content": "hi"}],
+            model="org/model",
+            api_key="test-key",
+            streaming=True,
+        )
+        _ = list(stream)
+    assert latest_rate_limit_headers("huggingface") is not None
+
+
+@pytest.mark.asyncio
+async def test_side_calls_record_under_the_session_provider_not_the_handler() -> None:
+    """A custom endpoint's side calls run on a shared handler key (Qodo #2981, 4)."""
+    from Tests.Chat.test_console_provider_gateway import (
+        _auxiliary_request,
+        _auxiliary_resolution,
+    )
+    from tldw_chatbook.Chat.provider_readiness import provider_config_key
+
+    def adapter(**_kwargs: Any) -> Any:
+        _post_with(OPENAI_HEADERS)
+        return {"choices": [{"message": {"content": "ok"}}]}
+
+    resolution = _auxiliary_resolution(
+        provider="custom-ep:acme", execution_key="custom-hosted", readiness_key="custom-hosted"
+    )
+    gateway = ConsoleProviderGateway(chat_api_call_fn=adapter)
+    assert (await gateway.complete_auxiliary(_auxiliary_request(resolution=resolution))).text == "ok"
+    assert latest_rate_limit_headers(provider_config_key("custom-ep:acme")) is not None
+    assert latest_rate_limit_headers(provider_config_key("custom-hosted")) is None

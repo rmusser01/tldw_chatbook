@@ -24,7 +24,9 @@ import re
 import time
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Mapping
+from typing import Annotated, Mapping
+
+from pydantic import Field, TypeAdapter, ValidationError
 
 _X_RATELIMIT = re.compile(
     r"x-ratelimit-(limit|remaining|reset)(?:-(requests|tokens))?"
@@ -42,6 +44,11 @@ _METRIC_ORDER = ("requests", "tokens", "input-tokens", "output-tokens")
 _MAX_COUNT = 10**12
 #: A reset further out than this is not believed.
 _MAX_RESET_SECONDS = 40 * 24 * 3600
+#: Header values are provider data: each is validated against these bounds
+#: before it becomes a window, and a value that fails is dropped.
+_COUNT = TypeAdapter(Annotated[int, Field(ge=0, le=_MAX_COUNT)])
+#: NaN and infinity fail the bounds, so they are dropped too.
+_RESET_SECONDS = TypeAdapter(Annotated[float, Field(ge=0, le=_MAX_RESET_SECONDS)])
 
 
 @dataclass(frozen=True)
@@ -65,10 +72,9 @@ class RateLimitWindow:
 
 def _count(value: str) -> int | None:
     try:
-        number = int(value.strip())
-    except ValueError:
+        return _COUNT.validate_python(value.strip())
+    except ValidationError:
         return None
-    return number if 0 <= number <= _MAX_COUNT else None
 
 
 def _reset_at(value: str, captured_at: float) -> float | None:
@@ -101,9 +107,12 @@ def _reset_at(value: str, captured_at: float) -> float | None:
                 seconds = datetime.fromisoformat(text).timestamp() - captured_at
             except (ValueError, OverflowError):
                 return None
-    if seconds is None or not 0 <= seconds <= _MAX_RESET_SECONDS:
+    if seconds is None:
         return None
-    return captured_at + seconds
+    try:
+        return captured_at + _RESET_SECONDS.validate_python(seconds)
+    except ValidationError:
+        return None
 
 
 def parse_rate_limit_headers(
@@ -151,9 +160,16 @@ def parse_rate_limit_headers(
 
 
 def _clock(at: float, captured_at: float) -> str:
-    """Local clock time; a reset more than 20 hours out also names the day."""
+    """Local clock time; further out it names the weekday, then the date.
+
+    A weekday alone is ambiguous six or more days ahead (a weekly or monthly
+    window), so from there the calendar date is shown instead.
+    """
     stamp = time.localtime(at)
-    if at - captured_at > 20 * 3600:
+    ahead = at - captured_at
+    if ahead >= 6 * 24 * 3600:
+        return time.strftime("%b %d %H:%M", stamp)
+    if ahead > 20 * 3600:
         return time.strftime("%a %H:%M", stamp)
     return time.strftime("%H:%M:%S", stamp)
 
