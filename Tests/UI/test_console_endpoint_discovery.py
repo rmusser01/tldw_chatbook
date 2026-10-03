@@ -406,8 +406,9 @@ async def test_create_endpoint_with_live_controller_rebase_settles(
         # its original provider. Selecting the new entry must run the real
         # quick-picker rebase before Apply commits the exact registry ID.
         # TASK-33003.5: the switch onto the entry is an unapplied edit, so
-        # Cancel asks first; Discard is the choice that closes unchanged.
-        modal.query_one("#console-settings-cancel", Button).press()
+        # closing asks first; Discard is the choice that closes unchanged.
+        # TASK-33006.5: Esc, since Cancel is the Context view's.
+        await pilot.press("escape")
         await pilot.pause()
         assert "Model" in str(  # the pair is one field (TASK-33006.4)
             modal.query_one("#console-settings-close-message", Static).renderable
@@ -832,7 +833,7 @@ async def test_refused_chat_settings_test_blocks_console_until_one_retry(
         assert _rail_text(modal, "#console-settings-readiness").startswith(
             f"{refused}\n"
         )  # Chat settings readiness
-        modal.query_one("#console-settings-cancel", Button).press()
+        await pilot.press("escape")  # TASK-33006.5: Cancel is the Context view's
         await pilot.pause()
         assert harness.screen is console
         await _console_settled(console, pilot, lambda r: r.blocker is not None)

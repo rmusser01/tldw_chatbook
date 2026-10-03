@@ -746,7 +746,7 @@ def _select_profile_database(notes_service: object | None) -> Any:
 class WideViewportTierMixin:
     """App-wide responsive wide tier: one class toggle for every modal.
 
-    The Conversation settings modal (PR #2670) and the Alt+M model popover
+    The Chat settings modal (PR #2670) and the Alt+M model popover
     (PR #2672) each shipped a private viewport-width tier with its own
     Python toggle. The repo-wide rollout replaces per-modal toggles with
     this single one: at >= 150 terminal columns the App gains the

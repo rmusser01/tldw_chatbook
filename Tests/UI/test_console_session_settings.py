@@ -1935,7 +1935,7 @@ async def _wait_for_focused_id(host: App[None], pilot, widget_id: str) -> None:
 
 @pytest.mark.asyncio
 async def test_missing_credential_action_is_mounted_only_for_missing_cloud_credentials() -> None:
-    """Conversation settings exposes Settings-owned credential recovery only when blocked."""
+    """Chat settings exposes Settings-owned credential recovery only when blocked."""
     app = ModalHarness()
     app.app_config = {"api_settings": {"openai": {}}}
     results: list[object] = []
@@ -4372,7 +4372,7 @@ async def test_console_settings_summary_renders_rows_and_button() -> None:
         await pilot.pause()
 
         text = _visible_text(app)
-        assert "Conversation settings" in text
+        assert "Chat settings" in text
         assert "Provider: llama.cpp" in text
         assert "Model: model-a" in text
         assert "Context: 12 / 4k" in text
@@ -4881,7 +4881,9 @@ async def test_console_settings_focused_button_keeps_its_contrast(theme) -> None
         await app.push_screen(_one_row_settings_modal(app.app_config))
         await pilot.pause()
         screen = app.screen
-        for button_id in ("#console-settings-save", "#console-settings-cancel"):
+        # TASK-33006.5: the default-variant sample is Default for new chats
+        # (Cancel is the Context view's now).
+        for button_id in ("#console-settings-save", "#console-settings-make-default"):
             button = screen.query_one(button_id, Button)
             assert not button.disabled, button_id
             panel = button.parent.background_colors[1].rich_color
@@ -5976,6 +5978,9 @@ async def test_console_settings_modal_cancel_discards_draft() -> None:
             ),
             callback=app.capture_saved_settings,
         )
+        await pilot.pause()
+        # TASK-33006.5: Cancel is the Context view's (spec mock (b)).
+        await pilot.click("#console-settings-view-context")
         await pilot.pause()
         await pilot.click("#console-settings-cancel")
 
@@ -8016,7 +8021,7 @@ async def _async_return(value):
 async def test_endpoint_command_layers_template_on_exact_settings_modal(
     monkeypatch,
 ) -> None:
-    """/endpoint (Qodo PR-2646 High): Conversation settings opens first and
+    """/endpoint (Qodo PR-2646 High): Chat settings opens first and
     the endpoint template layers directly on top of that exact modal, seeded
     from the active provider with the already-resolved provider models."""
     from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
@@ -8080,7 +8085,7 @@ async def test_endpoint_command_aborts_when_settings_dismissed_before_template(
     class DismissDuringMount:
         def __await__(self):
             async def _dismissed():
-                # The user dismissed Conversation settings while the mount
+                # The user dismissed Chat settings while the mount
                 # awaitable resolved; the modal leaves the stack.
                 assert isinstance(stack[-1], ConsoleSettingsModal)
                 stack.pop()
@@ -8570,7 +8575,9 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
 
         # TASK-33006.4: the provider Select is gone; Streaming is a Select.
         provider_select = app.screen.query_one("#console-settings-streaming", Select)
-        cancel_button = app.screen.query_one("#console-settings-cancel", Button)
+        # TASK-33006.5: any focused control outside the Select will do;
+        # Cancel is the Context view's now, so the MODEL row's Change.
+        cancel_button = app.screen.query_one("#console-settings-model-change", Button)
         cancel_button.focus()
         await pilot.pause()
         provider_region = _settings_screen_region(provider_select)
@@ -8590,7 +8597,7 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
 
         app.screen.on_click(click)
 
-        assert getattr(app.focused, "id", None) == "console-settings-cancel"
+        assert getattr(app.focused, "id", None) == "console-settings-model-change"
         assert app.mouse_captured is None
         assert provider_select.expanded is False
 
@@ -10696,7 +10703,7 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
         text = _screen_visible_text(console)
         assert "Model: model-a" in _summary_text(console)
-        assert "Setup required: choose a model in Console Settings." not in text
+        assert "Setup required: choose a model in Chat settings." not in text
         assert console._console_send_blocked_reason() == ""
 
 
@@ -10736,14 +10743,14 @@ async def test_console_llamacpp_saved_missing_model_blocks_before_send() -> None
             "Send blocked — choose a model to continue ›"
         )
         assert (
-            send_button.tooltip == "Choose a model in Console Settings before sending."
+            send_button.tooltip == "Choose a model in Chat settings before sending."
         )
         assert (
             "Console send blocked: Select a model before sending."
             not in _screen_visible_text(console)
         )
         assert (
-            "Setup required: choose a model in Console Settings."
+            "Setup required: choose a model in Chat settings."
             not in _screen_visible_text(console)
         )
         assert composer.draft_text() == "hello"
@@ -10959,20 +10966,20 @@ def test_console_unsaved_generic_endpoint_blocks_with_safe_in_modal_recovery() -
 
     assert provider_row.value == "blocked"
     assert provider_row.recovery == (
-        "Provider setup needed: save the endpoint in Conversation settings"
+        "Provider setup needed: save the endpoint in Chat settings"
     )
     assert "127.0.0.1" not in provider_row.recovery
     assert (
-        "save the endpoint in Conversation settings"
+        "save the endpoint in Chat settings"
         in screen._console_provider_blocker_copy()
     )
     assert label == "Configure endpoint"
     assert target == "console"
-    assert tooltip == "Save the Ollama endpoint in Conversation settings"
+    assert tooltip == "Save the Ollama endpoint in Chat settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     assert (
         screen._console_setup_blocked_reason()
-        == "Save provider endpoint in Conversation settings before sending."
+        == "Save provider endpoint in Chat settings before sending."
     )
 
 
@@ -11108,12 +11115,12 @@ def test_console_unsaved_endpoint_no_model_recovery_action_is_configure_endpoint
     card_state = screen._build_console_setup_card_state()
 
     assert (
-        "save the endpoint in Conversation settings"
+        "save the endpoint in Chat settings"
         in screen._console_provider_blocker_copy()
     )
     assert label == "Configure endpoint"
     assert target == "console"
-    assert tooltip == "Save the Ollama endpoint in Conversation settings"
+    assert tooltip == "Save the Ollama endpoint in Chat settings"
     assert screen._console_provider_recovery_field() == "endpoint"
     step_one, step_two, _step_three = card_state.steps
     assert step_one.state == "active"
@@ -11539,14 +11546,15 @@ def test_console_settings_modal_exposes_ctrl_enter_primary_binding() -> None:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel_and_skips_collapsed() -> None:
+async def test_console_settings_modal_focus_order_starts_temperature_ends_apply_and_skips_collapsed() -> None:
     """Tab order is logical and never enters a closed disclosure.
 
     Rewritten on purpose by TASK-33006.1 (AC#8/#13): focus opens on
-    Temperature, not the provider picker; the view tabs come first and Cancel
-    last; Sampling, Connection and the name stay closed until opened.
+    Temperature, not the provider picker; the view tabs come first;
+    Sampling, Connection and the name stay closed until opened.
     TASK-33006.4 (R7): the MODEL row's Change sits between the view tabs and
-    Temperature.
+    Temperature. TASK-33006.5 renamed it: the Model view ends on Apply, and
+    Cancel is the Context view's.
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -11568,14 +11576,15 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel
         for _ in range(40):
             await pilot.press("tab")
             focused_ids.append(app.focused.id)
-            if app.focused.id == "console-settings-cancel":
+            if app.focused.id == "console-settings-save":
                 break
 
         assert focused_ids[:2] == [
             "console-settings-model-change",
             "console-settings-temperature",
         ]
-        assert "console-settings-save" in focused_ids
+        assert focused_ids[-1] == "console-settings-save"
+        assert "console-settings-cancel" not in focused_ids
         for hidden in (
             "console-settings-top-p",
             "console-settings-base-url",
@@ -12074,6 +12083,9 @@ async def test_console_settings_modal_enumerated_inputs_list_accepted_values() -
 async def test_console_settings_modal_scope_line_names_session_and_default_scopes() -> (
     None
 ):
+    """Rewritten for TASK-33006.5 AC#1/#10: the scope line says the chat
+    owns these values and where defaults live (F4), and the default action
+    is named for what it writes, the model's profile."""
     from tldw_chatbook.Widgets.Console.console_settings_modal import (
         CONSOLE_SETTINGS_SCOPE_COPY,
     )
@@ -12087,12 +12099,13 @@ async def test_console_settings_modal_scope_line_names_session_and_default_scope
         )
         await pilot.pause()
         scope = app.screen.query_one("#console-settings-scope", Static)
-        assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY
-        assert "conversation" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
-        assert "future provider conversations" in CONSOLE_SETTINGS_SCOPE_COPY.lower()
+        assert str(scope.renderable) == CONSOLE_SETTINGS_SCOPE_COPY == (
+            "Applies to this chat only · saved with the conversation · "
+            "defaults live in Settings ▸ Providers & Models (F4)"
+        )
         assert (
             str(app.screen.query_one("#console-settings-save-default", Button).label)
-            == "Save as provider defaults"
+            == "Save as model default"
         )
         response_control = app.screen.query_one("#console-settings-max-tokens", Input)
         response_label = response_control.parent.query_one(
@@ -13228,7 +13241,7 @@ async def test_connection_probe_is_cancelled_when_modal_closes() -> None:
         modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
         await tester.started.wait()
 
-        modal.query_one("#console-settings-cancel", Button).press()
+        await pilot.press("escape")  # TASK-33006.5: the Model view has no Cancel
         for _ in range(40):
             if tester.cancelled:
                 break
@@ -13353,7 +13366,7 @@ async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
 
         assert (
             str(modal.query_one(".console-modal-header", Static).renderable)
-            == "Conversation settings"
+            == "Chat settings"
         )
         body = modal.query_one("#console-settings-body")
         assert [child.id for child in body.children][:5] == [
@@ -13438,8 +13451,9 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
 
     Rewritten on purpose by TASK-33006.1 (AC#8/#13): from Temperature, Tab
     walks the shown CORE rows, then the Sampling, Connection, Request
-    estimate and name titles, then the footer to Apply and Cancel; opening
-    Sampling from its title puts its first field next in the order.
+    estimate and name titles, then the footer to Apply; opening Sampling from
+    its title puts its first field next in the order. TASK-33006.5: the
+    footer ends on Apply (Cancel is the Context view's).
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -13466,12 +13480,12 @@ async def test_console_settings_modal_tab_order_skips_collapsed_disclosure_child
             # A disclosure title is recorded as its disclosure.
             title_of = focused.parent if isinstance(focused.parent, Collapsible) else None
             forward.append(title_of.id if title_of is not None else focused.id)
-            if focused.id == "console-settings-cancel":
+            if focused.id == "console-settings-save":
                 break
         titles = [entry for entry in forward if entry in disclosures]
         assert titles == disclosures
         footer = forward[forward.index(disclosures[-1]) + 1 :]
-        assert footer[-2:] == ["console-settings-save", "console-settings-cancel"]
+        assert footer[-1:] == ["console-settings-save"]
         assert "console-settings-make-default" in footer
         assert "console-settings-top-p" not in forward
 
@@ -13977,7 +13991,7 @@ async def test_console_settings_modal_ready_state_has_one_primary_action() -> No
 
         primary = _visible_enabled_primary_buttons(modal)
         assert [button.id for button in primary] == ["console-settings-save"]
-        assert str(primary[0].label) == "Use for this conversation"
+        assert str(primary[0].label) == "Apply to this chat (Ctrl+Enter)"  # TASK-33006.5
         assert str(
             modal.query_one(
                 "#console-settings-primary-disabled-reason", Static
@@ -14125,7 +14139,8 @@ async def test_console_settings_modal_default_action_only_tracks_changed_persist
 
         assert default_action.display is True
         assert default_action.variant == "default"
-        assert str(default_action.label) == "Save as generation defaults"
+        # TASK-33006.5: one name for the action, the profile it writes.
+        assert str(default_action.label) == "Save as model default"
         assert str(scope.renderable) == "Used by future conversations for llama.cpp."
 
 
@@ -14156,7 +14171,8 @@ async def test_console_settings_modal_provider_default_action_names_provider_sco
 
         default_action = modal.query_one("#console-settings-save-default", Button)
         assert default_action.display is True
-        assert str(default_action.label) == "Save as provider defaults"
+        # TASK-33006.5: one name for the action, the profile it writes.
+        assert str(default_action.label) == "Save as model default"
         assert str(
             modal.query_one("#console-settings-default-scope", Static).renderable
         ) == "Used by future conversations for llama.cpp."
@@ -14375,8 +14391,11 @@ async def test_console_settings_empty_completion_status_rows_consume_no_layout()
         assert disabled_reason.display is False
         assert default_scope.region.height == 0
         assert disabled_reason.region.height == 0
-        assert scope.region.height == 1
-        assert len(str(scope.renderable)) <= scope.content_region.width
+        # TASK-33006.5 (AC#1): the scope copy is 105 cells, so in this
+        # 72-cell compact frame (not redesigned) it takes the two rows it
+        # needs, and no more.
+        assert len(str(scope.renderable)) > scope.content_region.width
+        assert scope.region.height == 2
 
 
 @pytest.mark.parametrize("terminal_size", [(80, 24), (100, 30), (160, 40)])
@@ -14412,6 +14431,7 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         connection = modal.query_one("#console-settings-connection")
         actions = modal.query_one("#console-settings-actions", Vertical)
         cancel = modal.query_one("#console-settings-cancel", Button)
+        adopt = modal.query_one("#console-settings-use-saved-defaults", Button)
         defaults = modal.query_one("#console-settings-save-default", Button)
         use = modal.query_one("#console-settings-save", Button)
 
@@ -14421,11 +14441,14 @@ async def test_console_settings_task4_geometry_keeps_connection_and_footer_usabl
         assert actions.virtual_size.width <= actions.container_size.width
         assert actions.region.bottom <= frame.content_region.bottom
         assert actions.region.right <= frame.content_region.right
-        assert str(cancel.label) == "Cancel"
-        assert str(defaults.label) == "Save as provider defaults"
-        assert str(use.label) == "Use for this conversation"
-        assert defaults.region.width >= len(str(defaults.label))
-        assert use.region.width >= len(str(use.label))
+        # TASK-33006.5: Cancel is the Context view's; the Model view names
+        # its actions and their keys.
+        assert not cancel.display
+        assert str(adopt.label) == "Use saved defaults"
+        assert str(defaults.label) == "Save as model default"
+        assert str(use.label) == "Apply to this chat (Ctrl+Enter)"
+        for button in (adopt, defaults, use):
+            assert button.region.width >= len(str(button.label))
 
 
 @pytest.mark.asyncio

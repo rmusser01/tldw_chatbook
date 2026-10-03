@@ -46,6 +46,7 @@ Tests/UI/test_console_settings_core_first.py
 Tests/UI/test_console_settings_disclosures.py
 Tests/UI/test_console_settings_hidden_fields.py
 Tests/UI/test_console_settings_model_change.py
+Tests/UI/test_console_settings_saved_defaults.py
 Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
 Tests/UI/test_console_trace_call_recovery.py

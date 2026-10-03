@@ -126,6 +126,10 @@ async def _edit(pilot, modal: ConsoleSettingsModal, selector: str, value: str):
 
 async def _gesture(pilot, source: str) -> None:
     if source == "cancel":
+        # TASK-33006.5 (spec mock (b)): Cancel is the Context view's; the
+        # Model view's footer offers the default actions instead.
+        await pilot.click("#console-settings-view-context")
+        await pilot.pause()
         await pilot.click("#console-settings-cancel")
     elif source == "escape":
         await pilot.press("escape")

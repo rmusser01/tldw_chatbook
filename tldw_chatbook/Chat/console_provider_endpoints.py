@@ -14,7 +14,7 @@ from tldw_chatbook.Chat.provider_endpoint_contract import (
 
 UNSAVED_ENDPOINT_COPY = (
     "Provider blocked: this endpoint is not saved. Save it with Save model "
-    "defaults in Console Settings, or in F4 Settings, before sending."
+    "defaults in Chat settings, or in F4 Settings, before sending."
 )
 #: Single source of the llama.cpp origin Chatbook defaults to (and teaches in
 #: its docs) when nothing is configured. The stock `llama-server` port 8080 is

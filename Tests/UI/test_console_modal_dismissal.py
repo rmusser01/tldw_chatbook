@@ -1954,6 +1954,9 @@ async def test_settings_clean_close_sources_restore_opener_focus(source: str) ->
         await app.push_screen(modal, callback=app.results.append)
         await pilot.pause()
         if source == "visible-cancel":
+            # TASK-33006.5: Cancel is the Context view's (spec mock (b)).
+            await pilot.click("#console-settings-view-context")
+            await pilot.pause()
             await pilot.click("#console-settings-cancel")
         elif source == "escape":
             await pilot.press("escape")

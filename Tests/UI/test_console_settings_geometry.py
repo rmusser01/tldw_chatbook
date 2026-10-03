@@ -133,18 +133,21 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
             )
 
         connection = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        cancel = modal.query_one("#console-settings-cancel", Button)
+        # TASK-33006.5: Cancel is the Context view's; the Model view's footer
+        # leads with Use saved defaults (rewritten on purpose).
+        adopt = modal.query_one("#console-settings-use-saved-defaults", Button)
         save_default = modal.query_one("#console-settings-save-default", Button)
         save = modal.query_one("#console-settings-save", Button)
+        assert not modal.query_one("#console-settings-cancel", Button).display
         assert str(connection.label) == MODEL_DISCOVER_BUTTON_LABEL
-        assert str(save_default.label) == "Save as provider defaults"
-        assert str(save.label) == "Use for this conversation"
+        assert str(save_default.label) == "Save as model default"
+        assert str(save.label) == "Apply to this chat (Ctrl+Enter)"
         painted = "\n".join(
             strip.text for strip in app.screen._compositor.render_strips()
         )
-        assert "Use for this conversation" in painted
-        assert "Use in this conversation" not in painted
-        for action in (connection, cancel, save_default, save):
+        assert "Apply to this chat (Ctrl+Enter)" in painted
+        assert "Use for this conversation" not in painted
+        for action in (connection, adopt, save_default, save):
             assert action.region.width >= len(str(action.label))
 
         connection_row = modal.query_one("#console-settings-connection-actions")
@@ -153,14 +156,14 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
             assert connection_row.layout.name == "vertical"
             assert footer.layout.name == "vertical"
             assert connection.region.height == 1
-            assert len({action.region.y for action in (cancel, save_default, save)}) == 3
+            assert len({action.region.y for action in (adopt, save_default, save)}) == 3
             assert {
-                action.region.width for action in (cancel, save_default, save)
+                action.region.width for action in (adopt, save_default, save)
             } == {footer.content_region.width}
         else:
             assert connection_row.layout.name == "horizontal"
             assert footer.layout.name == "horizontal"
-            assert len({action.region.y for action in (cancel, save_default, save)}) == 1
+            assert len({action.region.y for action in (adopt, save_default, save)}) == 1
 
         status = modal.query_one("#console-settings-model-discover-status", Static)
         status.display = True

@@ -446,6 +446,13 @@ Use `TLDW_CONFIG_PATH=<scratch>/config.toml` so the run cannot touch real state 
 the profile-isolation entry below). Ctrl+digit hotkeys cannot be sent through tmux --
 verify those bindings by reading `BINDINGS` in the code instead.
 
+Ctrl+Enter, though, can be sent (TASK-33006.5, 2026-10-03): its kitty-protocol CSI u
+form reaches Textual as `ctrl+enter`: `tmux -L verify send-keys -l $'\e[13;5u'`.
+Chat settings' Apply (Ctrl+Enter) ran from a focused field this way, so the
+advertised key itself was exercised live. Also send typed values with `-l`
+(`send-keys -l "0.9"`): in that run the same text without `-l` left the
+Temperature field empty.
+
 ---
 
 ## A widget fed only by a sync method is blank on the first frame

@@ -12871,7 +12871,7 @@ class SettingsScreen(BaseAppScreen):
             is ConversationSettingsReturnOutcome.CREDENTIAL_SAVED
         ):
             return (
-                "Credential saved. Return to Conversation settings to check "
+                "Credential saved. Return to Chat settings to check "
                 "readiness; provider acceptance is not yet verified."
             )
         if (
@@ -12879,7 +12879,7 @@ class SettingsScreen(BaseAppScreen):
             is ConversationSettingsReturnOutcome.PROVIDER_SETTINGS_SAVED
         ):
             return (
-                "Provider settings saved. Return to Conversation settings to check "
+                "Provider settings saved. Return to Chat settings to check "
                 "readiness; generation is not yet verified."
             )
         return "Provider settings handoff is inactive."
@@ -13002,7 +13002,7 @@ class SettingsScreen(BaseAppScreen):
         claimed = self._claim_provider_return_intent()
         if claimed is None:
             self.app.notify(
-                "Conversation settings return is no longer available.",
+                "Chat settings return is no longer available.",
                 severity="warning",
             )
             self._settle_provider_return_state()
@@ -18280,7 +18280,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-conflict-discard",
                 )
                 yield Button(
-                    "Return to Conversation settings",
+                    "Return to Chat settings",
                     id="settings-provider-conflict-return",
                     disabled=self._provider_return_actions_disabled(),
                 )
@@ -18294,7 +18294,7 @@ class SettingsScreen(BaseAppScreen):
                     markup=False,
                 )
                 yield Button(
-                    "Return to Conversation settings",
+                    "Return to Chat settings",
                     id="settings-provider-return",
                     variant="primary",
                     disabled=self._provider_return_actions_disabled(),
@@ -18865,7 +18865,7 @@ class SettingsScreen(BaseAppScreen):
         if not rows:
             yield Static(
                 "No named endpoints yet. Create one from a template in "
-                "Console conversation settings (New endpoint…), or "
+                "Console's Chat settings (New endpoint…), or "
                 "convert a built-in custom slot below.",
                 id="settings-custom-endpoints-empty",
                 classes="settings-status-row",
