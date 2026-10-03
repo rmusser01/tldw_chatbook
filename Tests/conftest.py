@@ -1291,7 +1291,8 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_sitemap_crawl_trusted_origins.py",
             "test_github_api_client.py",
             "test_download_caps_wiring.py",
-            "test_settings_probe_egress.py",            # TASK-21233: the subscriptions FTS-backfill collision canary
+            "test_settings_probe_egress.py",
+            # TASK-21233: the subscriptions FTS-backfill collision canary
             # drives the real SubscriptionsDB from a worker thread; the
             # thread-local connection created there resolves config through
             # the guarded loader, and under the per-test env redirect the
@@ -1300,7 +1301,17 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # tests are tmp_path DB-level tests that do not depend on the
             # redirect.
             "test_fts_backfill.py",
-        }
+            # TASK-22302: the real-stack citation persistence suite drives the
+            # real Console controller submit path, whose hook-consent admission
+            # (`_hook_admission_reason` -> `read_hooks_config_snapshot`) reads
+            # the guarded config loader. Under the per-test redirect that read
+            # fails closed with RecoveryRequired("raw_source_selection_changed")
+            # and the gate's broad except turns it into a send refusal
+            # ("Hooks unavailable"), so the durable turn never starts and the
+            # six-table assertions never run -- the same admission signature as
+            # the two console continuation suites above, red since the
+            # hook-consent gate landed (aed1b13501).
+            "test_console_terminal_citation_persistence.py",        }
     )
     test_data_dir = (
         _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
