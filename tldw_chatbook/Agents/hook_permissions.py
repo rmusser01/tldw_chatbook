@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import fnmatch
 import json
+import os
 import re
 import threading
 from collections import Counter
@@ -80,6 +81,25 @@ def default_hook_permissions_path() -> Path:
     return Path(config.get_user_data_dir()) / "hook_permissions.json"
 
 
+def _file_stamp(path: Path) -> tuple[int, int, int, int, int] | None:
+    """A file's identity, size and change times, or None when it is absent.
+
+    Args:
+        path: The file to observe.
+
+    Returns:
+        ``(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)``, or ``None``.
+
+    Raises:
+        OSError: The file could not be observed for another reason.
+    """
+    try:
+        info = os.stat(path)
+    except FileNotFoundError:
+        return None
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
 def _empty_state() -> dict:
     return {"schema_version": 1, "store_id": str(uuid4()), "revision": 0, "configs": {}}
 
@@ -140,6 +160,8 @@ class HookPermissions:
         self._closed = threading.Event()
         self._published: HookReviewSnapshot | None = None
         self._published_targets: tuple[HookTarget, ...] = ()
+        #: TASK-33642: ``(snapshot, stamp)`` a Console visit may reuse.
+        self._visit_reuse: tuple[HookReviewSnapshot, tuple] | None = None
 
     @contextmanager
     def _store_lock(self, path: Path) -> Iterator[None]:
@@ -412,6 +434,73 @@ class HookPermissions:
                     state = None
                     error = "Hook permission state could not be saved; retry."
             yield self._make_snapshot(cfg, path, state, error), state, precondition
+
+    def _visit_stamp(self, config_path: Path, store_path: Path) -> tuple:
+        """Everything a visit snapshot depends on, read without opening a file.
+
+        Args:
+            config_path: The config file holding the hook section.
+            store_path: The hook permission store.
+
+        Returns:
+            The config selection and generation, both files' identity and
+            change times (``None`` for a missing file), and the in-memory
+            sealing, refresh and closed state the snapshot also reflects.
+        """
+        with self._cache_lock:
+            memory = (frozenset(self._sealed), frozenset(self._refresh_pending))
+        return (
+            config._CONFIG_CACHE_SOURCE,
+            config._CONFIG_GENERATION,
+            _file_stamp(config_path),
+            _file_stamp(store_path),
+            memory,
+            self._closed.is_set(),
+        )
+
+    def visit_snapshot(self) -> HookReviewSnapshot:
+        """``snapshot()`` for a Console visit, reused while nothing it read moved.
+
+        TASK-33642: every Console visit re-read the hook section and the
+        permission store under their locks. A snapshot is reused only when
+        stamps taken before and after the read that produced it are equal and
+        still equal now, so a write at any time -- including during that read
+        -- forces a full read on the next visit. Sending and reviewing keep
+        using ``snapshot()``.
+
+        Returns:
+            The current review state.
+        """
+        with self._cache_lock:
+            reusable = self._visit_reuse
+            published = self._published
+        if reusable is not None and reusable[0] is published:
+            try:
+                if reusable[1] == self._visit_stamp(
+                    published.config.config_path, published.store_path
+                ):
+                    return published
+            except OSError:
+                pass
+        try:
+            before = self._visit_stamp(
+                Path(config.get_cli_config_path()), default_hook_permissions_path()
+            )
+        except (OSError, ValueError, RecoveryRequired):
+            before = None
+        snapshot = self.snapshot()
+        try:
+            after = self._visit_stamp(snapshot.config.config_path, snapshot.store_path)
+        except OSError:
+            after = None
+        keep = (
+            after is not None
+            and after == before
+            and not any(row.state == "recovery" for row in snapshot.rows)
+        )
+        with self._cache_lock:
+            self._visit_reuse = (snapshot, after) if keep else None
+        return snapshot
 
     def snapshot(self) -> HookReviewSnapshot:
         """Reconcile the current saved section and return review state."""

@@ -71,6 +71,80 @@ def _edit(path, mutate):
     path.write_text(toml.dumps(raw))
 
 
+def _count_reads(owner, monkeypatch) -> list[int]:
+    """Count the owner's full reads (config section plus permission store)."""
+    reads: list[int] = []
+    real = owner._current
+
+    def counted(*args, **kwargs):
+        reads.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "_current", counted)
+    return reads
+
+
+def _settle(owner, reads: list[int]) -> None:
+    """Visit until a visit reads nothing (a reconcile write costs one more)."""
+    for _ in range(4):
+        before = len(reads)
+        owner.visit_snapshot()
+        if len(reads) == before:
+            return
+    raise AssertionError("visit snapshots never stopped reading")
+
+
+def test_a_warm_visit_reads_nothing_until_a_file_changes(hook_file, monkeypatch):
+    """TASK-33642: an unchanged Console visit reuses the last hook snapshot.
+
+    An approval (a store write) or a hook edit (a config write) is read on
+    the next visit and shown.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    reads = _count_reads(owner, monkeypatch)
+    first = owner.visit_snapshot()
+    _settle(owner, reads)
+    settled = len(reads)
+    warm = owner.visit_snapshot()
+    assert len(reads) == settled, "a warm visit re-read the hook files"
+    assert warm.rows == first.rows and not warm.ready
+
+    assert _approve(owner).ready
+    count = len(reads)
+    approved = owner.visit_snapshot()
+    assert len(reads) > count and approved.ready, "an approval was not picked up"
+
+    _settle(owner, reads)
+    _edit(hook_file, lambda hooks: hooks["hook"][0].update(timeout_s=7))
+    count = len(reads)
+    edited = owner.visit_snapshot()
+    assert len(reads) > count and not edited.ready, "a hook edit was not picked up"
+
+
+def test_a_sealed_hook_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: in-memory sealing invalidates the reused visit snapshot too.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    assert approved.ready
+
+    owner._seal(approved, [row.entry.key for row in approved.rows if row.entry])
+    count = len(reads)
+    sealed = owner.visit_snapshot()
+    assert len(reads) > count and not sealed.ready, "a sealed hook was still approved"
+
+
 def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     owner = _owner()
     assert not owner.snapshot().ready

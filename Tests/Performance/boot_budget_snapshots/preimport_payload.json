@@ -1,7 +1,7 @@
 {
   "_comment": "Screen pre-importer payload census. Written ONLY by scripts/update_boot_budget_snapshots.py (ADR-097).",
-  "pass_added_modules": 557,
-  "pass_added_loc": 411886,
+  "pass_added_modules": 556,
+  "pass_added_loc": 412083,
   "routes": {
     "acp": {
       "loc": 520,
@@ -10,7 +10,7 @@
       ]
     },
     "ccp": {
-      "loc": 54709,
+      "loc": 54707,
       "modules": [
         "tldw_chatbook.Backup_Recovery.persona_visual_participants",
         "tldw_chatbook.Character_Chat.Character_Chat_Lib",
@@ -164,7 +164,7 @@
       ]
     },
     "home": {
-      "loc": 1472,
+      "loc": 1475,
       "modules": [
         "tldw_chatbook.Home.home_rail_state",
         "tldw_chatbook.UI.Screens.home_screen",
@@ -174,7 +174,7 @@
       ]
     },
     "library": {
-      "loc": 125111,
+      "loc": 125112,
       "modules": [
         "tldw_chatbook.Audio.meeting_session",
         "tldw_chatbook.Chunking",
@@ -389,7 +389,7 @@
       ]
     },
     "logs": {
-      "loc": 843,
+      "loc": 852,
       "modules": [
         "tldw_chatbook.UI.Logs_Window",
         "tldw_chatbook.UI.Screens.logs_screen"
@@ -467,7 +467,7 @@
       ]
     },
     "schedules": {
-      "loc": 14912,
+      "loc": 14947,
       "modules": [
         "tldw_chatbook.Scheduling.automation_health",
         "tldw_chatbook.Scheduling.events",
@@ -491,7 +491,7 @@
       ]
     },
     "settings": {
-      "loc": 59970,
+      "loc": 60054,
       "modules": [
         "tldw_chatbook.Agents.agent_presets",
         "tldw_chatbook.Audio.voice_process_types",
@@ -506,7 +506,6 @@
         "tldw_chatbook.UI.Screens.settings_appearance_defaults",
         "tldw_chatbook.UI.Screens.settings_config_adapter",
         "tldw_chatbook.UI.Screens.settings_context_memory",
-        "tldw_chatbook.UI.Screens.settings_hooks",
         "tldw_chatbook.UI.Screens.settings_image_gen_defaults",
         "tldw_chatbook.UI.Screens.settings_privacy_security",
         "tldw_chatbook.UI.Screens.settings_provider_view_model",
@@ -550,7 +549,7 @@
       ]
     },
     "stts": {
-      "loc": 21248,
+      "loc": 21316,
       "modules": [
         "tldw_chatbook.Audio.dictation_service_lazy",
         "tldw_chatbook.Audio.duplex_contracts",
@@ -598,7 +597,7 @@
       ]
     },
     "watchlists_collections": {
-      "loc": 33966,
+      "loc": 33965,
       "modules": [
         "tldw_chatbook.Subscriptions.briefing_audio",
         "tldw_chatbook.Subscriptions.briefing_export",
