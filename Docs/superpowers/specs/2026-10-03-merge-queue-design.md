@@ -66,10 +66,10 @@ From GitHub's documentation:
 
 Facts verified in implementation task 1 (each has a fallback):
 
-| # | Question | Fallback if it fails |
-|---|----------|----------------------|
-| V1 | Can `GITHUB_TOKEN` delete a workflow run (the empty `action_required` runs)? | Leave them. CLAUDE.md says never click "Approve and run" on a queue-rebased PR, because that starts duplicate runs |
-| V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Leave superseded runs to finish |
+| # | Question | Result | Fallback if it fails |
+|---|----------|--------|----------------------|
+| V1 | Can `GITHUB_TOKEN` delete a workflow run (the empty `action_required` runs)? | Verified (run 37154004733) | Leave them. CLAUDE.md says never click "Approve and run" on a queue-rebased PR, because that starts duplicate runs |
+| V2 | Can `GITHUB_TOKEN` cancel a workflow run (runs on a superseded head)? | Verified (run 37154004733) | Leave superseded runs to finish |
 
 Retrying a failed run never uses the undocumented re-run API. It dispatches a fresh run (F1).
 
