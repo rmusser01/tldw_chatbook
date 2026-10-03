@@ -4,6 +4,7 @@ The fake exposes `tick(n_blocks)` which invokes the sink's registered
 callback exactly as PortAudio would: (outdata, frames, time_info, status).
 No wall-clock sleeps anywhere -- latency contracts are counted in BLOCKS.
 """
+
 import threading
 import time
 
@@ -11,8 +12,13 @@ import numpy as np
 import pytest
 
 from tldw_chatbook.Audio.streaming_sink import (
-    BUFFER_CAP_SECONDS, SinkBufferFull, SinkFailed,
-    SinkStarted, SinkStopped, SinkUnderrun, StreamingPcmSink,
+    BUFFER_CAP_SECONDS,
+    SinkBufferFull,
+    SinkFailed,
+    SinkStarted,
+    SinkStopped,
+    SinkUnderrun,
+    StreamingPcmSink,
 )
 
 
@@ -34,7 +40,7 @@ def _reset_live_sink_registry():
     def _force_clear() -> None:
         live = mod._LIVE_SINK
         if live is not None:
-            live.stop()   # non-joining (H2); also clears the registry itself
+            live.stop()  # non-joining (H2); also clears the registry itself
         with mod._LIVE_SINK_LOCK:
             mod._LIVE_SINK = None
 
@@ -42,10 +48,11 @@ def _reset_live_sink_registry():
     yield
     _force_clear()
 
+
 RATE = 24000
 BLOCK_MS = 20
-FRAMES = RATE * BLOCK_MS // 1000          # 480 frames/block
-BLOCK_BYTES = FRAMES * 2                  # int16 mono
+FRAMES = RATE * BLOCK_MS // 1000  # 480 frames/block
+BLOCK_BYTES = FRAMES * 2  # int16 mono
 
 
 def _settle_notify_queue(notify_q, timeout: float = 5.0) -> None:
@@ -73,13 +80,18 @@ class FakeStream:
         self.blocksize = blocksize
         self.started = False
         self.aborted = False
-        self.abort_thread = None           # which thread called abort(), for H4
+        self.abort_thread = None  # which thread called abort(), for H4
         self.stopped_via_drain = False
-        self.out = []                      # bytes actually "played"
+        self.out = []  # bytes actually "played"
 
-    def start(self):  self.started = True
-    def stop(self):   self.stopped_via_drain = True   # the WRONG stop; must stay unused
-    def close(self):  pass
+    def start(self):
+        self.started = True
+
+    def stop(self):
+        self.stopped_via_drain = True  # the WRONG stop; must stay unused
+
+    def close(self):
+        pass
 
     def abort(self):
         self.abort_thread = threading.current_thread()
@@ -98,18 +110,23 @@ class FakeStream:
             # any reentrant call a listener makes back into the sink, e.g.
             # stop() -- before returning, so assertions right after tick()
             # stay deterministic without any wall-clock sleep.
-            notify_q = getattr(getattr(self.callback, "__self__", None), "_notify_q", None)
+            notify_q = getattr(
+                getattr(self.callback, "__self__", None), "_notify_q", None
+            )
             if notify_q is not None:
                 _settle_notify_queue(notify_q)
 
 
 def _mk(events):
     holder = {}
+
     def factory(*, samplerate, channels, blocksize, callback):
         holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
         return holder["s"]
-    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS,
-                            stream_factory=factory)
+
+    sink = StreamingPcmSink(
+        on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     return sink, holder
 
 
@@ -118,39 +135,43 @@ def _pcm(n_blocks: int, value: int = 7) -> bytes:
 
 
 def test_prebuffer_holds_silence_until_threshold_then_starts():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     s = h["s"]
-    sink.feed(_pcm(1))                       # 20ms buffered < 300ms
+    sink.feed(_pcm(1))  # 20ms buffered < 300ms
     s.tick(2)
-    assert all(chunk == b"\x00" * BLOCK_BYTES for chunk in s.out), "audible before prebuffer"
+    assert all(chunk == b"\x00" * BLOCK_BYTES for chunk in s.out), (
+        "audible before prebuffer"
+    )
     assert not any(isinstance(e, SinkStarted) for e in events)
-    sink.feed(_pcm(15))                      # now 320ms buffered
+    sink.feed(_pcm(15))  # now 320ms buffered
     s.tick(1)
     assert s.out[-1] != b"\x00" * BLOCK_BYTES
     assert any(isinstance(e, SinkStarted) for e in events)
 
 
 def test_close_before_threshold_plays_short_utterance():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
-    sink.feed(_pcm(2))                       # 40ms only
-    sink.close()                             # end of stream => play it anyway
+    sink.feed(_pcm(2))  # 40ms only
+    sink.close()  # end of stream => play it anyway
     h["s"].tick(1)
     assert h["s"].out[-1] != b"\x00" * BLOCK_BYTES
 
 
 def test_stop_aborts_within_contract_and_never_drains():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(30))
     h["s"].tick(1)
     sink.stop()
     assert h["s"].aborted is True
-    assert h["s"].stopped_via_drain is False, "stream.stop() drains; contract requires abort()"
+    assert h["s"].stopped_via_drain is False, (
+        "stream.stop() drains; contract requires abort()"
+    )
     assert any(isinstance(e, SinkStopped) for e in events)
     before = len(h["s"].out)
     h["s"].tick(2)
@@ -158,37 +179,43 @@ def test_stop_aborts_within_contract_and_never_drains():
 
 
 def test_drain_emits_after_last_real_block():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     sink.close()
-    h["s"].tick(20)                          # 16 real + trailing zero-fill
+    h["s"].tick(20)  # 16 real + trailing zero-fill
     kinds = [type(e).__name__ for e in events]
     assert kinds.index("SinkStarted") < kinds.index("SinkDrained")
-    assert not any(isinstance(e, SinkUnderrun) for e in events), "post-close zero-fill is drain, not underrun"
+    assert not any(isinstance(e, SinkUnderrun) for e in events), (
+        "post-close zero-fill is drain, not underrun"
+    )
 
 
 def test_underrun_after_start_is_counted_and_throttled():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
-    h["s"].tick(16)                          # started, buffer now empty, NOT closed
-    h["s"].tick(5)                            # 5 empty callbacks: 1 immediate alert, no repeat yet
+    h["s"].tick(16)  # started, buffer now empty, NOT closed
+    h["s"].tick(5)  # 5 empty callbacks: 1 immediate alert, no repeat yet
     unders = [e for e in events if isinstance(e, SinkUnderrun)]
     assert len(unders) == 1
-    assert unders[0].frames == 1 * FRAMES, "the immediate alert fires on the very first empty block"
+    assert unders[0].frames == 1 * FRAMES, (
+        "the immediate alert fires on the very first empty block"
+    )
     # Cross the _UNDERRUN_THROTTLE_BLOCKS (50-block) window to force a second,
     # genuinely-throttled report. Its value must reflect every frame missed
     # since the sink opened -- an implementation that stopped counting after
     # the first empty block (or that hard-codes/forgets to accumulate) would
     # fail this, unlike a bare ">= 5" bound that a single stale event already
     # satisfies trivially.
-    h["s"].tick(46)                          # 5 + 46 = 51 empty callbacks total
+    h["s"].tick(46)  # 5 + 46 = 51 empty callbacks total
     unders = [e for e in events if isinstance(e, SinkUnderrun)]
     assert len(unders) == 2, "underrun events must be throttled, not per-callback"
-    assert unders[-1].frames == 51 * FRAMES, "must keep counting for the full throttle window"
+    assert unders[-1].frames == 51 * FRAMES, (
+        "must keep counting for the full throttle window"
+    )
 
 
 def test_stop_during_underrun_enqueue_does_not_orphan_a_queue_item(monkeypatch):
@@ -215,7 +242,7 @@ def test_stop_during_underrun_enqueue_does_not_orphan_a_queue_item(monkeypatch):
     class HookedSinkUnderrun(mod.SinkUnderrun):
         def __init__(self, *a, **kw):
             underrun_about_to_enqueue.set()
-            stop_finished.wait(timeout=0.3)   # bounded: never hangs the test either way
+            stop_finished.wait(timeout=0.3)  # bounded: never hangs the test either way
             super().__init__(*a, **kw)
 
     def call_stop_once_ready():
@@ -227,24 +254,28 @@ def test_stop_during_underrun_enqueue_does_not_orphan_a_queue_item(monkeypatch):
         holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
         return holder["s"]
 
-    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     holder["sink"] = sink
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
-    holder["s"].tick(16)     # drains the buffer fully; open, audible, not closed
+    holder["s"].tick(16)  # drains the buffer fully; open, audible, not closed
 
     stopper = threading.Thread(target=call_stop_once_ready, daemon=True)
     stopper.start()
     monkeypatch.setattr(mod, "SinkUnderrun", HookedSinkUnderrun)
-    holder["s"].tick(1)      # one empty callback -> triggers the hook mid-enqueue-decision
+    holder["s"].tick(1)  # one empty callback -> triggers the hook mid-enqueue-decision
 
     stopper.join(timeout=2.0)
     assert not stopper.is_alive(), "stop()-calling thread leaked past the test"
-    _settle_notify_queue(sink._notify_q)   # must not hang / must not orphan (raises loudly if it does)
+    _settle_notify_queue(
+        sink._notify_q
+    )  # must not hang / must not orphan (raises loudly if it does)
 
 
 def test_feed_caps_and_reports_once():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     cap_blocks = BUFFER_CAP_SECONDS * 1000 // BLOCK_MS
@@ -255,24 +286,31 @@ def test_feed_caps_and_reports_once():
 
 
 def test_callback_never_raises_even_when_emit_explodes():
-    def bomb(_e):  raise RuntimeError("emit failed")
-    sink = StreamingPcmSink(on_event=bomb, blocksize_ms=BLOCK_MS,
-                            stream_factory=lambda **kw: FakeStream(**kw))
+    def bomb(_e):
+        raise RuntimeError("emit failed")
+
+    sink = StreamingPcmSink(
+        on_event=bomb,
+        blocksize_ms=BLOCK_MS,
+        stream_factory=lambda **kw: FakeStream(**kw),
+    )
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
-    sink._stream.tick(20)                    # would raise through callback if unguarded
+    sink._stream.tick(20)  # would raise through callback if unguarded
 
 
 def test_repeated_callback_failure_reports_once_and_tears_down_stream():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     for _ in range(4):
-        sink._callback(None, FRAMES, None, None)   # outdata=None -> every write raises
-    _settle_notify_queue(sink._notify_q)     # wait for the async teardown_and_emit job
+        sink._callback(None, FRAMES, None, None)  # outdata=None -> every write raises
+    _settle_notify_queue(sink._notify_q)  # wait for the async teardown_and_emit job
     fails = [e for e in events if isinstance(e, SinkFailed)]
-    assert len(fails) == 1, "SinkFailed must fire once per lifecycle, not once per callback"
+    assert len(fails) == 1, (
+        "SinkFailed must fire once per lifecycle, not once per callback"
+    )
     assert sink.state == "failed"
     assert h["s"].aborted is True, "the stream must be torn down on failure"
 
@@ -284,45 +322,50 @@ def test_listener_stop_from_sink_started_does_not_abort_on_the_callback_thread()
     def on_event(e):
         events.append(e)
         if isinstance(e, SinkStarted):
-            holder["sink"].stop()          # reentrant, as a real barge-in listener would do
+            holder["sink"].stop()  # reentrant, as a real barge-in listener would do
 
     def factory(*, samplerate, channels, blocksize, callback):
         holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
         return holder["s"]
 
-    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     holder["sink"] = sink
     sink.open(sample_rate=RATE)
-    sink.feed(_pcm(16))                    # crosses the prebuffer threshold immediately
+    sink.feed(_pcm(16))  # crosses the prebuffer threshold immediately
     calling_thread = threading.current_thread()
-    holder["s"].tick(1)                    # drives SinkStarted -> listener's reentrant stop()
+    holder["s"].tick(1)  # drives SinkStarted -> listener's reentrant stop()
 
     assert holder["s"].aborted is True
     assert holder["s"].abort_thread is not None
-    assert holder["s"].abort_thread is not calling_thread, \
+    assert holder["s"].abort_thread is not calling_thread, (
         "stream.abort() must never run on the PortAudio callback thread"
+    )
     kinds = [type(e).__name__ for e in events]
-    assert kinds.index("SinkStarted") < kinds.index("SinkStopped"), \
+    assert kinds.index("SinkStarted") < kinds.index("SinkStopped"), (
         "SinkStopped must never be observed before the SinkStarted that caused it"
+    )
 
 
 def test_drain_tears_down_the_stream_and_stop_afterward_is_clean():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     sink.close()
-    h["s"].tick(20)                          # drains fully
+    h["s"].tick(20)  # drains fully
     assert h["s"].aborted is True, "a completed utterance must not leak the stream"
     assert sink._stream is None
     before = len(events)
-    sink.stop()                              # calling stop() after a natural drain...
-    assert not any(isinstance(e, SinkStopped) for e in events[before:]), \
+    sink.stop()  # calling stop() after a natural drain...
+    assert not any(isinstance(e, SinkStopped) for e in events[before:]), (
         "stop() after a natural drain must be a clean no-op, not a second terminal event"
+    )
 
 
 def test_stop_racing_open_wins_and_stream_is_never_left_running():
-    events, = ([],)
+    (events,) = ([],)
     holder = {}
 
     def factory(*, samplerate, channels, blocksize, callback):
@@ -334,48 +377,60 @@ def test_stop_racing_open_wins_and_stream_is_never_left_running():
         holder["sink"].stop()
         return stream
 
-    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     holder["sink"] = sink
     sink.open(sample_rate=RATE)
 
-    assert sink.state == "stopped", "a stop() that lands mid-open() must not be overwritten"
+    assert sink.state == "stopped", (
+        "a stop() that lands mid-open() must not be overwritten"
+    )
     assert any(isinstance(e, SinkStopped) for e in events)
-    assert holder["s"].aborted is True, "the stream open() just built must not be left running"
+    assert holder["s"].aborted is True, (
+        "the stream open() just built must not be left running"
+    )
     assert sink._stream is None
 
 
 def test_zero_audio_open_close_never_starts():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
-    sink.close()                             # nothing ever fed
+    sink.close()  # nothing ever fed
     h["s"].tick(3)
     assert all(chunk == b"\x00" * BLOCK_BYTES for chunk in h["s"].out), "silence played"
-    assert not any(isinstance(e, SinkStarted) for e in events), "nothing ever played; no SinkStarted"
+    assert not any(isinstance(e, SinkStarted) for e in events), (
+        "nothing ever played; no SinkStarted"
+    )
 
 
 def test_leftover_counts_toward_buffer_cap():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
     cap_blocks = BUFFER_CAP_SECONDS * 1000 // BLOCK_MS
-    assert sink.feed(_pcm(cap_blocks)) is True   # exactly the cap, one big chunk
-    h["s"].tick(1)                               # consumes 1 block; (cap - 1 block) becomes leftover
+    assert sink.feed(_pcm(cap_blocks)) is True  # exactly the cap, one big chunk
+    h["s"].tick(1)  # consumes 1 block; (cap - 1 block) becomes leftover
     assert sink.feed(_pcm(cap_blocks)) is False, "leftover must count against the cap"
     assert sum(isinstance(e, SinkBufferFull) for e in events) == 1
 
 
 def test_buffered_seconds_includes_leftover():
-    events, = ([],)
+    (events,) = ([],)
     sink, h = _mk(events)
     sink.open(sample_rate=RATE)
-    sink.feed(_pcm(16))                          # one 320ms chunk, crosses the 300ms prebuffer
+    sink.feed(_pcm(16))  # one 320ms chunk, crosses the 300ms prebuffer
     assert round(sink.buffered_seconds, 4) == 0.32
-    h["s"].tick(1)                                # consumes 1 block off the SAME chunk -> _leftover
-    assert round(sink.buffered_seconds, 4) == 0.30, "leftover must be visible to buffered_seconds"
+    h["s"].tick(1)  # consumes 1 block off the SAME chunk -> _leftover
+    assert round(sink.buffered_seconds, 4) == 0.30, (
+        "leftover must be visible to buffered_seconds"
+    )
 
 
-def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(monkeypatch):
+def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(
+    monkeypatch,
+):
     """N1: stop() landing between open()'s state="open" and its later,
     unlocked publish of self._notify_thread must not leave a daemon thread
     parked on queue.get() forever with no sentinel coming.
@@ -394,14 +449,16 @@ def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(mo
 
     class HookedThread(real_thread_cls):
         def __init__(self, *a, **kw):
-            holder["sink"].stop()   # reentrant, landing exactly in the N1 gap
+            holder["sink"].stop()  # reentrant, landing exactly in the N1 gap
             super().__init__(*a, **kw)
 
     def factory(*, samplerate, channels, blocksize, callback):
         holder["s"] = FakeStream(callback, samplerate, channels, blocksize)
         return holder["s"]
 
-    sink = StreamingPcmSink(on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=events.append, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     holder["sink"] = sink
     monkeypatch.setattr(mod.threading, "Thread", HookedThread)
     sink.open(sample_rate=RATE)
@@ -411,11 +468,14 @@ def test_stop_between_open_state_flip_and_notify_thread_publish_does_not_leak(mo
     t = sink._notify_thread
     if t is not None:
         t.join(timeout=2.0)
-        assert not t.is_alive(), "notify thread parked forever without a sentinel -- N1 leak"
+        assert not t.is_alive(), (
+            "notify thread parked forever without a sentinel -- N1 leak"
+        )
 
 
 def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
     import tldw_chatbook.Audio.streaming_sink as mod
+
     events = []
     monkeypatch.setattr(mod, "_import_sounddevice", lambda: None)
     sink = StreamingPcmSink(on_event=events.append)
@@ -424,17 +484,22 @@ def test_open_without_sounddevice_and_no_factory_fails_cleanly(monkeypatch):
     assert any(isinstance(e, SinkFailed) for e in events)
 
 
-@pytest.mark.parametrize("kwargs", [
-    pytest.param(dict(sample_rate="24000"), id="string-sample-rate"),
-    pytest.param(dict(sample_rate=RATE, channels="1"), id="string-channels"),
-    pytest.param(dict(sample_rate=24000.0), id="float-sample-rate"),
-    pytest.param(dict(sample_rate=0), id="zero-sample-rate"),
-    pytest.param(dict(sample_rate=-RATE), id="negative-sample-rate"),
-    pytest.param(dict(sample_rate=RATE, channels=0), id="zero-channels"),
-    pytest.param(dict(sample_rate=RATE, channels=-1), id="negative-channels"),
-    pytest.param(dict(sample_rate=True), id="bool-sample-rate"),
-])
-def test_open_with_invalid_sample_rate_or_channels_fails_closed_instead_of_raising(kwargs):
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param(dict(sample_rate="24000"), id="string-sample-rate"),
+        pytest.param(dict(sample_rate=RATE, channels="1"), id="string-channels"),
+        pytest.param(dict(sample_rate=24000.0), id="float-sample-rate"),
+        pytest.param(dict(sample_rate=0), id="zero-sample-rate"),
+        pytest.param(dict(sample_rate=-RATE), id="negative-sample-rate"),
+        pytest.param(dict(sample_rate=RATE, channels=0), id="zero-channels"),
+        pytest.param(dict(sample_rate=RATE, channels=-1), id="negative-channels"),
+        pytest.param(dict(sample_rate=True), id="bool-sample-rate"),
+    ],
+)
+def test_open_with_invalid_sample_rate_or_channels_fails_closed_instead_of_raising(
+    kwargs,
+):
     """F3 fix-round: `open()` documents fail-closed on any failure, but used
     to do arithmetic on `sample_rate`/`channels` (e.g.
     `sample_rate * blocksize_ms // 1000`) before any validation guarded it
@@ -454,7 +519,7 @@ def test_open_with_invalid_sample_rate_or_channels_fails_closed_instead_of_raisi
     """
     events = []
     sink, h = _mk(events)
-    sink.open(**kwargs)   # must not raise
+    sink.open(**kwargs)  # must not raise
     assert sink.state == "failed"
     assert any(isinstance(e, SinkFailed) for e in events)
     assert sink.terminal_reason == "failed"
@@ -472,7 +537,7 @@ def test_open_with_invalid_sample_rate_is_a_no_op_when_not_idle():
     sink.open(sample_rate=RATE)
     assert sink.state == "open"
     events.clear()
-    sink.open(sample_rate="garbage")   # already open -> must be a no-op
+    sink.open(sample_rate="garbage")  # already open -> must be a no-op
     assert sink.state == "open"
     assert events == []
 
@@ -505,9 +570,11 @@ def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
     def factory(*, samplerate, channels, blocksize, callback):
         return FakeStream(callback, samplerate, channels, blocksize)
 
-    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     sink.open(sample_rate=RATE)
-    sink.feed(_pcm(16))                      # crosses the prebuffer threshold
+    sink.feed(_pcm(16))  # crosses the prebuffer threshold
     out = np.zeros((FRAMES, 1), dtype=np.int16)
     sink._callback(out, FRAMES, None, None)  # queues SinkStarted's "emit" job
     assert listener_started.wait(timeout=2.0), "listener never started"
@@ -516,7 +583,9 @@ def test_stop_from_a_thread_with_a_blocking_listener_returns_promptly():
     sink.stop()
     elapsed = time.monotonic() - start
 
-    assert elapsed < 0.2, f"stop() blocked for {elapsed:.3f}s -- must never join the notify queue"
+    assert elapsed < 0.2, (
+        f"stop() blocked for {elapsed:.3f}s -- must never join the notify queue"
+    )
     assert sink.settle(timeout=2.0), "notify queue never settled"
     assert any(isinstance(e, SinkStopped) for e in events)
 
@@ -551,7 +620,7 @@ def test_on_event_may_be_invoked_concurrently_from_multiple_threads():
             events.append((type(e).__name__, thread_name))
         if isinstance(e, SinkStarted):
             started_entered.set()
-            started_may_finish.wait(timeout=2.0)   # hold this thread inside on_event
+            started_may_finish.wait(timeout=2.0)  # hold this thread inside on_event
         elif isinstance(e, SinkStopped):
             if started_entered.is_set() and not started_may_finish.is_set():
                 entered_concurrently.set()
@@ -559,27 +628,33 @@ def test_on_event_may_be_invoked_concurrently_from_multiple_threads():
     def factory(*, samplerate, channels, blocksize, callback):
         return FakeStream(callback, samplerate, channels, blocksize)
 
-    sink = StreamingPcmSink(on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory)
+    sink = StreamingPcmSink(
+        on_event=on_event, blocksize_ms=BLOCK_MS, stream_factory=factory
+    )
     sink.open(sample_rate=RATE)
     sink.feed(_pcm(16))
     out = np.zeros((FRAMES, 1), dtype=np.int16)
     sink._callback(out, FRAMES, None, None)  # queues SinkStarted's "emit" job
     assert started_entered.wait(timeout=2.0), "listener never started"
 
-    sink.stop()   # SinkStopped delivered synchronously HERE, on this thread,
-                  # while the notify thread is still blocked inside SinkStarted's handler
+    sink.stop()  # SinkStopped delivered synchronously HERE, on this thread,
+    # while the notify thread is still blocked inside SinkStarted's handler
     started_may_finish.set()
 
-    assert entered_concurrently.is_set(), \
+    assert entered_concurrently.is_set(), (
         "on_event was not actually re-entered concurrently -- test failed to demonstrate the contract"
+    )
     assert sink.settle(timeout=2.0)
     with events_lock:
         recorded = list(events)
     kinds = sorted(kind for kind, _ in recorded)
-    assert kinds == ["SinkStarted", "SinkStopped"], "no event may be lost to the concurrency"
+    assert kinds == ["SinkStarted", "SinkStopped"], (
+        "no event may be lost to the concurrency"
+    )
     threads_by_kind = dict(recorded)
-    assert threads_by_kind["SinkStarted"] != threads_by_kind["SinkStopped"], \
+    assert threads_by_kind["SinkStarted"] != threads_by_kind["SinkStopped"], (
         "the two events must genuinely have been delivered from different threads"
+    )
 
 
 def test_settle_on_a_sink_whose_notify_thread_never_ran_returns_false_immediately():
@@ -600,4 +675,6 @@ def test_settle_on_a_sink_whose_notify_thread_never_ran_returns_false_immediatel
     elapsed = time.monotonic() - start
 
     assert result is False
-    assert elapsed < 0.2, f"settle() took {elapsed:.3f}s -- must return immediately, not wait out the timeout"
+    assert elapsed < 0.2, (
+        f"settle() took {elapsed:.3f}s -- must return immediately, not wait out the timeout"
+    )

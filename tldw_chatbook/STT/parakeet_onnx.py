@@ -300,9 +300,7 @@ class ParakeetOnnxRuntime:
         started = time.monotonic()
         model_load_seconds = self._take_model_load_seconds()
         normalized_language = (language or "en").strip().lower()
-        effective_language = (
-            "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
-        )
+        effective_language = "auto" if self.model_id == PARAKEET_V3_MODEL else "en"
         with _prepared_wav(Path(audio_path), ffmpeg_path) as wav_path:
             duration = self._duration_reader(wav_path)
             use_vad = vad or duration > LONG_FORM_SECONDS
@@ -400,9 +398,7 @@ class ParakeetOnnxRuntime:
 
         started = time.monotonic()
         model_load_seconds = self._take_model_load_seconds()
-        samples = np.frombuffer(source.audio, dtype="<i2").reshape(
-            -1, source.channels
-        )
+        samples = np.frombuffer(source.audio, dtype="<i2").reshape(-1, source.channels)
         mono = samples.astype(np.float32).mean(axis=1) / 32768.0
         ends = segment_end_frames or (len(mono),)
         if (
@@ -410,13 +406,9 @@ class ParakeetOnnxRuntime:
             or any(a >= b for a, b in pairwise(ends))
             or ends[-1] != len(mono)
         ):
-            raise ValueError(
-                "segment_end_frames must increase to the final PCM frame"
-            )
+            raise ValueError("segment_end_frames must increase to the final PCM frame")
         starts = (0, *ends[:-1])
-        logical_waveforms = tuple(
-            mono[start:end] for start, end in zip(starts, ends)
-        )
+        logical_waveforms = tuple(mono[start:end] for start, end in zip(starts, ends))
         duration = len(mono) / source.sample_rate
         if (
             duration > LONG_FORM_SECONDS
@@ -498,9 +490,7 @@ class ParakeetOnnxRuntime:
         """Assemble the shared normalized file-or-buffer result contract."""
 
         granularity = (
-            TimestampGranularity.SEGMENT
-            if timestamps
-            else TimestampGranularity.NONE
+            TimestampGranularity.SEGMENT if timestamps else TimestampGranularity.NONE
         )
         segments = (
             tuple(
@@ -513,9 +503,7 @@ class ParakeetOnnxRuntime:
         is_v3 = self.model_id == PARAKEET_V3_MODEL
         effective_language = "auto" if is_v3 else "en"
         warnings = (
-            (TranscriptionWarningCode.REQUESTED_LANGUAGE_NOT_ENFORCED,)
-            if is_v3
-            else ()
+            (TranscriptionWarningCode.REQUESTED_LANGUAGE_NOT_ENFORCED,) if is_v3 else ()
         )
         provenance = TranscriptionProvenance(
             schema_version=1,

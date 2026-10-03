@@ -595,11 +595,7 @@ def _parakeet_provider(
     model_id = request.identity.model_id
     precision = request.identity.precision
     requested_language = request.options.get("language") or "en"
-    effective_language = (
-        "auto"
-        if model_id == "nemo-parakeet-tdt-0.6b-v3"
-        else "en"
-    )
+    effective_language = "auto" if model_id == "nemo-parakeet-tdt-0.6b-v3" else "en"
     artifact_root = None
     artifact_dependencies: tuple[Any, ...] = ()
 
@@ -705,9 +701,7 @@ def _parakeet_provider(
         attempt_id = kwargs.get("attempt_id") or request.attempt_id
         batch_id = kwargs.get("batch_id") or context.get("batch_id")
         job_id = kwargs.get("job_id") or request.job_id
-        language = (
-            kwargs.get("language") or request.options.get("language") or "en"
-        )
+        language = kwargs.get("language") or request.options.get("language") or "en"
         try:
             normalized = runtime.transcribe(
                 audio_path=Path(audio_path),
@@ -769,13 +763,9 @@ def _parakeet_provider(
         transcription_context: dict[str, Any],
     ) -> dict[str, Any]:
         if source.sample_width != 2:
-            raise _ProviderLoadFailure(
-                TranscriptionFailureCode.UNSUPPORTED_CAPABILITY
-            )
+            raise _ProviderLoadFailure(TranscriptionFailureCode.UNSUPPORTED_CAPABILITY)
         current_context = (
-            transcription_context
-            if isinstance(transcription_context, dict)
-            else {}
+            transcription_context if isinstance(transcription_context, dict) else {}
         )
 
         def buffer_failure() -> ParakeetOnnxFailure:
@@ -816,9 +806,7 @@ def _parakeet_provider(
         )
         provenance = build_transcription_provenance_document(
             normalized,
-            failed_attempt=current_context.get(
-                "retry_source_failure_provenance"
-            ),
+            failed_attempt=current_context.get("retry_source_failure_provenance"),
         )
         return {
             "text": normalized.text,
@@ -855,10 +843,7 @@ def _buffer_runner_kwargs(
         parameters = inspect.signature(runner).parameters.values()
     except (TypeError, ValueError):
         return values
-    if any(
-        parameter.kind is inspect.Parameter.VAR_KEYWORD
-        for parameter in parameters
-    ):
+    if any(parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters):
         return values
     accepted = {parameter.name for parameter in parameters}
     return {name: value for name, value in values.items() if name in accepted}
