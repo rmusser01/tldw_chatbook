@@ -128,16 +128,17 @@ async def test_install_modal_shows_consent_details_from_report_and_confirms(
         )
         await pilot.pause()
 
-        text = "\n".join(
-            str(static.renderable) for static in app.screen.query(Static)
-        )
+        text = "\n".join(str(static.renderable) for static in app.screen.query(Static))
         assert "istupakov/parakeet-tdt-0.6b-v2-onnx" in text
         assert "0bbb45a3365852604aef28b538a8f066f4ccaa85" in text
         assert "CC-BY-4.0" in text
         assert "int8" in text
         assert str(destination) in text
         assert "Enough free space" in text
-        assert app.screen.query_one("#parakeet-v2-install-confirm", Button).disabled is False
+        assert (
+            app.screen.query_one("#parakeet-v2-install-confirm", Button).disabled
+            is False
+        )
 
         await pilot.click(app.screen.query_one("#parakeet-v2-install-confirm", Button))
         await pilot.pause()
@@ -166,9 +167,7 @@ async def test_install_modal_renders_values_from_the_injected_report(
         await app.push_screen(_modal(report), lambda result: None)
         await pilot.pause()
 
-        text = "\n".join(
-            str(static.renderable) for static in app.screen.query(Static)
-        )
+        text = "\n".join(str(static.renderable) for static in app.screen.query(Static))
         assert str(destination) in text
         assert f"{123_456_789 / (1024 * 1024):.1f}" in text
         assert f"{999_999_999 / (1024 * 1024):.1f}" in text
@@ -190,9 +189,7 @@ async def test_install_modal_surfaces_gating_errors_and_disables_confirm(
         await app.push_screen(_modal(report), lambda result: None)
         await pilot.pause()
 
-        text = "\n".join(
-            str(static.renderable) for static in app.screen.query(Static)
-        )
+        text = "\n".join(str(static.renderable) for static in app.screen.query(Static))
         assert "requires a credential" in text
         # Confirming a plan that would immediately fail report.grant() is
         # pre-empted client-side rather than left to a caught background
@@ -216,9 +213,7 @@ async def test_install_modal_shows_insufficient_space_verdict_and_disables_confi
         await app.push_screen(_modal(report), lambda result: None)
         await pilot.pause()
 
-        text = "\n".join(
-            str(static.renderable) for static in app.screen.query(Static)
-        )
+        text = "\n".join(str(static.renderable) for static in app.screen.query(Static))
         assert "Not enough free space" in text
         confirm = app.screen.query_one("#parakeet-v2-install-confirm", Button)
         assert confirm.disabled is True
@@ -414,7 +409,9 @@ def test_failure_message_maps_consent_mismatch() -> None:
     assert _RAW_MARKER not in message
 
 
-def test_failure_message_maps_preflight_not_grantable_without_leaking_gating_tuple() -> None:
+def test_failure_message_maps_preflight_not_grantable_without_leaking_gating_tuple() -> (
+    None
+):
     # The real shape PreflightReport.grant() raises: embeds the full
     # gating_errors tuple (and a HuggingFace credential-env hint) in its
     # own message -- exactly the internal-state leak Finding 2 flagged.
@@ -451,7 +448,10 @@ def test_failure_message_maps_no_pending_report_without_raw_text() -> None:
     exc = _ParakeetV2NoPendingReportError(
         "No Parakeet v2 install plan is available; retry Install."
     )
-    assert _failure(exc) == "Parakeet v2 install failed. See the application log for details."
+    assert (
+        _failure(exc)
+        == "Parakeet v2 install failed. See the application log for details."
+    )
 
 
 def test_failure_message_falls_back_for_unknown_exception_types() -> None:
