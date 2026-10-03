@@ -466,11 +466,30 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
 - Then four closed one-row disclosures: **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.
-  **Connection** holds the Provider and Model pickers, the **Endpoint** field,
-  **Test connection & list models**, the paid generation test and the
-  readiness detail. When the chat is not ready (a missing key, an endpoint
-  to set, no model), Chat settings opens with **Connection** already open and
-  the fix focused.
+  Each closed title already shows its value:
+  - **Connection** names the server the chat sends to, where the key comes
+    from, and where to change it, for example "Connection ·
+    api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in
+    Settings ▸ Providers & Models". The key part reads *key from env
+    \<variable\>*, *key saved*, *key missing* or *no key needed* (*Claude
+    subscription* for Anthropic's subscription sign-in, and *key not
+    checked* while another problem, such as a missing endpoint, comes
+    first); the key itself is never shown, and neither is a user name or
+    password written into the server address. A very long server name is shortened with "…" so
+    the title stays one row. Typing a new **Endpoint** updates it at once.
+  - **Request estimate** shows the estimate, for example "Request estimate ·
+    10 / 200,000 tokens".
+  - **Your name in this chat** shows the name this chat uses, or the global
+    name with "(global default)" when the field is blank.
+
+  Opened, **Connection** holds the Provider and Model pickers, the
+  **Endpoint** field (only for providers that take a server address; other
+  providers show no Endpoint label), **Configure credential…** when a key is
+  missing, **Test connection & list models**, the paid generation test with
+  its confirmation step, and the readiness detail. When the chat is not
+  ready (a missing key, an endpoint to set, no model), Chat settings opens
+  with **Connection** already open and the fix focused. Help that points at
+  Settings names **F4**, the key that opens it.
 
 Every field row reads the same way: the label, the value, a word saying
 where the value comes from, and one line of help. The words are the ones
@@ -564,7 +583,7 @@ entry), adjust family, URL, and models, name it, and **Create**. The entry
 is saved to `config.toml` immediately and becomes selectable here, so unlike
 a typed-in URL it never trips the "Endpoint not saved" block, and
 conversations using it survive restart. Renaming, editing, and deletion
-(with a guard that detaches conversations first) live in **F9 ▸ Providers &
+(with a guard that detaches conversations first) live in **F4 ▸ Providers &
 Models ▸ Custom endpoints**.
 
 For a faster switch, **Alt+M** opens **Switch model**, a 140-column list of
