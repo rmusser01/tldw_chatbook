@@ -478,7 +478,8 @@ where the value comes from, and one line of help. The words are the ones
 *model default*, *Console Behavior*, *provider* and *built-in*. A blank field
 says what a blank sends: "blank = provider default" (nothing is sent, so the
 provider's own default applies). A blank **Temperature** or **Top P** shows
-its range instead, because Apply needs a value. Labels match Settings, for
+its range instead, because Apply needs a value while the provider accepts the
+field. Labels match Settings, for
 example **Thinking budget**, and **Budget strategy** and **When limit nears**
 under Context.
 
@@ -486,8 +487,10 @@ Fields the selected provider does not accept are hidden, not shown dimmed,
 and the **Sampling** title names them. For Anthropic it reads "Sampling ·
 hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty,
 Reasoning effort, Reasoning summary, Verbosity (this provider does not accept
-them)"; a line that long wraps onto a second row. Choosing another model
-updates the hidden fields and the line at once. A hidden field takes no focus,
+them)"; a line that long wraps onto a second row. A saved endpoint is judged
+as the server type it was saved with, so a llama.cpp endpoint hides what
+llama.cpp does not accept. Choosing another model updates the hidden fields
+and the line at once. A hidden field takes no focus,
 is never sent, is cleared from the chat by **Apply**, and is not written by
 **Save as model default**; a value saved for it earlier stays in
 `config.toml` untouched. A reasoning or thinking control whose support for

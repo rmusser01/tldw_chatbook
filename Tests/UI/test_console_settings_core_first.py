@@ -61,9 +61,8 @@ class CoreFirstHarness(ConsolidatedCSSApp):
                 "anthropic": {"api_key": "test-key"},
             },
             "chat_defaults": {"max_tokens": 2048},
-            # A registry entry has no capability data, so it shows every
-            # choice row plus the llama.cpp thinking budget: 8 CORE rows,
-            # the most any chat shows.
+            # A registry entry is decided as its family (llama.cpp here):
+            # Reasoning effort and Thinking budget show, the rest hide.
             "custom_endpoints": {
                 "gpu-box": {
                     "display_name": "GPU box",
@@ -406,6 +405,38 @@ _FIT_CHATS = (
 )
 
 
+def _most_core_rows(app_config) -> int:
+    """The most CORE rows any mapped provider shows, for any fit-set model.
+
+    TASK-33006.2's review fix decides a registry entry as its family, so the
+    worst case is no longer the registry entry's 8 rows but OpenAI's 6.
+    """
+    from tldw_chatbook.Chat.Chat_Functions import PROVIDER_PARAM_MAP
+    from tldw_chatbook.Chat.console_provider_support import (
+        console_generation_control_support,
+        supported_generation_fields,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        _SUPPORT_CONTROL_FIELDS,
+    )
+
+    def rows(provider: str, model: str) -> int:
+        supported = supported_generation_fields(provider, model, app_config)
+        return sum(
+            console_generation_control_support(provider, model, name, app_config)
+            != "unsupported"
+            if name in _SUPPORT_CONTROL_FIELDS
+            else name in supported
+            for name in CORE_FIELDS
+        )
+
+    return max(
+        rows(provider, model)
+        for provider in PROVIDER_PARAM_MAP
+        for model in ("model-a", *(chat.model for chat in _FIT_CHATS))
+    )
+
+
 @pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
 @pytest.mark.parametrize("settings", _FIT_CHATS, ids=lambda s: s.provider)
 @pytest.mark.parametrize("edited", [False, True], ids=["fresh", "edited"])
@@ -424,11 +455,11 @@ async def test_model_view_fits_through_the_footer_without_scrolling(
             for _ in range(4):
                 await pilot.pause()
         body = modal.query_one("#console-settings-body", ScrollableContainer)
-        if settings.provider.startswith("custom-ep:"):
+        if settings.provider == "openai":  # the worst case is in the set
             assert len(
                 [name for name in CORE_FIELDS if modal.query_one(
                     f"#{field_control_id(name)}-row").display]
-            ) == len(CORE_FIELDS)
+            ) == _most_core_rows(app.app_config)
         assert body.max_scroll_y == 0, (size, settings.provider, body.virtual_size)
         assert not modal.query_one("#console-settings-fold-hint").display
         container = modal.query_one("#console-settings-modal")

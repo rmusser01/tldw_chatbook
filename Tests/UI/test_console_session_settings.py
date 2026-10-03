@@ -5143,13 +5143,20 @@ _CHOICE_IDS = (
     "console-settings-verbosity",
     "console-settings-thinking-effort",
 )
-#: llama.cpp shows Reasoning effort only; a custom endpoint entry (ADR-146)
-#: has no authoritative capability data, so it shows all four choice rows.
+#: llama.cpp shows Reasoning effort only, and so does a llama.cpp custom
+#: endpoint entry (ADR-146): TASK-33006.2's review fix decides an entry as its
+#: family, where it used to show all four choice rows that Apply then cleared.
+#: OpenAI's three rows and Anthropic's Thinking cover the other Selects.
 _CHOICE_ROW_CHATS = {
     "llama_cpp": (None, 1),
     "custom_endpoint": (
         ConsoleSessionSettings(provider="custom-ep:gpu-box", model="model-a"),
-        4,
+        1,
+    ),
+    "openai": (ConsoleSessionSettings(provider="openai", model="gpt-5"), 3),
+    "anthropic": (
+        ConsoleSessionSettings(provider="anthropic", model="claude-sonnet-4-5"),
+        1,
     ),
 }
 
@@ -14850,20 +14857,19 @@ async def test_single_model_discovery_refreshes_generation_control_support(
         can_save=True,
     )
 
-    def model_dependent_support(_provider, model, control):
+    def model_dependent_support(_provider, model, control, _app_config=None):
         if control == "verbosity" and model == "only-real-model":
             return "unsupported"
         return "unknown"
 
-    # Patched where each module looks it up: TASK-33006.2 moved the row
-    # visibility sync into console_settings_field_row.py; the modal keeps
-    # the draft-retention reads.
+    # Patched where it is looked up: TASK-33006.2 moved every support read
+    # (the row sync and the modal's draft-retention reads, through
+    # ``_control_support``) into console_settings_field_row.py.
     import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row_module
 
-    for module in (settings_modal_module, field_row_module):
-        monkeypatch.setattr(
-            module, "console_generation_control_support", model_dependent_support
-        )
+    monkeypatch.setattr(
+        field_row_module, "console_generation_control_support", model_dependent_support
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
         await app.push_screen(modal)

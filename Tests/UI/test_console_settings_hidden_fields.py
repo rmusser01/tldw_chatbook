@@ -85,7 +85,8 @@ def _shared_hidden(app_config, provider: str, model: str) -> tuple[str, ...]:
         name
         for name in (*SAMPLING_FIELDS, *CORE_FIELDS)
         if (
-            console_generation_control_support(provider, model, name) == "unsupported"
+            console_generation_control_support(provider, model, name, app_config)
+            == "unsupported"
             if name in _CONTROLS
             else name not in supported
         )
@@ -213,6 +214,95 @@ async def test_hidden_set_and_line_come_from_the_shared_support_functions(
             )
         assert _sampling_title(modal) == expected
         assert _painted_title(app, modal).endswith(expected)
+        # Invariant, not a mirror: a shown row is one Apply keeps, unless its
+        # support is unknown (TASK-30012 AC#3).
+        supported = supported_generation_fields(provider, model, app.app_config)
+        for name in set(FIELD_ROW_FIELDS) - set(hidden) - supported:
+            assert (
+                console_generation_control_support(
+                    provider, model, name, app.app_config
+                )
+                == "unknown"
+            ), name
+
+
+@pytest.mark.asyncio
+async def test_a_registry_endpoint_hides_what_its_family_hides() -> None:
+    """AC#3 (review fix): a ``custom-ep`` entry is decided as its family, so
+    a llama.cpp entry shows no control that Apply would then clear."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings("custom-ep:gpu-box", "model-a", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        family_hidden = _shared_hidden(app.app_config, "llama_cpp", "model-a")
+        assert {"reasoning_summary", "verbosity", "thinking_effort"} <= set(
+            family_hidden
+        )
+        assert _hidden_rows(modal) == family_hidden
+        shown = set(FIELD_ROW_FIELDS) - set(family_hidden)
+        assert shown <= supported_generation_fields(
+            "custom-ep:gpu-box", "model-a", app.app_config
+        )
+        assert _sampling_title(modal) == _expected_line(
+            "llama_cpp", family_hidden
+        ).replace(provider_display_name("llama_cpp"), "GPU box")
+
+
+@pytest.mark.parametrize("name", ["Lab [gpu]", "Lab [/b] box"])
+@pytest.mark.asyncio
+async def test_a_bracketed_endpoint_name_paints_literally(name) -> None:
+    """Review fix: a registry display name is user text, never markup."""
+    app = CoreFirstHarness()
+    app.app_config["custom_endpoints"]["lab"] = {
+        "display_name": name,
+        "family": "ollama",
+        "base_url": "http://192.168.1.9:11434",
+        "models": ["qwen3"],
+    }
+    modal = _modal(app, _settings("custom-ep:lab", "qwen3", temperature=0.7))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        hidden = _hidden_rows(modal)
+        assert hidden, "an ollama entry hides something to name"
+        expected = _expected_line("ollama", hidden).replace(
+            provider_display_name("ollama"), name
+        )
+        assert f"hidden for {name}: " in expected
+        assert _sampling_title(modal) == expected
+        assert _painted_title(app, modal).endswith(expected)
+
+
+@pytest.mark.asyncio
+async def test_apply_succeeds_when_a_required_field_is_hidden() -> None:
+    """Review fix (Critical 1): Custom OpenAI 2 does not accept Top P, so its
+    row is hidden and the rebase commits it blank. Apply must not then demand
+    a Top P the user cannot reach."""
+    app = CoreFirstHarness()
+    results: list[object] = []
+    modal = _modal(app, _settings(), draft_rebaser=_real_rebase)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        for _ in range(4):
+            await pilot.pause()
+        assert "top_p" not in supported_generation_fields(
+            "custom_2", "model-a", app.app_config
+        )
+        assert modal._rebase_to("custom_2", "model-a") is True
+        for _ in range(3):
+            await pilot.pause()
+        assert "top_p" in _hidden_rows(modal)
+        assert modal.query_one("#console-settings-top-p").value == ""
+        modal.query_one("#console-settings-save", Button).focus()
+        await pilot.press("enter")
+        for _ in range(4):
+            await pilot.pause()
+        if app.screen is modal:
+            error = modal.query_one("#console-settings-error", Static)
+            raise AssertionError(f"Apply stayed open: {error.content}")
+    assert len(results) == 1
+    committed = results[0].live_commit.settings
+    assert committed.top_p is None
+    assert committed.temperature is not None
 
 
 @pytest.mark.parametrize(
@@ -241,7 +331,8 @@ async def test_unknown_support_stays_visible_with_neutral_copy_in_its_help_line(
         unknown = [
             name
             for name in _CONTROLS
-            if console_generation_control_support(provider, model, name) == "unknown"
+            if console_generation_control_support(provider, model, name, app.app_config)
+            == "unknown"
         ]
         assert unknown, "a new or unmapped model's controls are unknown"
         if provider not in PROVIDER_PARAM_MAP:

@@ -106,8 +106,10 @@ _BUDGETS: dict[str, int] = {
     # TASK-33006.1 lowers it to 7,516: the Model view's field rows, Source
     # words and open focus moved to console_settings_field_row.py.
     # TASK-33006.2 lowers it to 7,466: the support sync moved there too, and
-    # the modal's own support table and "no effect" copy are gone.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7466,
+    # the modal's own support table and "no effect" copy are gone. Its
+    # review fix lowers it to 7,445: the required check and the control
+    # support reads moved there as well.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7445,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

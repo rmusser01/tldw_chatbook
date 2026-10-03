@@ -241,6 +241,28 @@ setup. Their failure said nothing about slowness.
 - To pin the fix, stall the gap deterministically (here, hold `submit_draft`
   across several poll ticks). Do not rely on the slow runner.
 
+## A baseline tree at a generic scratchpad path is someone else's baseline too
+
+**TASK-33006.2, 2026-10-02.** The session scratchpad is shared by every agent the
+session runs, across worktrees. A recovery-relaunch (TASK-33662) agent was running its
+base side from `scratchpad/base` (`run_cover.sh` at 14:51, `run_chunks.sh` at 16:07).
+At about 15:16 the P6 Task 2 implementer ran `mkdir -p scratchpad/base` and extracted
+`e4b2e4f684` into it with `git archive | tar -x`. That overwrote every file the two
+trees shared and kept the others, so the result was a mix of two branches. Around 16:2x
+the implementer ran `rm -rf scratchpad/base` to recover from an ENOSPC. The other
+agent's `cit_base.log` (87 failed, 8 passed) ran against the mixed tree, and
+`res_base_chunk_aa.log` ended with `FileNotFoundError: .../scratchpad/base`. The
+implementer's report said it "saw no sign" of another tree, because the other tree was
+also a repo tree. In the other direction, a tidy-up renamed this fix round's own
+scratch directory while its parity run was still going, and that run died with
+`OSError: cannot send`.
+
+**What to do.** Name every scratch tree and log after your task and SHA, for example
+`scratchpad/p6-t2-fix1-base-e4b2e4f684`. Create it with a plain `mkdir` (no `-p`), so
+an existing directory makes the command fail. Delete only paths you created in this
+run. Before you call a baseline clean, check that its directory did not exist before
+your extraction.
+
 ## A marker "inside the pane" can still sit under the fold hint (TASK-33003.7, 2026-09-29)
 
 `_assert_marker_inside_container` (Tests/UI/test_destination_visual_parity_correction.py)

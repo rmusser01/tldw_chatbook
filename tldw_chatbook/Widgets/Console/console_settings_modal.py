@@ -47,7 +47,6 @@ from tldw_chatbook.Chat.console_provider_support import (
     CARRY_FORWARD_OPTIONS,
     MODEL_FIELD_LABELS,
     ConsoleGenerationControl,
-    console_generation_control_support,
 )
 from tldw_chatbook.Chat.custom_endpoint_registry import (
     CUSTOM_ENDPOINT_ID_PREFIX,
@@ -7372,22 +7371,10 @@ class ConsoleSettingsModal(
         except ValueError:
             return raw_value
 
-    def _required_sampling_errors(self) -> list[str]:
-        errors: list[str] = []
-        if not self.query_one("#console-settings-temperature", Input).value.strip():
-            errors.append("Temperature is required.")
-        if not self.query_one("#console-settings-top-p", Input).value.strip():
-            errors.append("Top P is required.")
-        return errors
-
     def _provider_choice_input_errors(self) -> list[str]:
         errors: list[str] = []
         for label, input_id, control in _PROVIDER_CHOICE_CONTROLS:
-            if console_generation_control_support(
-                self._active_provider,
-                self._current_model_value(),
-                control,
-            ) == "unsupported":
+            if self._control_support(control) == "unsupported":
                 continue
             raw_value = self._invalid_generation_choice_drafts.get(input_id)
             if raw_value is not None:
@@ -7435,11 +7422,7 @@ class ConsoleSettingsModal(
         input_id: str,
     ) -> str | None:
         """Retain a hidden choice unless its raw draft is not representable."""
-        support = console_generation_control_support(
-            self._active_provider,
-            self._current_model_value(),
-            control,
-        )
+        support = self._control_support(control)
         invalid_value = self._invalid_generation_choice_drafts.get(input_id)
         if invalid_value is not None:
             if support == "unsupported":
@@ -7454,11 +7437,7 @@ class ConsoleSettingsModal(
     def _generation_budget_draft_value(self, input_id: str) -> object:
         """Retain a valid hidden budget or carry forward the last valid value."""
         value = self._parse_optional_int_input(input_id)
-        support = console_generation_control_support(
-            self._active_provider,
-            self._current_model_value(),
-            "thinking_budget_tokens",
-        )
+        support = self._control_support("thinking_budget_tokens")
         if support != "unsupported" or value is None:
             return value
         if type(value) is int and value >= 1024:
