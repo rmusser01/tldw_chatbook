@@ -77,7 +77,16 @@ rule('Z-structural', cat='structural')
 rule('Z-misc', title=r'.')
 
 def classify(r: dict[str, Any]) -> str:
-    """Return the PR group of the first rule matching finding ``r`` (``Z-misc`` if none)."""
+    """Return the PR group of the first rule matching a finding.
+
+    Args:
+        r: One finding record, with ``title``, ``locs``, ``cat`` and
+            ``known_task`` keys.
+
+    Returns:
+        The key of the first matching rule in ``R``; ``Z-misc`` matches any
+        title, so every finding gets a group.
+    """
     t = r['title']; p = r['locs'][0] if r['locs'] else ''; c = r['cat']; k = r['known_task']
     for key, tr, pr, cr, kr in R:
         if tr and not tr.search(t): continue
