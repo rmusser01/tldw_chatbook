@@ -91,6 +91,37 @@ this blocker. After **Discard**, your user message offers **Resend** to ask
 again without forking, including after you reopen the conversation — see
 [Resend a broken turn](#resend-a-broken-turn).
 
+### When a message doesn't fit the model
+
+If a message can't fit the selected model, Console refuses it before
+anything is sent and says why in one system line that names the model, for
+example "brand-new-model-x's context size isn't known, so chatbook assumed
+4,096 tokens and reserved 4,096 of them for the reply, and this message can't
+fit. Switch model (Alt+M) to one with a larger, known window, or Set context
+size: add a context_window for brand-new-model-x under
+model_capabilities.models in config.toml." It says the size "isn't known"
+only when it really isn't; a known window that the reply limit fills asks
+you to lower the reply limit (max tokens) instead.
+
+The recovery card above the composer then reads "Not sent — this message
+doesn't fit the selected model. Change a setting above, then retry."
+**Retry response** stays disabled until something that could change the
+outcome changes — the chat's model, endpoint or reply limit, or a saved
+context window — and **Discard** is always available. A refused retry never
+adds a second copy of the same line.
+
+### When a reply fails
+
+A failed reply quotes the provider's own reason, prefixed with its name, and
+says what to do: for example "Provider error from OpenRouter: authentication
+failed. Status: 401. OpenRouter says: “API key expired.” Update the API key in Settings ▸ Providers & Models,
+or run Ctrl+P ▸ Setup: Run setup wizard." A model the provider no longer
+serves (a 404) names **Alt+M: Switch model**. Only the provider's one-line
+message is shown, capped at 200 characters and with anything shaped like a
+key hidden. A provider that stops sending mid-reply reads "no reply for 90 s
+— the provider stopped sending. Retry, or wait longer by raising
+chat_defaults.stream_stall_timeout_seconds in config.toml."
+
 ### Collapsed rail labels
 
 Collapsed Console rails use horizontal **Context->** and **<-Inspect** handles

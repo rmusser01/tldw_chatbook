@@ -30,7 +30,7 @@ Two things to know before trusting it:
 
 | Region | What it shows |
 |---|---|
-| **Header line** | "Home \| Ready · Local" — "Ready"/"Blocked" is model readiness (see Quirks — it is optimistic), then "Local", or "Server: \<name\>" when a server is the runtime source. |
+| **Header line** | "Home \| Ready · Local" — "Ready"/"Not set up" is model readiness (see Quirks — it is optimistic), then "Local", or "Server: \<name\>" when a server is the runtime source. |
 | **Rail** (left) | Four collapsible sections — **Needs Attention**, **Running**, **Recent**, **Details** — each headed by its title (plus " (N)" only when it has items) and a **▾**/**▸** toggle. Work items are two-line rows: a status glyph and title, then the owning source and age ("● g2_demo_article.txt" / "    Library - 6d"). The selected row is marked **▸**. Titles longer than 20 characters are cut with "..." — hover for the full title. |
 | **Canvas** (right) | The selected item's card: title, a status line ("● failed · Library"), the failure reason when there is one ("Interrupted by app restart · retry 1"), and "Opens: \<screen\>" — plus that item's action buttons. With nothing selected it shows the **next-action card** instead (see below). |
 | **Footer** | The global "Ctrl+Q quit \| Ctrl+P palette" hints and the token/DB read-outs — Home adds nothing of its own. |
