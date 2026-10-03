@@ -348,6 +348,7 @@ _GUARDED_TYPE_KEYS = (
 @pytest.mark.asyncio
 @private_profile_test
 async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
+    monkeypatch: pytest.MonkeyPatch,
     request: pytest.FixtureRequest,
 ) -> None:
     """New CSS must not grow the bare-type-subject candidate tax.
@@ -367,9 +368,19 @@ async def test_ancestor_scoped_bare_type_rule_count_is_a_ratchet(
 
     from Tests.UI.app_factory import _build_test_app
 
+    _scratch_env(monkeypatch)
     app = _build_test_app()
     async with app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
+        assert not app.splash_screen_active, "CSS census is still on the splash screen"
+        # Finish Console startup before the census can exit into teardown.
+        async with asyncio.timeout(30):
+            while not app._ui_ready:
+                await pilot.pause(0.05)
+        recovery_buttons = list(app.screen.query("#console-trace-actions Button"))
+        assert len(recovery_buttons) == 4 and all(
+            button.is_mounted for button in recovery_buttons
+        ), "CSS census requires fully mounted Console recovery controls"
         rules_map = app.stylesheet.rules_map
 
         per_key: Counter = Counter()
