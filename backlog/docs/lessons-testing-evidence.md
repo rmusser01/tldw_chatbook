@@ -17911,3 +17911,19 @@ guard dropped their only card after navigation, reproduced by the new legacy
 control. Inspect the survivor's actual resume state and mounted request ID after
 dispatch completes; worker cancellation and registration snapshots alone do not
 prove correct presentation.
+
+
+## A live host round does not prove a kind-registry count
+
+**TASK-32367 / PR #2953, 2026-10-03.** Qodo found a mounted legacy tool
+approval showing zero pending. The actual host state and waiting worker existed,
+but request_mcp_approvals(session_id=None) deliberately skips the separate
+kind/badge entry even when the controller infers a run owner. A real mounted
+RED and a pure zero-registry control both reproduced the count. Preserve
+positive registered counts and use only typed tool-card state for the zero
+compatibility fallback; broad app metadata can instead describe a question or
+another session. The new helper initially asserted unrelated transcript waiting
+copy and failed after its count was fixed; assert the affected Inspector and
+Files counts for this contract. Ordinary full wrappers then verify old journeys,
+worker completion and cleanup. Record the maximum-count compatibility bound
+rather than claiming an additive deduplicated mixed legacy/registered total.

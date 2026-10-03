@@ -14142,7 +14142,17 @@ class ChatScreen(BaseAppScreen):
         count = getattr(controller, "pending_round_count", None)
         store = self._console_chat_store
         if callable(count) and store is not None:
-            return count(store.active_session_id or "")
+            registered = count(store.active_session_id or "")
+            if registered:
+                return registered
+            # Legacy unscoped tool rounds can mount without a kind-registry entry.
+            task_approval = self._task_resume_state.pending_approval
+            if not task_approval or (
+                isinstance(task_approval, dict)
+                and task_approval.get("phase") == "finishing"
+            ):
+                return 0
+            return 1
 
         explicit_count = getattr(
             self.app_instance, "console_pending_approval_count", None

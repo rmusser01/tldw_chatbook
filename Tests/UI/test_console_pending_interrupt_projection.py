@@ -3,6 +3,7 @@
 import threading
 import time
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from textual.widgets import Button, Static
@@ -649,6 +650,101 @@ async def _verify_late_chat_create_projection_transition(
             await _stop_workers(controller, workers, pilot)
 
 
+@pytest.mark.parametrize(
+    ("registered", "task_approval", "expected"),
+    [
+        (0, None, 0),
+        (0, {"round_id": "legacy"}, 1),
+        (0, {"round_id": "finishing", "phase": "finishing"}, 0),
+        (2, None, 2),
+        (2, {"round_id": "legacy"}, 2),
+        (2, {"round_id": "finishing", "phase": "finishing"}, 2),
+    ],
+)
+def test_registry_count_keeps_tool_card_compatibility_kind_specific(
+    registered, task_approval, expected
+):
+    """Use the typed tool card without importing unrelated global attention.
+
+    Args:
+        registered: Active-session approval count from the real registry seam.
+        task_approval: Tool-specific card state, including a finishing control.
+        expected: Honest count preserving queued rounds and legacy compatibility.
+    """
+    from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
+
+    screen = SimpleNamespace(
+        _console_chat_controller=SimpleNamespace(
+            pending_round_count=lambda session_id: registered
+        ),
+        _console_chat_store=SimpleNamespace(active_session_id="viewed"),
+        _task_resume_state=SimpleNamespace(pending_approval=task_approval),
+        app_instance=SimpleNamespace(
+            console_pending_approval_count=99,
+            pending_console_approval={"kind": "question"},
+        ),
+    )
+    assert ChatScreen._console_pending_approval_count(screen) == expected
+
+
+async def _verify_legacy_tool_approval_counts_in_the_mounted_view(request, tmp_path):
+    """Count a real unscoped tool card on every generic approval-count surface.
+
+    Args:
+        request: Existing isolated private-profile collection owner.
+        tmp_path: Separate database directory for this fresh mounted Console.
+    """
+    app = _build_app(tmp_path)
+    workers = []
+    async with app.run_test(size=(160, 48)) as pilot:
+        console, controller, store, session_id = await _seed_console(app, pilot)
+        _start_live_turn(console, controller, store, session_id)
+        try:
+            worker, result = _arm(controller, None, call=_risk_row())
+            workers.append(worker)
+            await _wait(
+                pilot,
+                lambda: (
+                    bool(list(console.query("#chat-approval-card")))
+                    and console.query_one("#chat-approval-card").display
+                    and bool(console.query_one("#chat-approval-card")._batch_round_id)
+                ),
+            )
+            round_id = console.query_one("#chat-approval-card")._batch_round_id
+            assert round_id in controller._pending_approval_rounds
+            assert worker.is_alive()
+            # Legacy calls have a host round, but deliberately no kind/badge entry.
+            assert controller.pending_round_count(session_id) == 0
+            assert console._task_resume_state.pending_approval["round_id"] == round_id
+            assert console._console_pending_approval_count() == 1
+            console._sync_console_rail_and_controls()
+            await pilot.pause()
+            inspector = console.query_one(
+                "#console-run-inspector-state", ConsoleRunInspector
+            )
+            assert inspector.state.pending_approval_count == 1
+            rendered = "\n".join(str(row.render()) for row in inspector.query(Static))
+            assert "Approvals: 1 pending" in rendered, rendered
+            attention = console._workspace._workspace_files_attention_snapshot()
+            assert attention.pending_approval_count == 1
+            assert "1 approval waiting" in attention.status_copy
+            controller.resolve_pending_approval(
+                {"builtin__write_file": "deny"}, round_id=round_id
+            )
+            await _finish_worker(pilot, worker)
+            assert result["decisions"] == {"builtin__write_file": "deny"}
+            assert console._console_pending_approval_count() == 0
+            console._sync_console_rail_and_controls()
+            await pilot.pause()
+            assert inspector.state.pending_approval_count == 0
+            assert (
+                console._workspace._workspace_files_attention_snapshot().pending_approval_count
+                == 0
+            )
+        finally:
+            await _stop_workers(controller, workers, pilot)
+
+
 @pytest.mark.asyncio
 @private_profile_test
 async def test_session_owned_pending_projection_journeys(
@@ -666,6 +762,7 @@ async def test_session_owned_pending_projection_journeys(
         _verify_review_routes_reach_visible_skill_confirm_before_queued_approval,
         _verify_chat_create_confirmation_has_its_own_kind_and_review_route,
         _verify_late_chat_create_projection_spares_the_active_sibling,
+        _verify_legacy_tool_approval_counts_in_the_mounted_view,
     )
     for index, journey in enumerate(journeys):
         case_path = tmp_path / str(index)

@@ -952,3 +952,37 @@ source pins. Fresh full artifact preflight passes (exit0; all239 source pins
 stable), with the unchanged124-file UI census. Published-head review/all four
 CI gates, latest dev and verified normal merge remain required. TASK-32367
 remains In Progress until hosted checks pass.
+
+
+Legacy tool-approval count review follow-up (Qodo62959751, 2026-10-03 UTC)
+
+A real request_mcp_approvals(session_id=None) leaves a live host round and
+answerable mounted tool card but intentionally no kind/badge entry. Its UI
+count returned zero. Valid RED reproduces that count in the mounted view and
+one pure legacy control; five finishing/positive/global-metadata controls pass.
+The initial GREEN test also asserted unrelated legacy activity copy; that new
+fixture assertion was corrected to actual Inspector and Files count surfaces,
+without changing production activity projection. Partial selection is retained
+as regression evidence only; ordinary full-wrapper qualification follows.
+
+Change only ChatScreen._console_pending_approval_count: preserve a positive
+active-session registry count; on zero, count only the typed pending tool card,
+excluding finishing state. Unrelated app/global counts remain unreachable on
+this real-registry path. Older-controller fallback and all other screen AST,
+original UI helpers/assertions and private-wrapper census are unchanged. Of 239
+source pins, 237 retain bytes; only screen and projection tests change. Existing
+ADR-067/094/195 apply, no new owner/interface/authority or ADR.
+
+Complete projection/Close/compact-approval files pass all 24 fresh-app journeys
+in five ordinary private wrappers plus six boundary controls (11 top-level
+cases; zero failures/errors/skips; 352.17s). No selection
+plugin; maximum child report 102.668s under the unchanged 180s cap.
+All 99 host/consent cases and all 37 exact Perf Guards pass.
+No budgets, snapshots, counters, ticks or limits change. Fresh full artifact
+preflight, zero-new Ruff across 35 files and range-format/diff checks pass. Independent review
+has no remaining actionable findings. The mixed legacy/registered compatibility
+rule preserves the registered count rather than claiming an additive deduplicated
+total; AC8 explicitly bounds that case. QA legacy_approval_count_review_followup
+records exact bytes, receipts, fixture modes and earlier evidence limits.
+No fresh native/queue replay or full local-suite claim. Task remains In Progress
+until published-head review and all four hosted gates pass before normal merge.

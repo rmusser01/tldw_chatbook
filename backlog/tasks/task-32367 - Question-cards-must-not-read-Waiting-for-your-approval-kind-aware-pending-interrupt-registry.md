@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-03 06:37'
+updated_date: '2026-10-03 07:20'
 labels:
   - console
   - approvals
@@ -32,6 +32,7 @@ Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/super
 - [x] #5 A pending agent chat-creation confirmation is classified as a confirmation, contributes zero tool-approval rounds, and stays reachable through keyboard Review and its attention tab; Close declines it without creating a chat.
 - [x] #6 A question arriving after its session commits Close returns cancelled without a retained card or wait; existing sibling questions stay answerable.
 - [x] #7 A delayed chat-create confirmation from a closed or no-longer-viewed session cannot replace the active session decision; a live sibling confirmation remains answerable.
+- [x] #8 A visible legacy no-session tool-approval card contributes one pending approval when no registered approvals exist; finishing cards and unrelated broad app metadata do not, and positive queued registry counts remain exact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -80,6 +81,12 @@ ADR required: no new ADR.
 ADR paths: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/150-agent-chat-fork-and-spawn.md.
 Reason: routine correction at existing UI-thread confirmation projection; no new lock, authority, owner or persistence contract.
 The alleged register-after-sweep ordering is excluded by the shared standalone registry lock; preserve exact call-through62-pass probe and its queue-owner fixture correction. Independently reproduce the separate captured-payload presentation path using real mounted Console: pause at worker marshal after registration, complete source Close, resume and inspect survivor task state/card. Add late sibling-navigation coverage so an old callback cannot replace a live sibling confirmation. Fix only the existing UI-thread marshal currentness seam after valid RED. Preserve live and legacy/no-session consent, FIFO/remount and cancellation. Run complete consent/execution, pending projection, mounted Close and exact performance neighbors; fresh lint/derived preflight and independent review. Retain earlier native receipts with their source limits, no fresh native replay claim. Require clean final-head Qodo/all four hosted gates/latest dev before verified normal merge.
+
+Qodo legacy approval count follow-up (62959751, PR2953):
+ADR required: no new ADR.
+ADR paths: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/195-console-live-tool-call-presentation.md.
+Reason: routine correction in the existing kind-aware UI count; no new host/registry owner, authority, storage or public interface.
+Reproduce a real mounted request_mcp_approvals(session_id=None): its host round exists and its card is answerable, but the kind/badge registry intentionally remains empty. Inspect actual UI and generic workspace attention counts. Add focused controls for finishing cards, positive queued registry counts and unrelated broad app metadata. Preserve the real registry path's kind/session isolation; use only the typed pending-approval card when zero registered approvals need the existing visible-card compatibility fallback. Do not restore generic app/global counts in the real-registry path, which could miscount questions or other sessions. After valid RED, change only _console_pending_approval_count and preserve all older-controller fallbacks. Run complete projection/Close/approval mounted groups, consent/host neighbors, exact Perf Guards, lint/format and fresh artifact preflight. No fresh native replay claim. Keep the task In Progress until fresh published-head Qodo/all four gates/current dev pass before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -120,4 +127,6 @@ Delayed chat-create projection now qualifies the current UI sink, live round, co
 Mounted navigation and completed-Close regressions reproduce stale source cards on reviewed 54c; an isolated unconditional-clear branch comparison reproduces sibling erasure in the otherwise corrected controller. Qodo's separate register-after-sweep claim is excluded by six real call-through lock-order probes; its prior-head overview is clean/resolved after the rebuttal. Final local qualification passes all 58 checked-in Chat cases plus those six probes (64 total with explicit existing collection-profile ownership), five ordinary mounted wrappers covering 23 fresh-app journeys, and all 37 exact Perf Guards, without failures/errors/skips. Existing journey AST/public wrapper census and 235 other source pins are exact (238 current). Range formatting, zero-new Ruff across 35 files, full derived-artifact preflight and independent read-only review pass. Guide, incident lesson and QA chat_create_ui_projection_review_followup preserve valid/invalid fixture modes and source evidence. Original native receipts retained; no fresh native replay. Task remains In Progress until fresh published-head review and all four CI gates pass; verified normal merge remains tracked in PR2953.
 
 Latest-dev PR2964 queue-button integration: all 38 Console patches replay unchanged onto dev74bd039d. Only the inherited queue region and two generated-style pins change; 235 other prior pins remain exact, with the inherited queue regression additionally pinned (239 total). Fresh coupled qualification passes all 23 Console projection/Close/approval journeys plus all 17 inherited queue-button cases (22 top-level cases), and all 37 exact Perf Guards, with zero failures/errors/skips and unchanged caps/budgets/counters. Zero-new Ruff35 and diff checks pass. QA queue_button_dev_integration retains exact sources and fixture modes. Original64-case/native receipts retain their identities; no fresh Chat or native replay claim for this rebase. Fresh artifact preflight and published-head Qodo/all four hosted gates/current dev still required; task remains In Progress.
+
+Qodo62959751 legacy approval count: fixed only ChatScreen._console_pending_approval_count so a real mounted no-session tool card counts one when the kind registry is empty. Positive queued counts remain exact; finishing cards and unrelated global/question metadata do not count. Older-controller fallback and all other screen AST remain unchanged. Six boundary controls, all24 mounted app journeys/five ordinary private wrappers, all99 host/consent cases and exact37 Perf Guards pass; fresh artifact preflight, zero-new Ruff across 35 files, range format/diff and independent review are clean. Guide/incident lesson/QA updated; no fresh native replay. Existing ADR-067/094/195 apply, no new ADR. Mixed legacy+registered behavior intentionally preserves the registered maximum, not a deduplicated additive total. Keep In Progress until final published-head Qodo/all four hosted gates pass; normal merge remains required.
 <!-- SECTION:NOTES:END -->

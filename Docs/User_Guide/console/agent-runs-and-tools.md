@@ -69,8 +69,10 @@ the "Run:" status chip above the composer reads the same kind-aware line.
 The Inspector's `Live work` row uses the same waiting copy. Its `Approvals`
 count and the pinned authority summary's `Run` fact cover tool-approval rounds
 for the viewed conversation, including approvals queued behind another card.
-Questions and skill/worktree confirmations do not increase that count. The
-elapsed figure advances while you watch. The line is live-only — it vanishes
+Questions and skill/worktree confirmations do not increase that count. Older
+integrations can show an approval without attaching it to a conversation; when
+it is the only pending tool decision, the Inspector and Files attention count
+it while you decide. The elapsed figure advances while you watch. The line is live-only — it vanishes
 the moment the reply's own text arrives, and a conversation you reopen later shows the
 completed `Tool` rows below instead. During a fleet turn, while the primary
 waits on its children, the line reads `2 sub-agents · ⚙ grep_files · 12s`
