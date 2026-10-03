@@ -10,6 +10,7 @@ promoted search input and the ``panes`` pattern family.
 from __future__ import annotations
 
 import ast
+import json
 import os
 from dataclasses import astuple
 import re
@@ -30,6 +31,7 @@ from Tests.UI.consolidated_css import (
     BUNDLED_STYLESHEET,
     ConsolidatedCSSApp,
 )
+from Tests.UI.python_style_inventory import inventory_styles
 from tldw_chatbook.css import build_css
 from tldw_chatbook.Utils import adaptive_reader_state as ars
 from tldw_chatbook.Widgets import adaptive_pane_shell as shared
@@ -557,3 +559,48 @@ async def test_a_focused_library_grip_resolves_the_lazy_sheet_focus_rule() -> No
         await pilot.pause()
         assert "reverse" in str(grip.styles.text_style)
         assert "reverse" not in str(app.query_one("#styled-items-grip").styles.text_style)
+
+
+# ---------------------------------------------------------------------------
+# The ``panes`` pattern family (B0, G16) and B0's Python-style floor.
+# ---------------------------------------------------------------------------
+
+#: Every production module B0 changes. ``test_python_style_ratchet`` is red on
+#: dev for other modules, so a failure-set diff cannot see a NEW offender here;
+#: this pin can (ADR-161's hard floor, the same inventory the ratchet uses).
+B0_PRODUCTION_MODULES = (
+    "tldw_chatbook/Widgets/adaptive_pane_shell.py",
+    "tldw_chatbook/Widgets/Library/library_adaptive_reader_shell.py",
+    "tldw_chatbook/Widgets/Library/library_rail.py",
+    "tldw_chatbook/UI/Navigation/base_app_screen.py",
+    "tldw_chatbook/Utils/adaptive_reader_state.py",
+)
+
+
+def test_b0_production_modules_carry_no_python_style_violation() -> None:
+    violations = {
+        module: [
+            (write.line, write.property, write.form)
+            for write in inventory_styles((ROOT / module).read_text(encoding="utf-8"))
+            if write.violation
+        ]
+        for module in B0_PRODUCTION_MODULES
+    }
+    assert {module: found for module, found in violations.items() if found} == {}
+
+
+def test_panes_family_is_registered_in_the_registry_the_catalog_and_the_gallery() -> None:
+    registry = json.loads(
+        (ROOT / "tldw_chatbook/css/patterns.json").read_text(encoding="utf-8")
+    )
+    panes = registry["families"]["panes"]
+    assert panes["classes"] == {}
+    assert "AdaptivePaneShell" in panes["widget_contract"]
+    assert panes["owning_sheet"] in build_css.CSS_MODULES
+    catalog = (ROOT / "backlog/docs/component-patterns.md").read_text(encoding="utf-8")
+    assert "## Panes (adaptive pane shell)" in catalog
+    assert "| panes |" in catalog
+    gallery = (ROOT / "tldw_chatbook/Widgets/pattern_gallery.py").read_text(
+        encoding="utf-8"
+    )
+    assert "``panes``" in gallery and "AdaptivePaneShell" in gallery
