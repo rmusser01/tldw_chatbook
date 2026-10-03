@@ -504,7 +504,9 @@ async def test_voice_resume_restores_all_non_secret_controls():
 async def test_voice_resume_restores_the_omnivoice_preset(monkeypatch):
     import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
 
-    monkeypatch.setattr(wizard_module, "omnivoice_setup_state", lambda *_a, **_k: "ready")
+    monkeypatch.setattr(
+        wizard_module, "omnivoice_setup_state", lambda *_a, **_k: "ready"
+    )
     resume = SetupDraft(
         version=SETUP_DRAFT_VERSION,
         track=TRACK_QUICK,
@@ -5277,7 +5279,9 @@ async def test_mounted_model_save_rejects_settings_changed_discovery_identity(
             assert model_step.selected_model_id == ""
             assert model_step._selection_discovery_key is None
             assert model_step._effective_model_id() == ""
-            error = str(container.query_one("#setup-step-error-pinned", Static).renderable)
+            error = str(
+                container.query_one("#setup-step-error-pinned", Static).renderable
+            )
             assert "connection settings changed" in error.lower()
 
             for _ in range(30):
@@ -10272,10 +10276,8 @@ async def test_summary_footer_shows_the_effective_config_path(monkeypatch, tmp_p
         # the rendered path is the head and tail of the real path joined by
         # a single ellipsis (or the full path when it fits).
         assert "Config file:" in footer
-        line = next(
-            ln for ln in footer.splitlines() if ln.startswith("Config file:")
-        )
-        rendered_path = line[len("Config file: "):]
+        line = next(ln for ln in footer.splitlines() if ln.startswith("Config file:"))
+        rendered_path = line[len("Config file: ") :]
         full_path = str(scratch_config)
         if rendered_path != full_path:
             assert "…" in rendered_path
@@ -10543,9 +10545,7 @@ async def test_ctrl_n_recovers_hidden_widget_focus_and_stops_at_summary():
             # (TASK-21146: Summary prefers its primary exit button), then
             # hidden (display:none / .hidden) widgets must never be focus
             # targets (TASK-1496/1498).
-            preferred = (
-                step.preferred_focus() if isinstance(step, SetupStep) else None
-            )
+            preferred = step.preferred_focus() if isinstance(step, SetupStep) else None
             if (
                 preferred is not None
                 and preferred.focusable
@@ -11621,9 +11621,7 @@ async def test_tools_step_copy_comes_from_the_shared_gate_table():
         assert names == [entry.title for entry in entries]
         for entry in entries:
             rendered = str(
-                step.query_one(
-                    f"#setup-tool-desc-{entry.tool_name}", Static
-                ).render()
+                step.query_one(f"#setup-tool-desc-{entry.tool_name}", Static).render()
             )
             assert rendered == entry.blurb
 
@@ -12906,9 +12904,7 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
             recovery_hint="fix the key",
         ),
     )
-    scope_service = MagicMock(
-        discover_models=AsyncMock(return_value=auth_failed)
-    )
+    scope_service = MagicMock(discover_models=AsyncMock(return_value=auth_failed))
     wizard = _make_wizard()
     wizard.app_instance.app_config = {
         "api_settings": {
@@ -12940,9 +12936,7 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
         row = model_step.query_one("#setup-model-connection-failed")
         row_text = str(row.label)
         assert "Authentication failed" in row_text and "Back" in row_text
-        assert model_step.query_one("#setup-model-retry", Button).has_class(
-            "hidden"
-        )
+        assert model_step.query_one("#setup-model-retry", Button).has_class("hidden")
         assert container.provider_probe_failure() == "authentication"
 
         # M-2: Next gates behind an explicit confirmation; cancel keeps
@@ -12980,9 +12974,7 @@ async def test_auth_failed_probe_drives_row_gate_tracker_and_provider_notice(
             SetupWizardProgress,
         )
 
-        items = container.query_one(
-            ".wizard-progress", SetupWizardProgress
-        ).items
+        items = container.query_one(".wizard-progress", SetupWizardProgress).items
         states = {item.step_id: item.state for item in items}
         assert states[STEP_PROVIDER] == "attention"
 
@@ -13224,11 +13216,15 @@ async def test_show_all_rebuilds_keep_the_selected_theme_and_card_pressed():
         assert appearance.selected_theme == chosen_theme_name
         assert appearance.selected_splash_card == chosen_card_name
 
-        theme_pressed = appearance.query_one("#setup-theme-choice", RadioSet).pressed_button
+        theme_pressed = appearance.query_one(
+            "#setup-theme-choice", RadioSet
+        ).pressed_button
         assert theme_pressed is not None, "no theme row pressed after show-all"
         assert getattr(theme_pressed, "_theme_name", "") == chosen_theme_name
 
-        card_pressed = appearance.query_one("#setup-splash-choice", RadioSet).pressed_button
+        card_pressed = appearance.query_one(
+            "#setup-splash-choice", RadioSet
+        ).pressed_button
         assert card_pressed is not None, "no card row pressed after show-all"
         assert getattr(card_pressed, "_card_name", "") == chosen_card_name
 
@@ -13453,9 +13449,9 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
 
     key = object()
     owner = SimpleNamespace(
-        _selected_provider_outcomes={key: _errored_discovery_result(
-            "missing_credentials"
-        )}
+        _selected_provider_outcomes={
+            key: _errored_discovery_result("missing_credentials")
+        }
     )
 
     category = _handed_off_failure_category(owner, key)
@@ -13477,9 +13473,10 @@ def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
     for owner in (None, SimpleNamespace(_selected_provider_outcomes={})):
         category = _handed_off_failure_category(owner, object())
         assert category == "request failed"
-        assert wizard_state.classify_discovery_failure(
-            "connection_failed", category
-        ) == wizard_state.PROVIDER_PROBE_CONNECTION
+        assert (
+            wizard_state.classify_discovery_failure("connection_failed", category)
+            == wizard_state.PROVIDER_PROBE_CONNECTION
+        )
 
 
 def test_handed_off_failure_category_survives_a_malformed_outcome():

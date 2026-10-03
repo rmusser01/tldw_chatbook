@@ -663,6 +663,7 @@ class TestWizardAtomicProviderHandoff:
         self, monkeypatch
     ):
         container = SetupWizardContainer(SimpleNamespace(app_config={}))
+
         def writer(
             section_values, *, delete_keys=None, locked_snapshot_precondition=None
         ):
@@ -836,9 +837,7 @@ class TestWizardAtomicProviderHandoff:
                 }
             }
         )
-        replacement = SetupWizardContainer(
-            SimpleNamespace(app_config=_reload())
-        )
+        replacement = SetupWizardContainer(SimpleNamespace(app_config=_reload()))
         replacement.stage_provider_setup(
             _typed_provider_draft(
                 source="draft",
@@ -905,9 +904,7 @@ def _console_on_template_defaults(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "exit_route", ["chat", "home", "library", "library_notes"]
-)
+@pytest.mark.parametrize("exit_route", ["chat", "home", "library", "library_notes"])
 @private_profile_test
 async def test_saving_setup_exit_moves_an_untouched_console_chat_to_setup_choice(
     exit_route, monkeypatch, request
