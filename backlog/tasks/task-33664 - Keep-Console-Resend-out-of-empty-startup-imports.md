@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 12:29'
+updated_date: '2026-10-03 13:02'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -200,6 +200,19 @@ Reason: preserve the shipped TASK33660 authentication-refusal translation and in
 4. Authenticate all353 composed source/lesson/ADR/index/incoming hashes, complete tree/index/modes/blob IDs and deletion. Check only incoming four Python files for fatal/Ruff/format and retain exact shipped debt. Verify supportedPython3.12.11 task-ID/path/readability guards and whitespace. Existing CSS, diagnostic, worker, native, SQL, schema, fallback and tightened guard qualifications carry by exact source identity; no new or weakened pin, ceiling, timeout, warmup, count or work.
 5. Commit immutable source and obtain independent read-only preservation/targeted-functional/evidence review. After ALL functional/artifact/review activity settles, run ORIGINAL five actual unchanged tested/untested storage, app-import, UI-ready and boot-CSS cases with exact REPO_ROOT cwd/PYTHONPATH. Read fresh counts rather than relabel historical681/686 imports and1033/1033 UI-ready; retain all warnings and zero-headroom limits. Obtain supplemental independent source/hash/raw/XML/count approval before closing AC3 through CLI.
 6. Documentation-only closure updates four owned canonical Markdown records, retaining every approved source hash and every historical positive/NON-GREEN/baseline/interrupted/unexecuted limitation. Publish once with EXACT observed30c1595985b9abb6281b652a99b0df0e8c6a2c89 lease and concise PR body. Require fresh new-head Qodo/no actionable threads/ALL FOUR jobs, then actual strict protection before normal protected --match-head-commit merge. No rebase while new CI runs. Verify MERGED parents/tree/concurrency proportionately, pause heartbeat and report completion.
+
+## Strict-base legacy flat deletion and root-fork preservation — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; existing ADR211.
+Reason: mechanically integrate shipped TASK33628.6 persistence, local metadata and root-fork rules without changing their owners, schema or authority. Existing schema76, trace custody, progress, diagnostic and provider boundaries remain applicable.
+
+1. All FOUR published941715c876f11697df4e755bc726633bd0ace27c jobs passed and exact-head Qodo was clear, all four threads resolved with complete pagination, before this update. Actual dev22628b0f3c466c8593ecf95c255cd77498f1778f is BEHIND under live strict/admin-enforced protection. Reopen AC3/In Progress through CLI before rebase; AC4 stays checked. Capture353 approved hashes,11 incoming paths, full tree/index/modes/blob IDs and capture_cloud.py deletion.
+2. Rebase the preserving range from exactf87153b799eb6285f2fb417674af1954429ace26 onto exact22628. Two actual overlaps are console_chat_store.py and ChaChaNotes_DB.py, with no changed-function intersection. Independently reproduce clean three-way compositions before rebase and require byte identity afterward; all351 prior non-overlap files and nine incoming non-overlap paths remain exact. Preserve all original incoming assertions, every prior feature function, schema76/migrations/stamp gates and content-free diagnostics. Incoming TASK33628.6 remains Done/checked as shipped; no wider task closes.
+3. Run the unchanged incoming delete persistence, metadata and dispatch-checkpoint modules and bounded existing trace/fork/progress consumers using real SQLite/private profiles/fake providers. Cover marked first-message and before-first forks, saved/temporary/forked chats, durable acceptance, exact unmarked JSON, flat/off-path/hidden child deletion, Undo, rollback, query plan and low SQLite variable limits. No live providers/keys/physical keys, readiness/config/marker override, full suite or wider audit.
+4. Authenticate the362-hash union, full prospective tree/index/modes/blob IDs and deletion. Check incoming/composed Python fatal and added-line style/format proportionately, retain exact inherited debt, and verify supportedPython3.12.11 task-ID/path/readability and owned whitespace. CSS/native/scripts/workflows/diagnostic/worker artifacts and all unchanged original guards carry by exact source identity. Do not weaken ceilings/counts/timeouts/warmup/work.
+5. Obtain independent read-only immutable source/functional/composition/evidence approval. After all functional/artifact/review activity settles, run the ORIGINAL five unchanged tested/untested storage, app-import, UI-ready and boot-CSS cases with child cwd/PYTHONPATH pinned to exact REPO_ROOT. Read fresh counts, retaining all warning/zero-headroom and historical positive/NON-GREEN/baseline/interrupted/unexecuted limits. Supplemental independent source/hash/raw/XML/count approval precedes CLI AC3/Done closure.
+6. Update only the four owned canonical Markdown records after approval, preserving all reviewed hashes/deletion. Publish once with EXACT observed941715c876f11697df4e755bc726633bd0ace27c lease and concise PR body. Require fresh current-head Qodo/no actionable threads/ALL FOUR jobs before any next live strict-base action or normal protected --match-head-commit merge. Verify MERGED state/actual parents/tree/concurrency before pausing heartbeat and reporting completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
