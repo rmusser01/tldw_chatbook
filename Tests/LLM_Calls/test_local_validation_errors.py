@@ -23,6 +23,7 @@ from tldw_chatbook.Chat.console_provider_gateway import (
 from tldw_chatbook.Chat.provider_failures import describe_stream_failure
 from tldw_chatbook.LLM_Calls import LLM_API_Calls
 from tldw_chatbook.LLM_Calls.LLM_API_Calls import chat_with_anthropic, chat_with_cohere
+from tldw_chatbook.Utils.sensitive_llm_logging import sensitive_llm_request
 
 # The handlers read provider settings through the guarded config loader
 # before their local check (same admission signature as test_hosted_chat.py
@@ -113,3 +114,33 @@ async def test_a_streamed_local_refusal_reaches_console_as_not_sent() -> None:
     assert "provider returned HTTP" not in visible
     assert visible.startswith("the app could not build the request")
     assert "Anthropic not sent: it failed a local check on messages" in visible
+
+
+@pytest.mark.asyncio
+async def test_a_sensitive_run_through_the_default_adapter_still_names_the_field() -> None:
+    """Qodo #2974: automatic runs mark the request sensitive, and chat_api_call
+    then rebuilds the error with redacted text. The field must survive that."""
+    gateway = ConsoleProviderGateway(
+        config_provider=lambda: {"api_settings": {"anthropic": {"api_key": "test-key"}}},
+    )
+    resolution = await gateway.resolve_for_send(
+        ConsoleProviderSelection(provider="anthropic", explicit_model="claude-sonnet-4-5")
+    )
+    # Console refuses an empty history itself, so reach the handler's check the
+    # way a real turn can: Anthropic inlines only data-URL images, so a user
+    # turn holding just a remote image leaves it no user message to send.
+    remote_image_only = [
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "https://example.invalid/a.png"}}],
+        }
+    ]
+    with sensitive_llm_request():
+        with pytest.raises(ChatConfigurationError) as caught:
+            _ = [chunk async for chunk in gateway.stream_chat(resolution, remote_image_only)]
+
+    assert caught.value.status_code is None
+    assert "Anthropic not sent: it failed a local check on messages" in describe_stream_failure(
+        caught.value
+    )
+
