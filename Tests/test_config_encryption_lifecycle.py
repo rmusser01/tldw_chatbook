@@ -456,6 +456,63 @@ def test_encrypted_prefix_matches_the_encryption_engine():
     )
 
 
+@pytest.mark.parametrize(
+    ("provider", "key"),
+    [("llama_cpp", "llama_cpp"), ("Ollama", "ollama"), ("OpenAI", "openai")],
+)
+def test_a_still_encrypted_saved_key_is_never_ready(provider, key):
+    # Review round 2 (F-R2-2): a local provider needs no key, so a saved key
+    # that was still `enc:` read "Ready" -- and the send then failed with a
+    # bare HTTP 401 from a server that does require it. Any provider with a
+    # still-encrypted saved key (and no other credential) is blocked with
+    # copy that says why and where to fix it.
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = get_provider_readiness(
+        provider,
+        {
+            "api_settings": {
+                key: {"api_key": ciphertext, "api_url": "http://127.0.0.1:9/v1"}
+            }
+        },
+        environ={},
+    )
+
+    assert readiness.ready is False
+    assert readiness.api_key is None
+    assert readiness.reason == "Saved API key is still encrypted"
+    assert readiness.configuration_issue == "credential_missing"
+    assert "Providers & Models" in readiness.recovery
+
+
+def test_an_environment_key_still_beats_a_stranded_saved_key():
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = get_provider_readiness(
+        "OpenAI",
+        {"api_settings": {"openai": {"api_key": ciphertext}}},
+        environ={"OPENAI_API_KEY": "sk-env-sentinel-key"},
+    )
+
+    assert readiness.ready is True
+    assert readiness.api_key == "sk-env-sentinel-key"
+
+
+def test_a_deliberately_keyless_provider_ignores_a_stranded_saved_key():
+    from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = get_provider_readiness(
+        "llama_cpp",
+        {"api_settings": {"llama_cpp": {"api_key": ciphertext, "credential_source": "none"}}},
+        environ={},
+    )
+
+    assert readiness.ready is True
+
+
 def test_locked_config_reads_its_provider_as_key_missing():
     from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 

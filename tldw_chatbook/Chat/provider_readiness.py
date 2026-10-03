@@ -29,6 +29,7 @@ from unicodedata import category as unicode_category
 # imports (`DB.*`, `Utils.*`) never reach into `Chat`.
 from ..config import (
     ProviderSettingsError,
+    is_encrypted_config_value,
     is_valid_provider_api_key,
     normalize_provider_config_key,
     provider_settings_for_key,
@@ -207,6 +208,7 @@ _MAX_RECOVERY_CHARS = 1024
 #: ADR-146: the readiness reason for a ``custom-ep:<slug>`` id whose registry
 #: entry is gone (TASK-33002.12).
 ENDPOINT_NOT_FOUND_REASON = "Endpoint not found"
+STILL_ENCRYPTED_REASON = "Saved API key is still encrypted"
 _CONFIGURATION_STATE_BY_REASON: dict[
     str, tuple[ConfigurationFacet, ConfigurationIssueCode | None]
 ] = {
@@ -219,6 +221,11 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     "Checking Claude subscription credential": ("incomplete", "credential_missing"),
     "Select a provider": ("incomplete", "provider_missing"),
     "Missing API key": ("incomplete", "credential_missing"),
+    # TASK-34100.4 review round 2 (F-R2-2): the saved key is still `enc:`
+    # ciphertext (a locked session, or a key left under an earlier master
+    # password). Never sent, never Ready -- even for a provider that needs
+    # no key, whose server evidently asks for one.
+    STILL_ENCRYPTED_REASON: ("incomplete", "credential_missing"),
     # ADR-179: keyed provider whose per-account workspace host is
     # unconfigured. The credential is present; the endpoint is the missing
     # half, so the structured issue is endpoint_missing, and the blocked
@@ -233,6 +240,10 @@ _CONFIGURATION_STATE_BY_REASON: dict[
     ENDPOINT_NOT_FOUND_REASON: ("incomplete", "endpoint_missing"),
 }
 _PERSISTED_CREDENTIAL_SOURCES = frozenset({"none", "stored", "environment"})
+_STILL_ENCRYPTED_RECOVERY = (
+    "Re-enter or clear it in Settings > Providers & Models; it was encrypted "
+    "with a master password this session does not have."
+)
 
 
 def _validate_safe_text(value: object, *, label: str, max_chars: int) -> None:
@@ -896,6 +907,21 @@ def get_provider_readiness(
             env_var=env_var,
             reason="Ready",
             recovery=None,
+        )
+
+    if configured_provider_credential_source(
+        provider_settings
+    ) != "none" and is_encrypted_config_value(provider_settings.get("api_key")):
+        return ProviderReadiness(
+            provider=provider_name,
+            provider_key=provider_key,
+            requires_api_key=requires_api_key,
+            ready=False,
+            api_key=None,
+            api_key_source=None,
+            env_var=env_var,
+            reason=STILL_ENCRYPTED_REASON,
+            recovery=_STILL_ENCRYPTED_RECOVERY,
         )
 
     if provider_key not in KNOWN_PROVIDER_KEYS and not provider_settings:
