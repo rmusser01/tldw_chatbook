@@ -1280,13 +1280,33 @@ to bind external folders."
 
 ### Data & Privacy — Privacy & Security
 
-A read-out of your privacy posture: whether config encryption is on, whether
-redaction is active, how many sensitive fields and provider secrets exist
-(counted, never shown), how many referenced environment variables are actually
-set, and your skill-trust status. **Check Privacy** recomputes it; **Open
-Providers & Models** and **Open Advanced Config** are jump buttons. Encryption
-and credentials remain read-only here; change secrets in Providers & Models or
-Advanced Config.
+The page opens with the **Encryption** card, the one place after setup to
+manage the master password that encrypts API keys in config.toml. Its state
+line reads "Config encryption: Off — API keys are stored as plain text in
+config.toml.", "On — you'll enter your master password when chatbook
+starts.", or "On, but locked" when this session started without the password
+(saved keys then read as missing until you relaunch and unlock). Three
+actions, each gated by a password dialog that opens with its field focused:
+
+| Action | Asks for | What happens |
+|---|---|---|
+| **Encrypt keys…** | A new master password, twice | Encrypts every saved key. Refused when encryption is already on. The dialog warns that rewriting config.toml drops comments and custom formatting. |
+| **Change password…** | Your current master password and the new one (twice) | Re-encrypts the saved keys under the new password. A wrong current password changes nothing. |
+| **Turn off encryption…** | Your current master password | Decrypts the saved keys and stores them as plain text again. |
+
+Each action runs in the background and reports its result on the card ("Done:
+…", "That password didn't match. Nothing was changed.", or a failure line). A
+failed action never leaves config.toml half-written: the previous file is
+restored. Startup unlock, the forgotten-password reset and what happens with a
+wrong password are described in
+[First-Run Setup](First_Run_Setup.md#starting-chatbook-when-your-keys-are-encrypted).
+
+Below it is a read-out of your privacy posture: whether redaction is active,
+how many sensitive fields and provider secrets exist (counted, never shown),
+how many referenced environment variables are actually set, and your
+skill-trust status. **Check Privacy** recomputes it; **Open Providers &
+Models** and **Open Advanced Config** are jump buttons. Credentials remain
+read-only here; change secrets in Providers & Models or Advanced Config.
 
 The exception is the unmistakable **DANGER!!! RAW CLI HOST ACCESS** section.
 **Allow raw CLI host access** drafts the persistent
@@ -1600,9 +1620,11 @@ not open an editor.
 - **A splash change had no effect.** All splash settings are startup-only.
   Separately, **Animation speed (x)** is saved to a place this page does not
   read back, so it looks unchanged when you return (backlog task-2706).
-- **Privacy & Security cannot edit encryption or credentials.** Those rows are
-  still read-only. Its raw CLI unlock is the deliberate exception: it uses the
-  category's Save/Revert draft, while Arm/Disarm changes process memory only.
+- **Privacy & Security cannot edit credentials.** The posture rows are
+  read-only. Key encryption is changed through the Encryption card's
+  password-gated actions, which apply at once (no Save). The raw CLI unlock is
+  the one value that uses the category's Save/Revert draft, while Arm/Disarm
+  changes process memory only.
 - **"Open Config File" didn't open anything.** By design — that palette command
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach new chats and open
