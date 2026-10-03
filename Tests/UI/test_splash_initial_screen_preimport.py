@@ -350,9 +350,7 @@ def test_missing_module_degrade_is_unchanged_by_a_pre_import_attempt(monkeypatch
         screen_name="task-21110-missing-route",
         module_path="tldw_chatbook.UI.Screens.no_such_screen_xyz_21110",
     )
-    monkeypatch.setattr(
-        app, "_initial_screen_preimport_route", lambda: missing_route
-    )
+    monkeypatch.setattr(app, "_initial_screen_preimport_route", lambda: missing_route)
 
     assert missing_route.load_screen_class() is None  # today's baseline
 
@@ -433,9 +431,7 @@ async def test_initial_screen_module_is_imported_by_the_thread_not_the_loop(
 
     def spy_import_module(name, *args, **kwargs):
         if name == CHAT_MODULE:
-            importers.append(
-                (threading.current_thread().name, time.perf_counter())
-            )
+            importers.append((threading.current_thread().name, time.perf_counter()))
         return real_import_module(name, *args, **kwargs)
 
     monkeypatch.setattr(screen_registry, "import_module", spy_import_module)

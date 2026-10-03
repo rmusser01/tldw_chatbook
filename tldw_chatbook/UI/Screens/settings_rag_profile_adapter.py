@@ -4,6 +4,7 @@ The RAG category edits the ACTIVE PROFILE (SP2a storage, SP2b resolution) —
 never the deprecated AppRAGSearchConfig.rag.* keys, which the engine ignores.
 All functions here are headless (no Textual imports) and testable.
 """
+
 from __future__ import annotations
 
 import copy
@@ -12,9 +13,12 @@ from typing import Optional
 
 from loguru import logger
 
-from tldw_chatbook.Backup_Recovery.rag_definition_participant import definition_operation
+from tldw_chatbook.Backup_Recovery.rag_definition_participant import (
+    definition_operation,
+)
 
 from tldw_chatbook.RAG_Search.config_profiles import ProfileConfig, get_profile_manager
+
 # Both imported as module seams: tests monkeypatch `ad._active_profile_id` and
 # `ad.set_active_profile` directly (unqualified name lookup at call time),
 # the same pattern already used for `_active_profile_id` below.
@@ -26,10 +30,12 @@ from tldw_chatbook.RAG_Search.simplified.active_config import (
 from tldw_chatbook.RAG_Search.simplified.collection_fingerprint import (
     fingerprint_collection,
 )
+
 # Imported as a module seam (like `set_active_profile` above): tests
 # monkeypatch `ad.index_status` directly to simulate a broken/unavailable
 # vector store without touching a real Chroma instance.
 from tldw_chatbook.RAG_Search.simplified.collection_indexes import index_status
+
 # Module seam (same convention as `set_active_profile`/`index_status`
 # above): saving edits to the ALREADY-ACTIVE profile must also drop the
 # process-wide shared RAG service, mirroring what `set_active_profile`
@@ -63,7 +69,9 @@ def load_rag_defaults_from_active_profile() -> SettingsLibraryRagDefaults:
     """Current active profile's search settings as the category dataclass."""
     profile = _active_profile()
     defaults = (
-        SettingsLibraryRagDefaults() if profile is None else _defaults_from_profile(profile)
+        SettingsLibraryRagDefaults()
+        if profile is None
+        else _defaults_from_profile(profile)
     )
     # task-1337: the direct-Library-tools toggle is global [console] config,
     # not profile data -- overlay the live value so the editor never shows a
@@ -204,6 +212,7 @@ def apply_defaults_to_profile(
     if values.enable_reranking:
         if profile.reranking_config is None:
             from tldw_chatbook.RAG_Search.reranker import RerankingConfig
+
             profile.reranking_config = RerankingConfig()
         if values.reranker_provider:
             profile.reranking_config.model_provider = values.reranker_provider

@@ -1878,7 +1878,9 @@ async def test_home_ready_idle_canvas_primary_start_conversation_routes_to_conso
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
-    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
+    assert host.seen_contexts[-1] == {
+        CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"
+    }
 
 
 @pytest.mark.asyncio
@@ -1939,7 +1941,9 @@ async def test_home_resume_latest_conversation_routes_to_console():
         await pilot.pause(HOME_MOUNT_PAUSE)
 
     assert seen[-1] == "chat"
-    assert host.seen_contexts[-1] == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"}
+    assert host.seen_contexts[-1] == {
+        CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "conv-9"
+    }
 
 
 def test_open_content_item_routes_by_prefix():
@@ -1962,7 +1966,9 @@ def test_open_content_item_routes_by_prefix():
         "library",
         "library",
     ]
-    assert posted[0].screen_context == {CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "42"}
+    assert posted[0].screen_context == {
+        CONSOLE_NAV_CONTEXT_RESUME_LOCAL_CONVERSATION_ID: "42"
+    }
     assert posted[1].screen_context == {LIBRARY_NAV_CONTEXT_NOTE_ID: "7"}
     assert posted[2].screen_context == {
         LIBRARY_NAV_CONTEXT_OPEN_SOURCE_TYPE: "media",

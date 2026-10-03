@@ -301,9 +301,7 @@ async def test_disabled_row_and_badge_read_disabled_and_survive_refresh():
         badge = workbench.query_one("#scheduling-task-status-badge", Static)
         assert "Disabled" in str(badge.render())
 
-        next_run = workbench.query_one(
-            "#scheduling-task-detail-next-run", Static
-        )
+        next_run = workbench.query_one("#scheduling-task-detail-next-run", Static)
         assert "2099" not in str(next_run.render())
 
         # The derived state survives a queue refresh.
@@ -321,12 +319,8 @@ class _DisabledMissedService(MockSchedulingServiceMixin):
 
     async def list_tasks(self, owner_id=None, include_projections=True):
         return [
-            _reminder_with(
-                "task-m", "Failed backup", TaskStatus.MISSED, enabled=False
-            ),
-            _reminder_with(
-                "task-c", "Conflicted", TaskStatus.CONFLICT, enabled=False
-            ),
+            _reminder_with("task-m", "Failed backup", TaskStatus.MISSED, enabled=False),
+            _reminder_with("task-c", "Conflicted", TaskStatus.CONFLICT, enabled=False),
         ]
 
 
