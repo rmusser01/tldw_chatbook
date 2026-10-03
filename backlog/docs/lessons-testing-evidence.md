@@ -17737,3 +17737,22 @@ The same run found that Ctrl+U cleared a version-2 handoff visibly while the sav
 revision stayed unchanged, although direct store edit/clear tests passed. Exercise
 the mounted composer event and reopen the actual database: persistence must be
 wired to the empty edit event, not only to activation or nonblank input.
+
+## Census os.open counts are a function of the temp path's depth
+
+**PR #2969 / TASK-33644, 2026-10-03.** The new trace-GC-pass row was pinned at
+34 opens, "the same in every run" (three runs, both variants). After a rebase it
+read 36 in every run, and once 73. A temporary trace of every billed `os.open`
+with its caller showed neither number is noise. Each private-SQLite helper start
+walks the profile directory chain, one open per path component plus `/` and
+`/dev/null`, so that pass (two helpers) cost `2 x (components + 2)`. The 34 had been measured
+under a scratch `--basetemp` one component shallower than macOS's default
+pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
+1 Hz backup-maintenance probe's own ~37-open walk landing inside the short
+billed window, about one run in ten; the census now holds that probe still for
+the phase. Pin `os_opens` at the depth the gate actually runs at (the default
+temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+### An accepted turn can own the composer before VALIDATING
+
+During TASK34203.2 current-dev qualification, keyboard Send canceled an idle cost-refresh timer, but the queued composer-clear Input.Changed event rearmed it while the controller still reported IDLE. The runtime already held the accepted turn. The preserved timer trace and three focused controls in the current integration QA demonstrate the gap. Refresh routing now checks the existing runtime custody for the exact chat as well as controller status; other idle chats still refresh, and an edit after refusal rearms normally. When guarding accepted work, use its actual custody owner rather than assuming run status has advanced.
