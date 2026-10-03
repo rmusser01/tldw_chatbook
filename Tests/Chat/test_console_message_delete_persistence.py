@@ -1624,6 +1624,74 @@ def test_deleting_an_unsaved_message_tombstones_the_saved_rows_under_it():
     assert _visible(reopened, reopened_session) == reopened_before
 
 
+def test_deleting_an_interstitial_note_tombstones_the_saved_reply_under_it():
+    """The UI path: an unsaved note the turn appends mid-chain, a saved reply.
+
+    A skipped-skill note is a SYSTEM row appended with no saved id between a
+    saved prompt and its reply; the reply is saved under the prompt (its
+    nearest saved ancestor). Delete on the note removes the reply with it.
+    """
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_actions import (
+        ConsoleMessageActionService,
+    )
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    prompt = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="saved prompt", persist=True
+    )
+    note = store.append_message(
+        session_id, role=ConsoleMessageRole.SYSTEM, content="Skipped skill: demo"
+    )
+    reply = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="saved reply",
+        persist=True,
+    )
+    saved_prompt = store.get_message(prompt.id).persisted_message_id
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    # Preconditions: the note is unsaved and offers Delete; the reply is saved
+    # under the prompt, so reopen shows the prompt and reply without the note.
+    assert store.get_message(note.id).persisted_message_id is None
+    actions = ConsoleMessageActionService(
+        canvas_enabled_reader=lambda: False
+    ).available_actions(store.get_message(note.id))
+    assert "delete" in {action.action_id for action in actions}
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == saved_prompt
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    reopened_before = _visible(reopened, reopened_session)
+    assert reopened_before[-2:] == [(saved_prompt, "user"), (saved_reply, "assistant")]
+
+    scope = console_delete_scope(store, note.id)
+    deleted, held = delete_subtree_for_undo(store, note.id)
+
+    assert scope.removed_count == deleted.count == 2
+    assert _visible(store, session_id)[-1] == (saved_prompt, "user")
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 1]
+    assert list(held) == [saved_reply]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == _visible(store, session_id)
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, [saved_prompt, saved_reply]) == [0, 0]
+    assert [m.id for m in store.messages_for_session(session_id)][-3:] == [
+        prompt.id,
+        note.id,
+        reply.id,
+    ]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == reopened_before
+
+
 # --- TASK-33628.12: a voice exchange sent before the first message -------------
 #
 # A completed voice exchange is saved by its own commit, not by the typed send.
