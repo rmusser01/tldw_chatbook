@@ -25,6 +25,7 @@ rows and already have coverage in their owning feature's test file.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -585,7 +586,9 @@ async def test_close_tab_button_confirms_for_unsaved_message_on_hidden_branch():
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_close_tab_button_confirms_before_dropping_a_session_with_messages(request):
+async def test_close_tab_button_confirms_before_dropping_a_session_with_messages(
+    request: pytest.FixtureRequest,
+) -> None:
     """Confirm Close before removing a session with unsaved messages.
 
     Args:
@@ -625,7 +628,9 @@ async def test_close_tab_button_confirms_before_dropping_a_session_with_messages
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text(request):
+async def test_close_empty_session_with_queue_warns_without_exposing_prompt_text(
+    request: pytest.FixtureRequest,
+) -> None:
     """Warn about queued work without exposing its prompt, then preserve it on Stay.
 
     Args:
@@ -855,7 +860,10 @@ async def test_mic_button_routes_a_live_capture_to_cancel_or_stop(
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(request, tmp_path):
+async def test_close_saved_session_warns_only_for_unsaved_draft_and_retains_saved_history(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+) -> None:
     """Warn about the draft and preserve saved history after Close.
 
     Args:

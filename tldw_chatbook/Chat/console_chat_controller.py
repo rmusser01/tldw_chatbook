@@ -61,6 +61,7 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
     CONSOLE_PENDING_CHAT_CREATE_KIND,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
@@ -7192,7 +7193,7 @@ class ConsoleChatController:
         return len(self._live_busy_session_ids())
 
     def add_pending_round(
-        self, session_id: str, round_id: str, kind: str = "approval"
+        self, session_id: str, round_id: str, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
@@ -7244,7 +7245,7 @@ class ConsoleChatController:
             changed = round_id not in rounds
             rounds.add(round_id)
             self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
-                kind or "approval"
+                kind or CONSOLE_PENDING_APPROVAL_KIND
             )
         if changed:
             if self._buddy_sink is not None:
@@ -7346,7 +7347,9 @@ class ConsoleChatController:
         with self._approval_state_lock:
             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
 
-    def pending_round_count(self, session_id: str, *, kind: str = "approval") -> int:
+    def pending_round_count(
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
+    ) -> int:
         """Count one session's outstanding rounds of the requested kind.
 
         Args:
@@ -16633,7 +16636,7 @@ class ConsoleChatController:
         self._announce_detached_approval(session_id, kind=kind)
 
     def _announce_detached_approval(
-        self, session_id: str, *, kind: str = "approval"
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Raise the app-wide toast for a round with no visible Console view.
 

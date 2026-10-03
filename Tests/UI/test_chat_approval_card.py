@@ -701,7 +701,9 @@ async def test_three_row_approval_card_stays_bounded():
 
 @pytest.mark.asyncio
 @private_profile_test
-async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console(request):
+async def test_action_bar_is_actually_visible_at_80x24_in_the_production_console(
+    request: pytest.FixtureRequest,
+) -> None:
     """AC#2: at 80x24 the Submit button is on screen AND not clipped away.
 
     Region alone is not evidence here: pre-fix the button reported a

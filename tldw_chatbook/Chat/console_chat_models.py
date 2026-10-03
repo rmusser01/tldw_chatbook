@@ -370,6 +370,10 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 }
 
 
+#: Approval-kind key shared by pending-round defaults and their copy.
+CONSOLE_PENDING_APPROVAL_KIND = "approval"
+
+
 #: Qodo #4 (task-32345): what the run chip and the turn-activity line say
 #: while an interrupt round is waiting on the user, by round KIND
 #: (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys). Only the two kinds
@@ -381,7 +385,7 @@ _CONSOLE_ACTIVITY_STATUS_WORDS: Mapping[str, str] = {
 #: Sentence-less on purpose: the run chip appends its own full stop, the
 #: activity line appends " · <elapsed>".
 CONSOLE_PENDING_ROUND_COPY: Mapping[str, str] = {
-    "approval": "Waiting for your approval",
+    CONSOLE_PENDING_APPROVAL_KIND: "Waiting for your approval",
     "question": "Waiting for your answer",
 }
 CONSOLE_PENDING_ROUND_DEFAULT_COPY = "Waiting for your confirmation"
@@ -409,8 +413,8 @@ def console_pending_round_copy(kinds: Iterable[str] = ()) -> str:
         The waiting sentence, without trailing punctuation.
     """
     resolved = {str(kind) for kind in kinds}
-    if not resolved or "approval" in resolved:
-        return CONSOLE_PENDING_ROUND_COPY["approval"]
+    if not resolved or CONSOLE_PENDING_APPROVAL_KIND in resolved:
+        return CONSOLE_PENDING_ROUND_COPY[CONSOLE_PENDING_APPROVAL_KIND]
     if resolved == {"question"}:
         return CONSOLE_PENDING_ROUND_COPY["question"]
     return CONSOLE_PENDING_ROUND_DEFAULT_COPY

@@ -1191,3 +1191,43 @@ QA oct03_rate_limit_dev_integration records exact proof, receipts and limits.
 Keep TASK32367 and TASK33625.2 In Progress pending latest-dev publication,
 clean/resolved exact-head Qodo and all four hosted gates, then fresh final
 Done-metadata-head review/checks and verified protected normal merge.
+
+
+Pending approval kind / changed public test signatures (2026-10-03 UTC)
+
+Qodo b4d98154 asks that the three related pending-round approval defaults
+share one kind. CONSOLE_PENDING_APPROVAL_KIND names the identical approval
+scalar in the existing shared models; registration fallback, shared copy and
+Close consequences reuse it. Qodo65fea6a1/d934f324/0dd121c7 identify five
+changed existing test signatures. Add their existing controller/pytest types
+and test-only pathlib.Path. Audit all new AND changed public test signatures
+across the PR: none now omit input/return annotations. No new ADR is required;
+existing ADR043/067/094/150/161/195 apply.
+
+All six full module ASTs equal published835e9bbe after only this exact scalar
+substitution/new declaration-import removal and the five new annotations/
+test-only Path import removal. All other production imports/statements and
+every test body/assertion/fixture/marker/deadline stay exact. All253 other
+source pins are unchanged (259 total). Explicit format checks identify only
+three signature/tuple wraps; apply those exact wraps without unrelated churn.
+All16 final changed ranges format cleanly and zero-new Ruff35 passes.
+
+The full six-module targeted command has110 passes/18 failures
+(67.75s). All six cases from the five changed signatures pass in ordinary
+mode, including the four production-shaped private wrappers. The18 failures
+are unchanged unwrapped routing cases refused at config binding with
+raw_source_selection_changed. An exact preceding-reviewed-head source-only
+control reproduces the same128 cases and18 failure nodes/messages; this is
+published835e9bbe, not pristine dev. Apply only the existing real
+bootstrap_profile owner to those18 nodes through a temporary collection
+plugin: all18 pass (72.23s). Retain both modes; no getter/admission replacement,
+assertion/permission/cap/budget changes, and no whole-command-green claim.
+
+All13 targeted import/module/LOC guards pass. Full artifact preflight passes
+in 133.76s with all259 source pins stable. Backlog and diff checks pass.
+Prior full37-Perf/mounted/native receipts retain their exact original identities;
+no fresh broad/native/full-suite replay is claimed. QA oct03_pending_kind_and_changed_test_types
+preserves the proof, both fixture modes and their controls. Keep TASK32367 and
+TASK33625.2 In Progress pending latest-dev safe publication, fixed-thread
+resolution, fresh exact-head Qodo/all four hosted gates, then final
+Done-metadata-head review/checks and verified protected normal merge.

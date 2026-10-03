@@ -140,6 +140,7 @@ from textual.widgets import Select
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
     CONSOLE_PENDING_CHAT_CREATE_KIND,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
@@ -3094,7 +3095,10 @@ class ConsoleSessionController:
         consequences.extend(
             text
             for kind, text in (
-                ("approval", "Tool approvals: denied; runs cancelled."),
+                (
+                    CONSOLE_PENDING_APPROVAL_KIND,
+                    "Tool approvals: denied; runs cancelled.",
+                ),
                 ("question", "Questions: cancelled without an answer."),
                 ("skill_install", "Skill installs: declined; runs cancelled."),
                 ("skill_script", "Skill scripts: declined; runs cancelled."),

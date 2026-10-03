@@ -380,7 +380,9 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
 
 
 @pytest.mark.parametrize("closing", [False, True], ids=["open-session", "committed-close"])
-def test_primary_requester_still_rides_session_grant(make_controller, closing):
+def test_primary_requester_still_rides_session_grant(
+    make_controller: Callable[[], ConsoleChatController], closing: bool
+) -> None:
     """A remembered grant survives only while its source session is live.
 
     Args:
