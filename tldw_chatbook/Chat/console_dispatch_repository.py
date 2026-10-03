@@ -244,6 +244,8 @@ class ConsoleDispatchRepository:
                         }
                     )
                     if receipt
+                    else MessageMetadata(root_fork=True).to_json()
+                    if acceptance.user_root_fork
                     else None
                 ),
             ),
@@ -1540,6 +1542,8 @@ class ConsoleDispatchRepository:
             or type(acceptance.user_content) is not str
             or type(acceptance.attachments) is not tuple
             or type(acceptance.contributions) is not tuple
+            or type(acceptance.user_root_fork) is not bool
+            or (acceptance.user_root_fork and acceptance.parent_message_id is not None)
         ):
             raise ConsoleDispatchCheckpointValidationError(
                 "Invalid durable turn acceptance."

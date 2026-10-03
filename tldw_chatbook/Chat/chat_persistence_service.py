@@ -3294,14 +3294,32 @@ class ChatPersistenceService:
             expected_count=expected_count,
         )
 
-    def delete_message_subtree(self, *, message_id: str) -> list[dict[str, Any]]:
-        """Atomically tombstone one persisted branch and return its versions."""
+    def delete_message_subtree(
+        self, *, message_id: str, subtree_message_ids: Sequence[str | None] = ()
+    ) -> list[dict[str, Any]]:
+        """Atomically tombstone one persisted branch and return its versions.
+
+        Args:
+            message_id: Persisted id of the branch's root message.
+            subtree_message_ids: Persisted ids the caller shows in the
+                branch (``None`` for unsaved nodes is ignored), including those
+                with no ``parent_message_id`` link (a legacy flat conversation
+                the Console chains in memory, TASK-33628.6); see
+                :meth:`CharactersRAGDB.soft_delete_message_subtree`.
+
+        Returns:
+            The committed tombstones with their new versions.
+
+        Raises:
+            ValueError: The message does not exist.
+        """
         current_message = self.db.get_message_by_id(message_id)
         if not current_message:
             raise ValueError(f"Message {message_id} not found")
         rows = self.db.soft_delete_message_subtree(
             message_id,
             expected_version=current_message["version"],
+            subtree_message_ids=subtree_message_ids,
         )
         self._release_recovered_messages([row["message_id"] for row in rows])
         return rows

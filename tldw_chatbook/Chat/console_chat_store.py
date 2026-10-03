@@ -5982,6 +5982,10 @@ class ConsoleChatStore:
                 if preparation is None or preparation.session_id not in self._sessions:
                     raise RuntimeError("Durable preparation is unavailable.")
                 session = self._sessions[preparation.session_id]
+                from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+                acceptance = flat_roots.durable_acceptance(
+                    acceptance, self._nodes_by_session.get(session.id, {})
+                )
                 existing_reservation = self._durable_commit_in_flight.get(
                     acceptance.preparation_id
                 )
@@ -10893,7 +10897,7 @@ class ConsoleChatStore:
         markers whose durable accounting lives elsewhere: direct user commands
         use local-command run logs, while model calls use the agent run log.
         """
-        self._session_or_raise(session_id)
+        session = self._session_or_raise(session_id)
         if raw_cli_presentation is not None and (
             type(raw_cli_presentation) is not RawCliPresentation
             or role is not ConsoleMessageRole.TOOL
@@ -10959,6 +10963,9 @@ class ConsoleChatStore:
             and self.persistence is not None
             and (defer_terminal_persistence or arm_finalizer)
         )
+        old_leaf = self._active_leaf_by_session[session_id]
+        children = self._children_by_parent.get(session_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -10967,7 +10974,9 @@ class ConsoleChatStore:
             tool_output_full=tool_output_full,
             tool_diff=tool_diff,
             change_review_run_id=change_review_run_id,
-            metadata=metadata,
+            metadata=flat_roots.appended_metadata(
+                metadata, role, old_leaf, children, session
+            ),
             activity_presentation=activity_presentation,
             activity_round_ordinal=activity_round_ordinal,
             raw_cli_presentation=raw_cli_presentation,
@@ -11005,7 +11014,6 @@ class ConsoleChatStore:
                     session_id, anchor_node, content, tool_output_full
                 )
             return self._snapshot(message)
-        old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
@@ -11121,21 +11129,24 @@ class ConsoleChatStore:
         """
         self._message_or_raise(anchor_message_id)
         session_id = self._message_session_index[anchor_message_id]
+        session = self._sessions[session_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
             content=content,
             status=self._initial_status(role=role, content=content),
+            metadata=flat_roots.root_fork_metadata(parent_native_id, session),
         )
         # task-573: a fork can carry the anchor's attachments (Edit & resend
         # of an image-bearing user turn); same seam ``append_message`` uses.
         self._set_message_attachments(message, tuple(attachments))
-        previous_updated_at = self._sessions[session_id].updated_at
+        previous_updated_at = session.updated_at
         previous_active_leaf = self._active_leaf_by_session[session_id]
         try:
             with self._dispatch_branch_mutation(session_id):
-                self._sessions[session_id].updated_at = _utc_now_iso()
+                session.updated_at = _utc_now_iso()
                 self._register_tree_node(
                     session_id, message, parent_native_id=parent_native_id
                 )
@@ -13813,11 +13824,10 @@ class ConsoleChatStore:
         parent_native_id = self._native_parent_by_message.get(message_id)
         on_active_path = message_id in self.active_path_message_ids(session_id)
         subtree_ids = self._subtree_ids(session_id, message_id)
+        nodes = self._nodes_by_session.get(session_id, {})
         if self.persistence is None or message.persisted_message_id is None:
             with self._dispatch_branch_mutation(session_id):
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
+                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
                     raise ValueError("Resolve pending dispatch before deleting this message.")
         tombstones: list[dict[str, Any]] = []
         if self.persistence is not None and message.persisted_message_id is not None:
@@ -13825,16 +13835,17 @@ class ConsoleChatStore:
             if not callable(deleter):
                 raise RuntimeError("Message deletion could not be persisted.")
             with self._dispatch_branch_mutation(session_id):
-                tombstones = deleter(message_id=message.persisted_message_id)
-                if on_active_path and not self._persist_active_leaf(
-                    session_id, parent_native_id
-                ):
+                # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
+                saved = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
+                tombstones = deleter(
+                    message_id=message.persisted_message_id, subtree_message_ids=saved
+                )
+                if on_active_path and not self._persist_active_leaf(session_id, parent_native_id):
                     raise ValueError("Resolve pending dispatch before deleting this message.")
             self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
         children_map = self._children_by_parent.get(session_id, {})
-        nodes = self._nodes_by_session.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
         siblings = children_map.get(parent_native_id)
         if siblings is not None and message_id in siblings:
@@ -15393,9 +15404,9 @@ class ConsoleChatStore:
         revised in place while a turn runs: a realtime user row is created
         ``pending`` at turn-commit and becomes ``final``/``empty``/``failed``
         when its transcript resolves, and a reply is marked ``interrupted``
-        after the fact. So this always overwrites (the caller composes the
-        whole record; there is no partial merge to get wrong) and persists
-        immediately WHEN there is a durable row to write to.
+        after the fact. So this overwrites (the caller composes the whole
+        record; only the store's own ``root_fork`` marker is carried over) and
+        persists immediately WHEN there is a durable row to write to.
 
         A row with no persisted id yet is left alone on purpose: an empty
         realtime user row is not written at all until its transcript lands
@@ -15411,7 +15422,8 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
-        message.metadata = metadata
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+        message.metadata = flat_roots.keep_root_fork(message.metadata, metadata)
         if message.persisted_message_id is not None:
             self._persist_metadata_only(message)
         return self._snapshot(message)
@@ -21909,101 +21921,30 @@ class ConsoleChatStore:
         self._resolve_context_summary_on_resume(session_id, persisted_to_native)
 
     def _chain_legacy_flat_roots(self, session_id: str) -> None:
-        """Chain multiple root-level threads into one linear spine (C1 repair).
+        """Chain legacy flat root-level rows into one linear spine (C1 repair).
 
-        Pre-feature Console persistence wrote EVERY message with
-        ``parent_message_id=NULL`` (the base ``_persist_new_message`` hardcoded
-        ``None``), so an existing conversation ``[U1, A1, U2, A2]`` is stored as
-        four separate roots -- all siblings under ``None``, none with children.
-        On resume the active-leaf fallback (``_most_recent_leaf_native``) then
-        walks only the LAST root, collapsing the transcript to its final message
-        and rendering a phantom ``n/n`` sibling counter on the survivor.
-
-        Historically a GENUINE Console branch was ALWAYS a set of siblings
-        under a shared *non-None* parent (regenerate / create-sibling parent
-        the new node at the anchor's parent), NEVER two separate root
-        threads -- a conversation's real root is its single first message.
-        So more than one root-level thread meant legacy flat data (fully
-        flat, or a flat prefix followed by post-feature branched messages),
-        and it was always correct to chain the roots into a single linear
-        spine.
-
-        Phase B's ``edit_and_resend_message`` broke that invariant on
-        purpose: editing-and-resending the conversation's very FIRST user
-        message forks a NEW root-level USER sibling (``create_sibling``
-        parents the fork at the anchor's own parent, which is ``None`` for a
-        root message) -- a genuine branch that legitimately has more than one
-        root thread. A genuine root-level fork's siblings are ALWAYS all USER
-        (an ASSISTANT node's native parent is never ``None`` -- it always
-        replies to a user turn, even the very first one), so a role-MIXED root
-        set (both USER and ASSISTANT at the root) can ONLY be legacy flat data
-        and is chained. Role-homogeneity is thus the distinguishing signal: a
-        single-role (all-USER) root set is treated as a genuine Phase-B branch
-        and left alone (chaining it would silently splice the newer branch onto
-        the older as a fake parent-child link, corrupting the tree so a
-        swipe/resume shows the wrong content).
-
-        task-572 strengthens the fingerprint for the all-USER root set: a
-        DEGENERATE legacy conversation whose 2+ user turns each got NO
-        assistant reply (reachable in the flat era via repeated
-        failed/blocked sends) also loads as all-USER roots -- but its roots
-        are ALL CHILDLESS, whereas a genuine first-message edit-&-resend
-        fork always hangs at least one reply subtree under a root (the
-        anchor's old tail, and/or the resent branch's own reply). So an
-        all-USER root set is chained when every root is childless, and left
-        alone when any root has a subtree.
-
-        RESIDUAL EDGE (not airtight, narrower than the pre-task-572 gap): a
-        genuine first-message fork whose BOTH branches ended up childless --
-        the anchor never got a reply AND the resent branch's reply never
-        persisted (killed mid-stream before the first flushed chunk) -- is
-        indistinguishable from degenerate legacy and now chains. Non-data-
-        loss (both user rows stay visible, linearly), and strictly rarer
-        than the all-USER-legacy shape this fixes; the two shapes are
-        provably indistinguishable from the persisted tree alone, so no
-        local heuristic can be perfect.
-
-        Roots are chained in their existing insertion order, which is the DB's
-        timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
-        by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
-        insertion order is the ordering signal -- exactly the accepted fallback
-        for equal/absent timestamps). Each root ``r_i`` (i >= 1) is re-parented
-        onto ``r_{i-1}`` and moved out of the ``None`` bucket into
-        ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
-        root (e.g. a post-feature message whose real parent is a flat row) is
-        left intact. After chaining there is exactly one root (``r_0``) and the
-        active-leaf ancestry walk traverses the full spine plus any subtrees.
-
-        A single-root (genuine) tree is left untouched -- the chaining branch
-        never triggers. This is an IN-MEMORY reconstruction only; durable
-        ``parent_message_id`` rows are never rewritten (the active-leaf pointer
-        repair on resume is the durable fix).
+        ``console_legacy_flat_roots.legacy_flat_chain`` picks the roots: every
+        unmarked legacy flat root (a marked fork stays its own root; that module
+        has the rule and its residual edges). They chain in insertion order, the
+        DB's timestamp-ASC root order: each ``r_i`` (i >= 1) moves from the
+        ``None`` bucket to the end of ``r_{i-1}``'s child list, any real subtree
+        left intact, so the ancestry walk traverses the whole spine. IN-MEMORY
+        only: durable ``parent_message_id`` rows are never rewritten.
         """
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         children = self._children_by_parent.get(session_id)
         if children is None:
             return
         roots = children.get(None, [])
-        if len(roots) <= 1:
-            return
         nodes = self._nodes_by_session.get(session_id, {})
-        root_has_assistant = any(
-            nodes[root_id].role is ConsoleMessageRole.ASSISTANT
-            for root_id in roots
-            if root_id in nodes
-        )
-        all_roots_childless = all(not children.get(root_id) for root_id in roots)
-        if not root_has_assistant and not all_roots_childless:
-            # All-USER roots with at least one reply subtree: a genuine
-            # Phase-B root-level fork (an ASSISTANT node's parent is never
-            # None, so any root assistant row is the legacy signature; and a
-            # real fork always carries a subtree). Leave each root
-            # independently navigable via `siblings_at`/`set_active_leaf`.
+        chain = flat_roots.legacy_flat_chain(roots, children, nodes)
+        if len(chain) <= 1:
             return
-        # Keep only the first root under None; chain the rest onto their
-        # predecessor, preserving each root's own existing subtree.
-        children[None] = [roots[0]]
-        previous = roots[0]
-        for root in roots[1:]:
+        chained = set(chain[1:])
+        children[None] = [root for root in roots if root not in chained]
+        previous = chain[0]
+        for root in chain[1:]:
             self._native_parent_by_message[root] = previous
             children.setdefault(previous, []).append(root)
             previous = root
