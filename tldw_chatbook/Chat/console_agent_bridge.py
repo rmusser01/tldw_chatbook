@@ -11292,7 +11292,10 @@ def build_chat_create_tool_closures(
                 return ToolResult(ok=False, error="creation_preparation_refused")
         # Trusted preparation rechecks the captured primary or child actor.
         # Child decisions never remember, so every child request confirms anew.
-        if tool != "new_chat" or grant_scope not in remembered:
+        child_request = (
+            tool == "new_chat" and payload.get("source_agent_kind") == "subagent"
+        )
+        if tool != "new_chat" or child_request or grant_scope not in remembered:
             try:
                 decision = confirm(dict(payload))
             except Exception:
@@ -11303,7 +11306,11 @@ def build_chat_create_tool_closures(
                 return ToolResult(
                     ok=False, error="The user declined. Do not retry this turn."
                 )
-            if tool == "new_chat" and decision.get("remember", False):
+            if (
+                tool == "new_chat"
+                and not child_request
+                and decision.get("remember", False)
+            ):
                 remembered.add(grant_scope)
         # Broad-catch the EXECUTE phase exactly like the sibling
         # run_skill_script_tool does: a raising executor must surface as

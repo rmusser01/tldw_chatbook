@@ -13473,6 +13473,7 @@ class ConsoleChatController:
             )
             if (
                 live_session is not None
+                and continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START
                 and not (
                     continuation.prepared and continuation.prepared.preserve_composer
                 )
