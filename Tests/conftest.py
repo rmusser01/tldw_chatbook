@@ -1291,7 +1291,6 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
-<<<<<<< HEAD
 
 
             # TASK-592/609 (egress hardening arc): the three SSRF/egress
@@ -1398,8 +1397,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # not the config getters, so they keep the bootstrap profile.
             "test_preflight.py",
             "test_provision_install.py",
-            "test_provision_crash_recovery.py",        }
-=======
+            "test_provision_crash_recovery.py",
             # TASK-32171: the Library media-reader traversal suite mounts
             # real production-CSS apps through _flow_app -> _build_test_app ->
             # load_settings on the guarded config loader, so the per-test env
@@ -1418,7 +1416,6 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # and same class as the console integration suites above.
             "test_fleet_teardown_notice.py",
         }
->>>>>>> fix/task-21234-32171-32386-flake-trio
     )
     test_data_dir = (
         _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
