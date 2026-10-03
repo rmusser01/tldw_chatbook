@@ -1,8 +1,9 @@
 ---
 id: TASK-27001
 title: Clean Ruff formatter debt for ruff-ui-prompts-workbench
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - rmusser01
 created_date: '2026-08-31 18:31'
 updated_date: '2026-08-31 18:31'
 labels:
@@ -55,3 +56,13 @@ Clean the `ruff-ui-prompts-workbench` Ruff formatter batch at the owner boundary
 - [ ] `git diff --check` and `Tests/CI/test_backlog_task_id_uniqueness.py` pass. <!-- TASK-26000-CONTRACT: governance -->
 - [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reconcile assigned paths against current `origin/dev` (existence + format state; missing paths recorded with dev delete/rename lineage) and against the TASK-26000 evidence JSON `cleanup_records` `paths_sha256` (mechanical ownership check).
+2. Snapshot each assigned path's `ast.dump` before formatting (type_comments=True with symmetric plain-parse fallback; normalize `TypeIgnore.lineno`).
+3. Run Ruff 0.15.22 `ruff format` on exactly the assigned paths.
+4. Snapshot after-ASTs; require per-file equality (formatter-mandated docstring-normalization deviations enumerated if they occur).
+5. `ruff format --check` must pass on every existing assigned path; `ruff check` findings must not increase vs the pre-format baseline.
+6. Run the focused test surface (bounded; never a bare pytest), plus `Tests/CI/test_backlog_task_id_uniqueness.py` and `git diff --check`; verify the three-way path partition arithmetically before writing notes.
+7. Tick ACs, record Implementation Notes (lineage, commands, results), set status Done.
