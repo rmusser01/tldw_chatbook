@@ -42,14 +42,13 @@ Owner priority (2026-10-03): the data-integrity P0s land first, in this order:
 
 The other P0s follow: .4 (L-01), .5 (L-02), .6 (S-05).
 
-Owner rulings recorded in the subtasks:
+Owner rulings (2026-10-03):
 - Media "Use in Console" links the item to the active workspace on use (TASK-34000.24).
 - Note links get a `[[` picker, and a typed `[[Title]]` that matches exactly one note records a backlink (TASK-34000.11).
-Still open for an owner ruling (see report.md "Questions"):
-- ADR-031 save/key grammar: N-33 in .40, and S-28.
-- A side-by-side reading desk: S-02 in .25 is scoped to preserving state. A desk needs an ADR-086/084 amendment and per-screen approval.
+- Ctrl+S saves in every editor. ADR-031 is amended (refinement dated 2026-10-03). Library editors are covered in .40 and the Media editors in .22. Every other editor in the app is inventoried in TASK-34000.43. S-28 (select-mode key differences) stays with TASK-31569.
+- Build a reading desk. TASK-34000.42 designs it: spec, mockups, the ADR-086/084 amendment, and explicit owner approval before any implementation is filed. TASK-34000.25 (preserving reader and note state, plus Take note) is the near-term fix and does not wait for it.
 
-Subtasks: .1–.27 each hold one P0 or P1 finding. .28–.41 batch the P2/P3 findings by surface.
+Subtasks: .1–.27 each hold one P0 or P1 finding. .28–.41 batch the P2/P3 findings by surface. .42 (reading-desk design) and .43 (Ctrl+S in every remaining editor) record the 2026-10-03 rulings.
 
 These 12 findings are owned by existing tasks, so no new subtask was filed. Re-verify each against the review evidence when its owner closes:
 - N-03 → TASK-32633
