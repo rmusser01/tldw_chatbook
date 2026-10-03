@@ -20,7 +20,7 @@ Setup today is one fixed corridor. This spec gives it a shape that matches what 
 | D1 | Quick track | **4 steps: Welcome → Connect → Model → Ready.** Voice and Protect leave Quick. This reverses TASK-21148 AC#5 but keeps its real guarantee, now written as an invariant: once you leave Welcome, the step count never changes. |
 | D2 | Full track | **11 steps, in dependency order:** Welcome, Connect, Model, tldw server, Search, Tools, Spoken replies, Dictation, Appearance, Keys, Ready. Untouched optional steps write nothing. **Save and finish with defaults** is offered on Model, and **Finish with defaults** on every later step. |
 | D3 | tldw server | An always-shown **tldw server** row on Ready (the AC's "Runtime" row, named for what it measures), a **"Connect a tldw server… (if you run one)"** next step, and an optional Full step. One shared probe says *unreachable / token rejected / not a tldw server*. One coordinator, shared with Settings (ADR-033), rolls back the config write when the bind fails. Sync is disclosed before the choice. Settings' button leaves the collapsed section. |
-| D4 | Ready screen | A verdict from Console's own shared readiness, in **four honest states**: Ready to chat · Set up, key not checked yet · Can't chat yet · Chat not set up. The test result sits on its own line and never contradicts the verdict. Rows appear only for steps you saw, plus Data and Config lines. First run docks **three exits on one nav row**. It fits 80x24 on **both** tracks, with the glyph legend. Esc never finishes setup. |
+| D4 | Ready screen | A verdict from Console's own shared readiness, in **five honest states**: Ready to chat · Set up, key not checked yet · Set up, but the test didn't finish · Can't chat yet · Chat not set up. Only a Say hello test can produce the third. The test result sits on its own line and never contradicts the verdict. Rows appear only for steps you saw, plus Data and Config lines. First run docks **three exits on one nav row**. It fits 80x24 on **both** tracks, with the glyph legend. Esc never finishes setup. |
 | D5 | Say hello (E1) | One test message through Console's real admission and dispatch, as a **probe turn**: no tools, search, history or persona, a model-aware reply cap, and no hidden-turn toast. **Auto-run only on first run, only for a known local engine on loopback with the model already loaded.** Cloud runs only on a press, with a money-first cost line on screen. **Start chatting opens a new chat**; the test stays in History and the arrival line quotes it (Q2). |
 | D6 | What's next (E9) | Up to three relevant next steps (`→`), plus "More (N)". The Console arrival line replaces toasts. Pressing Speak or Dictate with nothing set up opens a setup sheet right there; the sheet never takes an API key. |
 | D7 | Re-run (E5) | A re-run of a working setup opens **"Review your setup"**: the verdict with Say hello, then one row per area. Enter changes just that area and comes back. **Done** returns where you started. One predicate decides dashboard or corridor: *is a usable chat provider configured?* Console's readiness links keep going to the control that fixes them (TASK-34100.10 AC#8; Q9). |
@@ -36,7 +36,7 @@ The owner also confirmed the report's seven "Rejected, on purpose" items (D12). 
 - **What follows from it.** Ready's "Encrypt saved keys with a password…" now appears for most cloud users, the Keys step offers moves in both directions, Q4's rationale no longer leans on a keychain default, and server-token storage stays as Settings does it today.
 
 **What changed in revision 2** (the full list is in §17):
-- **Honesty.** Ready gains a fourth verdict state, a separate test line, quota and rate-limit failures, and a model-aware reply cap (D4, D5).
+- **Honesty.** Ready gains two verdict states ("Set up, key not checked yet" and "Set up, but the test didn't finish"), a separate test line, quota and rate-limit failures, and a model-aware reply cap (D4, D5).
 - **Safety.** Local auto-run is narrowed to an allowlist. Environment keys are never stored. Keychain resolution is moved after first paint, behind a writer guard (D5, D9).
 - **Contradictions resolved.** One entry predicate serves D7, D8 and D10. Console links follow TASK-34100.10 AC#8. Re-run exits follow TASK-34100.10 AC#14 (D4, D7, D8).
 - **Fit.** Full-track Ready is now mocked at 80x24, with the legend and a one-row nav (§3.6).
@@ -91,7 +91,7 @@ Two further gaps belong here because they change who can use setup at all:
 | Sibling | Owns | This spec adds on top |
 |---|---|---|
 | .1 step extraction | Steps in their own modules, `wizard_worker()` helper, busy line | Requires F0 (§4.7) right after it: a step-host protocol, a pure setup session and pure Provider/Model state, so that the dashboard, sheets and plain mode can host steps |
-| .2 first chat works | Catalog repair, **shared readiness verdict with the capacity blocker** (AC#2), real key checks, env-aware Get started card | Ready's four verdict states (D4). The verdict must have an app-free entry for plain mode (D10) and must account for the active runtime source (D3) |
+| .2 first chat works | Catalog repair, **shared readiness verdict with the capacity blocker** (AC#2), real key checks, env-aware Get started card | Ready's five verdict states (D4). The verdict must have an app-free entry for plain mode (D10) and must account for the active runtime source (D3) |
 | .3 Moonshot | Continuation persistence | Say hello exercises the saved-chat path that .3 fixes (D5) |
 | .4 encryption lifecycle | One unlock path, refuse second enable, Settings Encryption card, state-aware Protect | Protect leaves Quick (D1); Ready's "Encrypt saved keys…" option; the key line names encryption, and Keys and Settings offer moves to and from the keychain (D9) |
 | .5 handoff | False toast (AC#8), no unavailable tools (AC#2), minimal plain-chat prompt (AC#6), error categories (AC#4), first-send trace failure (AC#7), single arrival line (AC#11) | Arrival line content (D6). Say hello reuses .5's categories and depends on AC#4, #7 and #8 (D5) |
@@ -347,7 +347,7 @@ The two PocketTTS integration tests move to the Full track, where Spoken replies
    |---|---|---|
    | Ready | `✓ Ready to chat — <provider> · <model> (<context>)` | The shared verdict passes, **and** the key was proven: by a check that proves it (an authenticated endpoint, or a model list that needs the key), by a keyless local engine that answered, or by a test that replied in this run |
    | Set up, key not checked | `✓ Set up — <provider> · <model> (<context>)`, then on the next line "The key isn't checked yet: <provider> lists models for any key. Say hello checks it." | The shared verdict passes, but the key can't be proven offline. This is the [gap-01] class (OpenRouter, Hugging Face, NVIDIA NIM, Novita) until TASK-34100.2/.6 add authenticated probes (report SF1 step 3). Nothing has been tested yet |
-   | Test didn't finish | `! Set up, but the test didn't finish — <cause>` | The shared verdict passes, and the test failed for a reason that doesn't prove the setup is broken (rate limited, too slow, network or server error) |
+   | Test didn't finish | `! Set up, but the test didn't finish — <cause>` | The shared verdict passes, and the test failed for a reason that doesn't prove the setup is broken (rate limited, too slow, network or server error, or a reply chatbook couldn't save). Only a test in this run produces it. D5's failure table words it per cause: a slow first reply reads "! Set up, but no reply yet.", and an unsaved reply "! The reply arrived, but chatbook couldn't save it." |
    | Can't chat | `✗ Can't chat yet — <plain cause>` | The shared verdict is blocked, **or** the test failed in a way that proves the saved setup can't work: key rejected, model not found, no credit, local server not answering, or model not downloaded |
    | Not set up | `– Chat not set up — no AI provider connected` | No usable chat provider (§4.2's predicate) |
 
@@ -407,7 +407,7 @@ Both are measured in the §3.6 mockups.
 - *Five exits, as today* (`FRSW:6640-6658`). Two docked rows at 80x24 take the read-back's space [a11y-01], and the end of setup is the wrong moment for choice overload.
 - *A "More ▾" button for the Library exits.* Rejected by the verifiers (report §5.4 table) and by TASK-34100.12.
 - *Block "Start chatting" when the verdict is ✗.* That would block the "set it up now, start the server later" path the report preserves (report §5.5). On ✗, Start chatting is replaced by [ Go to Console ], and Console's Get started card explains what is missing.
-- *Three verdict states* (revision 1). An OpenRouter key that had expired read "✓ Ready to chat" until the user chose to test it [gap-01], and a failed test sat under a ✓ verdict. Both are fixed by the fourth state and the single mark.
+- *Three verdict states* (revision 1). An OpenRouter key that had expired read "✓ Ready to chat" until the user chose to test it [gap-01], and a failed test sat under a ✓ verdict. Both are fixed by the two added states ("Set up, key not checked yet" and "Set up, but the test didn't finish") and the single mark.
 - *Collapse ✓ rows into one line ("✓ 6 more areas set").* TASK-34100.12 AC#1 asks for at least 8 visible read-back rows. Collapsing What's next to one row buys the space instead, and costs less information.
 - *Esc finishes setup* (revision 1). A key that also stops a test is too easy to press twice.
 - *Move the context size out of the verdict* (the HCI critic's low-severity note). TASK-34100.17 AC#6 specifies "(<context>)". When the verdict is ✗ for capacity, the number is the cause. It stays, as one parenthetical.
@@ -1981,7 +1981,7 @@ Every test below is **RED-verified**: it fails on the pre-change code, then pass
 - **Widget tests (Pilot, real stylesheet):**
   - Welcome's three choices, tracker updates and the Reduce motion row;
   - DOCS → Library Import, with no consent modal mounted;
-  - Ready in states R-cloud, R-key-not-checked, R-local, replied, no credit, ✗ preflight, ✗ test and not set up, on both tracks. Each runs at 80x24, 100x30, 120x40 and 200x60, in glyph and ASCII mode. The checks: the verdict region, the legend whenever –, ! or ✗ shows, at most three exits plus Back on one row, both Library exits and at least 8 read-back rows inside the visible region;
+  - Ready in states R-cloud, R-key-not-checked, R-local, replied, no credit, ✗ preflight, ✗ test, ! test didn't finish and not set up, on both tracks. Each runs at 80x24, 100x30, 120x40 and 200x60, in glyph and ASCII mode. The checks: the verdict region, the legend whenever –, ! or ✗ shows, at most three exits plus Back on one row, both Library exits and at least 8 read-back rows inside the visible region;
   - Esc on Ready never finishes setup, with and without a running test;
   - the dashboard: Change → Save returns with a receipt, a refreshed row and a recomputed verdict; Change → Cancel writes nothing; a deep link highlights its row;
   - the single-step sheet at 80x24, with `allows_secret_entry` false over Console;
@@ -2389,7 +2389,7 @@ Two independent critiques of revision 1 were received the same day: one HCI revi
 
 | Item | Disposition |
 |---|---|
-| 1 Verdict honesty (unverifiable keys, contradictory marks, quota) | **Changed.** Four verdict states, including "✓ Set up — key not checked yet"; the test on its own line, with one mark per region; rows for no credit (402/429 `insufficient_quota`) and rate limiting (D4, D5, §3.6) |
+| 1 Verdict honesty (unverifiable keys, contradictory marks, quota) | **Changed.** Five verdict states, adding "✓ Set up — key not checked yet" and "! Set up, but the test didn't finish" to revision 1's three; the test on its own line, with one mark per region; rows for no credit (402/429 `insufficient_quota`) and rate limiting (D4, D5, §3.6) |
 | 2 256-token cap unsafe for reasoning models | **Changed.** A model-aware cap; empty text at the limit counts as replied; test-only failures never change readiness; the cost line uses the real cap (D5) |
 | 3 Loopback is not "costs nothing" | **Changed.** A positive local-engine allowlist; generic endpoints and keyed endpoints excluded; first run only; nothing to load; the memory cost named (D5) |
 | 4 D9 default vs §2.3 and env keys | **Changed.** An environment key is always the default and never stored; storage applies only to a different, pasted key; a test that env values reach no store (D9, §2.3) |
@@ -2480,3 +2480,6 @@ The owner approved revision 2 on 2026-10-03 with one exception: "yes to all of t
 | §14, §15, §16 | AC#9 mapping notes the ruling; the approval record filled in; an Outcome column for every question; Q4's rationale restated without the keychain default |
 
 A review pass on the applied ruling (2026-10-03) made three further corrections: §7's D3 row still said revision 2's "the token goes to the keyring", and now says the token is stored where Settings stores it today; TASK-34100.16 AC#2 now carries the warning that a copied config.toml carries its keys, which D9 and K20 rely on but no task recorded (added to §6's list); and the keychain note for the second-machine guide moves to F12a, since .16 can land before any key can be in the keychain (D9, §0.4, D11, §10).
+
+The PR review of this spec (PR #2982, 2026-10-03) made these corrections. None changes an owner decision in §15 or §16:
+- **The verdict count.** D4's table has had five states since revision 2, but the Summary, §0.4, D4's rejected alternatives and §17 said "four", because they counted the "Set up, key not checked yet" state and missed "! Set up, but the test didn't finish". Every place now says five, D4's table names D5's per-cause wordings for the ! state, §8.1 adds that state to the Ready widget tests, and TASK-34100.23 AC#1 lists all five states with conditions that match D4 and TASK-34100.29 AC#4.
