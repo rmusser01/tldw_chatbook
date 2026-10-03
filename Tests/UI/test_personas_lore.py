@@ -328,8 +328,17 @@ async def test_regex_switch_round_trips_through_form():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
         app.query_one("#personas-lore-entry-keys", Input).value = "w[ao]rden"
         app.query_one("#personas-lore-entry-content", TextArea).text = "grim jailer"
         app.query_one("#personas-lore-entry-regex", Switch).value = True
@@ -344,15 +353,24 @@ async def test_invalid_regex_pattern_blocks_save():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
         app.query_one("#personas-lore-entry-keys", Input).value = "(a+)+"
         app.query_one("#personas-lore-entry-content", TextArea).text = "x"
         app.query_one("#personas-lore-entry-regex", Switch).value = True
         await pilot.pause()
         await pilot.click("#personas-lore-entry-add")
         await pilot.pause()
-        assert not app.posted   # nothing posted
+        assert not app.posted  # nothing posted
         status = str(app.query_one("#personas-lore-status", Static).renderable)
         assert "too complex" in status
 
@@ -439,8 +457,17 @@ async def test_attachments_empty_state_and_render():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
         widget.load_attachments([])
         await pilot.pause()
         empty = app.query_one("#personas-lore-attachments-empty", Static)
@@ -456,9 +483,20 @@ async def test_attach_button_posts_request():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
-        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
+        app.query_one(
+            "#personas-lore-tabs", TabbedContent
+        ).active = "personas-lore-tab-attachments"
         await pilot.pause()
         await pilot.click("#personas-lore-attach-add")
         await pilot.pause()
@@ -470,10 +508,21 @@ async def test_detach_button_posts_selected_conversation():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
         widget.load_attachments([{"conversation_id": "c1", "title": "Noir case"}])
-        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        app.query_one(
+            "#personas-lore-tabs", TabbedContent
+        ).active = "personas-lore-tab-attachments"
         await pilot.pause()
         app.query_one("#personas-lore-attachments-table", DataTable).move_cursor(row=0)
         await pilot.pause()
@@ -490,10 +539,21 @@ async def test_detach_with_no_selection_does_not_post():
     app = _DetailHost()
     async with app.run_test(size=(140, 40)) as pilot:
         widget = app.query_one(PersonasLoreDetailWidget)
-        widget.load_book({"id": 1, "name": "B", "description": "", "scan_depth": 3,
-                          "token_budget": 500, "recursive_scanning": False, "enabled": True})
+        widget.load_book(
+            {
+                "id": 1,
+                "name": "B",
+                "description": "",
+                "scan_depth": 3,
+                "token_budget": 500,
+                "recursive_scanning": False,
+                "enabled": True,
+            }
+        )
         widget.load_attachments([])  # no rows → nothing selectable
-        app.query_one("#personas-lore-tabs", TabbedContent).active = "personas-lore-tab-attachments"
+        app.query_one(
+            "#personas-lore-tabs", TabbedContent
+        ).active = "personas-lore-tab-attachments"
         await pilot.pause()
         await pilot.click("#personas-lore-attach-detach")
         await pilot.pause()
@@ -1019,14 +1079,18 @@ async def test_add_entry_persists_regex_through_real_screen_handler(
         screen = await _enter_lore(pilot)
         await _select_first_lore(pilot, screen)
         screen.query_one("#personas-lore-entry-keys", Input).value = "w[ao]rden"
-        screen.query_one("#personas-lore-entry-content", TextArea).text = "a pale spirit"
+        screen.query_one(
+            "#personas-lore-entry-content", TextArea
+        ).text = "a pale spirit"
         screen.query_one("#personas-lore-entry-regex", Switch).value = True
         await pilot.pause()
         await pilot.click("#personas-lore-entry-add")
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        entries = WorldBookManager(lore_db).get_world_book_entries(seeded_lore_book["book_id"])
+        entries = WorldBookManager(lore_db).get_world_book_entries(
+            seeded_lore_book["book_id"]
+        )
         added = next(e for e in entries if e["keys"] == ["w[ao]rden"])
         assert added["regex"] is True
 
@@ -1399,13 +1463,15 @@ async def test_attach_via_picker_then_detach_real_db(
     async with app.run_test(size=(200, 60)) as pilot:
         screen = await _enter_lore(pilot)
         await _select_first_lore(pilot, screen)
-        screen.query_one("#personas-lore-tabs", TabbedContent).active = (
-            "personas-lore-tab-attachments"
-        )
+        screen.query_one(
+            "#personas-lore-tabs", TabbedContent
+        ).active = "personas-lore-tab-attachments"
         await pilot.pause()
 
         async def _fake_push(screen_obj):
-            return "conv-x" if isinstance(screen_obj, ConversationAttachPicker) else None
+            return (
+                "conv-x" if isinstance(screen_obj, ConversationAttachPicker) else None
+            )
 
         monkeypatch.setattr(screen.app, "push_screen_wait", _fake_push, raising=False)
         monkeypatch.setattr(
@@ -1427,7 +1493,9 @@ async def test_attach_via_picker_then_detach_real_db(
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
+        assert (
+            manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
+        )
 
 
 @pytest.mark.asyncio
@@ -1445,9 +1513,9 @@ async def test_attach_survives_list_conversations_failure(
     async with app.run_test(size=(200, 60)) as pilot:
         screen = await _enter_lore(pilot)
         await _select_first_lore(pilot, screen)
-        screen.query_one("#personas-lore-tabs", TabbedContent).active = (
-            "personas-lore-tab-attachments"
-        )
+        screen.query_one(
+            "#personas-lore-tabs", TabbedContent
+        ).active = "personas-lore-tab-attachments"
         await pilot.pause()
 
         def _boom():
@@ -1458,7 +1526,9 @@ async def test_attach_survives_list_conversations_failure(
         await pilot.pause()
         await pilot.app.workers.wait_for_complete()
         await pilot.pause()
-        assert pilot.app.is_running, "a conversation-list failure must not crash the app"
+        assert pilot.app.is_running, (
+            "a conversation-list failure must not crash the app"
+        )
         manager = WorldBookManager(lore_db)
         assert (
             manager.get_conversations_for_world_book(seeded_lore_book["book_id"]) == []
@@ -1473,7 +1543,9 @@ async def test_attached_book_reaches_send_path_query(
     # get_world_books_for_conversation returns it after attach.
     lore_db.add_conversation({"id": "conv-y", "title": "Case Y"})
     manager = WorldBookManager(lore_db)
-    manager.associate_world_book_with_conversation("conv-y", seeded_lore_book["book_id"])
+    manager.associate_world_book_with_conversation(
+        "conv-y", seeded_lore_book["book_id"]
+    )
     books = manager.get_world_books_for_conversation("conv-y", enabled_only=False)
     assert any(b["id"] == seeded_lore_book["book_id"] for b in books)
 
@@ -1498,9 +1570,7 @@ async def test_refresh_clears_stale_rows_on_query_failure(
         def _boom(self, _wb_id):
             raise RuntimeError("db unavailable")
 
-        monkeypatch.setattr(
-            WorldBookManager, "get_conversations_for_world_book", _boom
-        )
+        monkeypatch.setattr(WorldBookManager, "get_conversations_for_world_book", _boom)
         await screen._refresh_lore_attachments()
         await pilot.pause()
         assert table.row_count == 0
