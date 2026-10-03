@@ -37,7 +37,7 @@ process boundary -- workers never touch the media DB):
         "analysis_skipped_reason": str | None,
     }
 
-(TASK-20973) One more key rides this dict for the video arm:
+(TASK-20973) One more key rides this dict for the URL arms:
 ``url_provenance`` carries the ``Utils.egress.UrlProvenance`` the parent
 minted for this submission (``USER_ENTERED`` for general Library-import
 jobs, ``UNKNOWN`` for research-source jobs). It is transport only --

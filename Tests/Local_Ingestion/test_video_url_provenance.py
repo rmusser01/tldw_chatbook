@@ -39,10 +39,8 @@ redirect hops, the per-format media URLs an extractor discovers inside a
 page, or a DNS answer that changes between the check and yt-dlp's own
 resolution (the resolve-then-connect TOCTOU window ``Utils/egress.py``
 documents). This task changes WHO may vouch for the entry URL, not what
-happens after yt-dlp starts. The adjacent audio arm
-(``audio_processing.download_audio_file``'s own ``origin_set(url)`` call,
-reached via the ``process_audio`` seams) keeps its TASK-19556 shape and is
-out of scope here.
+happens after yt-dlp starts. The adjacent audio and article arms consume
+the same provenance (PR #2993 review; pinned at the foot of this module).
 """
 
 from __future__ import annotations
@@ -529,3 +527,140 @@ def test_the_self_trusting_call_is_no_longer_unconditional() -> None:
                 "must seed trust from trusted_origins_for(url, url_provenance)"
             )
     assert checked >= 1, "the module must still call the egress policy"
+
+
+# ---------------------------------------------------------------------------
+# Audio and article arms (PR #2993 review). The ingest queue mints UNKNOWN
+# for research-source jobs, but only the video arm consumed it: a
+# research-source URL classified "audio" or "article" still vouched for its
+# own private host. Both fetchers now seed trust from the same provenance.
+# ---------------------------------------------------------------------------
+
+PRIVATE_AUDIO_URL = "http://10.255.255.1:8080/episode.mp3"
+PRIVATE_ARTICLE_URL = "http://10.255.255.1:8080/wiki/page"
+
+_SEED_CASES = [
+    (None, False),
+    (UrlProvenance.UNKNOWN, False),
+    (UrlProvenance.USER_ENTERED, True),
+]
+
+
+def _record_trusted_origins(monkeypatch, helper_name: str) -> List[frozenset]:
+    """Replace a guarded fetcher with one that records its trust seed."""
+    from tldw_chatbook.Utils import egress
+
+    seen: List[frozenset] = []
+
+    def _stub(url, **kwargs):
+        seen.append(kwargs["trusted_origins"])
+        raise egress.EgressFetchError("stop after recording the seed")
+
+    monkeypatch.setattr(egress, helper_name, _stub)
+    return seen
+
+
+def _audio_downloader_self() -> Any:
+    """``download_audio_file`` reads only ``max_file_size`` off ``self``."""
+    from types import SimpleNamespace
+
+    return SimpleNamespace(max_file_size=1024)
+
+
+@pytest.mark.parametrize("provenance, self_trusts", _SEED_CASES)
+def test_article_fetch_self_trusts_only_a_user_entered_url(
+    monkeypatch, provenance, self_trusts
+) -> None:
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import PermanentIngestError
+    from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
+        extract_article_for_ingest,
+    )
+    from tldw_chatbook.Utils.egress import origin_set
+
+    seen = _record_trusted_origins(monkeypatch, "guarded_fetch_httpx")
+    with pytest.raises(PermanentIngestError):
+        extract_article_for_ingest(PRIVATE_ARTICLE_URL, {}, url_provenance=provenance)
+    expected = origin_set(PRIVATE_ARTICLE_URL) if self_trusts else frozenset()
+    assert seen == [expected]
+
+
+@pytest.mark.parametrize("provenance, self_trusts", _SEED_CASES)
+def test_audio_download_self_trusts_only_a_user_entered_url(
+    monkeypatch, tmp_path: Path, provenance, self_trusts
+) -> None:
+    from tldw_chatbook.Local_Ingestion.audio_processing import AudioDownloadError
+    from tldw_chatbook.Utils.egress import origin_set
+
+    seen = _record_trusted_origins(monkeypatch, "guarded_fetch_requests")
+    with pytest.raises(AudioDownloadError):
+        LocalAudioProcessor.download_audio_file(
+            _audio_downloader_self(),
+            PRIVATE_AUDIO_URL,
+            str(tmp_path),
+            url_provenance=provenance,
+        )
+    expected = origin_set(PRIVATE_AUDIO_URL) if self_trusts else frozenset()
+    assert seen == [expected]
+
+
+@private_profile_test
+def test_article_and_audio_fetches_refuse_a_private_url_by_default(
+    request, tmp_path: Path
+) -> None:
+    """No stub: the real egress policy (which reads live ``[web_security]``
+    config, hence the private profile) refuses the private IP literal
+    before any socket opens."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import AudioDownloadError
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import PermanentIngestError
+    from tldw_chatbook.Local_Ingestion.web_article_ingestion import (
+        extract_article_for_ingest,
+    )
+
+    with pytest.raises(PermanentIngestError):
+        extract_article_for_ingest(PRIVATE_ARTICLE_URL, {})
+    with pytest.raises(AudioDownloadError, match="blocked"):
+        LocalAudioProcessor.download_audio_file(
+            _audio_downloader_self(), PRIVATE_AUDIO_URL, str(tmp_path)
+        )
+
+
+@private_profile_test
+def test_parse_seam_threads_provenance_to_the_article_arm(request, monkeypatch) -> None:
+    from tldw_chatbook.Local_Ingestion import web_article_ingestion
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import PermanentIngestError
+
+    seen: List[Any] = []
+
+    def _stub(url, options, *, url_provenance=None):
+        seen.append(url_provenance)
+        raise PermanentIngestError("stop after recording the provenance")
+
+    monkeypatch.setattr(web_article_ingestion, "extract_article_for_ingest", _stub)
+    for provenance in (None, UrlProvenance.USER_ENTERED):
+        with pytest.raises(PermanentIngestError):
+            parse_local_file_for_ingest(
+                PRIVATE_ARTICLE_URL, {}, url_provenance=provenance
+            )
+    assert seen == [UrlProvenance.UNKNOWN, UrlProvenance.USER_ENTERED]
+
+
+@private_profile_test
+def test_parse_seam_threads_provenance_to_the_audio_download(
+    request, monkeypatch
+) -> None:
+    """End to end through the audio arm: parse -> ``process_audio_files`` ->
+    ``_process_single_audio`` -> ``download_audio_file``."""
+    from tldw_chatbook.Local_Ingestion.audio_processing import AudioDownloadError
+    from tldw_chatbook.Local_Ingestion.local_file_ingestion import FileIngestionError
+
+    seen: List[Any] = []
+
+    def _download(self, url, target_dir, use_cookies=False, cookies=None, **kwargs):
+        seen.append(kwargs.get("url_provenance"))
+        raise AudioDownloadError("stop after recording the provenance")
+
+    monkeypatch.setattr(LocalAudioProcessor, "download_audio_file", _download)
+    for provenance in (None, UrlProvenance.USER_ENTERED):
+        with pytest.raises(FileIngestionError):
+            parse_local_file_for_ingest(PRIVATE_AUDIO_URL, {}, url_provenance=provenance)
+    assert seen == [UrlProvenance.UNKNOWN, UrlProvenance.USER_ENTERED]

@@ -256,6 +256,13 @@ TASK-19556-documented residuals, stated in
 `check_media_url_egress`'s docstring and the new test module's docstring.
 The audio arm keeps the same self-trust shape and is out of scope here.
 
+PR #2993 review addendum: that scope left research-source URLs classified
+audio or article still self-trusting (Qodo, confirmed by an independent
+review), so the audio and article arms now consume `url_provenance` too;
+the Collections quick-capture extractor passes `USER_ENTERED` explicitly.
+ADR-207 is updated to match. Pinned in
+`Tests/Local_Ingestion/test_video_url_provenance.py`.
+
 Filed medium with no live exposure, deliberately. The severity is not what an
 attacker can do today — nothing reaches these seams — it is that the security
 property is held by a fact nobody is watching, one wiring commit from being

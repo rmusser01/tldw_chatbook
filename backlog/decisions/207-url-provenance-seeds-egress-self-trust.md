@@ -61,11 +61,15 @@ was the one place that sentence was not actually enforced.
 - The minted enum rides the pickled parse-`options` dict across the spawn
   pool; `run_parse_job` translates it back and accepts the enum only — a
   plain string cannot launder trust.
-- Deliberately unchanged: the audio arm
-  (`audio_processing.download_audio_file`'s own `origin_set(url)`,
-  TASK-19556's parity choice) — same shape, different task; and the
-  metadata-endpoint and non-http(s) refusals, which apply regardless of
-  provenance.
+- The audio and article arms of the same ingest pipeline
+  (`audio_processing.download_audio_file`,
+  `web_article_ingestion.extract_article_for_ingest`) consume the same
+  provenance (PR #2993 review: the first cut threaded it into the video
+  arm only, so a research-source URL classified audio or article still
+  vouched for its own private host). The Collections quick-capture
+  extractor passes `USER_ENTERED` explicitly, keeping the behaviour it had.
+- Deliberately unchanged: the metadata-endpoint and non-http(s) refusals,
+  which apply regardless of provenance.
 - TASK-19556's residual limits are unchanged and NOT claimed closed:
   yt-dlp's own redirect hops, extractor-discovered per-format URLs, and
   the resolve-then-connect TOCTOU window.

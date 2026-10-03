@@ -8,9 +8,12 @@ Heavy imports (httpx/trafilatura) are deferred inside the function.
 from __future__ import annotations
 
 import re
-from typing import Any, Dict
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 from .local_file_ingestion import PermanentIngestError, canonicalize_url
+
+if TYPE_CHECKING:
+    from ..Utils.egress import UrlProvenance
 
 _MAX_BYTES = 10 * 1024 * 1024  # 10 MB body guard
 _RETRYABLE_STATUS = frozenset({408, 429, 500, 502, 503, 504})
@@ -31,7 +34,12 @@ def _strip_boilerplate(text: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", out).strip()
 
 
-def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, Any]:
+def extract_article_for_ingest(
+    url: str,
+    options: Dict[str, Any],
+    *,
+    url_provenance: Optional["UrlProvenance"] = None,
+) -> Dict[str, Any]:
     """Fetch a URL and extract its readable article text for Library ingest.
 
     Runs synchronously inside the spawn parse-pool worker (``httpx`` and
@@ -47,6 +55,11 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
             unsupported URL still fails permanently here.
         options: Ingest options. ``title`` and ``author`` are used as
             fallbacks when the page supplies none.
+        url_provenance: (TASK-20973) How this process came to hold ``url``.
+            Only ``UrlProvenance.USER_ENTERED`` lets the URL vouch for its
+            own (possibly private) origin; ``None`` means ``UNKNOWN`` and
+            fails closed, so an agent-discovered research-source URL
+            cannot reach an internal host.
 
     Returns:
         A ``result`` dict with keys ``content`` (boilerplate-stripped article
@@ -74,11 +87,12 @@ def extract_article_for_ingest(url: str, options: Dict[str, Any]) -> Dict[str, A
         EgressBlockedError,
         EgressFetchError,
         MAX_FETCH_BYTES_PAGE,
+        UrlProvenance,
         guarded_fetch_httpx,
-        origin_set,
+        trusted_origins_for,
     )
 
-    origins = origin_set(url)
+    origins = trusted_origins_for(url, url_provenance or UrlProvenance.UNKNOWN)
     try:
         with httpx.Client(
             timeout=30.0,
