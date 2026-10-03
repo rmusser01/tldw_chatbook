@@ -2535,19 +2535,19 @@ class ConsoleSettingsModal(
         )
 
     def on_descendant_focus(self, event: events.DescendantFocus) -> None:
-        """Remember the last draft control before an action button takes focus."""
+        """Open a disclosure holding focus; remember and reveal the control.
+
+        Args:
+            event: The focus event bubbling from the focused descendant.
+        """
+        self._open_disclosure_holding(event.widget)
         if self.focused is not event.widget:
             return
         logical_focus = self._logical_focus_control_id(event.widget)
         pending = self._pending_suspended_scroll_restore
         restored_focus = pending is not None and logical_focus == pending[0]
         if restored_focus:
-            self.call_after_refresh(
-                self._complete_suspended_scroll_restore,
-                pending[1],
-                pending[2],
-                pending[3],
-            )
+            self.call_after_refresh(self._complete_suspended_scroll_restore, *pending[1:])
         elif pending is not None:
             self._pending_suspended_scroll_restore = None
         if not (self._suppress_focus_reveal or restored_focus):

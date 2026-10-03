@@ -19,9 +19,11 @@ from tldw_chatbook.Chat.console_provider_support import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    CONSOLE_VALUE_SOURCE_WORDS,
     ConsoleSessionSettings,
     ConsoleSettingsContextEstimate,
     ConsoleSettingsSummaryState,
+    ConsoleValueLayer,
     _estimate_tokens_locally,
     build_console_context_estimate,
     build_console_model_options,
@@ -4069,6 +4071,25 @@ def test_summary_state_carries_structured_sampling_fields():
     state = _build_console_settings_summary_state_for_test()
     assert state.temperature == "0.70"
     assert state.max_tokens == "4096"
+
+
+@pytest.mark.parametrize("blank", ["temperature", "top_p"])
+def test_summary_names_the_provider_for_a_blank_required_sampler(blank):
+    """Qodo #2992: validation lets Temperature or Top P stay blank when the
+    provider drops it (Custom OpenAI 2 has no Top P), so the summary shows a
+    blank as the field rows' Source word, not a float() crash."""
+    settings = ConsoleSessionSettings(
+        provider="custom-openai-api-2", model="model-a", **{blank: None}
+    )
+    word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+    state = build_console_settings_summary_state(
+        settings,
+        ConsoleSettingsContextEstimate(None, None, "Context: unavailable"),
+        build_console_settings_readiness(settings, app_config={}, environ={}),
+    )
+    label = "T" if blank == "temperature" else "P"
+    assert f"{label} {word}" in state.sampling_row
+    assert state.temperature == ("0.70" if blank == "top_p" else word)
 
 
 def _registry_config() -> dict:

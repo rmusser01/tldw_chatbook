@@ -542,7 +542,8 @@ llama.cpp does not accept. Choosing another model updates the hidden fields,
 the title and the list at once. A hidden field takes no focus,
 is never sent, is cleared from the chat by **Apply**, and is not written by
 **Save as model default**; a value saved for it earlier stays in
-`config.toml` untouched. A reasoning or thinking control whose support for
+`config.toml` untouched. A cleared **Top P** (Custom OpenAI-compatible #2
+does not accept it) reads *provider* in the chat's settings summary. A reasoning or thinking control whose support for
 this model is not known stays visible, and its help line starts with "Support
 not verified for this model."
 

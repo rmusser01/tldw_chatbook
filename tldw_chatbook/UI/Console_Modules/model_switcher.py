@@ -58,6 +58,11 @@ class ModelPairUse:
 
     @property
     def pair(self) -> tuple[str, str]:
+        """Return the row's pair.
+
+        Returns:
+            ``(provider, model)``.
+        """
         return (self.provider, self.model)
 
     def used_label(self, now: datetime) -> str:
@@ -111,6 +116,13 @@ def persisted_model_pair_uses(
     One listing capped at 50 and one batched metadata read. Snapshots
     that are malformed, missing, from a newer version or carry no model are
     skipped (fail closed).
+
+    Args:
+        db: The ChaChaNotes database to read.
+        skip_conversation_ids: Conversations already open as live sessions.
+
+    Returns:
+        One use per readable conversation, in the listing's order.
     """
     rows = [
         row
@@ -132,7 +144,14 @@ def persisted_model_pair_uses(
 
 
 def newest_distinct(uses: Iterable[ModelPairUse]) -> list[ModelPairUse]:
-    """Keep each pair's newest use and order the pairs newest first."""
+    """Keep each pair's newest use and order the pairs newest first.
+
+    Args:
+        uses: Pair uses, possibly repeating a pair.
+
+    Returns:
+        One use per pair, newest first.
+    """
     newest: dict[tuple[str, str], ModelPairUse] = {}
     for use in uses:
         kept = newest.get(use.pair)
@@ -150,6 +169,13 @@ async def read_recent_model_pairs(
     The live sessions are read before the first await, on the caller's (UI)
     thread; the database read runs in a worker thread. A failed read keeps
     the open sessions' pairs.
+
+    Args:
+        db: The ChaChaNotes database, or None when none is attached.
+        sessions: The open Console sessions.
+
+    Returns:
+        One use per pair, newest first.
     """
     sessions = list(sessions)
     uses = live_model_pair_uses(sessions)
@@ -188,7 +214,14 @@ class PreviousPairMemory:
     def record_switch(
         self, session_id: str, before: Pair, after: Pair, *, now: datetime | None = None
     ) -> None:
-        """Remember ``before`` as this chat's PREVIOUS when the pair changed."""
+        """Remember ``before`` as this chat's PREVIOUS when the pair changed.
+
+        Args:
+            session_id: The chat that switched.
+            before: The pair it switched from.
+            after: The pair it switched to.
+            now: The switch time (UTC); defaults to now.
+        """
         provider, model = before
         if not model or before == after:
             return
@@ -199,7 +232,16 @@ class PreviousPairMemory:
     def previous(
         self, session_id: str, current: Pair, recent: Sequence[ModelPairUse]
     ) -> ModelPairUse | None:
-        """Return this chat's previous pair, else RECENT's newest other pair."""
+        """Return this chat's previous pair, else RECENT's newest other pair.
+
+        Args:
+            session_id: The chat Switch model opened for.
+            current: The chat's current pair.
+            recent: RECENT, newest first.
+
+        Returns:
+            The pair to offer as PREVIOUS, or None when there is none.
+        """
         remembered = self._by_session.get(session_id)
         if remembered is not None and remembered.pair != current:
             return remembered
@@ -225,6 +267,11 @@ def open_provider_setup(
     Uses the screen-context keys ``_open_console_provider_recovery`` uses; the
     way back to Console waits for P8's handoff store. Settings keeps its own
     model field when no model is routed, so the row's pair travels with it.
+
+    Args:
+        screen: The Console screen that opens Settings.
+        provider: The provider whose fix Settings opens at.
+        model: The row's model, when it has one.
     """
     from ...Constants import TAB_SETTINGS
     from ..Navigation.main_navigation import NavigateToScreen
@@ -254,6 +301,14 @@ async def load_provider_catalog(
     6 ms a provider, so 13 ready providers held the event loop for 110 ms
     in one block on every open. It runs in a worker thread; the options'
     warnings are remembered back on the UI thread.
+
+    Args:
+        screen: The Console screen whose catalog scope service is read.
+        providers_models: The configured models per provider.
+        provider: The provider whose catalog is loaded.
+
+    Returns:
+        The provider's model ids.
     """
     from ..Screens.provider_model_resolution import resolve_provider_model_options
 
@@ -330,6 +385,10 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
 
     ``/model <query>`` passes its text here: it opens in Find, so the best
     match is highlighted and nothing applies until Enter (TASK-33004.7).
+
+    Args:
+        screen: The Console screen whose active chat Switch model edits.
+        query: Text Find opens with ("" lists everything).
     """
     from ...Chat.console_settings_apply import QUICK_MODEL_DEFAULT_FIELDS
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
