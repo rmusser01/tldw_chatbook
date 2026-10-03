@@ -1486,20 +1486,60 @@ class ConsoleSessionController:
         *,
         provider: str,
         model: str,
-        config_revision: int,
-    ) -> ConsoleSessionSettings | None:
-        """Resolve exact current defaults only while the config fence matches."""
+    ) -> tuple[ConsoleSessionSettings | None, int, ConsoleSessionSettings]:
+        """Resolve the saved defaults while they still name the intent's pair.
+
+        The fence is the saved provider and model, not the global config
+        generation (TASK-34100.5 AC#1): Console's own first-mount rail-scope
+        write advances the generation between Start chatting and the consume,
+        which released every fresh-profile handoff with a false warning.
+
+        Returns:
+            ``(matching settings or None, generation read, settings read)``.
+        """
 
         snapshot = get_runtime_config_snapshot()
-        if snapshot.generation != config_revision:
-            return None
         settings = build_default_console_session_settings(snapshot.values)
         if (
             provider_config_key(settings.provider) != provider_config_key(provider)
             or str(settings.model or "").strip() != str(model or "").strip()
         ):
-            return None
-        return settings
+            return None, snapshot.generation, settings
+        return settings, snapshot.generation, settings
+
+    def _settle_stale_first_chat_claim(
+        self, claim, current: ConsoleSessionSettings
+    ) -> bool:
+        """Retire a handoff whose saved pair changed, naming the pair in use."""
+
+        model = str(current.model or "").strip()
+        provider = provider_config_key(current.provider)
+        label = " · ".join(
+            part
+            for part in (provider_display_name(provider) if provider else "", model)
+            if part
+        )
+        message = (
+            f"Your default chat model changed to {label} after setup — "
+            f"Console is using {model or label}."
+            if label
+            else "Your default chat model changed after setup — Console is using the saved default."
+        )
+        handoffs = self.app_instance.pending_handoffs
+        try:
+            settled = handoffs.acknowledge_current(claim)
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            self._log_first_chat_handoff_exception("stale-claim-settle", exc)
+            settled = False
+        if not settled:
+            # Superseded by a newer Start chatting: releasing settles it.
+            self._release_first_chat_claim(claim, message)
+            return False
+        try:
+            self.app_instance.notify(message, severity="information")
+        except Exception as exc:  # noqa: BLE001 - lifecycle boundary containment
+            self._log_first_chat_handoff_exception("notification", exc)
+        return False
 
     def eligible_console_first_chat_session_id(self) -> str | None:
         """Return an exact untouched target without changing Console.
@@ -1644,16 +1684,12 @@ class ConsoleSessionController:
                 claim,
                 "The first chat could not be opened yet; review provider setup.",
             )
-        defaults = self._current_first_chat_defaults(
+        defaults, verified_generation, saved = self._current_first_chat_defaults(
             provider=intent.provider,
             model=intent.model,
-            config_revision=intent.config_revision,
         )
         if defaults is None:
-            return self._release_first_chat_claim(
-                claim,
-                "Provider settings changed before Console opened. Review setup and try again.",
-            )
+            return self._settle_stale_first_chat_claim(claim, saved)
 
         store = self._ensure_console_chat_store()
         prior_active_id = store.active_session_id
@@ -1718,11 +1754,13 @@ class ConsoleSessionController:
             return self._release_first_chat_claim(claim, message)
 
         def fence_matches(*, expected_active_id: str) -> bool:
-            current = self._current_first_chat_defaults(
+            nonlocal verified_generation
+            current, generation, _saved = self._current_first_chat_defaults(
                 provider=intent.provider,
                 model=intent.model,
-                config_revision=intent.config_revision,
             )
+            if current == defaults:
+                verified_generation = generation
             return (
                 current == defaults
                 and store.active_session_id == expected_active_id
@@ -1848,10 +1886,21 @@ class ConsoleSessionController:
                 "Console changed before the first chat finished opening. It will retry.",
             )
         try:
-            acknowledged = run_if_runtime_config_generation_current(
-                intent.config_revision,
-                lambda: self.app_instance.pending_handoffs.acknowledge_current(claim),
-            )
+            # Linearize the acknowledgement against the generation whose
+            # VALUES were just re-verified; an unrelated write in between only
+            # re-runs the value check, a changed pair rolls back below.
+            acknowledged = False
+            for _attempt in range(3):
+                acknowledged = run_if_runtime_config_generation_current(
+                    verified_generation,
+                    lambda: self.app_instance.pending_handoffs.acknowledge_current(
+                        claim
+                    ),
+                )
+                if acknowledged or not fence_matches(
+                    expected_active_id=intent.session_id
+                ):
+                    break
         except Exception as exc:  # noqa: BLE001 - mount/resume must not fail
             self._log_first_chat_handoff_exception("guarded-acknowledgement", exc)
             return rollback_and_release(

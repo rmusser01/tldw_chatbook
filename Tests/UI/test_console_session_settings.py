@@ -2801,17 +2801,67 @@ def test_session_owner_refuses_session_switch_and_config_generation_races(
     assert _pending_first_chat(app) == intent
 
     store.switch_session(target.id)
+    target_before = _first_chat_session_snapshot(target)
+    # TASK-34100.5: the fence is the saved provider and model. A write that
+    # changed the saved model retires the stale handoff without applying it
+    # and names the model now in use, instead of leaving it pending forever.
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
     monkeypatch.setattr(
         session_module,
         "get_runtime_config_snapshot",
-        lambda: RuntimeConfigSnapshot(24, snapshot.values),
+        lambda: RuntimeConfigSnapshot(24, _first_chat_config("openai", "model-b")),
         raising=False,
     )
     assert (
         _first_chat_owner(console).consume_pending_console_first_chat_intent() is False
     )
     assert store.active_session_id == target.id
-    assert _pending_first_chat(app) == intent
+    preserved = next(item for item in store.sessions() if item.id == target.id)
+    assert _first_chat_session_snapshot(preserved) == target_before
+    assert _pending_first_chat(app) is None
+    assert len(notices) == 1 and "model-b" in notices[0]
+    assert "Review setup" not in notices[0]
+
+
+def test_first_chat_unrelated_config_write_before_consume_still_applies(
+    monkeypatch,
+) -> None:
+    """TASK-34100.5 AC#1: a write that leaves the saved pair alone (Console's
+    own first-mount rail-scope seed) must not release the handoff."""
+
+    app = _build_test_app()
+    console = ChatScreen(app)
+    store = ConsoleChatStore()
+    console._console_chat_store = store
+    notices: list[str] = []
+    monkeypatch.setattr(
+        app, "notify", lambda message, **_kwargs: notices.append(str(message))
+    )
+    staged = RuntimeConfigSnapshot(23, _first_chat_config())
+    target = store.create_session(
+        session_id="existing-first-chat-target",
+        settings=build_default_console_session_settings(staged.values),
+        canonical_settings_baseline=build_default_console_session_settings(
+            staged.values
+        ),
+    )
+    intent = ConsoleFirstChatIntent(target.id, "openai", "model-a", 23)
+    app.pending_handoffs.stage(HandoffChannel.CONSOLE_FIRST_CHAT, intent)
+    later = {**staged.values, "console": {"rail_state": {"seeded": True}}}
+    monkeypatch.setattr(
+        session_module,
+        "get_runtime_config_snapshot",
+        lambda: RuntimeConfigSnapshot(24, later),
+        raising=False,
+    )
+
+    assert _first_chat_owner(console).consume_pending_console_first_chat_intent()
+    assert store.active_session_id == target.id
+    assert _pending_first_chat(app) is None
+    assert notices == []
 
 
 def test_first_chat_consumer_activates_once_and_acknowledges_exact_target(
@@ -3075,7 +3125,11 @@ def test_first_chat_generation_change_during_reserved_create_rolls_back(
     def create_then_advance_generation(**kwargs):
         created = original_create(**kwargs)
         if kwargs.get("session_id") == intent.session_id:
-            current[0] = RuntimeConfigSnapshot(44, current[0].values)
+            # TASK-34100.5: the fence is the saved pair, so the race that must
+            # roll back is a write that changes it, not any generation bump.
+            current[0] = RuntimeConfigSnapshot(
+                44, _first_chat_config("openai", "model-b")
+            )
         return created
 
     monkeypatch.setattr(store, "create_session", create_then_advance_generation)
@@ -3127,7 +3181,10 @@ def test_first_chat_generation_change_during_refresh_restores_exact_target(
 
     def refresh_then_advance_generation(*args, **kwargs):
         refreshed = original_refresh(*args, **kwargs)
-        current[0] = RuntimeConfigSnapshot(48, current[0].values)
+        # TASK-34100.5: a value fence -- only a changed saved pair rolls back.
+        current[0] = RuntimeConfigSnapshot(
+            48, _first_chat_config("openai", "model-b")
+        )
         return refreshed
 
     monkeypatch.setattr(

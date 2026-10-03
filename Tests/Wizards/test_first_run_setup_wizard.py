@@ -10908,7 +10908,17 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
 
     def stage_then_publish(channel, intent):
         revision = original_stage(channel, intent)
-        current[0] = RuntimeConfigSnapshot(54, current[0].values)
+        # TASK-34100.5: the handoff is fenced on the saved provider and model,
+        # so the publish that must never reach Console is one that CHANGES the
+        # saved pair (an unrelated write, such as Console's first-mount rail
+        # seed, now lets the handoff apply).
+        current[0] = RuntimeConfigSnapshot(
+            54,
+            {
+                "chat_defaults": {"provider": "openai", "model": "newer-model"},
+                "api_settings": {"openai": {"model": "newer-model"}},
+            },
+        )
         return revision
 
     monkeypatch.setattr(pending, "stage", stage_then_publish)
@@ -10920,10 +10930,12 @@ def test_generation_advance_after_stage_before_consume_never_mutates_console(
     assert console._session.consume_pending_console_first_chat_intent() is False
     assert store.active_session_id == session.id
     assert _first_chat_store_snapshot(store) == sessions_before
-    claim = pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT)
-    assert claim is not None
-    assert claim.value.config_revision == 53
-    assert pending.release(claim) is True
+    # The stale handoff is retired, not left pending for the whole session,
+    # and the notice names the model now in use rather than "Review setup".
+    assert pending.claim(HandoffChannel.CONSOLE_FIRST_CHAT) is None
+    notice = app_instance.notify.call_args
+    assert notice is not None and "newer-model" in notice.args[0]
+    assert "Review setup" not in notice.args[0]
 
 
 @pytest.mark.asyncio
