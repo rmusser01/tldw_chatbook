@@ -756,12 +756,19 @@ async def _census_idle_and_visit(
                     )
                     billed.set()
                 raise
+            if name == "collect" and window["calls"] and not billed.is_set():
+                window["collected"] = getattr(result, "status", None)
             if name == "run_after_gc" and window["calls"] and not billed.is_set():
                 counting["on"] = False
                 # A deferral (e.g. database_threshold on the small census
-                # database) is a whole pass: all three calls ran. Only a pass
-                # whose collection was unusable is not.
-                if getattr(result, "reason_code", "") == "logical_gc_unavailable":
+                # database) is a whole pass: all three calls ran. A collection
+                # that did not complete (e.g. a stale epoch) or was unusable
+                # did partial work, so its counts are not the pass's.
+                if window.get("collected") != "completed":
+                    window["error"] = window["error"] or (
+                        f"the billed collection ended {window.get('collected')!r}"
+                    )
+                elif getattr(result, "reason_code", "") == "logical_gc_unavailable":
                     window["error"] = "the billed pass found no usable collection"
                 phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
                 billed.set()
