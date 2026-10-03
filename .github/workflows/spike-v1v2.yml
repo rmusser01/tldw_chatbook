@@ -1,0 +1,42 @@
+name: SPIKE merge-queue V1 V2
+
+# THROWAWAY (merge-queue plan Task 1). Never merged. Checks whether GITHUB_TOKEN can
+# cancel (V2) and delete (V1) a workflow run.
+on:
+  pull_request:
+    types: [opened]
+    branches: [dev]
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  probe:
+    if: startsWith(github.head_ref, 'spike/merge-queue-v1v2')
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      GH_TOKEN: ${{ github.token }}
+      REPO: ${{ github.repository }}
+      HEAD: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: V2 cancel this PR's derived-artifacts run
+        run: |
+          RID=""
+          for i in $(seq 1 40); do
+            RID=$(gh api "repos/$REPO/actions/workflows/derived-artifacts.yml/runs?head_sha=$HEAD" --jq '.workflow_runs[0].id // empty')
+            [ -n "$RID" ] && break
+            sleep 15
+          done
+          echo "derived run: $RID" | tee -a "$GITHUB_STEP_SUMMARY"
+          if gh api -X POST "repos/$REPO/actions/runs/$RID/cancel"; then echo "V2 cancel: OK" | tee -a "$GITHUB_STEP_SUMMARY"; else echo "V2 cancel: REFUSED" | tee -a "$GITHUB_STEP_SUMMARY"; fi
+          echo "RID=$RID" >> "$GITHUB_ENV"
+      - name: V1 delete that run once completed
+        run: |
+          for i in $(seq 1 60); do
+            S=$(gh api "repos/$REPO/actions/runs/$RID" --jq .status)
+            [ "$S" = completed ] && break
+            sleep 15
+          done
+          if gh api -X DELETE "repos/$REPO/actions/runs/$RID"; then echo "V1 delete: OK" | tee -a "$GITHUB_STEP_SUMMARY"; else echo "V1 delete: REFUSED" | tee -a "$GITHUB_STEP_SUMMARY"; fi
