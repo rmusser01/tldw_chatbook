@@ -19145,6 +19145,7 @@ class ChatScreen(BaseAppScreen):
 
         from tldw_chatbook.Chat.console_send_diagnostics import send_diagnostic_scope
 
+        self._console_draft_spend_refresh.stop()
         async with send_diagnostic_scope(
             "ui_dispatch", self._ui_responsiveness_monitor()
         ) as diagnostic:
@@ -20141,8 +20142,11 @@ class ChatScreen(BaseAppScreen):
             run_active=bool(
                 session_id is not None
                 and controller is not None
-                and controller.run_state_for(session_id).status
-                in CONSOLE_ACTIVE_RUN_STATUSES
+                and (
+                    controller.run_state_for(session_id).status
+                    in CONSOLE_ACTIVE_RUN_STATUSES
+                    or self._console_runtime().has_custodied_turns(session_id)
+                )
             )
         )
 
