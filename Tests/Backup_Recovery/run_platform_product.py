@@ -1696,6 +1696,41 @@ _ADMISSION_FIXED_SHA256 = (
 )
 
 
+_ADMISSION_IDLE_SHA256 = (
+    "1d4df8e02a0472c66b994ac562cc2aa729e75e9a4cb06a2e7a6617d0221bf440"
+)
+_ADMISSION_CONTAINMENT_SHA256 = (
+    "77c5fd81925b9f3377b88fa41782707b4979da9361fd6c5e4d111ceb75c5a6a5"
+)
+
+
+def _metric_programs(workspace: Path) -> dict[str, str]:
+    """Join live executable bytes to the three approved immutable programs."""
+    pins = {}
+    for label, relative, expected in (
+        (
+            "fixed",
+            "Helper_Scripts/Benchmarks/backup_admission_benchmark.py",
+            _ADMISSION_FIXED_SHA256,
+        ),
+        (
+            "idle",
+            "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py",
+            _ADMISSION_IDLE_SHA256,
+        ),
+        (
+            "containment",
+            "tldw_chatbook/Notes/git_process_containment.py",
+            _ADMISSION_CONTAINMENT_SHA256,
+        ),
+    ):
+        path = workspace / relative
+        if path.is_symlink() or not path.is_file() or _sha256(path) != expected:
+            raise ValueError("admission_program_identity_changed")
+        pins[label] = expected
+    return pins
+
+
 def _metric_preflight(workspace: Path, baseline: str) -> dict[str, str]:
     """Accept only disclosed exact ancestors for Windows nested-Job execution."""
     if platform.system() != "Windows":
@@ -1719,56 +1754,70 @@ def _metric_preflight(workspace: Path, baseline: str) -> dict[str, str]:
     return refs
 
 
+def _metric_validate_fixed(
+    receipt: Mapping, source: Mapping, phase: str, iterations: int
+) -> None:
+    """Validate one original fixed receipt before admitting another execution."""
+    if (
+        receipt["protocol"] != "reconstructed-v1"
+        or receipt["phase"] != phase
+        or receipt["iterations"] != iterations
+        or receipt["platform"] != "win32"
+        or receipt["native_windows_measured"] is not True
+        or receipt["source"] != source
+        or receipt["probe_sha256"] != _ADMISSION_FIXED_SHA256
+        or receipt["containment_sha256"] != _ADMISSION_CONTAINMENT_SHA256
+        or receipt["exit_code"] != 0
+        or len(receipt["runs"]) != (3 if phase == "boot" else 1)
+    ):
+        raise ValueError("incomplete_fixed_receipt")
+    if receipt["seed"]["seed_notes"] != 8 or (
+        phase == "transaction"
+        and any(row["seed_notes"] != 8 for row in receipt["runs"])
+    ):
+        raise ValueError("invalid_fixed_eight_note_seed")
+    children = [receipt["seed"], *receipt["runs"]]
+    if phase == "boot":
+        children.append(receipt["warmup"])
+    for child in children:
+        if (
+            child["retired"] is not True
+            or child["supervisor_retired"] is not True
+            or child["exit_code"] != 0
+            or child["network_attempts"] != 0
+            or child["foreign_source_modules"] != 0
+            or child["source_sha256"] != source["content_sha256"]
+            or not child["outstanding_ownership"]
+            or any(child["outstanding_ownership"].values())
+            or child["live_children_before_reaping"] != 0
+            or child.get("supervisor_error_type")
+            or child.get("cleanup_error_type")
+        ):
+            raise ValueError("unretired_fixed_child")
+    for child in receipt["runs"]:
+        if (
+            any(
+                type(child[key]) is not int or child[key] <= 0
+                for key in (
+                    "native_handle_opens",
+                    "native_acl_reads",
+                )
+            )
+            or type(child["os_opens"]) is not int
+            or child["os_opens"] < 0
+        ):
+            raise ValueError("missing_native_fixed_costs")
+
+
 def _metric_fixed_summary(receipts: Mapping, sources: Mapping) -> dict[str, object]:
     """Retain the original complete boundary and historical three-boot targets."""
     result: dict[str, object] = {"qualified": False}
     try:
         for side in ("historical", "final"):
             for phase, iterations in (("transaction", 100), ("boot", 3)):
-                receipt = receipts[f"{side}-{phase}"]
-                if (
-                    receipt["protocol"] != "reconstructed-v1"
-                    or receipt["phase"] != phase
-                    or receipt["iterations"] != iterations
-                    or receipt["platform"] != "win32"
-                    or receipt["native_windows_measured"] is not True
-                    or receipt["source"] != sources[side]
-                    or receipt["probe_sha256"] != _ADMISSION_FIXED_SHA256
-                    or receipt["exit_code"] != 0
-                    or len(receipt["runs"]) != (3 if phase == "boot" else 1)
-                ):
-                    raise ValueError("incomplete_fixed_receipt")
-                children = [receipt["seed"], *receipt["runs"]]
-                if phase == "boot":
-                    children.append(receipt["warmup"])
-                for child in children:
-                    if (
-                        child["retired"] is not True
-                        or child["supervisor_retired"] is not True
-                        or child["exit_code"] != 0
-                        or child["network_attempts"] != 0
-                        or child["foreign_source_modules"] != 0
-                        or child["source_sha256"] != sources[side]["content_sha256"]
-                        or not child["outstanding_ownership"]
-                        or any(child["outstanding_ownership"].values())
-                        or child["live_children_before_reaping"] != 0
-                        or child.get("supervisor_error_type")
-                        or child.get("cleanup_error_type")
-                    ):
-                        raise ValueError("unretired_fixed_child")
-                for child in receipt["runs"]:
-                    if (
-                        any(
-                            type(child[key]) is not int or child[key] <= 0
-                            for key in (
-                                "native_handle_opens",
-                                "native_acl_reads",
-                            )
-                        )
-                        or type(child["os_opens"]) is not int
-                        or child["os_opens"] < 0
-                    ):
-                        raise ValueError("missing_native_fixed_costs")
+                _metric_validate_fixed(
+                    receipts[f"{side}-{phase}"], sources[side], phase, iterations
+                )
         boundary = receipts["final-transaction"]["runs"][0][
             "transaction_boundary_median_ns"
         ]
@@ -1850,7 +1899,23 @@ async def _metric_supervise(
 def _metric_phase(
     workspace: Path, private_root: Path, artifacts: Path, baseline: str
 ) -> int:
+    """Retain bounded progress even when preparation refuses before any launch."""
+    path = artifacts / "metric-summary.json"
+    _write_json(path, {"calls": [], "exit_code": 1, "status": "preparation"})
+    try:
+        return _metric_execute(workspace, private_root, artifacts, baseline)
+    except Exception as error:  # noqa: BLE001 - bounded type only, never raw program output
+        summary = json.loads(path.read_text(encoding="utf-8"))
+        summary.update(exit_code=1, error_type=type(error).__name__[:80])
+        _write_json(path, summary)
+        return 1
+
+
+def _metric_execute(
+    workspace: Path, private_root: Path, artifacts: Path, baseline: str
+) -> int:
     """Prepare separate snapshots/wheels and execute only the existing probes."""
+    _metric_programs(workspace)
     from Tests.Packaging import test_backup_helper_distribution as packaging
 
     refs = _metric_preflight(workspace, baseline)
@@ -1926,6 +1991,18 @@ def _metric_phase(
         side: idle.installed_join(sources[side], installed[side], wheels[side])
         for side in installed
     }
+
+    def intact() -> None:
+        _metric_programs(workspace)
+        for side, source in sources.items():
+            if idle.fixed.select_source(source) != manifests[side]:
+                raise ValueError("metric_source_changed")
+        for side, target in installed.items():
+            if idle.installed_join(sources[side], target, wheels[side]) != joins[side]:
+                raise ValueError("installed_join_changed")
+        if _installed_receipts(private_root) != before_installed:
+            raise ValueError("metric_artifact_changed")
+
     _write_json(artifacts / "metric-sources.json", manifests)
     summary = {
         "protocol": "windows-admission-metrics-v1",
@@ -1946,6 +2023,7 @@ def _metric_phase(
         for side, phase, iterations in calls:
             if shutil.disk_usage(private_root).free < 2 * 1024**3:
                 raise RuntimeError("metric_phase_reserve_below_two_gib")
+            intact()
             label = f"{side}-{phase}"
             receipt_path = raw / f"{label}.json"
             call = {"label": label, "status": "running"}
@@ -1980,9 +2058,12 @@ def _metric_phase(
                 receipts[label] = json.loads(receipt_path.read_text(encoding="utf-8"))
             if completed.returncode:
                 raise RuntimeError("fixed_execution_failed")
+            _metric_validate_fixed(receipts[label], manifests[side], phase, iterations)
+            intact()
             if idle.fixed.select_source(sources[side]) != manifests[side]:
                 raise ValueError("fixed_source_changed")
         summary["fixed"] = _metric_fixed_summary(receipts, manifests)
+        intact()
         receipt_path = raw / "idle.json"
         call = {"label": "installed-idle", "status": "running"}
         summary["calls"].append(call)
@@ -2019,6 +2100,15 @@ def _metric_phase(
             _sanitize_file(
                 receipt_path, artifacts / "metric-idle.json", private_root=private_root
             )
+            if result["sources"] != {
+                side: manifests[side] for side in installed
+            } or any(
+                run["probe_sha256"] != _ADMISSION_IDLE_SHA256
+                or run["containment_sha256"] != _ADMISSION_CONTAINMENT_SHA256
+                or run["source"] != manifests[run["side"]]
+                for run in result["runs"]
+            ):
+                raise ValueError("idle_expected_program_source_join_failed")
             summary["idle_qualified"] = (
                 completed.returncode == 0 and result["comparison"]["qualified"] is True
             )
@@ -2034,17 +2124,7 @@ def _metric_phase(
                     _sanitize_file(path, target, private_root=private_root)
                     if _sha256(target) != helper["sha256"]:
                         raise ValueError("helper_metadata_projection_changed")
-        for side, source in sources.items():
-            if idle.fixed.select_source(source) != manifests[side]:
-                raise ValueError("metric_source_changed")
-        for side, target in installed.items():
-            if idle.installed_join(sources[side], target, wheels[side]) != joins[side]:
-                raise ValueError("installed_join_changed")
-        if (
-            _installed_receipts(private_root) != before_installed
-            or _sha256(idle.FIXED) != _ADMISSION_FIXED_SHA256
-        ):
-            raise ValueError("metric_artifact_changed")
+        intact()
         summary["exit_code"] = int(
             not (summary["fixed"]["qualified"] and summary["idle_qualified"])
         )
@@ -2076,6 +2156,7 @@ def _run_admission_metrics(workspace: Path, evidence_root: Path, baseline: str) 
     keyring.set_keyring(Keyring())
     private_root = _create_private_root(evidence_root)
     environment = _private_environment(workspace, private_root)
+    _metric_programs(workspace)
     spec = importlib.util.spec_from_file_location(
         "metric_containment",
         workspace / "tldw_chatbook/Notes/git_process_containment.py",
@@ -2124,6 +2205,10 @@ def _run_admission_metrics(workspace: Path, evidence_root: Path, baseline: str) 
     summary = json.loads(
         (artifacts / "metric-summary.json").read_text(encoding="utf-8")
     )
+    try:
+        summary["programs_sha256"] = _metric_programs(workspace)
+    except ValueError as error:
+        summary.update(exit_code=1, error_type=type(error).__name__[:80])
     summary["outer"] = supervised
     summary["exit_code"] = summary["exit_code"] or supervised["exit_code"]
     summary["parent_network_attempts"] = len(network_guard.blocked_attempts())

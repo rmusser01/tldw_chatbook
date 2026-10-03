@@ -2,8 +2,12 @@
 
 import asyncio
 import copy
+import json
+import shutil
 import subprocess
 import time
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -127,6 +131,7 @@ def fixed_receipts():
                 "native_windows_measured": True,
                 "source": sources[side],
                 "probe_sha256": "34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428",
+                "containment_sha256": "77c5fd81925b9f3377b88fa41782707b4979da9361fd6c5e4d111ceb75c5a6a5",
                 "exit_code": 0,
                 "seed": copy.deepcopy(child),
                 "warmup": copy.deepcopy(child) if phase == "boot" else None,
@@ -134,6 +139,9 @@ def fixed_receipts():
                     copy.deepcopy(child) for _ in range(3 if phase == "boot" else 1)
                 ],
             }
+            receipts[f"{side}-{phase}"]["seed"]["seed_notes"] = 8
+            if phase == "transaction":
+                receipts[f"{side}-{phase}"]["runs"][0]["seed_notes"] = 8
     return receipts, sources
 
 
@@ -241,6 +249,7 @@ def test_partial_receipt_reads_require_positive_outer_retirement(
     tmp_path, monkeypatch, retired
 ):
     """An unknown tree may still be writing; only settled metadata is read."""
+    copy_metric_programs(tmp_path)
     private = tmp_path / "private"
     raw = private / "metric-receipts"
     raw.mkdir(parents=True)
@@ -272,3 +281,360 @@ def test_partial_receipt_reads_require_positive_outer_retirement(
     monkeypatch.setattr(runner, "_sanitize_file", observe)
     runner._run_admission_metrics(tmp_path, tmp_path / "evidence", "reviewed")
     assert reads == ([child] if retired else [])
+
+
+@pytest.mark.parametrize(
+    "field,value",
+    [
+        ("containment_sha256", None),
+        ("containment_sha256", "0" * 64),
+        ("seed", None),
+        ("seed", 7),
+        ("transaction", None),
+        ("transaction", 7),
+    ],
+)
+def test_fixed_schema_requires_approved_containment_and_eight_note_seed(field, value):
+    receipts, sources = fixed_receipts()
+    if field == "containment_sha256":
+        target, key = receipts["final-boot"], field
+    else:
+        target = (
+            receipts["final-boot"]["seed"]
+            if field == "seed"
+            else receipts["final-transaction"]["runs"][0]
+        )
+        key = "seed_notes"
+    if value is None:
+        target.pop(key)
+    else:
+        target[key] = value
+    assert runner._metric_fixed_summary(receipts, sources)["qualified"] is False
+
+
+def copy_metric_programs(workspace):
+    origin = Path(runner.__file__).parents[2]
+    for name in (
+        "Helper_Scripts/Benchmarks/backup_admission_benchmark.py",
+        "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py",
+        "tldw_chatbook/Notes/git_process_containment.py",
+    ):
+        target = workspace / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(origin / name, target)
+
+
+@pytest.fixture
+def metric_phase(tmp_path, monkeypatch):
+    """Actual phase flow; tiny real source/wheel joins, fake native boundaries."""
+    from Tests.Packaging import test_backup_helper_distribution as packaging
+    from Tests.Performance.test_backup_admission_idle_benchmark import harness, windows
+
+    monkeypatch.setattr(
+        runner.shutil, "disk_usage", lambda *args: SimpleNamespace(free=3 * 1024**3)
+    )
+
+    workspace, private, artifacts = (
+        tmp_path / name for name in ("workspace", "private", "artifacts")
+    )
+    private.mkdir()
+    artifacts.mkdir()
+    copy_metric_programs(workspace)
+    idle = harness()
+    idle.FIXED = workspace / "Helper_Scripts/Benchmarks/backup_admission_benchmark.py"
+    refs = {
+        side: digit * 40
+        for side, digit in (("historical", "1"), ("baseline", "3"), ("final", "2"))
+    }
+    state = SimpleNamespace(
+        workspace=workspace,
+        private=private,
+        artifacts=artifacts,
+        calls=[],
+        builds=[],
+        snapshots={},
+        damage=None,
+        imported=[],
+    )
+    monkeypatch.setattr(runner, "_metric_preflight", lambda *args: refs)
+    monkeypatch.setattr(runner, "_run_git", lambda *args: "4" * 40)
+    monkeypatch.setattr(packaging, "REPO_ROOT", workspace)
+
+    def source_copy(_workspace, root, *, revision):
+        source = root / "source"
+        file = source / "tldw_chatbook/fixture.py"
+        file.parent.mkdir(parents=True)
+        file.write_text("# synthetic " + revision + "\n")
+        state.snapshots[revision] = source
+        return source, "5" * 64
+
+    monkeypatch.setattr(runner, "_copy_tracked_source", source_copy)
+    monkeypatch.setattr(
+        runner,
+        "_source_receipt",
+        lambda *args, **kwargs: {"revision": kwargs["revision"]},
+    )
+
+    def build_copy(target):
+        source = packaging.REPO_ROOT
+        state.builds.append((source, target))
+        shutil.copytree(source / "tldw_chatbook", target / "tldw_chatbook")
+
+    def build(source, output):
+        output.mkdir()
+        wheel = output / "fixture.whl"
+        with zipfile.ZipFile(wheel, "w") as archive:
+            archive.write(
+                source / "tldw_chatbook/fixture.py", "tldw_chatbook/fixture.py"
+            )
+        return wheel
+
+    monkeypatch.setattr(packaging, "_copy_build_source", build_copy)
+    monkeypatch.setattr(packaging, "_build_wheel", build)
+    loader = SimpleNamespace(exec_module=lambda module: state.imported.append(module))
+    monkeypatch.setattr(
+        runner.importlib.util,
+        "spec_from_file_location",
+        lambda *args: SimpleNamespace(loader=loader),
+    )
+    monkeypatch.setattr(runner.importlib.util, "module_from_spec", lambda *args: idle)
+
+    def execute(command, **kwargs):
+        if "pip" in command:
+            target = Path(command[command.index("--target") + 1])
+            with zipfile.ZipFile(command[-1]) as wheel:
+                wheel.extractall(target)
+            if state.damage == "install":
+                (target / "tldw_chatbook/fixture.py").write_text(
+                    "wrong installed bytes"
+                )
+            return SimpleNamespace(returncode=0)
+        state.calls.append(command)
+        path = Path(command[command.index("--receipt") + 1])
+        if "--phase" in command:
+            source = Path(command[command.index("--source") + 1])
+            side = "historical" if "historical" in str(source) else "final"
+            phase = command[command.index("--phase") + 1]
+            receipt = fixed_receipts()[0][f"{side}-{phase}"]
+            receipt["source"] = idle.fixed.select_source(source)
+            for child in [
+                receipt["seed"],
+                *receipt["runs"],
+                *([receipt["warmup"]] if phase == "boot" else []),
+            ]:
+                child["source_sha256"] = receipt["source"]["content_sha256"]
+            if state.damage == "boundary":
+                receipt["runs"][0]["transaction_boundary_median_ns"] = 500000
+            if state.damage == "custody":
+                receipt["runs"][0]["supervisor_retired"] = False
+            if state.damage == "source":
+                (source / "tldw_chatbook/fixture.py").write_text("changed source")
+            if state.damage in ("idle-live", "containment-live"):
+                name = (
+                    "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py"
+                    if state.damage == "idle-live"
+                    else "tldw_chatbook/Notes/git_process_containment.py"
+                )
+                (workspace / name).write_text("changed live program")
+            path.write_text(json.dumps(receipt))
+            return SimpleNamespace(
+                returncode=1 if state.damage == "prerequisite" else 0
+            )
+        manifests = {
+            side: idle.fixed.select_source(state.snapshots[refs[side]])
+            for side in ("baseline", "final")
+        }
+        runs = windows()
+        for run in runs:
+            run.update(
+                source=manifests[run["side"]],
+                platform="win32",
+                execution_mode="installed",
+                probe_sha256="1d4df8e02a0472c66b994ac562cc2aa729e75e9a4cb06a2e7a6617d0221bf440",
+                containment_sha256="77c5fd81925b9f3377b88fa41782707b4979da9361fd6c5e4d111ceb75c5a6a5",
+            )
+            run["window"].update(native_handle_opens=1, native_acl_reads=1)
+        if state.damage == "idle-comparison":
+            runs[0]["retired"] = False
+        if state.damage == "idle-join":
+            for run in runs:
+                run["probe_sha256"] = "f" * 64
+        result = {
+            "protocol": "live-idle-v1",
+            "sources": manifests,
+            "seeds": [],
+            "runs": runs,
+            "comparison": idle.compare(runs),
+        }
+        path.write_text(json.dumps(result))
+        if state.damage in ("wheel", "installed"):
+            wheel = Path(command[command.index("--wheel") + 1])
+            target = Path(command[command.index("--installed") + 1])
+            (
+                wheel
+                if state.damage == "wheel"
+                else target / "tldw_chatbook/fixture.py"
+            ).write_bytes(b"changed artifact")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(runner.subprocess, "run", execute)
+    return state
+
+
+@pytest.mark.parametrize("damage", [None, "boundary"])
+def test_metric_phase_calls_four_fixed_and_installed_idle_with_separate_builds(
+    metric_phase, damage
+):
+    state = metric_phase
+    state.damage = damage
+    exit_code = runner._metric_phase(
+        state.workspace, state.private, state.artifacts, "3" * 40
+    )
+    fixed = state.workspace / "Helper_Scripts/Benchmarks/backup_admission_benchmark.py"
+    expected = [
+        [
+            runner.sys.executable,
+            str(fixed),
+            "--source",
+            str(state.private / f"metric-{side}/source"),
+            "--phase",
+            phase,
+            "--iterations",
+            count,
+            "--receipt",
+            str(state.private / f"metric-receipts/{side}-{phase}.json"),
+        ]
+        for phase, count in (("transaction", "100"), ("boot", "3"))
+        for side in ("historical", "final")
+    ]
+    expected.append(
+        [
+            runner.sys.executable,
+            str(fixed.with_name("backup_admission_idle_benchmark.py")),
+            "--source",
+            str(state.private / "metric-final/source"),
+            "--baseline",
+            str(state.private / "metric-baseline/source"),
+            "--baseline-description",
+            "Reviewed contemporary pre-Task2/3 1Hz/schema75/PERF07/release0.2.3/trace baseline "
+            + "3" * 40,
+            "--installed",
+            str(state.private / "metric-final/installed"),
+            "--wheel",
+            str(state.private / "metric-final/wheels/fixture.whl"),
+            "--baseline-installed",
+            str(state.private / "metric-baseline/installed"),
+            "--baseline-wheel",
+            str(state.private / "metric-baseline/wheels/fixture.whl"),
+            "--receipt",
+            str(state.private / "metric-receipts/idle.json"),
+        ]
+    )
+    assert (
+        exit_code,
+        state.calls,
+        all(
+            build.parent == source.parent
+            and build != source
+            and not build.is_relative_to(source)
+            for source, build in state.builds
+        ),
+    ) == (int(damage == "boundary"), expected, True)
+
+
+@pytest.mark.parametrize(
+    "damage",
+    [
+        "custody",
+        "prerequisite",
+        "source",
+        "idle-live",
+        "containment-live",
+        "install",
+        "wheel",
+        "installed",
+        "idle-comparison",
+        "idle-join",
+    ],
+)
+def test_metric_phase_refuses_failure_or_drift_and_preserves_safe_progress(
+    metric_phase, damage
+):
+    state = metric_phase
+    state.damage = damage
+    exit_code = runner._metric_phase(
+        state.workspace, state.private, state.artifacts, "3" * 40
+    )
+    summary = json.loads((state.artifacts / "metric-summary.json").read_text())
+    expected_calls = (
+        0
+        if damage == "install"
+        else 1
+        if damage
+        in ("custody", "prerequisite", "source", "idle-live", "containment-live")
+        else 5
+    )
+    assert (
+        exit_code,
+        len(state.calls),
+        summary["exit_code"],
+        len(summary["calls"]),
+        all(call["status"] == "completed" for call in summary["calls"]),
+        any(p.suffix == ".log" for p in state.artifacts.iterdir()),
+    ) == (1, expected_calls, 1, expected_calls, True, False)
+
+
+@pytest.mark.parametrize("program", ["idle", "containment"])
+@pytest.mark.parametrize("damage", ["missing", "changed"])
+def test_metric_phase_refuses_live_program_before_import(metric_phase, program, damage):
+    state = metric_phase
+    name = (
+        "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py"
+        if program == "idle"
+        else "tldw_chatbook/Notes/git_process_containment.py"
+    )
+    path = state.workspace / name
+    path.unlink() if damage == "missing" else path.write_text("changed program")
+    exit_code = runner._metric_phase(
+        state.workspace, state.private, state.artifacts, "3" * 40
+    )
+    assert (exit_code, state.imported, state.calls) == (1, [], [])
+
+
+def test_shared_outer_budget_includes_preparation(tmp_path, monkeypatch):
+    copy_metric_programs(tmp_path)
+    monkeypatch.setattr(
+        runner.shutil, "disk_usage", lambda *args: SimpleNamespace(free=3 * 1024**3)
+    )
+    clock, deadlines = [100.0], []
+    monkeypatch.setattr(runner.time, "monotonic", lambda: clock[0])
+
+    def preflight(*args):
+        clock[0] += 20
+        return {}
+
+    def private(*args):
+        clock[0] += 30
+        return tmp_path
+
+    monkeypatch.setattr(runner, "_metric_preflight", preflight)
+    monkeypatch.setattr(runner, "_create_private_root", private)
+    monkeypatch.setattr(runner, "_private_environment", lambda *args: {})
+    module = SimpleNamespace(ProcessTreeController=lambda: object())
+    spec = SimpleNamespace(
+        name="metric_containment",
+        loader=SimpleNamespace(exec_module=lambda *args: None),
+    )
+    monkeypatch.setattr(
+        runner.importlib.util, "spec_from_file_location", lambda *args: spec
+    )
+    monkeypatch.setattr(runner.importlib.util, "module_from_spec", lambda *args: module)
+    monkeypatch.setitem(runner.sys.modules, "metric_containment", module)
+
+    async def supervise(*args):
+        deadlines.append((args[-1], args[-1] - clock[0]))
+        return {"exit_code": 1, "supervisor_retired": True}
+
+    monkeypatch.setattr(runner, "_metric_supervise", supervise)
+    runner._run_admission_metrics(tmp_path, tmp_path / "evidence", "3" * 40)
+    assert deadlines == [(4900, 4750)]
