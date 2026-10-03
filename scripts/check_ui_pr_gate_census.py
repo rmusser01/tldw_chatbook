@@ -75,7 +75,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33661 raised it to 121: Tests/UI/test_console_turn_resend_ui.py pins
 # the Resend action row, its `r` key, the in-flight guard, and a real-Console
 # click and keypress through both Resend paths.
-MINIMUM_FILES = 121
+# Roleplay frame B0 raised it to 125: test_adaptive_pane_shell.py,
+# test_destination_rail_row.py and test_base_app_screen_tab_region.py gate the
+# shared pane shell, rail-row fitting and the behaviour-neutral Tab region.
+# The mounted every-route Tab test (test_base_app_screen_tab_region_routes.py,
+# ~65 s) stays out of the fast lane; the B0 gate run executes it on both arms.
+MINIMUM_FILES = 125
 
 
 def read_census(path: Path) -> list[str]:
