@@ -74,6 +74,7 @@ from tldw_chatbook.Chat.console_trace_provenance import (
 )
 from tldw_chatbook.Utils.sensitive_llm_logging import is_sensitive_llm_request
 from tldw_chatbook.Chat.console_provider_support import (
+    CUSTOM_OPENAI_EXECUTION_KEYS,
     resolve_console_provider_identity,
 )
 from tldw_chatbook.Chat import console_provider_gateway as gateway_module
@@ -106,6 +107,18 @@ from tldw_chatbook.Chat.thinking_blocks import (
     ThinkingEnvelope,
 )
 from tldw_chatbook.LLM_Calls.hosted_chat import HostedChatTurn
+
+
+# Real config/TLS/app consumers retain their collection-selected private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
+async def _settle_gateway_metadata(gateway):
+    tasks = tuple(gateway._context_window_refreshes) + tuple(
+        gateway._reasoning_metadata_refreshes.values()
+    )
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 class _SettlementBoundary:
@@ -2719,6 +2732,8 @@ async def test_resolve_for_send_normalizes_scheme_less_llamacpp_base_url_before_
         ConsoleProviderSelection(provider="llama_cpp", base_url="127.0.0.1:9099/v1")
     )
 
+    await _settle_gateway_metadata(gateway)
+
     assert resolved.ready is True
     assert resolved.base_url == "http://127.0.0.1:9099"
     assert seen_urls == [
@@ -2860,12 +2875,18 @@ async def test_resolve_for_send_all_chat_api_handlers_are_console_supported() ->
             identity.readiness_key,
             {"model": f"{identity.readiness_key}-model"},
         )
-        if identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS:
+        if (
+            identity.readiness_key in PROVIDERS_REQUIRING_API_KEY_KEYS
+            or identity.execution_key in CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
             settings["api_key"] = f"test-key-for-{identity.readiness_key}"
         # ADR-179: per-account-host providers (databricks) stay blocked on a
         # resolved key alone; the sweep's point is that a fully configured
         # handler IS sendable, so give them their workspace URL too.
-        if identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS:
+        if (
+            identity.readiness_key in PROVIDERS_REQUIRING_BASE_URL_KEYS
+            or identity.execution_key in CUSTOM_OPENAI_EXECUTION_KEYS
+        ):
             settings["api_base_url"] = (
                 f"https://{identity.readiness_key}-workspace.example.test"
             )
@@ -7643,7 +7664,16 @@ class _CapturedMistralSession:
 
     def post(self, url, *, headers=None, json=None, stream=False, timeout=None):
         self._calls.append((url, (headers or {}).get("Authorization", "")))
-        return _FakeMistralPostResponse()
+        import requests
+
+        response = requests.Response()
+        response.status_code = 200
+        response.headers["Content-Type"] = "application/json"
+        response._content = b'{"choices":[{"index":0,"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}'
+        return response
+
+    def close(self):
+        return None
 
 
 class _FakeMistralPostResponse:
@@ -7675,7 +7705,7 @@ class _CapturedCustomSession:
 async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
     monkeypatch,
 ) -> None:
-    from tldw_chatbook.LLM_Calls import LLM_API_Calls
+    from tldw_chatbook.LLM_Calls import hosted_chat, mistral
 
     class RuntimeConfigSnapshotStub:
         def __init__(self, values) -> None:
@@ -7697,12 +7727,12 @@ async def test_console_send_keeps_each_mistral_credential_on_its_own_endpoint(
     }
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(
-        LLM_API_Calls,
+        hosted_chat,
         "create_default_session",
         lambda: _CapturedMistralSession(calls),
     )
     monkeypatch.setattr(
-        LLM_API_Calls,
+        mistral,
         "get_runtime_config_snapshot",
         lambda: RuntimeConfigSnapshotStub(config),
     )
@@ -8121,6 +8151,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
                 explicit_model="keyless-model",
             )
         )
+        await _settle_gateway_metadata(gateway)
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8136,6 +8167,7 @@ async def test_console_persisted_explicit_keyless_llamacpp_sends_no_authorizatio
     assert chunks == ["ok"]
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
+        ("GET", "/props"),
         ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
@@ -8185,6 +8217,7 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
                 explicit_model="authenticated-model",
             )
         )
+        await _settle_gateway_metadata(gateway)
         chunks = [
             chunk
             async for chunk in gateway.stream_chat(
@@ -8201,9 +8234,11 @@ async def test_console_llamacpp_explicit_stored_source_reaches_probe_and_chat():
     assert [(request.method, request.url.path) for request in requests] == [
         ("GET", "/health"),
         ("GET", "/props"),
+        ("GET", "/props"),
         ("POST", "/v1/chat/completions"),
     ]
     assert [request.headers.get("Authorization") for request in requests] == [
+        "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
         "Bearer stored-llama-request-canary",
@@ -11796,18 +11831,28 @@ def test_adapter_wire_kwargs_hands_providers_serializable_messages() -> None:
 
 
 @pytest.mark.asyncio
-async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
+@pytest.mark.parametrize(
+    ("console_settings", "execution_key"),
+    [
+        ({}, "custom-hosted"),
+        ({"custom_endpoints_use_engine": False}, "custom-openai-api"),
+    ],
+)
+async def test_custom_endpoint_openai_compatible_resolves_entry_url(
+    console_settings, execution_key
+) -> None:
     """An openai_compatible entry executes as the custom family with the
     entry's URL (ADR-146), never the endpoint-not-saved guard."""
     gateway = ConsoleProviderGateway(
         config_provider=lambda: {
+            "console": console_settings,
             "custom_endpoints": {
                 "paid": {
                     "display_name": "Paid",
                     "family": "openai_compatible",
                     "base_url": "https://api.example.com/v1",
                 }
-            }
+            },
         },
         environ={},
     )
@@ -11822,7 +11867,7 @@ async def test_custom_endpoint_openai_compatible_resolves_entry_url() -> None:
 
     assert resolved.ready is True
     assert resolved.readiness_key == "custom"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == execution_key
     # The custom family materializes the chat-completions URL from the
     # entry's base_url (provider endpoint contract), so assert the entry
     # URL flowed rather than exact equality.
@@ -11870,7 +11915,7 @@ async def test_custom_endpoint_declared_env_key_flows_to_resolution(
 
     assert resolved.ready is True
     assert resolved.api_key == "paid-secret"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio
@@ -11899,7 +11944,7 @@ async def test_custom_endpoint_stored_key_flows_to_resolution() -> None:
 
     assert resolved.ready is True
     assert resolved.api_key == "stored-secret"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio
@@ -12125,7 +12170,7 @@ async def test_custom_endpoint_resolution_carries_raw_selected_provider() -> Non
 
     assert resolved.ready is True
     assert resolved.selected_provider == "custom-ep:paid"
-    assert resolved.execution_key == "custom-openai-api"
+    assert resolved.execution_key == "custom-hosted"
 
 
 @pytest.mark.asyncio

@@ -2323,13 +2323,20 @@ class ConsoleRuntime:
                 )
         return record
 
-    def has_custodied_turns(self) -> bool:
-        """Whether an accepted turn is in custody, even before its run starts.
+    def has_custodied_turns(self, session_id: str | None = None) -> bool:
+        """Whether accepted work is in custody, even before its run starts.
+
+        Args:
+            session_id: Limit the check to one chat, or check all chats when unset.
 
         Returns:
-            True until every accepted turn's task has finished.
+            True until the selected accepted turn tasks have finished.
         """
-        return bool(self._turn_custody)
+        if session_id is None:
+            return bool(self._turn_custody)
+        return any(
+            record.session_id == session_id for record in self._turn_custody.values()
+        )
 
     def _release_custody(self, turn_id: str) -> None:
         """Drop the runtime's final references to an accepted turn."""
