@@ -199,3 +199,57 @@ def test_incompatible_machine_and_root_fork_provenance_rolls_back(
         assert not db.get_messages_for_conversation(conversation)
     finally:
         db.close()
+
+
+def test_mixed_hook_replay_keeps_native_receipt_and_messages_exact(tmp_path):
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+
+    db, conversation = _db_and_conversation(tmp_path / "mixed-replay.sqlite")
+    try:
+        acceptance = replace(
+            _acceptance(conversation),
+            origin="agent_chat_start",
+            agent_chat_start_attempt_id="start",
+            agent_chat_start=message_metadata.AgentChatStartMetadata(
+                "start", "run", "source"
+            ),
+            handoff_draft_revision=1,
+        )
+        repository = ConsoleDispatchRepository(db)
+        checkpoint = _insert(db, repository, acceptance)
+        assert _insert(db, repository, acceptance) == checkpoint
+        before = dict(
+            db.get_connection()
+            .execute("SELECT * FROM console_dispatch_checkpoints")
+            .fetchone()
+        )
+        messages = db.get_messages_for_conversation(conversation)
+        with pytest.raises(ValueError):
+            _insert(
+                db,
+                repository,
+                replace(
+                    acceptance,
+                    continuation_receipt=ContinuationReceipt(
+                        "parent", "stop", "assistant", "scheduler", 1
+                    ),
+                ),
+            )
+        assert (
+            dict(
+                db.get_connection()
+                .execute("SELECT * FROM console_dispatch_checkpoints")
+                .fetchone()
+            )
+            == before
+        )
+        assert db.get_messages_for_conversation(conversation) == messages
+        assert len(messages) == 2
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM console_hook_continuation_receipts")
+            .fetchone()[0]
+            == 0
+        )
+    finally:
+        db.close()

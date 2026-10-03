@@ -11221,8 +11221,8 @@ def build_chat_create_tool_closures(
                 if isinstance(exc, RoutingError):
                     return ToolResult(ok=False, error=f"{exc.code}: {exc}")
                 return ToolResult(ok=False, error="creation_preparation_refused")
-        # Only new_chat's trusted preparation verifies a live primary on every
-        # invocation. Fork/sub-agent requests continue through native confirmation.
+        # Trusted preparation rechecks the captured primary or child actor.
+        # Child decisions never remember, so every child request confirms anew.
         if tool != "new_chat" or grant_scope not in remembered:
             try:
                 decision = confirm(dict(payload))

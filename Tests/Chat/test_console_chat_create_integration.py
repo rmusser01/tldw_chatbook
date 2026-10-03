@@ -906,3 +906,256 @@ def test_prepared_new_chat_preset_params_win_over_config_and_keep_destination_id
         and durable.top_p == 0.4
         and durable.max_tokens == 123
     )
+
+
+@pytest.fixture
+def child_new_chat_rig(real_db_controller, tmp_path):
+    """A trusted child actor backed by genuine native run and conversation rows."""
+    from threading import Event
+    from types import SimpleNamespace
+    from tldw_chatbook.Agents.run_context import CurrentRunActor
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+    from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Parent chat")
+    source.persisted_conversation_id = controller.store.persistence.create_conversation(
+        conversation_title="Parent chat"
+    )
+    runs = AgentRunsDB(tmp_path / "child-runs.sqlite")
+    parent = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="primary",
+        assistant_message_id="parent-message",
+    )
+    child = runs.create_run(
+        conversation_id=source.persisted_conversation_id,
+        agent_kind="subagent",
+        parent_run_id=parent,
+        task="Follow-up work",
+    )
+    controller._agent_bridge = SimpleNamespace(
+        runs_db=runs,
+        agent_runs_db=runs,
+        live_primary_run_id=lambda conversation: parent,
+    )
+    controller._active_cancel_events[source.id] = Event()
+    controller._active_assistant_message_ids[source.id] = "parent-message"
+    controller.app.app_config = _FAKE_APP_CONFIG
+    runtime = SimpleNamespace(_app=controller.app)
+    runtime._resolve_new_console_assistant = lambda workspace, settings: (
+        ConsoleRuntime._resolve_new_console_assistant(runtime, workspace, settings)
+    )
+    controller.app.console_runtime = runtime
+    controller._default_session_settings = lambda: ConsoleSessionSettings(
+        provider="llama_cpp", model="destination-model"
+    )
+    actor = CurrentRunActor("subagent", child, parent)
+    payload = {
+        "tool": "new_chat",
+        "session_id": source.id,
+        "source_run_id": child,
+        "source_message_id": "parent-message",
+        "title": "Child draft",
+        "opening_prompt": "literal /new @helper",
+        "instructions": "",
+    }
+    try:
+        yield controller, db, runs, source, actor, payload
+    finally:
+        runs.close()
+
+
+def test_child_new_chat_prepares_confirms_executes_and_requires_fresh_approval(
+    child_new_chat_rig,
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    controller._start_created_chat = lambda *args: pytest.fail(
+        "child draft acquired start authority"
+    )
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=lambda prepared: controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        ),
+        execute=controller.execute_agent_chat_create,
+        prepare=controller.prepare_agent_chat_create,
+        session_id=source.id,
+        run_id="parent-message",
+    )
+    source.draft = "parent composer custody"
+    with use_run_actor(actor):
+        first = new_chat(
+            {"title": "Child draft", "opening_prompt": "literal /new @helper"}
+        )
+        assert first.ok, first.error
+        second = new_chat({"title": "Child draft 2", "opening_prompt": "second draft"})
+        assert second.ok, second.error
+    assert len(cards) == 2
+    assert cards[0]["request_id"] != cards[1]["request_id"]
+    for card in cards:
+        assert card["run_id"] == actor.run_id
+        assert (
+            card["agent_kind"] == "subagent"
+            and card["parent_run_id"] == actor.parent_run_id
+        )
+        assert card["destination"] == "same_workspace" and card["mode"] == "draft"
+    for result, prompt in ((first, "literal /new @helper"), (second, "second draft")):
+        outcome = json.loads(result.content)
+        assert outcome["launch_status"] == "draft"
+        assert outcome["draft_set"] and outcome["copied_messages"] == 0
+        row = db.get_conversation_by_id(outcome["conversation_id"])
+        metadata = json.loads(row["metadata"])
+        assert metadata["console_agent_handoff"]["draft"] == prompt
+        assert metadata["console_agent_handoff"]["source_run_id"] == actor.run_id
+        assert not db.get_messages_for_conversation(outcome["conversation_id"])
+    assert controller.store.active_session_id == source.id
+    assert source.draft == "parent composer custody"
+    assert not controller._chat_create_session_grants.get(source.id)
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )
+    with runs.connection() as connection:
+        assert (
+            connection.execute(
+                "SELECT COUNT(*) FROM automatic_chat_start_attempts"
+            ).fetchone()[0]
+            == 0
+        )
+
+
+@pytest.mark.parametrize("extra", [{"destination": "casual"}, {"mode": "start"}])
+def test_child_new_chat_refuses_new_destination_and_start_authority(
+    child_new_chat_rig, extra
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    with use_run_actor(actor), pytest.raises(PermissionError):
+        controller.prepare_agent_chat_create({**payload, **extra})
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize(
+    "mutation", ["terminal_child", "wrong_actor", "source_incarnation"]
+)
+def test_child_prepared_create_rechecks_currentness_before_execution(
+    child_new_chat_rig, mutation
+):
+    from dataclasses import replace
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+        if mutation == "terminal_child":
+            with runs.transaction() as connection:
+                connection.execute(
+                    "UPDATE agent_runs SET status='cancelled' WHERE id=?",
+                    (actor.run_id,),
+                )
+        elif mutation == "source_incarnation":
+            source.incarnation_id = "replacement-incarnation"
+        acting = (
+            replace(actor, parent_run_id="other-parent")
+            if mutation == "wrong_actor"
+            else actor
+        )
+        with use_run_actor(acting):
+            outcome = controller.execute_agent_chat_create(prepared)
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not controller._chat_creation_records
+
+
+def test_survivor_child_draft_ignores_primary_slot_and_standing_grant(
+    child_new_chat_rig,
+):
+    from threading import Event
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    with runs.transaction() as connection:
+        connection.execute(
+            "UPDATE agent_runs SET status='done' WHERE id=?", (actor.parent_run_id,)
+        )
+    controller._agent_bridge.live_primary_run_id = lambda conversation: None
+    controller._active_cancel_events.pop(source.id)
+    controller._active_assistant_message_ids.pop(source.id)
+    scope = (source.incarnation_id, "new_chat", "global", None, "draft")
+    controller._chat_create_session_grants[source.id] = {scope}
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    with use_run_actor(actor):
+        first = controller.prepare_agent_chat_create(payload)
+        assert not controller._chat_creation_records[first["_creation_token"]][
+            "approved"
+        ]
+        assert controller.request_chat_create_confirm(first, session_id=source.id) == {
+            "allow": True,
+            "remember": False,
+        }
+        assert controller.execute_agent_chat_create(first)["ok"]
+        controller._active_cancel_events[source.id] = Event()
+        controller._active_assistant_message_ids[source.id] = "unrelated-next-turn"
+        second = controller.prepare_agent_chat_create(
+            {**payload, "title": "Later child draft"}
+        )
+        assert controller.request_chat_create_confirm(second, session_id=source.id) == {
+            "allow": True,
+            "remember": False,
+        }
+        assert controller.execute_agent_chat_create(second)["ok"]
+    assert len(cards) == 2 and cards[0]["request_id"] != cards[1]["request_id"]
+    assert controller._chat_create_session_grants[source.id] == {scope}
+    assert not controller._chat_creation_records
+
+
+@pytest.mark.parametrize("before_prepare", [True, False])
+def test_child_draft_observes_its_parent_turn_stop(child_new_chat_rig, before_prepare):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cancel = controller._active_cancel_events[source.id]
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        if before_prepare:
+            cancel.set()
+            with pytest.raises(PermissionError):
+                controller.prepare_agent_chat_create(payload)
+        else:
+            prepared = controller.prepare_agent_chat_create(payload)
+            assert controller.request_chat_create_confirm(prepared)["allow"]
+            cancel.set()
+            # Completion can pop this turn's slot; its captured Stop still wins.
+            controller._active_cancel_events.pop(source.id)
+            controller._active_assistant_message_ids.pop(source.id)
+            outcome = controller.execute_agent_chat_create(prepared)
+            assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not controller._chat_creation_records

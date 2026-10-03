@@ -1269,8 +1269,58 @@ def test_continuation_handoff_atomically_transfers_ownership_and_sync_intent(
     assert repository.read_for_session(conversation_id).status is (
         ConsoleDispatchResultStatus.NOT_FOUND
     )
-    assert db.read_committed_chat_sync_intent(
-        message_id=inserted.assistant_message_id,
-        message_version=3,
-        payload_hash=expected_hash,
-    ) is not None
+    assert (
+        db.read_committed_chat_sync_intent(
+            message_id=inserted.assistant_message_id,
+            message_version=3,
+            payload_hash=expected_hash,
+        )
+        is not None
+    )
+
+
+def test_native_replay_rejects_added_hook_receipt_before_dedupe(tmp_path):
+    from dataclasses import replace
+    from tldw_chatbook.Agents.hooks_v2.continuations import ContinuationReceipt
+    from tldw_chatbook.Chat.message_metadata import AgentChatStartMetadata
+
+    db, conversation = _db_and_conversation(tmp_path / "native-replay.sqlite")
+    try:
+        native = replace(
+            _acceptance(conversation),
+            origin="agent_chat_start",
+            agent_chat_start_attempt_id="native-start",
+            agent_chat_start=AgentChatStartMetadata(
+                "native-start", "source-run", "source-chat"
+            ),
+            handoff_draft_revision=1,
+        )
+        repository = ConsoleDispatchRepository(db)
+        checkpoint = _insert(db, repository, native)
+        assert _insert(db, repository, native) == checkpoint
+        messages = db.get_messages_for_conversation(conversation)
+        mixed = replace(
+            native,
+            continuation_receipt=ContinuationReceipt(
+                "parent", "stop", "assistant", "scheduler", 1
+            ),
+        )
+        with pytest.raises(ConsoleDispatchCheckpointValidationError):
+            _insert(db, repository, mixed)
+        assert db.get_messages_for_conversation(conversation) == messages
+        assert len(messages) == 2
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM console_dispatch_checkpoints")
+            .fetchone()[0]
+            == 1
+        )
+        assert (
+            db.get_connection()
+            .execute("SELECT COUNT(*) FROM console_hook_continuation_receipts")
+            .fetchone()[0]
+            == 0
+        )
+        assert _insert(db, repository, native) == checkpoint
+    finally:
+        db.close()
