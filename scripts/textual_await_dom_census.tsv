@@ -25,8 +25,6 @@ tldw_chatbook/UI/ChatbookCreationWindow.py::on_mount	1
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::_load_chatbook_details	2
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::on_mount	3
 tldw_chatbook/UI/Chunking_Lab_Modules/results_region.py::update	1
-tldw_chatbook/UI/CodeRepoCopyPasteWindow.py::handle_node_selected	1
-tldw_chatbook/UI/CodeRepoCopyPasteWindow.py::load_tree	1
 tldw_chatbook/UI/Console_Modules/provider_continuation_recovery.py::_dispatch	2
 tldw_chatbook/UI/Library_Modules/library_artifacts_share_controller.py::_prepare_dialog	1
 tldw_chatbook/UI/Library_Modules/library_browse_route_swap.py::_apply_library_notes_source_strip	1
@@ -104,19 +102,16 @@ tldw_chatbook/UI/Screens/research_workspace_screen.py::_download_quick_note	3
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_guard_quick_note_action	3
 tldw_chatbook/UI/Screens/research_workspace_screen.py::_load_quick_note_after_flush	1
 tldw_chatbook/UI/Screens/research_workspace_screen.py::apply	1
-tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::_run_sync	1
 tldw_chatbook/UI/Screens/scheduling/schedules_workbench.py::action_move_owner	2
 tldw_chatbook/UI/Screens/workflows_screen.py::_activate_issue	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_attach_session	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_initialize_authoring	2
 tldw_chatbook/UI/Screens/workflows_screen.py::_recovery_dialog	1
 tldw_chatbook/UI/Screens/workflows_screen.py::_render_authoring	4
-tldw_chatbook/UI/Sharing_Panel.py::_run_operation	1
 tldw_chatbook/UI/Sharing_Panel.py::create_share_token	3
 tldw_chatbook/UI/Sharing_Panel.py::create_workspace_share	3
 tldw_chatbook/UI/Sharing_Panel.py::list_workspace_shares	1
 tldw_chatbook/UI/Sharing_Panel.py::update_share	2
-tldw_chatbook/UI/SiteConfigSettings.py::on_delete_config	1
 tldw_chatbook/UI/Speech/speech_playback_mixin.py::_play_audio_async	1
 tldw_chatbook/UI/Speech/speech_playground_pane.py::_run_audio_cpp_lifecycle	1
 tldw_chatbook/UI/Speech/speech_profile_mixin.py::_save_current_result_as_profile	4
@@ -187,3 +182,4 @@ tldw_chatbook/Widgets/Settings_Widgets/speech_tts_settings_panel.py::handle_conf
 tldw_chatbook/Widgets/audio_troubleshooting_dialog.py::_initialize_audio	1
 tldw_chatbook/Widgets/llamacpp_snapshot_manager.py::_save_preferences	5
 tldw_chatbook/Widgets/model_search_picker.py::load_provider	1
+tldw_chatbook/Widgets/settings_theme_editor.py::save_theme	1
