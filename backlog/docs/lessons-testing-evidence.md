@@ -17969,3 +17969,28 @@ The RED boundary case and unchanged mounted width/height/focus journeys
 prove both retry readiness and normal painted controls. An uncomposed-widget
 check alone is not evidence of native visibility; pair it with those mounted
 journeys and retain each source identity.
+
+
+## A real startup callback superseded an older census setup seam
+
+**PR #2953, 2026-10-03.** Rebase brought in a census that pauses the actual
+startup media-cleanup timer and bills its real callback separately. The PR's
+older setup still disabled startup cleanup and called it manually before
+typing. Both variants failed with zero captured callbacks before reaching the
+new query/helper proof. Removing only the old disable/manual-call blocks
+restored the capture and completed-query assertion; the existing trace
+migration settlement remained necessary. Compare complete test modules across
+the rebase before retaining an old settlement seam: its replacement may now
+measure the operation that the old setup suppresses.
+
+## A group selector spent the fully mounted CSS candidate budget
+
+**TASK-33625.2 / PR #2953, 2026-10-03.** A real mounted startup census read
+275 CSS candidates above its unchanged ceiling274. A read-only failure-frame
+probe identified `.approval-compact #approval-batch-actions Button` among the
+Button candidates. The three existing action IDs preserve the parsed(1,1,1)
+specificity and token declarations while indexing under those IDs. Source
+rebuild, mounted candidate budget, complete approval journeys and token/bundle
+guards then passed. Check actual parsed specificity and the fully mounted
+census when narrowing a selector; matching the same controls alone does not
+prove its global styling cost is unchanged.

@@ -1579,7 +1579,10 @@ MCPSchemaForm Checkbox.-on > .toggle--button {
   column-span: $ds-size-2;
   width: $ds-width-fill;
 }
-.approval-compact #approval-batch-actions Button {
+/* ID subjects preserve specificity without indexing this rule under every Button. */
+.approval-compact Button#approval-approve-all,
+.approval-compact Button#approval-submit,
+.approval-compact Button#approval-deny-all {
   width: $ds-width-fill;
   min-width: $ds-size-0;
   padding: $ds-space-0;

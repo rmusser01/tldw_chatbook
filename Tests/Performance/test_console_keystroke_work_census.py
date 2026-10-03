@@ -70,8 +70,7 @@ def _scratch_env(
         quiet_scheduler: Stretch the scheduler's 30 s poll to an hour. Its
             tick pays config and storage admissions (heartbeat and
             emergency-stop paths) and otherwise lands in whichever storage-
-            unit phase is open 30 s after boot (TASK-33260). Hold media startup
-            cleanup for an explicit real pass before the measured keys.
+            unit phase is open 30 s after boot (TASK-33260).
     """
     del tmp_path  # The private-profile wrapper owns the selected scratch tree.
     config_file = Path(os.environ["TLDW_CONFIG_PATH"])
@@ -85,7 +84,6 @@ def _scratch_env(
         f'api_key = "{CENSUS_API_KEY}"\n'
         + (
             "\n[scheduling]\nscheduler_poll_interval_seconds = 3600.0\n"
-            "\n[media_cleanup]\ncleanup_on_startup = false\n"
             if quiet_scheduler
             else ""
         )
@@ -597,10 +595,6 @@ async def _census(
             # (measured: 49 config admissions, not 27); the ``pause`` phase
             # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
-            # Pay the real media startup pass before typing; its five-second
-            # timer otherwise lands on whichever measured phase is open.
-            assert app.media_db is not None
-            await app.perform_media_cleanup()
 
         _TYPING_BURST_CALLERS.clear()
         counting["burst"] = True

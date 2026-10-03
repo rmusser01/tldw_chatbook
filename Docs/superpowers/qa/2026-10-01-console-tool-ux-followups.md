@@ -1355,3 +1355,44 @@ selected tasks remain In Progress until fresh exact-head Qodo/all four
 hosted gates and final Done metadata-head review/checks precede normal merge.
 Auto-merge stays off; prior scoped raw config failures/native/provider/Close
 receipts remain under their explicit earlier identities.
+
+
+Startup-cleanup and mounted-CSS dev integration (2026-10-03 UTC)
+
+Rebased onto dev efea5e45cf2348dd0da50fedac215cd849143822; all52 preceding patches are exact.
+The inherited startup timer capture supersedes three old media setup blocks.
+Both real storage variants reproduce the missing-callback assertion before
+removing only those blocks. The full census then restores byte-for-byte to dev
+after removing only the existing trace-migration settlement; every real timer,
+candidate-query/helper/first-GC assertion and platform/path ceiling stays exact.
+
+The real fully mounted CSS census measured275 above the unchanged274 ceiling.
+Its failure-frame probe names the owned bare Button approval selector. Replace
+only that selector with the three existing Button IDs, preserving parsed(1,1,1)
+specificity and every token declaration. Rebuild the app bundle from source;
+whole source and generated bundle restore to the rebased anchor after only
+that selector swap. Mounted census and complete approval journeys pass.
+
+Final268-source qualification: 22startup,
+13latency, 5ordinary storage/timer/platform/log controls,
+47affected UI, 26SDK/service/loopback-transport,
+1tooltip, and 13token/bundle-governance cases pass.
+Fresh derived-artifact preflight passes. Zero-new Ruff35, changed-range format
+and changed public-test signature audit pass;259 prior pins retain identities.
+The inherited SDK's whole AST restores after only its diagnostics export method
+is restored; no selected Console production method or guard changes here.
+
+One earlier final-source tested warm visit measured10 helpers above ceiling9.
+Both call-through traced variants pass at9, lighter tested capture at7, then
+the ordinary final pair and controls pass without instrumentation. Real stacks
+name character-scope metadata, conversation reads and workspace availability.
+The original extra helper was not captured: exact cause remains unconfirmed,
+no generic-flake fix or budget/worker/profile suppression is claimed. QA retains
+the failure, actual stacks, source identities and final ordinary receipts;
+fresh hosted performance success remains required.
+
+Existing ADR097(boot budget)/125/126/150 apply; no new ADR. All three selected
+tasks remain In Progress until fresh exact-head Qodo/all four hosted gates,
+then final Done metadata-head review/checks before protected normal merge.
+Auto-merge off. Earlier native/Close/provider evidence retains its original
+source identity; no new native/full-suite/live-server-UAT claim.
