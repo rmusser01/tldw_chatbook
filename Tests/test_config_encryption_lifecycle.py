@@ -221,6 +221,74 @@ def test_change_password_publish_failure_restores_file_bytes_and_password(
     assert cfg.get_encryption_password() == PASSWORD_A
 
 
+def _double_fault(cfg, monkeypatch) -> None:
+    """The publish fails AND putting the previous bytes back fails too."""
+
+    def failing_publish(*_args, **_kwargs):
+        raise ValueError("Configuration runtime reload failed")
+
+    def failing_restore(*_args, **_kwargs):
+        raise OSError("restore refused")
+
+    monkeypatch.setattr(cfg, "_publish_runtime_config_unlocked", failing_publish)
+    monkeypatch.setattr(cfg, "_restore_previous_config_unlocked", failing_restore)
+
+
+def test_change_password_double_fault_keeps_the_password_the_file_holds(
+    cfg, config_path, monkeypatch
+):
+    # Review round 1 (F7): when the rollback itself fails the file holds the
+    # NEW document. Reverting the session to the old password would encrypt
+    # the next save under A beside a verifier for B -- the stranded state.
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    _double_fault(cfg, monkeypatch)
+
+    assert cfg.change_encryption_password(PASSWORD_A, PASSWORD_B) is False
+
+    document = tomllib.loads(config_path.read_text())
+    ConfigEncryption().decrypt_config_strict(document, PASSWORD_B)
+    assert cfg.get_encryption_password() == PASSWORD_B
+
+
+def test_disable_double_fault_keeps_the_session_unlocked_state_of_the_file(
+    cfg, config_path, monkeypatch
+):
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    _double_fault(cfg, monkeypatch)
+
+    assert cfg.disable_config_encryption(PASSWORD_A) is False
+
+    assert "encryption" not in tomllib.loads(config_path.read_text())
+    assert cfg.get_encryption_password() is None
+
+
+def test_enable_double_fault_keeps_the_password_the_file_holds(
+    cfg, config_path, monkeypatch
+):
+    _double_fault(cfg, monkeypatch)
+
+    assert cfg.enable_config_encryption(PASSWORD_A) is False
+
+    document = tomllib.loads(config_path.read_text())
+    assert document["encryption"]["enabled"] is True
+    assert cfg.get_encryption_password() == PASSWORD_A
+
+
+def test_stranded_values_are_named_when_encryption_is_off(cfg, config_path):
+    # Review round 1 (G4-R1-F5): the Settings card names the stuck value
+    # when it refuses to encrypt over it.
+    document = _stranded_document()
+    del document["encryption"]
+    config_path.write_text(toml.dumps(document))
+
+    stranded = config_path.read_bytes()
+
+    assert cfg.encrypted_value_paths_on_disk() == ["api_settings.openai.api_key"]
+    # The key is under A; encrypting with B would strand it again.
+    assert cfg.enable_config_encryption(PASSWORD_B) is False
+    assert config_path.read_bytes() == stranded
+
+
 def test_change_password_then_disable_round_trips_the_key(cfg, config_path):
     assert cfg.enable_config_encryption(PASSWORD_A) is True
     assert cfg.change_encryption_password(PASSWORD_A, PASSWORD_B) is True
