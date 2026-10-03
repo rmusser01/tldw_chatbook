@@ -1506,3 +1506,66 @@ def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
     assert [m for m, _role in _visible(store, session_id)] == shown
     reopened, reopened_session, _native = _open_store(db, conversation_id)
     assert _tree_ids(reopened, reopened_session) == set(ids) - hidden
+
+
+# --- TASK-33628.9: Delete of an unsaved message with saved rows under it -------
+#
+# A message with no saved id can still have saved rows beneath it in memory:
+# a saved child of an unsaved node is written under its nearest SAVED ancestor.
+# The store skipped the durable delete whenever the selected message itself
+# had no saved id, so those rows vanished from the transcript and came back on
+# reopen (and stayed in search and exports).
+
+
+def test_deleting_an_unsaved_message_tombstones_the_saved_rows_under_it():
+    """AC#1/#2: reopen agrees with what the Delete showed, and Undo agrees too."""
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    db = CharactersRAGDB(":memory:", "unsaved-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    unsaved = store.append_message(
+        session_id, role=ConsoleMessageRole.USER, content="unsaved prompt"
+    )
+    reply = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.ASSISTANT,
+        content="saved reply",
+        persist=True,
+    )
+    saved_reply = store.get_message(reply.id).persisted_message_id
+    # Preconditions: the prompt is unsaved, its reply is saved under c3.
+    assert store.get_message(unsaved.id).persisted_message_id is None
+    assert saved_reply is not None
+    assert db.get_message_by_id(saved_reply)["parent_message_id"] == "c3"
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    reopened_before = _visible(reopened, reopened_session)
+    assert reopened_before[-1] == (saved_reply, "assistant")
+
+    scope = console_delete_scope(store, unsaved.id)
+    deleted, held = delete_subtree_for_undo(store, unsaved.id)
+
+    assert scope.removed_count == deleted.count == 2
+    assert _visible(store, session_id) == [(m, role) for m, role, _ in _CHAIN]
+    assert _deleted(db, [saved_reply]) == [1]
+    assert list(held) == [saved_reply]
+    assert not db.search_messages_by_content(
+        "saved reply", conversation_id=conversation_id
+    )
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == _visible(store, session_id)
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, [saved_reply]) == [0]
+    assert [m.id for m in store.messages_for_session(session_id)][-2:] == [
+        unsaved.id,
+        reply.id,
+    ]
+    reopened, reopened_session, _ = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == reopened_before
