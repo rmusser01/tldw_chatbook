@@ -8,6 +8,7 @@ import json
 import os
 import re
 import threading
+import time
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping
 from contextlib import ExitStack, contextmanager
@@ -80,6 +81,12 @@ class HookReviewSnapshot:
 def default_hook_permissions_path() -> Path:
     """Resolve the live canonical profile directory, never a startup constant."""
     return Path(config.get_user_data_dir()) / "hook_permissions.json"
+
+
+#: A visit snapshot is kept only once both hook files' last change is this
+#: old (storage_admission's _EVIDENCE_SETTLE_NS): a same-size edit inside one
+#: coarse timestamp tick leaves an identical stamp.
+_VISIT_SETTLE_NS = 1_000_000_000
 
 
 def _file_stamp(path: Path) -> tuple[int, int, int, int, int, int] | None:
@@ -453,22 +460,23 @@ class HookPermissions:
             store_path: The hook permission store.
 
         Returns:
-            The config selection (the effective config path as well as the
-            loaded source), generation and the environment that selects the
-            data root; both files' type, identity and change times taken
+            First, both files' type, identity and change times taken
             without following links (``None`` for a missing file); the
-            no-follow posture of both lock files and of every component of
-            both parent directories (the full read refuses an unsafe one);
-            the storage admission epoch and the serving state of its native
-            holds; and the in-memory sealing, refresh and closed state the
-            snapshot also reflects. Admission records other processes keep
-            on disk are not mirrored: no authority derives from a visit
-            snapshot, and Send and review always run the full read.
+            config selection (the effective config path as well as the
+            loaded source), generation and the environment that selects the
+            data root; the no-follow posture of both lock files and of every
+            component of both parent directories (the full read refuses an
+            unsafe one); the storage admission epoch and the serving state of
+            its native holds; and last, the in-memory sealing, refresh and
+            closed state the snapshot also reflects (``_memory_state()``).
+            Admission records other processes keep on disk are not mirrored:
+            no authority derives from a visit snapshot, and Send and review
+            always run the full read.
         """
         from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
 
         with self._cache_lock:
-            memory = (frozenset(self._sealed), frozenset(self._refresh_pending))
+            memory = self._memory_state()
         with storage_admission._lock:
             holds = tuple(
                 sorted(
@@ -478,14 +486,13 @@ class HookPermissions:
             )
         chain, posture = storage_admission._chain, storage_admission._posture
         return (
+            (_file_stamp(config_path), _file_stamp(store_path)),
             str(config.get_cli_config_path()),
             config._CONFIG_CACHE_SOURCE,
             config._CONFIG_GENERATION,
             # The data root (and so the store) follows HOME and the XDG
             # variables as well as config; a retarget forces a full read.
             os.environ.copy(),
-            _file_stamp(config_path),
-            _file_stamp(store_path),
             posture(config_path.with_name(config_path.name + ".lock")),
             posture(store_path.with_name(store_path.name + ".lock")),
             tuple(posture(part) for part in chain(config_path.parent)),
@@ -493,6 +500,13 @@ class HookPermissions:
             bootstrap._admission_epoch,
             holds,
             memory,
+        )
+
+    def _memory_state(self) -> tuple:
+        """Sealing, refresh and closed state; the caller holds ``_cache_lock``."""
+        return (
+            frozenset(self._sealed),
+            frozenset(self._refresh_pending),
             self._closed.is_set(),
         )
 
@@ -503,8 +517,10 @@ class HookPermissions:
         permission store under their locks. A snapshot is reused only when
         stamps taken before and after the read that produced it are equal and
         still equal now, so a write at any time -- including during that read
-        -- forces a full read on the next visit. Sending and reviewing keep
-        using ``snapshot()``.
+        -- forces a full read on the next visit. It is kept only once both
+        files' last change is ``_VISIT_SETTLE_NS`` old, so a same-size write
+        inside one timestamp tick cannot hide behind an equal stamp. Sending
+        and reviewing keep using ``snapshot()``.
 
         Returns:
             The current review state.
@@ -518,12 +534,20 @@ class HookPermissions:
         paused = storage_admission._pause is not None
         if reusable is not None and reusable[0] is published and not paused:
             try:
-                if reusable[1] == self._visit_stamp(
+                stamp = self._visit_stamp(
                     published.config.config_path, published.store_path
-                ):
-                    return published
+                )
             except OSError:
-                pass
+                stamp = None
+            if stamp is not None and stamp == reusable[1]:
+                # Re-read under the lock sealing takes: a hook sealed while
+                # the probes ran is never served as approved.
+                with self._cache_lock:
+                    if (
+                        self._visit_reuse is reusable
+                        and self._memory_state() == stamp[-1]
+                    ):
+                        return published
         try:
             # Validated as locked_hooks_config_snapshot validates it, before any
             # metadata probe touches the environment-selected path.
@@ -541,9 +565,14 @@ class HookPermissions:
             after = self._visit_stamp(snapshot.config.config_path, snapshot.store_path)
         except OSError:
             after = None
+        settled = time.time_ns() - _VISIT_SETTLE_NS
         keep = (
             after is not None
             and after == before
+            and all(
+                stamp is None or max(stamp[4], stamp[5]) <= settled
+                for stamp in after[0]
+            )
             and not any(row.state == "recovery" for row in snapshot.rows)
         )
         with self._cache_lock:
