@@ -1119,5 +1119,10 @@ produces a new inode, so that fence is unchanged (pinned by
 `Tests/Backup_Recovery/test_admission_device_renumber.py`). One case is weaker:
 a different volume mounted at the same path whose file has the same inode number
 would now match. That needs a volume swap at the same mount point and an inode
-collision, and it was accepted. The PERF-08 per-call posture stamps keep
+collision, and it was accepted. Matches are now a superset of before, and every
+comparison a false inode match could flip fails closed: admission groups more
+namespaces (more locking), and the activation, publication, replacement,
+storage-admission and later-rollback scope checks refuse. Nothing that was
+refused before is admitted. A malformed stored token is never normalized, so it
+cannot match. The PERF-08 per-call posture stamps keep
 `st_dev`: they never outlive a process, so a renumbering cannot reach them.

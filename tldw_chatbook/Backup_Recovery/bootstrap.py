@@ -9,6 +9,7 @@ from __future__ import annotations
 import functools
 import hashlib
 import json
+import re
 import stat
 import threading
 from collections.abc import Callable, Iterable, Mapping
@@ -37,7 +38,23 @@ def inode_token(info: os.stat_result) -> str:
     Returns:
         ``"inode:<st_ino>"``.
     """
-    return f"inode:{info.st_ino}"
+    return inode_token_for(info.st_ino)
+
+
+def inode_token_for(st_ino: int) -> str:
+    """Return the physical-identity token for an inode number (TASK-34200).
+
+    Args:
+        st_ino: The file's inode number.
+
+    Returns:
+        ``"inode:<st_ino>"``.
+    """
+    return f"inode:{st_ino}"
+
+
+#: A token recorded before TASK-34200: ``inode:<st_dev>:<st_ino>``, both numeric.
+_LEGACY_INODE_TOKEN = re.compile(r"inode:(\d+):(\d+)")
 
 
 def identity_view(tokens: Iterable[str]) -> set[str]:
@@ -55,9 +72,10 @@ def identity_view(tokens: Iterable[str]) -> set[str]:
     """
     view = set()
     for token in tokens:
-        if token.startswith("inode:") and token.count(":") == 2:
-            token = "inode:" + token.rsplit(":", 1)[1]
-        view.add(token)
+        legacy = _LEGACY_INODE_TOKEN.fullmatch(token)
+        # Only a well-formed legacy token is normalized; a malformed one stays
+        # as recorded, so it can never match a current identity (Qodo #2994).
+        view.add(inode_token_for(int(legacy.group(2))) if legacy else token)
     return view
 
 MAX_RECORD = 1048576
