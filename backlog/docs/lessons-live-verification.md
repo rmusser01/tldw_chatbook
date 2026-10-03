@@ -3583,3 +3583,19 @@ fresh handles to archive, hook configuration, run-log selection and fleet histor
 reads. Reusing operation-owned connection retirement fixed the actual workers;
 closing only the main-thread database or collecting Python objects did not.
 The final 105-case run passed without resource warnings or raised FD thresholds.
+
+
+## Importing the test bootstrap also installs its socket guard
+
+**TASK-33660, 2026-10-02.** A standalone audio-auth UAT probe reused
+`Tests/conftest.py` for a private client profile. Two connection attempts failed
+even though the owned server listener was reachable: importing that bootstrap
+also installs the socket guard in blocked mode. The initial startup-delay
+explanation was not established. The guard's documented numeric-loopback-only
+mode allowed the four protected GET requests while retaining external socket
+denial; all four produced the expected 401/auth_required recovery state.
+
+Use `loopback_network` for a pytest probe, or the documented guard mode for a
+standalone probe against an owned numeric loopback address. Restore blocked mode
+in `finally` and assert that no blocked attempts were swallowed. Keep failed
+setup attempts out of the passing receipt.

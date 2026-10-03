@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from ..runtime_policy.bootstrap import build_runtime_api_client_provider_from_config
 from ..runtime_policy.types import PolicyDeniedError
-from ..tldw_api.exceptions import APIResponseError
+from ..tldw_api.exceptions import APIResponseError, AuthenticationError
 
 if TYPE_CHECKING:
     from ..tldw_api import (
@@ -125,6 +125,19 @@ class ServerAudioServicesService:
             authority_owner="server",
         )
 
+    @staticmethod
+    def _auth_required(action_id: str) -> PolicyDeniedError:
+        # tldw_server#3058 made the STT health and streaming status probes
+        # require an authenticated user, and Chatbook allows a server binding
+        # with no token -- so a 401 here is a state to report, not a failure.
+        return PolicyDeniedError(
+            action_id=action_id,
+            reason_code="auth_required",
+            user_message="Authentication with the active server is required to check audio status.",
+            effective_source="server",
+            authority_owner="server",
+        )
+
     async def _require_audio_diagnostic_capability(
         self, client: TLDWAPIClient, action_id: str
     ) -> None:
@@ -159,17 +172,21 @@ class ServerAudioServicesService:
             The server's STT health data.
 
         Raises:
-            PolicyDeniedError: Warm-up is denied by current server capability or
-                a later server 403.
+            PolicyDeniedError: The server rejected the request as
+                unauthenticated (``auth_required``), or warm-up is denied by
+                current server capability or a later server 403
+                (``admin_required``).
             APIResponseError: Other server or capability-request failures.
         """
         action_id = "audio.health.observe.server"
         self._enforce(action_id)
         client = self._require_client()
-        if warm:
-            await self._require_audio_diagnostic_capability(client, action_id)
         try:
+            if warm:
+                await self._require_audio_diagnostic_capability(client, action_id)
             return self._dump(await client.get_stt_health(model=model, warm=warm))
+        except AuthenticationError as exc:
+            raise self._auth_required(action_id) from exc
         except APIResponseError as exc:
             if warm and exc.status_code == HTTPStatus.FORBIDDEN:
                 raise self._admin_required(action_id) from exc
@@ -186,8 +203,22 @@ class ServerAudioServicesService:
         )
 
     async def get_audio_streaming_status(self) -> dict[str, Any]:
-        self._enforce("audio.streaming.status.server")
-        return self._dump(await self._require_client().get_audio_streaming_status())
+        """Read streaming status from the active server.
+
+        Returns:
+            The server's streaming status data.
+
+        Raises:
+            PolicyDeniedError: Runtime policy denies the probe or the server
+                requires authentication (``auth_required``).
+            APIResponseError: Other server response failures.
+        """
+        action_id = "audio.streaming.status.server"
+        self._enforce(action_id)
+        try:
+            return self._dump(await self._require_client().get_audio_streaming_status())
+        except AuthenticationError as exc:
+            raise self._auth_required(action_id) from exc
 
     async def get_audio_streaming_limits(self) -> dict[str, Any]:
         self._enforce("audio.streaming.detail.server")
