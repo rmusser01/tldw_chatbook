@@ -1242,10 +1242,21 @@ async def test_console_storage_units_stay_within_their_ratchets(
         if (ceiling := _ceiling(phase, unit, ceilings)) is not None
         and value > ceiling * slack.get(unit, 1)
     ]
+    # Only the units the burst went over: its ceilings allow dozens of
+    # ordinary admissions, which would bury the one that broke it.
+    burst_over = {
+        unit
+        for unit in ("storage_admissions", "helper_spawns")
+        if f"typing (whole burst) {unit}:" in " ".join(over)
+    }
+    burst_callers = [
+        entry
+        for entry in _TYPING_BURST_CALLERS
+        if entry.split(" on ", 1)[0] in burst_over
+    ]
     callers = (
-        " Typing-burst callers: " + " | ".join(_TYPING_BURST_CALLERS) + "."
-        if any(entry.startswith("typing (whole burst)") for entry in over)
-        and _TYPING_BURST_CALLERS
+        " Typing-burst callers: " + " | ".join(burst_callers) + "."
+        if burst_callers
         else ""
     )
     assert not over, (
