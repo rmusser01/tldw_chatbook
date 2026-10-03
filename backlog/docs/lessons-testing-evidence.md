@@ -1,5 +1,38 @@
 # Lessons: what counts as evidence a change works
 
+## A parametrize id of `live` skips the test unless `--run-live` is given
+
+**TASK-33621.33, 2026-10-03.** A new W003 checker test used
+`@pytest.mark.parametrize(..., ids=["live", "dead"])`. In scratch runs (a
+copy of the file outside the repo, used for red-on-dev and mutation checks)
+both cases ran, and the `live` case caught a mutation. In the worktree the
+same file reported `140 passed, 1 skipped`: `Tests/conftest.py`'s
+`pytest_collection_modifyitems` adds `skip("Need --run-live option to run")`
+to every item with `"live" in item.keywords`, and an exact param id is a
+keyword. The mutation evidence came from a run the repo's own command never
+reproduces. Renaming the ids to `live-def-takes-pick`/`dead-def-takes-pick`
+made both run. A test name such as `test_live_x` is not affected: only the
+exact keyword `live` (a param id, a marker, a class or module named `live`)
+is. **What to do:** read the skip count in the summary, not just the pass
+count, and run `-rs` once when it is nonzero. Never use `live` as a param id
+unless the case really needs a live server.
+
+## An unchanged census does not show that a change kept a checker's recall
+
+**TASK-33621.33, 2026-10-03.** AC#6 taught W003 to ignore dead code: a def
+that a later def of the same name rebinds. The first cut called every
+earlier def in a scope's name table dead, and the evidence offered was that
+the W003 census stayed byte-identical (69 rows). It did. But 166 real-tree
+defs had become dead, and only 18 really were (`@overload` stubs and true
+duplicates). The rest were live: property getters beside their `@x.setter`
+(one of them schedules a callable), and defs in `if`/`else` or
+`try`/`except` alternatives. None of them reached a wait push that day, so
+no row moved; the first one that did would have been missed in silence. A
+checkpoint review found it by probing those shapes, not by reading the
+census. **What to do:** when a change makes a checker ignore something,
+count what it now ignores on the real tree and read that list, alongside
+the row diff. Identical rows only say that nothing reachable changed today.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
