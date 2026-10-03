@@ -29,6 +29,7 @@ from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
     CORE_FIELDS,
     FIELD_ROW_FIELDS,
+    MODEL_CHANGE_ID,
     SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS,
     field_control_id,
@@ -540,3 +541,73 @@ async def test_label_column_comes_from_css_per_view_and_tier(size, model, contex
         for _ in range(4):
             await pilot.pause()
         assert widths() == {context}
+
+
+_TO_CONTEXT = ("model", "context", "Model capacity", "console-context-budget-mode")
+
+
+@pytest.mark.parametrize(
+    ("size", "scrolled", "opened", "first_section", "first_control"),
+    (
+        ((211, 44), *_TO_CONTEXT),
+        ((235, 52), *_TO_CONTEXT),
+        # The Context view fits at 235x52, so only 211x44 can scroll it.
+        ((211, 44), "context", "model", "model-a", "console-settings-temperature"),
+    ),
+)
+@pytest.mark.asyncio
+async def test_a_view_switch_opens_the_new_view_at_its_top(
+    size, scrolled, opened, first_section, first_control
+) -> None:
+    """TASK-33006.7 AC#1-#3: both views share one scroll body, so a switch
+    kept the other view's offset and Model capacity sat above the fold. The
+    new view opens at its top: its first section paints, and the control it
+    opens on (the shared open-focus rule) has focus and is visible. Sampling
+    and Connection are open so the Model view scrolls at both sizes."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings())
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        for disclosure_id in (SAMPLING_DISCLOSURE_ID, CONNECTION_DISCLOSURE_ID):
+            modal.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+        body = modal.query_one("#console-settings-body", ScrollableContainer)
+        if scrolled == "context":
+            await pilot.click("#console-settings-view-context")
+            await _open(pilot, app, modal)
+        await _open(pilot, app, modal)
+        body.scroll_end(animate=False, immediate=True)
+        await _open(pilot, app, modal)
+        assert body.scroll_y > 0, "precondition: the view scrolled"
+
+        await pilot.click(f"#console-settings-view-{opened}")
+        await pilot.pause(0.2)  # the modal's focus reveal settles on a timer
+        await _open(pilot, app, modal)
+
+        viewport = body.content_region
+        section = (
+            modal.query("#console-settings-context-view .destination-section").first()
+            if opened == "context"
+            else modal.query_one("#console-settings-model-row")
+        )
+        assert viewport.contains_region(section.region), (body.scroll_y, section.region)
+        assert first_section in _painted(app.screen)[section.region.y]
+        focused = app.focused
+        assert focused is not None and focused.id == first_control
+        assert viewport.contains_region(focused.region), (focused.region, viewport)
+
+
+@pytest.mark.asyncio
+async def test_a_view_switch_to_a_blocked_model_view_focuses_its_fix() -> None:
+    """TASK-33006.7 AC#2: the switch shares the open-focus rule, so a chat
+    with no model lands on Change, as it does when Chat settings opens."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(model=None), focus_context=True)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause(0.2)
+        await _open(pilot, app, modal)
+        focused = app.focused
+        assert focused is not None and focused.id == MODEL_CHANGE_ID
+        body = modal.query_one("#console-settings-body", ScrollableContainer)
+        assert body.content_region.contains_region(focused.region)

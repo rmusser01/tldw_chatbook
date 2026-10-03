@@ -118,8 +118,9 @@ _BUDGETS: dict[str, int] = {
     # compose-time geometry and Use saved defaults lives in
     # console_settings_saved_defaults.py. TASK-33006.6 lowers it to 6,143:
     # the label column's inline widths moved to app CSS, so the Context view
-    # can widen it.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6143,
+    # can widen it. TASK-33006.7 lowers it to 6,142: one handler switches
+    # both views, which now open at their top.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6142,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them
