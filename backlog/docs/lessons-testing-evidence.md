@@ -17939,3 +17939,20 @@ Remove the unrelated formatting rather than blessing it in the inventory. Use
 `start_line:start_column-end_line:end_column` (or `start_line-end_line`), validate
 nonempty parsed diff ranges, and inspect the actual diff; AST equality alone
 does not establish byte-local scope or persistent-diagnostic reproducibility.
+
+## A queryable confirmation is not a painted confirmation
+
+**TASK-33621.16 / PR #2953, 2026-10-03.** A latest-dev qualification
+uncovered three real Close journey failures after ConfirmationDialog had
+entered the screen stack and its Confirm selector existed. Navigation and
+refusal tests tried to click at `(0, 0)` with an empty compositor; the compact
+geometry test saw the scroll container's width as zero even though Stay had
+focus. The shared `_wait_for_confirmation` helper returned on selector
+existence, before the first paint.
+
+Wait at that common boundary until both Confirm and Stay have non-empty
+regions and the compositor returns the actual buttons at their centres.
+Keep the original polling budget and real Pilot clicks, focus/geometry
+assertions and private-profile wrapper caps. Focus and selector readiness
+do not establish paint readiness; adding sleeps or weakening geometry
+assertions would conceal the timing gap instead of verifying the interface.

@@ -39,6 +39,7 @@ from tldw_chatbook.Widgets.Console.console_conversation_action_menu import (
     ConversationActionChosen,
 )
 from textual.css.query import NoMatches
+from textual.errors import NoWidget
 from textual.widgets import Button
 
 from Tests.private_profile import private_profile_test
@@ -95,17 +96,31 @@ async def _mounted_console(host, pilot, selector: str = "#console-workspace-cont
 async def _wait_for_confirmation(
     host, *, previous: ConfirmationDialog | None = None
 ) -> ConfirmationDialog:
-    """Wait for a close worker to mount its confirmation without fixed sleeps."""
+    """Wait for the Close modal's actions to be painted and hit-testable.
+
+    The screen stack and selectors can be ready before the first layout.
+    Preserve the polling budget, then let the callers perform real clicks
+    and their geometry assertions against the painted controls.
+    """
 
     for _ in range(200):
         candidate = host.screen_stack[-1]
         if isinstance(candidate, ConfirmationDialog) and candidate is not previous:
             try:
-                candidate.query_one("#confirm-button", Button)
-            except NoMatches:
+                buttons = (
+                    candidate.query_one("#confirm-button", Button),
+                    candidate.query_one("#cancel-button", Button),
+                )
+                painted = all(
+                    button.region.area
+                    and candidate.get_widget_at(*button.region.center)[0] is button
+                    for button in buttons
+                )
+            except (NoMatches, NoWidget):
                 pass
             else:
-                return candidate
+                if painted:
+                    return candidate
         await asyncio.sleep(0.01)
     raise AssertionError("Console close confirmation did not mount")
 

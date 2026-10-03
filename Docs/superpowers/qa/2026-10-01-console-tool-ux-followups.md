@@ -1231,3 +1231,54 @@ preserves the proof, both fixture modes and their controls. Keep TASK32367 and
 TASK33625.2 In Progress pending latest-dev safe publication, fixed-thread
 resolution, fresh exact-head Qodo/all four hosted gates, then final
 Done-metadata-head review/checks and verified protected normal merge.
+
+
+Latest-dev guard / Close first-paint qualification (2026-10-03 UTC)
+
+Rebase onto dev 9b28ce1479efed6bca687cfbb33d261322f83abe preserves all48 Console patches. Three
+inherited fixture pins change and two guard pins are added, all exact dev;
+all256 other prior pins and production remain exact (261 total). The earlier
+four maintenance fixes retain their exact scalar/type AST proof. No new ADR:
+consume the inherited test guard and correct only test input readiness.
+
+Guard tests55 pass/2 macOS xattr skips. Full128 affected contracts110 pass/
+18 configuration-binding failures. A unique reviewed835 Console source-only
+snapshot plus exactly current9b fixtures/guard reproduces these18 nodes and
+messages; only those18 pass with their existing real bootstrap_profile owner.
+This is a controlled preceding-Console/current-fixtures snapshot, not pristine
+dev or a whole-command-green claim. No guard off switch, real-home override,
+config getter/admission replacement, assertion change or budget relaxation.
+
+All37 exact Perf Guards pass:22 startup,13 latency/responsiveness,2 storage.
+The full24 mounted command has21 passes/3 Close failures (622.79s).
+A queryable ConfirmationDialog entered the stack before its first paint:
+two clicks see an empty compositor/NoWidget at0,0, and compact geometry sees
+width0 despite Stay focus. Retain all RED messages and the21 passing cases.
+Fix only shared _wait_for_confirmation to require non-empty Confirm/Stay
+regions with the actual buttons hit-testable at their centres. Existing200
+polls/0.01s, real clicks, every geometry/focus/worker assertion and180s caps
+stay unchanged. Restoring that helper and its one test-only NoWidget import
+makes the entire module AST exact; all260 other source pins stay unchanged.
+The concrete readiness incident is recorded in lessons-testing-evidence.
+
+All three complete Close groups now pass (206.8s), including all original scenarios and both geometry title variants.
+The complete21 routing cases pass (198.62s) with existing bootstrap-profile
+ownership only on18 unchanged legacy cases; the three typed private wrappers
+keep ordinary ownership. The longest fresh wrapper/child takes
+111.834s/98.992s, below unchanged180s.
+Passing evidence covers all24 original mounted nodes across explicitly
+identified pre-/post-helper sources; no fresh whole24/37 replay is claimed.
+Production/guard/fixture/performance bytes remain exact; earlier provider,
+SQLite and native receipts retain original identities, no native/full suite.
+
+Fresh final-helper artifact preflight passes (172.02s), zero-new Ruff35
+and4 exact helper format ranges pass, all261 final pins stable. Earlier16
+maintenance-format signatures/scalar fragments remain exact. QA oct03_real_profile_guard_dev_integration
+and oct03_close_first_paint_readiness retain source identity, failures, controls and final receipts.
+The preceding835 hosted latency job passed timing but failed a startup
+trace-callout mount; the fresh full22 local startup run passes unchanged.
+That establishes neither cause nor fix for the older hosted failure; final
+hosted latency success remains required, no speculative production/CI change.
+The Close task is reopened alongside the pending/compact tasks until fresh
+exact-head clean/resolved Qodo/all four hosted gates, then final task metadata
+review/checks and verified protected normal merge. Auto-merge remains off.
