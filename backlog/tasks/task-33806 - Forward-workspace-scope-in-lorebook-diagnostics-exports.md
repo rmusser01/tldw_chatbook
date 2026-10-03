@@ -12,7 +12,7 @@ modified_files:
 - Tests/tldw_api/test_character_persona_client.py
 - Tests/tldw_api/test_lorebook_diagnostics_transport.py
 - Tests/Character_Chat/test_character_persona_scope_service.py
-updated_date: 2026-10-03 03:31
+updated_date: 2026-10-03 03:38
 ---
 
 ## Description
@@ -52,6 +52,7 @@ Fresh rebase run retained the known class-spec DB mock failure: participants._co
 Rebased qualification:102/102 targeted tests pass after replacing the wiring-test DB mock with isolated in-memory SQLite and a pytest finalizer that closes it. No production recovery guards or existing assertions changed. Read-only no-mock real authenticated API checks execute this exact checkout: explicit/inferred scope200 matching raw endpoint, missing/wrong scope404, protected history byte-equivalent with prior SHA256. Added-line Ruff findings0; changed blocks/new file formatting and compilation pass; production client Bandit0findings/0errors. Existing filewide Ruff debt remains and is not claimed clean. Stage3 is now awaiting exact-lease publication, current-head hosted CI and Qodo, and requested merge.
 Additional rebased verification:37/37 Perf Guard cases pass locally, with3budget-headroom warnings (no failing guards). CSS reproduction, profile-owned-path and persistent diagnostic inventories, schema table allowlist, index-plan pins, worker/timestamp contracts, and UI gate census pass. Independent exact-head review found no actionable issues. Qodo footer identifies c387faa084102a4c486a700f266d87d9ab583a7b and reports0active bugs/rules/cross-repo/skills, with no unresolved threads. Hosted Perf Guard and Derived Artifacts are waiting for runner capacity; strict dev branch protection requires Derived artifacts reproduce from their sources. No admin bypass or merge performed. Only superseded runs of this same PR were cancelled, including force-cancel of the initial-head run that held the new workflow concurrency group after normal cancellation. Current-head runs are preserved.
 Scoped implementation and review are complete against dev2d34cbf8. All139local cases pass (102owning and37PerfGuard); real authenticated HTTP positive/negative controls pass without mocks and preserve history. Hosted Perf Guard, PR Fast Lane, and UI Fast Lane succeeded for c387faa084102a4c486a700f266d87d9ab583a7b. Required derived-artifact job remains queued; no protected merge has occurred. Closing the implementation task adds only tracking metadata, with production/test bytes preserved; final-head CI and exact-head merge remain mandatory before reporting the PR merged. No full-suite or native TUI/browser UAT claim is made.
+Dev advanced during runner allocation to acc45cdc2e7ec90157e478a0e4b499084830edf9 (live-provider capture Tests/fixtures work only). Rebased all5commits onto that tip without conflicts, preserving eb89c343 in codex/backup-lorebook-pre-acc45-eb89c343; range-diff reports all5commits equivalent. Production tldw_chatbook tree and pyproject.toml hashes are byte-identical to the c387faa0 source that passed139local cases and hosted Perf Guard/PR/UI fast lanes. Fresh owning suite on acc45:102passed. Final-head hosted checks are still required, and merge is not yet claimed. This follow-up changes only task metadata.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
