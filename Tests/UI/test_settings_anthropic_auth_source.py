@@ -233,3 +233,40 @@ def test_the_readiness_overlay_carries_a_draft_sign_in_choice():
         draft_api_key=None,
     )
     assert "auth_source" not in untouched["api_settings"]["anthropic"]
+
+
+@pytest.mark.asyncio
+async def test_switching_a_saved_subscription_back_to_api_key_shows_the_stored_key():
+    """Qodo #2990: a saved subscription choice must not hide a stored key."""
+    app = _anthropic_app(auth_source="claude_subscription")
+    app.app_config["api_settings"]["anthropic"]["api_key"] = "sk-ant-test-0000000000000000"
+    host = DestinationHarness(app, "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        clear = screen.query_one("#settings-provider-api-key-clear", Button)
+        assert clear.disabled is True  # subscription chosen
+
+        _choose(screen, "api_key")
+        await pilot.pause()
+
+        assert clear.disabled is False
+        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
+        assert "Claude subscription" not in status
+        assert "local config key saved" in status
+
+
+@pytest.mark.asyncio
+async def test_an_unsaved_subscription_choice_shows_in_the_credential_status():
+    """Qodo #2990: the status row follows the choice before Save."""
+    host = DestinationHarness(_anthropic_app(), "settings")
+
+    async with host.run_test(size=(180, 50)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        _choose(screen, "claude_subscription")
+        await pilot.pause()
+
+        status = str(screen.query_one("#settings-provider-credential-status", Static).content)
+        assert "Claude subscription" in status
