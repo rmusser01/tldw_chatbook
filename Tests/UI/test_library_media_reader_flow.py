@@ -139,10 +139,22 @@ async def test_media_global_f6_reaches_content_scroller() -> None:
 async def _wait_for_detail_call(
     service: ControlledDetailMediaService, backing_id: int
 ) -> None:
+    """Wait until the controlled service has ENTERED the gated detail read.
+
+    The deadline is wall-clock contention survival, not a product bound: the
+    read is dispatched by the 0.12 s selection settle timer onto the app's
+    event loop, and a fixed 2 s budget lost that race to CPU contention about
+    once per few dozen isolated runs (TASK-32171 -- the traversal probe's
+    "genuine nondeterminism": identical rates on branch and base, because the
+    varying input is scheduling latency, not the tree). 15 s matches the
+    `_wait_for_condition` convention these suites already use for the same
+    reason; it only elongates the FAILURE path when the dispatch is truly
+    gone.
+    """
     try:
         started = await asyncio.to_thread(
             service.detail_entered.setdefault(backing_id, threading.Event()).wait,
-            2,
+            15,
         )
         if not started:
             raise TimeoutError

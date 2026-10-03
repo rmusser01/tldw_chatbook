@@ -16842,7 +16842,20 @@ class LibraryScreen(BaseAppScreen):
         viewer = self._mounted_library_media_viewer()
         if viewer is not None:
             viewer.sync_list_failed(self._library_media_list_unselectable())
-        _sync_library_canvas(self, "media", then=then)
+        synced_media_canvas = _sync_library_canvas(self, "media", then=then)
+        if not synced_media_canvas and pending_entry_focus_generation is not None:
+            # Projection-suppressed and failed targeted syncs do not run the
+            # queued callback (the media-trash path below releases the same
+            # guards for exactly that reason). Without this release,
+            # ``_library_notes_restoring_focus`` -- armed just above because
+            # the recompose temporarily drops DOM focus outside Media --
+            # stays True forever, and every later ``on_descendant_focus``
+            # classifies as programmatic, which suppresses Media row
+            # selection entirely: arrow-keying the Items list then selects
+            # nothing at all (TASK-32171's intermittent failure; the varying
+            # input was whether this one sync was suppressed).
+            self._library_notes_restoring_focus = False
+            self._library_notes_programmatic_focus_target = None
 
     def _focus_library_media_page_control(self, invoked: str) -> None:
         return self._media_controller._focus_library_media_page_control(invoked)

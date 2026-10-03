@@ -99,6 +99,21 @@ async def _load_row(screen, pilot, service: ControlledDetailMediaService, index:
         lambda: screen._media_state.reader_session.loaded_id == canonical_id,
         message=f"Row {index} never settled its detail.",
     )
+    # Entering the Media list arms a 2.0 s "list entry focus" receipt
+    # (LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS) whose return-focus events
+    # are deliberately NOT selections. Arrow-keying inside that armed
+    # window is classified as the programmatic return and selects nothing
+    # at all -- observed under a loaded loop as the whole traversal
+    # selecting zero rows and the final row's fetch never starting
+    # (TASK-32171's genuine nondeterminism: the varying input is whether
+    # the traversal begins inside or after the armed window). Let the arm
+    # discharge before any caller traverses, so every probe drives real
+    # user selections.
+    await _wait_for_condition(
+        pilot,
+        lambda: not getattr(screen, "_library_pending_list_entry_focus", False),
+        message=f"Row {index}: Media list entry focus arm never discharged.",
+    )
     return canonical_id, backing_id, title
 
 
@@ -133,7 +148,19 @@ async def test_focus_traversal_builds_zero_bodies_for_pass_through_rows():
                 lambda: screen._media_state.reader_session.loaded_id == final_id,
                 message="The final traversal row never settled.",
             )
-            await pilot.pause()
+            # The settle projects the document through a deferred
+            # ``call_next`` recompose; wait for that build itself rather
+            # than a fixed number of pauses, so the counting window closes
+            # on the projection landing, never one tick early or late
+            # (TASK-32171).
+            await _wait_for_condition(
+                pilot,
+                lambda: counts["body"] >= 1,
+                message=(
+                    "The settled row's document projection never landed "
+                    f"(counts={counts!r})."
+                ),
+            )
 
         assert pass_through_builds == 0, (
             "Pass-through focus rows rebuilt the document body "
@@ -196,6 +223,22 @@ async def test_loading_banner_paints_in_place_without_body_rebuild():
                 pilot,
                 lambda: not _loading_banner_displayed(screen),
                 message="The banner stayed painted after the settle.",
+            )
+            # The settle defers the document projection through
+            # ``call_next(_recompose_library_media_detail_if_unrendered)``;
+            # the waits above can observe their predicates one tick BEFORE
+            # that deferred callback runs (checked-first polling), which
+            # closed the counting window early and read 0 builds instead of
+            # 1 about once per ten isolated runs (TASK-32171's sibling
+            # manifestation). Wait for the projection to land instead of
+            # guessing a pause count.
+            await _wait_for_condition(
+                pilot,
+                lambda: counts["body"] >= 1,
+                message=(
+                    "The settled document projection never landed inside "
+                    f"the counting window (counts={counts!r})."
+                ),
             )
         assert counts["body"] == 1
 
@@ -268,7 +311,17 @@ async def test_one_megabyte_markdown_document_is_not_reparsed_per_keystroke():
                 timeout=180.0,
                 message="The settled row never loaded past the 1 MB document.",
             )
-            await pilot.pause()
+            # Same deferred-projection close as the other two probes: wait
+            # for the settled document build itself (TASK-32171).
+            await _wait_for_condition(
+                pilot,
+                lambda: counts["body"] >= 1,
+                timeout=30.0,
+                message=(
+                    "The 1 MB document projection never landed inside the "
+                    f"counting window (counts={counts!r})."
+                ),
+            )
 
         assert traversal_builds == 0, (
             f"Traversing past a 1 MB document rebuilt its body "

@@ -1291,6 +1291,7 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_kimi_zai_native_tools.py",
             "test_console_continuation_review_fixes.py",
             "test_console_trace_transform_continuations.py",
+<<<<<<< HEAD
 
 
             # TASK-592/609 (egress hardening arc): the three SSRF/egress
@@ -1398,6 +1399,26 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_preflight.py",
             "test_provision_install.py",
             "test_provision_crash_recovery.py",        }
+=======
+            # TASK-32171: the Library media-reader traversal suite mounts
+            # real production-CSS apps through _flow_app -> _build_test_app ->
+            # load_settings on the guarded config loader, so the per-test env
+            # redirect fails the config-participant admission closed with the
+            # same RecoveryRequired signature as the suites above (observed
+            # masking the whole file standalone at dev tip 2612fc56b2). None of
+            # its cases re-selects a config itself and none writes durable
+            # reader preferences, so the shared bootstrap profile is safe.
+            # (The adaptive-reader closeout suite hits the same admission but
+            # DOES write durable per-destination reader preferences its later
+            # cases must not see; it uses @private_profile_test instead.)
+            "test_library_media_reader_traversal_t22207.py",
+            # TASK-21234: the fleet teardown notice suite builds real apps
+            # through _build_test_app for its direct-seam staging and its
+            # full-app superseded-navigation case; same admission signature
+            # and same class as the console integration suites above.
+            "test_fleet_teardown_notice.py",
+        }
+>>>>>>> fix/task-21234-32171-32386-flake-trio
     )
     test_data_dir = (
         _BOOTSTRAP_CONFIG_ROOT if keep_bootstrap_profile else tmp_path / "test_data"
