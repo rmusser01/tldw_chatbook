@@ -13,6 +13,7 @@ from ....Chat.citation_evidence_models import (
     EvidenceReference,
 )
 from ....Chat.chat_handoff_models import ChatHandoffPayload
+
 # The score-kind vocabulary is imported from `library_rag_score_kinds`, NOT
 # from `library_rag_state`: that module imports `library_rag_answer_service`,
 # which imports this one, so a direct import would close an import cycle.
