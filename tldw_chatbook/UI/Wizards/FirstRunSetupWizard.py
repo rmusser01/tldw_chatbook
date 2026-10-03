@@ -45,15 +45,15 @@ from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards import first_run_step_guard as step_guard
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
-    SetupRadioButton,
+    SetupRadioButton as SetupRadioButton,  # re-exported: old import path
     _radio_model_id,
-    SetupCheckbox,
+    SetupCheckbox as SetupCheckbox,  # re-exported: old import path
     SetupRadioSet,
-    REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
+    REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES as REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES,
     manual_settings_context_for_required_step,
     SetupStepFailure,
     SetupStep,
-    ProviderChoiceOption,
+    ProviderChoiceOption as ProviderChoiceOption,  # re-exported: old import path
 )
 from tldw_chatbook.UI.Wizards.first_run_appearance_step import AppearanceStep
 from tldw_chatbook.UI.Wizards.first_run_busy_status import (
@@ -3146,25 +3146,25 @@ class FirstRunSetupWizard(WizardScreen):
         )
 
 
-#: Public names that moved to their own modules and that this module does not
-#: use itself. ``__getattr__`` serves them so old imports keep resolving.
-#: TASK-33921 moved ``VoiceSetupStep``, and TASK-34100.1 moved the other
-#: steps. The step classes this module does use are imported at the top, so
-#: they are real attributes. Private helpers are deliberately absent. A test
-#: that patches one here must fail with AttributeError, not silently patch a
-#: name the moved step no longer reads.
+#: Public names that moved out (TASK-33921, TASK-34100.1) and that this module
+#: does not use itself, by owning module; ``__getattr__`` serves them so old
+#: imports keep resolving. Private helpers and the two tunable timeouts are
+#: absent on purpose: a test that patches one here must fail with
+#: AttributeError, not silently patch a name the moved step no longer reads.
 _MOVED_PUBLIC_NAMES: dict[str, str] = {
-    "VoiceSetupStep": "tldw_chatbook.UI.Wizards.first_run_voice_step",
-    "EXIT_ROUTE_LIBRARY_NOTES": "tldw_chatbook.UI.Wizards.first_run_summary_step",
-    "ProviderChoiceList": "tldw_chatbook.UI.Wizards.first_run_provider_step",
+    "VoiceSetupStep": "first_run_voice_step",
+    "EXIT_ROUTE_LIBRARY_NOTES": "first_run_summary_step",
+    "ProviderChoiceList": "first_run_provider_step",
+    "ProviderEndpointCandidateList": "first_run_provider_step",
+    "ProviderEndpointCandidateOption": "first_run_provider_step",
+    "GENERIC_DISCOVERY_FAILURE_CATEGORY": "first_run_model_discovery",
 }
 
 
 def __getattr__(name: str) -> object:
     """Re-export a public name that moved to its own module.
 
-    Lazy for ``VoiceSetupStep``, whose module is only imported when the Voice
-    step is built.
+    Lazy: the owning module is imported on the first lookup.
 
     Args:
         name: The attribute looked up on this module.
@@ -3180,4 +3180,4 @@ def __getattr__(name: str) -> object:
         raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
     import importlib
 
-    return getattr(importlib.import_module(module_name), name)
+    return getattr(importlib.import_module(f"{__package__}.{module_name}"), name)
