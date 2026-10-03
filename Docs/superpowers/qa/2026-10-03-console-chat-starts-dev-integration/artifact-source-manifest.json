@@ -359,6 +359,15 @@
     "readable_path": "verification-logs/controller-final-preflight.log",
     "readable_sha256": "73e7abc0f25a1c1ed6bbb5a903fd9ad134bd37c46c3ddcc90b8d998f7b7f12e2"
   },
+  "controller-final-rulings.json": {
+    "source_bytes": 4209,
+    "source_sha256": "f399e15780c1a79ee6a706580d3f8f6638decc59e7bc1f1726c608869a26baa6",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-final-rulings.json",
+    "archive_path": "source-archives/controller-final-rulings.json.gz",
+    "archive_sha256": "adecc8d8a2d26144f9acc35a6c81c91a76e1b218c90b0c295469b7fd111a88c7",
+    "readable_path": "controller-final-rulings.json",
+    "readable_sha256": "f399e15780c1a79ee6a706580d3f8f6638decc59e7bc1f1726c608869a26baa6"
+  },
   "controller-finalfix-receipt-validation.json": {
     "source_bytes": 44617,
     "source_sha256": "82702bf9e90f845f15fd80d6797b79f5db6d1818c3f374dedc4a95a7a2cc3880",
@@ -458,6 +467,15 @@
     "readable_path": "verification-logs/controller-preflight.log",
     "readable_sha256": "32452e2450d9eac62c7dc039d73914edfc5953d46f360566a6584e17677c253c"
   },
+  "controller-publication-audit-match-investigation.json": {
+    "source_bytes": 1927,
+    "source_sha256": "66dbda534833f7a5c2a0cfda127e2cba9262c44ae602dab2b18fbbd6e26e9163",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-publication-audit-match-investigation.json",
+    "archive_path": "source-archives/controller-publication-audit-match-investigation.json.gz",
+    "archive_sha256": "e1d019d1d7e73d8a45803301f93ebb68df498c0f7a6b1ace4c6fa895a95e0972",
+    "readable_path": "controller-publication-audit-match-investigation.json",
+    "readable_sha256": "66dbda534833f7a5c2a0cfda127e2cba9262c44ae602dab2b18fbbd6e26e9163"
+  },
   "controller-publication-base-check.json": {
     "source_bytes": 2095,
     "source_sha256": "80f9abc7cdbf6101a1773bc5958e4e3eed5e7999bf8396af013c7cc18b8a74eb",
@@ -475,6 +493,24 @@
     "archive_sha256": "e61deede4f13eef477937497642f5e04f48187659cae003e38ba6aa21fb1ecf6",
     "readable_path": "controller-publication-historical-qa-proof.json",
     "readable_sha256": "148c5db53d849ca6230f0529f7eb2f8ffdae1de8b98afe4f562a8a5d1740c89b"
+  },
+  "controller-publication-payload-audit-adjudication.json": {
+    "source_bytes": 1236,
+    "source_sha256": "b6167adbddb6f3fcd9536a8eaaed85c4681f083fde547a75658fa30c544e2bcd",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-publication-payload-audit-adjudication.json",
+    "archive_path": "source-archives/controller-publication-payload-audit-adjudication.json.gz",
+    "archive_sha256": "868217f1357e5c225b5269089f9eb19a04b71ec0aff8180b4f178c058bbd8130",
+    "readable_path": "controller-publication-payload-audit-adjudication.json",
+    "readable_sha256": "b6167adbddb6f3fcd9536a8eaaed85c4681f083fde547a75658fa30c544e2bcd"
+  },
+  "controller-publication-payload-audit.json": {
+    "source_bytes": 423872,
+    "source_sha256": "87c30c8dc81ba9011444804caf35d3c23a0cdb5b02e3511843820807f9be24d0",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-publication-payload-audit.json",
+    "archive_path": "source-archives/controller-publication-payload-audit.json.gz",
+    "archive_sha256": "e6f54434a22ea2e1b2f85f5ef9b16d2c6ce67386c5b238b6e4f6abb049c84cad",
+    "readable_path": null,
+    "readable_sha256": null
   },
   "controller-publication-task-files.json": {
     "source_bytes": 509,
@@ -511,6 +547,24 @@
     "archive_sha256": "746d504c93e93d51cc99207cdd959f61e0f644dd9c4d30c9eb2683b21be8c9b9",
     "readable_path": "verification-logs/controller-publication-task-ids.log",
     "readable_sha256": "0b48d73ea95968adcd0813440edcd75defa6f5f839faa1bd511f7e9a973ef20e"
+  },
+  "controller-qa-git-blob-proof.json": {
+    "source_bytes": 617,
+    "source_sha256": "018838ebcecde4967bb03d3920e812f19b7ef9845b557b386920d989ca41726b",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-qa-git-blob-proof.json",
+    "archive_path": "source-archives/controller-qa-git-blob-proof.json.gz",
+    "archive_sha256": "c1e3ab35e05e06c2d2ddc9cd3e4930e9b9a6c2bdef945759408983a04d09c0f6",
+    "readable_path": "controller-qa-git-blob-proof.json",
+    "readable_sha256": "018838ebcecde4967bb03d3920e812f19b7ef9845b557b386920d989ca41726b"
+  },
+  "controller-qa-git-blob-proof.log": {
+    "source_bytes": 188,
+    "source_sha256": "681db337cc897ab9aabb9ddd1d1fca51abd74d733c05496aa8a92ca55ebfa95e",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-qa-git-blob-proof.log",
+    "archive_path": "source-archives/controller-qa-git-blob-proof.log.gz",
+    "archive_sha256": "3ebdb48a079342f7fe4a4e5a9a70f15720ed53573c016746b12b6f4bd4b4049f",
+    "readable_path": "verification-logs/controller-qa-git-blob-proof.log",
+    "readable_sha256": "681db337cc897ab9aabb9ddd1d1fca51abd74d733c05496aa8a92ca55ebfa95e"
   },
   "core-catalog-install.json": {
     "source_bytes": 472,
@@ -4311,13 +4365,13 @@
     "readable_sha256": "78ddb4939fb533a5a1f81ad01eb25095e4f8837473de539efe1e1455118544fa"
   },
   "progress.md": {
-    "source_bytes": 20019,
-    "source_sha256": "d6586de0404ebfb9fcc2622a713d29ad768e03d10ae9c67bded95c44ad6e30d8",
+    "source_bytes": 21085,
+    "source_sha256": "fc36139516f5edd2183642821ec254be3f0604618bdc3b46db21fbb95beeb8cc",
     "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/progress.md",
     "archive_path": "source-archives/progress.md.gz",
-    "archive_sha256": "4c08de3a12940a10345ebb109f77b7f9991e886249e6bc162dc5cd9aa6905bf0",
+    "archive_sha256": "1c847e25ac196cdad77fef19a680b3dd2abd87abef4b48a77dafa628c83a7fbc",
     "readable_path": "progress.md",
-    "readable_sha256": "d6586de0404ebfb9fcc2622a713d29ad768e03d10ae9c67bded95c44ad6e30d8"
+    "readable_sha256": "fc36139516f5edd2183642821ec254be3f0604618bdc3b46db21fbb95beeb8cc"
   },
   "provenance-red.json": {
     "source_bytes": 36237,
@@ -4336,6 +4390,15 @@
     "archive_sha256": "b795e80ecf6d201e95968afad08c7e9afb5d36a421e47b0410cd88087d9d5081",
     "readable_path": "verification-logs/provenance-red.log",
     "readable_sha256": "2ddd15d21029f3b28d700844cc3043d3d54503f1814b931d918ae0d732f1f5fb"
+  },
+  "publication-auto-review-rejection.md": {
+    "source_bytes": 1055,
+    "source_sha256": "eb49e6cc823233b4eb2fabf1571140204939742d34c78fbb997012faa283a554",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/publication-auto-review-rejection.md",
+    "archive_path": "source-archives/publication-auto-review-rejection.md.gz",
+    "archive_sha256": "b3f6bafe76ce5184903c01752a8050794e3e31a23451838a76dad9ce524f9cfb",
+    "readable_path": "publication-auto-review-rejection.md",
+    "readable_sha256": "eb49e6cc823233b4eb2fabf1571140204939742d34c78fbb997012faa283a554"
   },
   "publication-dev-docs-merge.json": {
     "source_bytes": 382,
@@ -5641,6 +5704,15 @@
     "archive_sha256": "1107796b9291897d55a719a673282b2cd3a8c5274da437569af4938b737aa194",
     "readable_path": "task-id-fresh-allocation-sweep.json",
     "readable_sha256": "f0c8fb764d49c100971c59f6af3aad69bbd4952d1e5a65e9c33635f773e4c173"
+  },
+  "task-id-immediate-prepush-sweep.json": {
+    "source_bytes": 987,
+    "source_sha256": "610ec1b065d86709b91ecd90de65be96421672ed9493c58527bb70e583e205c8",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/task-id-immediate-prepush-sweep.json",
+    "archive_path": "source-archives/task-id-immediate-prepush-sweep.json.gz",
+    "archive_sha256": "9f4d783436ff4602b45cdad7bb91dd9d2ed3ba3f8c5fdb8685e150e2cbefd8f6",
+    "readable_path": "task-id-immediate-prepush-sweep.json",
+    "readable_sha256": "610ec1b065d86709b91ecd90de65be96421672ed9493c58527bb70e583e205c8"
   },
   "task-id-prepublication-sweep.json": {
     "source_bytes": 472,
