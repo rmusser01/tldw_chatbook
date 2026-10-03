@@ -119,7 +119,7 @@ Everything lives on `dev` and runs on the built-in token.
    - A workflow that cannot be made to run safely from a dispatch is listed for an owner decision. None is dropped silently.
 
 5. **Docs.**
-   - CLAUDE.md "Merging into dev": the rules depend on the queue mode (section 10).
+   - CLAUDE.md "Merging into dev" and the same rules in AGENTS.md: they depend on the queue mode (section 10).
    - A new ADR for the queue, cross-referenced from ADR-103.
    - `branch-protection-baseline.md`.
 
@@ -199,7 +199,14 @@ never rebased, dispatched or commented on.
   feed values through `env:`.
 - Write permissions are granted at job level, only to the queue jobs.
 
-## 10. CLAUDE.md rules
+## 10. Agent rules (CLAUDE.md and AGENTS.md)
+
+The queue runs entirely in GitHub Actions and reacts only to GitHub events. Any number of machines, sessions, tools or
+people can open and arm PRs: the order is GitHub's server-side `autoMergeRequest.enabledAt`, and racing queue runs are made
+safe by section 7. What every machine must share is the rules below.
+
+They go into both `CLAUDE.md` (read by Claude Code sessions) and `AGENTS.md` (read by Codex sessions). As of 2026-10-03,
+`AGENTS.md` contains no merge rules at all.
 
 The rules depend on the mode, checked with `gh variable get MERGE_QUEUE`. A rollback therefore needs no docs change.
 
@@ -269,6 +276,8 @@ After 7 days on, compared with the 2026-09-21..28 baseline:
 - Build an in-repo queue, not an organization transfer for GitHub's native merge queue (2026-10-03).
 - Run the spike before redesigning (2026-10-03), then accept the revised section 1 and section 2, with the 12 review fixes
   folded in.
+- The queue must not depend on any single machine making PRs (owner question, 2026-10-03). It doesn't: GitHub events and
+  server-side ordering only. The shared rules go into both CLAUDE.md and AGENTS.md (section 10).
 - Still open:
   - any PR workflow the section-5 audit finds cannot run safely from a dispatch;
   - setting `MERGE_QUEUE`.
