@@ -180,11 +180,14 @@ class PasswordDialog(ModalScreen):
                 # TASK-21141 (UAT K-1/K-4): requirements and the
                 # forgotten-password consequence stated BEFORE first submit,
                 # not discovered through a failed attempt.
+                # TASK-34100.4: a forgotten password no longer locks the
+                # whole app -- startup offers a reset of the saved keys.
                 self.custom_message = (
                     "Create a master password to encrypt your API keys and "
                     "sensitive configuration data. At least 8 characters. "
                     "If you forget it, the encrypted keys cannot be "
-                    "recovered — you'll need to re-enter them."
+                    "recovered — you can reset them when chatbook starts and "
+                    "re-enter them; nothing else is lost."
                 )
             elif mode == "unlock":
                 self.custom_message = (
