@@ -136,6 +136,28 @@ def test_paired_comparison_uses_rates_and_retains_adverse_pairs():
 
 
 @pytest.mark.parametrize(
+    "change", [None, "interval_one", "interval_all", "repeat_one", "repeat_all"]
+)
+def test_comparison_requires_matching_observed_credential_timer_cadence(change):
+    runs = windows()
+    for index, run in enumerate(runs):
+        for state in run["producer_checks"].values():
+            # Process-local identities may differ between independently run apps.
+            state["credential_timer"]["identity"] = index + 100
+    if change is not None:
+        field, affected = change.split("_")
+        finals = [run for run in runs if run["side"] == "final"]
+        for run in finals[:1] if affected == "one" else finals:
+            for state in run["producer_checks"].values():
+                state["credential_timer"][field] = 0.5 if field == "interval" else 10
+    assert all(
+        run["producer_checks"]["before"] == run["producer_checks"]["cutoff"]
+        for run in runs
+    )
+    assert harness().compare(runs)["qualified"] == (change is None)
+
+
+@pytest.mark.parametrize(
     "damage",
     [
         "missing",

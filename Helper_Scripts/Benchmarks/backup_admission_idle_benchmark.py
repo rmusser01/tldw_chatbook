@@ -910,6 +910,12 @@ def compare(runs):
                 raise ValueError(
                     "changed_or_unknown_normal_producers_or_process_coverage"
                 )
+            first_timer = runs[0]["producer_checks"]["before"]["credential_timer"]
+            if any(
+                checks["before"]["credential_timer"][key] != first_timer[key]
+                for key in ("interval", "repeat")
+            ):
+                raise ValueError("incompatible_credential_timer_cadence")
             counts = run["window"]
             for key in Census().counts["window"]:
                 if type(counts[key]) is not int or counts[key] < 0:
