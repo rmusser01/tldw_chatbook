@@ -890,3 +890,25 @@ def test_allowed_file_roots_skips_ssh_bindings_even_with_colliding_laptop_dir(
         roots = wfr.allowed_file_roots(write=False, sandbox_root=sandbox)
 
     assert roots == (sandbox,)
+
+
+def test_remote_only_workspace_without_path_tools_says_so(tmp_path) -> None:
+    """A reachable remote binding the run's tools cannot address is still bound.
+
+    Qodo #3 on PR #2975: the alias filter dropped reachable remote bindings
+    without counting them, so a remote-only workspace whose run offers no
+    fs_* tools was described as having no filesystem roots at all.
+
+    Args:
+        tmp_path: Unused; keeps the signature uniform with the note tests.
+    """
+    note = wfr.workspace_context_note(
+        "ws-a",
+        registry=_MixedRegistry(_SshRow()),
+        status_cache=_status_cache(),
+        path_tool_aliases=(),
+    )
+
+    assert "no filesystem roots" not in note
+    assert "ssh-b1" not in note  # no alias the tools would reject
+    assert "no fs_*, git_* or virtual_cli tools are available" in note

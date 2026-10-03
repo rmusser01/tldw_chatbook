@@ -191,7 +191,7 @@ def _remote_note_lines(
     authority_by_id: dict[str, Any] | None,
     status_cache: Any,
     path_tool_aliases: frozenset[str] | None = None,
-) -> tuple[list[str], list[str]]:
+) -> tuple[list[str], list[str], int]:
     """Render the remote-root lines: admitted aliases and dropped ones.
 
     Admitted (READY / STALE_IDENTITY / cold-optimistic) remote bindings
@@ -201,12 +201,15 @@ def _remote_note_lines(
     local display paths: a crafted locator cannot splice a fake prompt
     section into the note. When ``path_tool_aliases`` is given, a usable
     binding the run's fs_* tools did not admit is left out: the note never
-    offers an alias the tools would reject.
+    offers an alias the tools would reject; such bindings are still counted
+    (third return value) so a remote-only workspace is never described as
+    having no roots (Qodo #3 on PR #2975).
     """
     from tldw_chatbook.Tools.remote_root_types import RemoteRoot, display_uri
 
     admitted: list[str] = []
     dropped: list[str] = []
+    unaddressable = 0
     for binding in _list_remote_bindings(registry, workspace_id):
         binding_id = str(getattr(binding, "binding_id", ""))
         if not binding_id:
@@ -254,12 +257,12 @@ def _remote_note_lines(
         if state in {"BLOCKED", "MISSING"} or state is None:
             dropped.append(f"  - {alias}: {_NOTE_REMOTE_UNREACHABLE}")
         elif path_tool_aliases is not None and binding_id not in path_tool_aliases:
-            continue
+            unaddressable += 1
         else:
             admitted.append(
                 f"  - {alias} → {uri} [ssh, {'ro' if read_only else 'rw'}]"
             )
-    return admitted, dropped
+    return admitted, dropped, unaddressable
 
 
 def workspace_context_note(
@@ -389,6 +392,7 @@ def workspace_context_note(
     # never fails because the cache is unavailable).
     remote_admitted: list[str] = []
     remote_dropped: list[str] = []
+    remote_unaddressable = 0
     if status_cache is None:
         try:
             from tldw_chatbook.Tools.remote_binding_status import (
@@ -399,7 +403,7 @@ def workspace_context_note(
         except Exception:  # noqa: BLE001 - note-only extra, fail-soft
             status_cache = None
     if status_cache is not None:
-        remote_admitted, remote_dropped = _remote_note_lines(
+        remote_admitted, remote_dropped, remote_unaddressable = _remote_note_lines(
             registry,
             workspace_id,
             authority_by_id=authority_by_id,
@@ -414,7 +418,7 @@ def workspace_context_note(
         lines.extend(remote_admitted)
         lines.extend(remote_dropped)
     has_folders = bool(root_lines or remote_admitted or remote_dropped)
-    if not has_folders and unaddressable_folders:
+    if not has_folders and (unaddressable_folders or remote_unaddressable):
         lines.append(_NOTE_NO_PATH_TOOLS)
     elif not has_folders:
         lines.append(_NOTE_NO_ROOTS)

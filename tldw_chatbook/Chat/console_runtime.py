@@ -2562,6 +2562,27 @@ class ConsoleRuntime:
                 type(exc).__name__,
             )
 
+    async def _capture_console_staged_rag(
+        self, draft: str, turn_context: Any = None
+    ) -> Any:
+        """Capture the evidence staged at dispatch: the controller's live seam.
+
+        TASK-33940.4 (Qodo #1 on PR #2975): the live seam is called as
+        ``provider(draft, turn_context)`` for turns that did not freeze an
+        evidence decision at admission -- queued prompts and non-custodied
+        callers. This runtime used to wire its three-argument frozen capture
+        there, so every such call raised TypeError. Mirrors the retrieval
+        owner's live capture: consume the launch staged now, and release it
+        once it produced context.
+        """
+        launch, revision, _notice = self.snapshot_console_staged_evidence()
+        result = await self._capture_frozen_console_staged_rag(
+            draft, turn_context, launch
+        )
+        if launch is not None:
+            self.release_console_staged_evidence(launch, result, revision=revision)
+        return result
+
     async def _capture_frozen_console_staged_rag(
         self, draft: str, turn_context: Any, launch: Any
     ) -> Any:
@@ -4093,7 +4114,10 @@ class ConsoleRuntime:
             world_info_applier=functools.partial(
                 _apply_world_info_for_app, self._app
             ),
-            rag_capture_provider=self._capture_frozen_console_staged_rag,
+            # The LIVE seam (two arguments). Frozen captures arrive per turn
+            # as ``staged_evidence_capture`` and fall back to this owner's
+            # ``_capture_frozen_console_staged_rag`` (TASK-33940.4).
+            rag_capture_provider=self._capture_console_staged_rag,
             staged_evidence_provider=self._has_staged_evidence,
             default_session_settings=functools.partial(
                 _default_session_settings_for_app,

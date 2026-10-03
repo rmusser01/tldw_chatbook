@@ -143,3 +143,65 @@ async def test_runtime_send_with_staged_evidence_attaches_and_releases_it(
     )
     assert EVIDENCE in sent
     assert [staged for staged, _outcome in released] == [launch]
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_runtime_live_seam_consumes_evidence_staged_at_dispatch(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A turn admitted without frozen capture hooks uses the live seam.
+
+    Qodo #1 on PR #2975: queued prompts are custodied but carry no staged
+    launch and no capture/release hooks (``_submit_queued_entry``). Before the
+    runtime took ownership they consumed whatever evidence was staged at
+    dispatch; on the runtime controller the live seam raised TypeError
+    instead. This mirrors that custody shape (configuration, no hooks).
+
+    Args:
+        request: pytest request, required by ``private_profile_test``.
+        tmp_path: Per-test directory for the chat database.
+        monkeypatch: Replaces the Library search boundary and stream.
+    """
+    from tldw_chatbook.Event_Handlers.Chat_Events import chat_rag_events
+
+    runtime, _store, controller = _runtime_controller(tmp_path)
+    entries = _record_provider_entries(controller, monkeypatch)
+    launch = SimpleNamespace(name="staged-at-dispatch")
+    searched: list[Any] = []
+
+    async def library_search(_app: Any, staged: Any, *, user_message: str) -> Any:
+        searched.append(staged)
+        if staged is None:
+            return SimpleNamespace(context=None)
+        return SimpleNamespace(
+            context=EVIDENCE,
+            citation_repair_contract=SimpleNamespace(allowed_ordinals=(1,)),
+        )
+
+    monkeypatch.setattr(
+        chat_rag_events, "capture_console_staged_evidence_for_chat", library_search
+    )
+    runtime.stage_console_staged_evidence(launch)
+    records: list[str] = []
+    sink = _warnings(records)
+    try:
+        result = await controller.submit_draft(
+            "what does the staged note say?",
+            session_id="session-1",
+            configuration=_configuration(),
+            staged_evidence_launch=None,
+        )
+    finally:
+        controller_module.logger.remove(sink)
+
+    assert result.accepted is True
+    assert not any("RAG capture unavailable" in line for line in records), records
+    assert searched == [launch]
+    sent = "\n".join(
+        str(row.get("content", "")) for row in entries[0]["provider_messages"]
+    )
+    assert EVIDENCE in sent
+    assert runtime.snapshot_console_staged_evidence()[0] is None

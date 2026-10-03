@@ -72,6 +72,12 @@ def _admitted(root: Path, executor) -> RunAdmittedWorkspaceRoot:
 def test_fs_worker_failure_on_a_workspace_folder_never_blames_scratch(
     tmp_path, code
 ) -> None:
+    """An fs_* executor failure on an admitted workspace folder names the worker.
+
+    Args:
+        tmp_path: Directory standing in for the admitted workspace folder.
+        code: The ``WorkspaceToolExecutionError`` code the worker raises.
+    """
     provider = LocalToolProvider(
         workspace_root=tmp_path,
         resolve_state=lambda _hub: _ALLOW,
@@ -87,6 +93,12 @@ def test_fs_worker_failure_on_a_workspace_folder_never_blames_scratch(
 
 @pytest.mark.parametrize("code", _WORKER_CODES)
 def test_virtual_cli_worker_failure_never_blames_scratch(tmp_path, code) -> None:
+    """A virtual_cli executor failure names the worker, never scratch.
+
+    Args:
+        tmp_path: Directory standing in for the admitted workspace folder.
+        code: The ``WorkspaceToolExecutionError`` code the worker raises.
+    """
     provider = VirtualCliProvider(
         workspace_root=tmp_path,
         resolve_state=lambda _hub: _ALLOW,
@@ -101,6 +113,11 @@ def test_virtual_cli_worker_failure_never_blames_scratch(tmp_path, code) -> None
 
 
 def test_a_failed_scratch_lease_still_says_scratch_is_unavailable(tmp_path) -> None:
+    """A genuine private-scratch lease failure keeps the scratch refusal.
+
+    Args:
+        tmp_path: Directory standing in for the chat's private scratch root.
+    """
     @contextlib.contextmanager
     def failing_lease():
         raise RuntimeError("scratch generation retired")

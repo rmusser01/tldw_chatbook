@@ -11155,12 +11155,14 @@ class ConsoleChatController:
                     preparation_outcome.evidence_bundle
                 )
             elif origin is not ConsoleSubmissionOrigin.AGENT_WAKE and (
-                # TASK-33940.4: a custodied turn froze its evidence decision at
-                # admission (its staged launch, or none), so it never asks the
-                # live seam -- which, on runtime-owned controllers, is the
-                # three-argument frozen capture and raised TypeError on every
-                # ordinary send. Non-custodied callers keep the live route.
-                custodied_inputs
+                # TASK-33940.4: a turn admitted WITH a frozen capture seam
+                # froze its evidence decision then (its staged launch, or
+                # none), so it never asks the live seam for newer staged state.
+                # A custodied turn admitted without one -- a queued prompt
+                # (Qodo #1 on PR #2975) -- keeps the live route and consumes
+                # what is staged at dispatch, as it did before the runtime
+                # took ownership.
+                (custodied_inputs and staged_evidence_capture is not None)
                 or (
                     prepared_continuation is not None
                     and prepared_continuation.staged_evidence_frozen
