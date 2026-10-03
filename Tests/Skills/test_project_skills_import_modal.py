@@ -91,10 +91,8 @@ async def test_new_rows_checked_installed_rows_unchecked(tmp_path):
     app = _HarnessApp(modal)
     async with app.run_test() as pilot:
         await pilot.pause()
-        boxes = {
-            box.id: box.value for box in modal.query(Checkbox)
-        }
-        assert boxes["project-skill-row-0"] is True   # alpha-skill: new
+        boxes = {box.id: box.value for box in modal.query(Checkbox)}
+        assert boxes["project-skill-row-0"] is True  # alpha-skill: new
         assert boxes["project-skill-row-1"] is False  # beta-skill: installed
 
 
@@ -383,7 +381,13 @@ async def test_maybe_offer_chains_installed_names_ledger_and_navigation(
         await pilot.pause()
 
     assert service.import_calls == [
-        ("directory", str(root_b / ".SKILLS" / "beta-skill"), "local", "beta-skill", False)
+        (
+            "directory",
+            str(root_b / ".SKILLS" / "beta-skill"),
+            "local",
+            "beta-skill",
+            False,
+        )
     ]
     assert app.navigated == ["skills"]
 
@@ -535,9 +539,7 @@ async def test_partial_import_failure_leaves_ledger_untouched(tmp_path, monkeypa
 
 
 @pytest.mark.asyncio
-async def test_fully_successful_import_records_imported_decision(
-    tmp_path, monkeypatch
-):
+async def test_fully_successful_import_records_imported_decision(tmp_path, monkeypatch):
     ledger_dir = tmp_path / "data"
     monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: ledger_dir)
 
@@ -755,9 +757,7 @@ class _RaisingOnceRunWorkerApp(_RecorderApp):
         return super().run_worker(coro, **kwargs)
 
 
-def test_initial_scheduling_failure_clears_flag_and_allows_retry(
-    tmp_path, monkeypatch
-):
+def test_initial_scheduling_failure_clears_flag_and_allows_retry(tmp_path, monkeypatch):
     monkeypatch.setattr(_offer_module, "get_cli_setting", lambda *a, **k: True)
     monkeypatch.setattr(_offer_module, "get_user_data_dir", lambda: tmp_path / "data")
 

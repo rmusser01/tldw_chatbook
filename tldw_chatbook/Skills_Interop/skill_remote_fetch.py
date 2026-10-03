@@ -108,7 +108,11 @@ def classify_skill_source_url(url: str) -> GitHubZipSource | DirectZipSource:
     segments = tuple(s for s in path.split("/") if s)
 
     if host == "github.com":
-        if len(segments) >= 4 and segments[2] == "releases" and segments[3] == "download":
+        if (
+            len(segments) >= 4
+            and segments[2] == "releases"
+            and segments[3] == "download"
+        ):
             if not path.lower().endswith(".zip"):
                 raise RemoteSkillError("Only .zip release assets are supported.")
             return DirectZipSource(
@@ -177,10 +181,12 @@ async def resolve_ref_and_subdir(
     joined = "/".join(tail)
     best = ""
     for branch in branches:
-        if (joined == branch or joined.startswith(branch + "/")) and len(branch) > len(best):
+        if (joined == branch or joined.startswith(branch + "/")) and len(branch) > len(
+            best
+        ):
             best = branch
     if best:
-        subdir = joined[len(best):].strip("/")
+        subdir = joined[len(best) :].strip("/")
         return best, subdir
     return tail[0], "/".join(tail[1:])
 
@@ -190,8 +196,12 @@ REMOTE_FETCH_MAX_HOPS = 3
 REMOTE_FETCH_TOTAL_DEADLINE_SECONDS = 60.0
 _FETCH_CHUNK = 65536
 GITHUB_AUTH_HOSTS = frozenset(
-    {"github.com", "api.github.com", "codeload.github.com",
-     "objects.githubusercontent.com"}
+    {
+        "github.com",
+        "api.github.com",
+        "codeload.github.com",
+        "objects.githubusercontent.com",
+    }
 )
 
 
@@ -214,8 +224,14 @@ def _assert_host_allowed(host: str, resolver) -> None:
         raise RemoteSkillError(f"Could not resolve {host}.")
     for raw in addresses:
         addr = ipaddress.ip_address(raw.split("%", 1)[0])
-        if (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+        if (
+            addr.is_private
+            or addr.is_loopback
+            or addr.is_link_local
+            or addr.is_reserved
+            or addr.is_multicast
+            or addr.is_unspecified
+        ):
             raise RemoteSkillError("That host is not reachable from here.")
 
 
@@ -376,11 +392,11 @@ def re_root_skill_zip(
         if (skill_root + "SKILL.md") not in names:
             # Depth-limited candidate scan under the current base.
             candidates = sorted(
-                n[len(base):-len("/SKILL.md")]
+                n[len(base) : -len("/SKILL.md")]
                 for n in names
                 if n.startswith(base)
                 and n.endswith("/SKILL.md")
-                and n[len(base):].count("/") <= _CANDIDATE_SCAN_DEPTH
+                and n[len(base) :].count("/") <= _CANDIDATE_SCAN_DEPTH
             )
             if not candidates:
                 raise RemoteSkillError("No SKILL.md found in that archive.")
@@ -398,7 +414,8 @@ def re_root_skill_zip(
         from .skill_trust_scanner import SUPPORTING_JUNK_DIRS, _is_junk
 
         raw_members = [
-            m for m in archive.infolist()
+            m
+            for m in archive.infolist()
             if not m.is_dir() and m.filename.startswith(skill_root)
         ]
 
@@ -417,13 +434,13 @@ def re_root_skill_zip(
         for member in raw_members:
             mode = (member.external_attr >> 16) & 0xFFFF
             if stat.S_ISLNK(mode):
-                continue                       # symlink member: skip-not-fail, matches the importer
-            relative = member.filename[len(skill_root):]
+                continue  # symlink member: skip-not-fail, matches the importer
+            relative = member.filename[len(skill_root) :]
             if not relative:
                 continue
             parts = relative.split("/")
             if any(p in SUPPORTING_JUNK_DIRS for p in parts) or _is_junk(parts[-1]):
-                continue                       # junk pruned, matches the importer
+                continue  # junk pruned, matches the importer
             try:
                 LocalSkillsService._validate_archive_member(relative)
             except ValueError as exc:
@@ -440,9 +457,7 @@ def re_root_skill_zip(
         with _zipfile.ZipFile(out, "w", compression=_zipfile.ZIP_DEFLATED) as dest:
             for member, relative in pruned:
                 if member.file_size > MAX_SUPPORTING_FILE_BYTES:
-                    raise RemoteSkillError(
-                        f"File too large in bundle: {relative}"
-                    )
+                    raise RemoteSkillError(f"File too large in bundle: {relative}")
                 try:
                     data = LocalSkillsService._read_zip_member_bounded(
                         archive, member, relative, MAX_SUPPORTING_FILE_BYTES
@@ -538,7 +553,9 @@ async def inspect_skill_from_url(
             message = "That URL is malformed or unsupported."
         else:
             kind = SkillPackageKind.FETCH_OR_AUTH_FAILURE
-            message = "Could not fetch that skill package. Retry when access is available."
+            message = (
+                "Could not fetch that skill package. Retry when access is available."
+            )
         return RemoteSkillPackage(
             SkillPackageInspection(kind, message=message),
             failure_category=exc.category,
@@ -566,11 +583,17 @@ async def import_inspected_skill(
 ) -> dict:
     """Import one explicit candidate from the exact retained archive bytes."""
     zip_bytes = package.archive_bytes
-    if zip_bytes is None or hashlib.sha256(zip_bytes).hexdigest() != package.archive_sha256:
+    if (
+        zip_bytes is None
+        or hashlib.sha256(zip_bytes).hexdigest() != package.archive_sha256
+    ):
         raise RemoteSkillError("The inspected skill package is no longer available.")
     candidates = package.inspection.candidates
     if candidate is None:
-        if package.inspection.kind is not SkillPackageKind.ROOT_SKILL or len(candidates) != 1:
+        if (
+            package.inspection.kind is not SkillPackageKind.ROOT_SKILL
+            or len(candidates) != 1
+        ):
             raise RemoteSkillError("Choose one installable skill first.")
         candidate = candidates[0]
     if candidate not in candidates:

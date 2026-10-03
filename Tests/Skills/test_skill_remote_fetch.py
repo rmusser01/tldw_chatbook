@@ -118,13 +118,16 @@ def test_classify_release_asset_and_direct_zip():
     assert direct.github_auth is False and direct.suggested_name == "my-skill"
 
 
-@pytest.mark.parametrize("bad", [
-    "http://github.com/o/r",                    # http
-    "https://example.com/not-a-zip",            # non-github non-zip
-    "git@github.com:o/r.git",                   # git protocol
-    "https://github.com/onlyowner",             # no repo
-    "ftp://example.com/x.zip",
-])
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "http://github.com/o/r",  # http
+        "https://example.com/not-a-zip",  # non-github non-zip
+        "git@github.com:o/r.git",  # git protocol
+        "https://github.com/onlyowner",  # no repo
+        "ftp://example.com/x.zip",
+    ],
+)
 def test_classify_rejects(bad):
     with pytest.raises(RemoteSkillError):
         classify_skill_source_url(bad)
@@ -133,16 +136,20 @@ def test_classify_rejects(bad):
 @pytest.mark.asyncio
 async def test_ref_split_single_segment_is_ref():
     src = classify_skill_source_url("https://github.com/o/r/tree/v1.2")
+
     async def _boom(o, r):  # must NOT be called for single-segment tails
         raise AssertionError("branch listing not needed")
+
     assert await resolve_ref_and_subdir(src, _boom) == ("v1.2", "")
 
 
 @pytest.mark.asyncio
 async def test_ref_split_longest_prefix_branch_wins():
     src = classify_skill_source_url("https://github.com/o/r/tree/feature/foo/skills/x")
+
     async def _branches(o, r):
         return ["main", "feature/foo", "feature"]
+
     ref, subdir = await resolve_ref_and_subdir(src, _branches)
     assert (ref, subdir) == ("feature/foo", "skills/x")
 
@@ -150,16 +157,20 @@ async def test_ref_split_longest_prefix_branch_wins():
 @pytest.mark.asyncio
 async def test_ref_split_no_match_falls_back_to_first_segment():
     src = classify_skill_source_url("https://github.com/o/r/tree/main/skills/x")
+
     async def _branches(o, r):
         return ["dev"]  # capped/truncated list without the real branch
+
     assert await resolve_ref_and_subdir(src, _branches) == ("main", "skills/x")
 
 
 @pytest.mark.asyncio
 async def test_ref_split_api_failure_falls_back():
     src = classify_skill_source_url("https://github.com/o/r/tree/main/skills/x")
+
     async def _branches(o, r):
         raise RuntimeError("offline")
+
     assert await resolve_ref_and_subdir(src, _branches) == ("main", "skills/x")
 
 
@@ -175,9 +186,11 @@ def _transport(handler):
 async def test_fetch_happy_path_streams_bytes():
     def handler(request):
         return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+
     out = await fetch_zip_bytes(
         "https://api.github.com/repos/o/r/zipball/HEAD",
-        transport=_transport(handler), resolver=_PUB,
+        transport=_transport(handler),
+        resolver=_PUB,
     )
     assert out.startswith(b"PK")
 
@@ -185,17 +198,23 @@ async def test_fetch_happy_path_streams_bytes():
 @pytest.mark.asyncio
 async def test_private_and_mixed_resolution_rejected():
     with pytest.raises(RemoteSkillError):
-        await fetch_zip_bytes("https://internal.example/x.zip",
-                              transport=_transport(lambda r: httpx.Response(200)),
-                              resolver=lambda h: ["10.0.0.5"])
+        await fetch_zip_bytes(
+            "https://internal.example/x.zip",
+            transport=_transport(lambda r: httpx.Response(200)),
+            resolver=lambda h: ["10.0.0.5"],
+        )
     with pytest.raises(RemoteSkillError):  # mixed public+private -> reject
-        await fetch_zip_bytes("https://mixed.example/x.zip",
-                              transport=_transport(lambda r: httpx.Response(200)),
-                              resolver=lambda h: ["93.184.216.34", "fd00::1"])
+        await fetch_zip_bytes(
+            "https://mixed.example/x.zip",
+            transport=_transport(lambda r: httpx.Response(200)),
+            resolver=lambda h: ["93.184.216.34", "fd00::1"],
+        )
     with pytest.raises(RemoteSkillError):  # IP-literal host
-        await fetch_zip_bytes("https://169.254.169.254/x.zip",
-                              transport=_transport(lambda r: httpx.Response(200)),
-                              resolver=_PUB)
+        await fetch_zip_bytes(
+            "https://169.254.169.254/x.zip",
+            transport=_transport(lambda r: httpx.Response(200)),
+            resolver=_PUB,
+        )
 
 
 @pytest.mark.asyncio
@@ -207,54 +226,75 @@ async def test_redirect_hop_revalidated_and_capped():
         if host == "b.example":
             return httpx.Response(302, headers={"location": "http://c.example/x.zip"})
         raise AssertionError("unexpected host")
-    with pytest.raises(RemoteSkillError):   # https->http hop rejected
-        await fetch_zip_bytes("https://a.example/x.zip",
-                              transport=_transport(handler), resolver=_PUB)
+
+    with pytest.raises(RemoteSkillError):  # https->http hop rejected
+        await fetch_zip_bytes(
+            "https://a.example/x.zip", transport=_transport(handler), resolver=_PUB
+        )
 
     def loop_handler(request):
         return httpx.Response(302, headers={"location": str(request.url)})
-    with pytest.raises(RemoteSkillError):   # >3 hops
-        await fetch_zip_bytes("https://a.example/x.zip",
-                              transport=_transport(loop_handler), resolver=_PUB)
+
+    with pytest.raises(RemoteSkillError):  # >3 hops
+        await fetch_zip_bytes(
+            "https://a.example/x.zip", transport=_transport(loop_handler), resolver=_PUB
+        )
 
     def private_hop(request):
         if request.url.host == "a.example":
-            return httpx.Response(302, headers={"location": "https://evil.internal/x.zip"})
+            return httpx.Response(
+                302, headers={"location": "https://evil.internal/x.zip"}
+            )
         raise AssertionError
-    with pytest.raises(RemoteSkillError):   # hop host resolves private
+
+    with pytest.raises(RemoteSkillError):  # hop host resolves private
         await fetch_zip_bytes(
-            "https://a.example/x.zip", transport=_transport(private_hop),
-            resolver=lambda h: ["10.1.1.1"] if h == "evil.internal" else ["93.184.216.34"],
+            "https://a.example/x.zip",
+            transport=_transport(private_hop),
+            resolver=lambda h: (
+                ["10.1.1.1"] if h == "evil.internal" else ["93.184.216.34"]
+            ),
         )
 
 
 @pytest.mark.asyncio
 async def test_auth_scoped_to_github_family():
     seen = {}
+
     def handler(request):
         seen[request.url.host] = request.headers.get("authorization")
         if request.url.host == "api.github.com":
             return httpx.Response(
-                302, headers={"location": "https://codeload.github.com/o/r/zip/HEAD"})
+                302, headers={"location": "https://codeload.github.com/o/r/zip/HEAD"}
+            )
         if request.url.host == "codeload.github.com":
             return httpx.Response(
-                302, headers={"location": "https://cdn.example.com/x.zip"})
+                302, headers={"location": "https://cdn.example.com/x.zip"}
+            )
         return httpx.Response(200, content=b"PK\x03\x04")
-    await fetch_zip_bytes("https://api.github.com/repos/o/r/zipball/HEAD",
-                          token="SECRET", transport=_transport(handler), resolver=_PUB)
+
+    await fetch_zip_bytes(
+        "https://api.github.com/repos/o/r/zipball/HEAD",
+        token="SECRET",
+        transport=_transport(handler),
+        resolver=_PUB,
+    )
     assert seen["api.github.com"] == "token SECRET"
     assert seen["codeload.github.com"] == "token SECRET"
-    assert seen["cdn.example.com"] is None    # STRIPPED off-family
+    assert seen["cdn.example.com"] is None  # STRIPPED off-family
 
 
 @pytest.mark.asyncio
 async def test_stream_cap_aborts():
     big = b"x" * (REMOTE_FETCH_MAX_BYTES + 1024)
+
     def handler(request):
         return httpx.Response(200, content=big)
+
     with pytest.raises(RemoteSkillError, match="too large"):
-        await fetch_zip_bytes("https://example.com/x.zip",
-                              transport=_transport(handler), resolver=_PUB)
+        await fetch_zip_bytes(
+            "https://example.com/x.zip", transport=_transport(handler), resolver=_PUB
+        )
 
 
 @pytest.mark.asyncio
@@ -267,10 +307,12 @@ async def test_fetch_total_deadline_aborts_slow_drip():
     async def handler(request):
         await asyncio.sleep(0.3)
         return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+
     with pytest.raises(RemoteSkillError, match="timed out"):
         await fetch_zip_bytes(
             "https://api.github.com/repos/o/r/zipball/HEAD",
-            transport=_transport(handler), resolver=_PUB,
+            transport=_transport(handler),
+            resolver=_PUB,
             total_deadline=0.05,
         )
 
@@ -282,9 +324,11 @@ async def test_fetch_accepts_explicit_total_deadline():
     # not change the happy path.
     def handler(request):
         return httpx.Response(200, content=b"PK\x03\x04zipbytes")
+
     out = await fetch_zip_bytes(
         "https://api.github.com/repos/o/r/zipball/HEAD",
-        transport=_transport(handler), resolver=_PUB,
+        transport=_transport(handler),
+        resolver=_PUB,
         total_deadline=5.0,
     )
     assert out.startswith(b"PK")
@@ -302,10 +346,12 @@ def _zipball(entries, wrapper="repo-abc123/"):
 async def test_remote_inspection_returns_retained_multi_skill_archive_without_import():
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import inspect_skill_from_url
 
-    payload = _zipball([
-        ("skills/z/SKILL.md", "z"),
-        ("skills/a/SKILL.md", "a"),
-    ])
+    payload = _zipball(
+        [
+            ("skills/z/SKILL.md", "z"),
+            ("skills/a/SKILL.md", "a"),
+        ]
+    )
     scope = _RecordingScopeService()
 
     package = await inspect_skill_from_url(
@@ -329,10 +375,12 @@ async def test_selected_candidate_import_uses_retained_bytes_once_and_stays_untr
         inspect_skill_from_url,
     )
 
-    payload = _zipball([
-        ("skills/a/SKILL.md", "a"),
-        ("skills/b/SKILL.md", "b"),
-    ])
+    payload = _zipball(
+        [
+            ("skills/a/SKILL.md", "a"),
+            ("skills/b/SKILL.md", "b"),
+        ]
+    )
     requests = 0
 
     def handler(request):
@@ -422,9 +470,7 @@ async def test_public_install_uses_generic_framework_classification():
         await install_skill_from_url(
             "https://github.com/o/framework",
             scope_service=scope,
-            transport=_transport(
-                lambda request: httpx.Response(200, content=payload)
-            ),
+            transport=_transport(lambda request: httpx.Response(200, content=payload)),
             resolver=_PUB,
         )
 
@@ -442,10 +488,7 @@ async def test_public_install_exact_subdir_beyond_display_cap_stays_selectable(
 
     monkeypatch.setattr(GitHubAPIClient, "get_branches", branches)
     payload = _zipball(
-        [
-            (f"skills/s{index:02d}/SKILL.md", "body")
-            for index in range(21)
-        ]
+        [(f"skills/s{index:02d}/SKILL.md", "body") for index in range(21)]
     )
     scope = _RecordingScopeService()
     requests = 0
@@ -468,13 +511,17 @@ async def test_public_install_exact_subdir_beyond_display_cap_stays_selectable(
 
 
 def test_reroot_subdir_install():
-    data = _zipball([
-        ("skills/brainstorm/SKILL.md", "---\nname: brainstorm\n---\nbody"),
-        ("skills/brainstorm/references/api.md", "# api"),
-        ("skills/other/SKILL.md", "x"),
-        ("README.md", "top"),
-    ])
-    out, name = re_root_skill_zip(data, subdir="skills/brainstorm", suggested_name="brainstorm")
+    data = _zipball(
+        [
+            ("skills/brainstorm/SKILL.md", "---\nname: brainstorm\n---\nbody"),
+            ("skills/brainstorm/references/api.md", "# api"),
+            ("skills/other/SKILL.md", "x"),
+            ("README.md", "top"),
+        ]
+    )
+    out, name = re_root_skill_zip(
+        data, subdir="skills/brainstorm", suggested_name="brainstorm"
+    )
     with zipfile.ZipFile(io.BytesIO(out)) as z:
         assert set(z.namelist()) == {"SKILL.md", "references/api.md"}
     assert name == "brainstorm"
@@ -485,7 +532,7 @@ def test_reroot_root_is_skill_and_unwrapped_asset():
     out, _ = re_root_skill_zip(wrapped, subdir="", suggested_name="repo")
     with zipfile.ZipFile(io.BytesIO(out)) as z:
         assert "SKILL.md" in z.namelist()
-    unwrapped = _zipball([("SKILL.md", "body")], wrapper="")   # release-asset shape
+    unwrapped = _zipball([("SKILL.md", "body")], wrapper="")  # release-asset shape
     out2, _ = re_root_skill_zip(unwrapped, subdir="", suggested_name="asset")
     with zipfile.ZipFile(io.BytesIO(out2)) as z:
         assert "SKILL.md" in z.namelist()
@@ -519,6 +566,7 @@ def test_reroot_lying_header_bomb_aborts_bounded():
     # simplest honest proxy — a member whose ACTUAL content exceeds the
     # per-file cap; the bounded reader must abort during synthesis.
     from tldw_chatbook.tldw_api.skills_schemas import MAX_SUPPORTING_FILE_BYTES
+
     big = "x" * (MAX_SUPPORTING_FILE_BYTES + 100)
     data = _zipball([("SKILL.md", "body"), ("references/huge.md", big)])
     with pytest.raises(RemoteSkillError, match="too large"):
@@ -530,10 +578,12 @@ def test_reroot_rejects_zip_slip_relative_member():
     # carries ".." segments. Raw member selection is a naive
     # ``startswith(skill_root)`` string match, so this still reaches
     # synthesis; the per-member path validator must catch it there.
-    data = _zipball([
-        ("SKILL.md", "body"),
-        ("refs/../../evil.md", "evil"),
-    ])
+    data = _zipball(
+        [
+            ("SKILL.md", "body"),
+            ("refs/../../evil.md", "evil"),
+        ]
+    )
     # Sanity: writestr does not normalize the traversal out of the name.
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         assert any(n.endswith("refs/../../evil.md") for n in z.namelist())
@@ -555,8 +605,7 @@ def test_reroot_prunes_junk_before_count_cap():
         ("scripts/run.sh", "run"),
     ]
     entries += [
-        (f"__pycache__/x{i}.pyc", "junk")
-        for i in range(MAX_SUPPORTING_FILES_COUNT + 5)
+        (f"__pycache__/x{i}.pyc", "junk") for i in range(MAX_SUPPORTING_FILES_COUNT + 5)
     ]
     data = _zipball(entries)
     out, name = re_root_skill_zip(data, subdir="", suggested_name="repo")
@@ -564,7 +613,10 @@ def test_reroot_prunes_junk_before_count_cap():
         names = z.namelist()
     assert not any("__pycache__" in n for n in names)
     assert set(names) == {
-        "SKILL.md", "references/a.md", "references/b.md", "scripts/run.sh",
+        "SKILL.md",
+        "references/a.md",
+        "references/b.md",
+        "scripts/run.sh",
     }
 
 
@@ -579,8 +631,8 @@ def _reroot_zip_with_understated_file_size(declared: int = 5) -> bytes:
     z = zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED)
     z.writestr("SKILL.md", b"---\nname: forged\n---\nbody\n")
     info = zipfile.ZipInfo("big.bin")
-    z.writestr(info, b"y" * 4096)   # local header + data written with real size
-    info.file_size = declared        # mutate BEFORE close -> central dir lies
+    z.writestr(info, b"y" * 4096)  # local header + data written with real size
+    info.file_size = declared  # mutate BEFORE close -> central dir lies
     z.close()
     return buf.getvalue()
 
@@ -809,6 +861,7 @@ async def test_install_seam_404_slash_branch_gets_hint(monkeypatch):
 
     async def _fake_get_branches(self, owner, repo):
         return ["main", "feature/foo"]
+
     monkeypatch.setattr(GitHubAPIClient, "get_branches", _fake_get_branches)
 
     scope = _RecordingScopeService()
@@ -854,7 +907,9 @@ async def test_install_seam_404_single_segment_ref_no_hint():
 
 
 @pytest.mark.asyncio
-async def test_e2e_install_skill_from_github_tree_url_real_services(tmp_path, monkeypatch):
+async def test_e2e_install_skill_from_github_tree_url_real_services(
+    tmp_path, monkeypatch
+):
     """Paste a GitHub ``/tree/`` URL -> classify -> real policy gate ->
     real 302 hop (api.github.com -> codeload.github.com) -> bounded re-root
     -> the real hardened ``import_skill_file`` seam, against REAL
@@ -1129,7 +1184,8 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
     from tldw_chatbook.Skills_Interop.skill_trust_store import (
-        FileSkillTrustGenerationMarkerStore, SkillTrustStore,
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
     )
     from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
     from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
@@ -1151,46 +1207,64 @@ def test_e2e_agent_install_skill_confirm_allow(tmp_path, monkeypatch):
         state_provider=lambda: RuntimeSourceState(active_source="local"),
     )
     local_service = LocalSkillsService(
-        store_dir=tmp_path, trust_service=trust_service, policy_enforcer=policy_enforcer,
+        store_dir=tmp_path,
+        trust_service=trust_service,
+        policy_enforcer=policy_enforcer,
     )
     scope_service = SkillsScopeService(
-        local_service=local_service, server_service=None, policy_enforcer=policy_enforcer,
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
     )
 
     async def _fake_get_branches(self, owner, repo):
         return ["main", "master"]
+
     monkeypatch.setattr(GitHubAPIClient, "get_branches", _fake_get_branches)
 
     zip_bytes = _zipball(
-        [("skills/demo/SKILL.md", "---\nname: demo\n---\nBody.\n"),
-         ("skills/demo/references/api.md", "# API\n")],
+        [
+            ("skills/demo/SKILL.md", "---\nname: demo\n---\nBody.\n"),
+            ("skills/demo/references/api.md", "# API\n"),
+        ],
         wrapper="superpowers-abc/",
     )
 
     async def _fake_fetch(url, *, token=None, transport=None, resolver=None):
         return zip_bytes
+
     monkeypatch.setattr(srf, "fetch_zip_bytes", _fake_fetch)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
 
     scripts = [
-        [_fence("install_skill",
-                {"url": "https://github.com/obra/superpowers/tree/main/skills/demo"})],
+        [
+            _fence(
+                "install_skill",
+                {"url": "https://github.com/obra/superpowers/tree/main/skills/demo"},
+            )
+        ],
         ["Installed."],
     ]
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store, provider_gateway=_ChunkGateway(scripts),
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=_ChunkGateway(scripts),
         skills_service=scope_service,
     )
     _rid, outcome = bridge.run_reply(
         conversation_id="conv-e2e",
         session_id=session.id,
         resolution=_provider_resolution(),
-        assistant_message_id=assistant.id, model="m", session_system_prompt="",
+        assistant_message_id=assistant.id,
+        model="m",
+        session_system_prompt="",
         agent_messages=[{"role": "user", "content": "install it"}],
         should_cancel=lambda: False,
         request_skill_install_confirm=lambda url: True,
@@ -1219,7 +1293,8 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
     from tldw_chatbook.Skills_Interop.local_skills_service import LocalSkillsService
     from tldw_chatbook.Skills_Interop.skill_trust_service import SkillTrustService
     from tldw_chatbook.Skills_Interop.skill_trust_store import (
-        FileSkillTrustGenerationMarkerStore, SkillTrustStore,
+        FileSkillTrustGenerationMarkerStore,
+        SkillTrustStore,
     )
     from tldw_chatbook.Skills_Interop.skills_scope_service import SkillsScopeService
     from tldw_chatbook.runtime_policy.enforcement import ServicePolicyEnforcer
@@ -1240,25 +1315,36 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
         state_provider=lambda: RuntimeSourceState(active_source="local"),
     )
     local_service = LocalSkillsService(
-        store_dir=tmp_path, trust_service=trust_service, policy_enforcer=policy_enforcer,
+        store_dir=tmp_path,
+        trust_service=trust_service,
+        policy_enforcer=policy_enforcer,
     )
     scope_service = SkillsScopeService(
-        local_service=local_service, server_service=None, policy_enforcer=policy_enforcer,
+        local_service=local_service,
+        server_service=None,
+        policy_enforcer=policy_enforcer,
     )
 
     async def _boom(*a, **k):
         raise AssertionError("fetch must not run on deny")
+
     monkeypatch.setattr(srf, "fetch_zip_bytes", _boom)
 
     db = AgentRunsDB(tmp_path / "runs.db", client_id="t")
     store = ConsoleChatStore()
     session = store.ensure_session()
     store.append_message(session.id, role=ConsoleMessageRole.USER, content="install it")
-    assistant = store.append_message(session.id, role=ConsoleMessageRole.ASSISTANT, content="")
+    assistant = store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content=""
+    )
     bridge = ConsoleAgentBridge(
-        agent_runs_db=db, store=store,
+        agent_runs_db=db,
+        store=store,
         provider_gateway=_ChunkGateway(
-            [[_fence("install_skill", {"url": "https://github.com/o/r"})], ["Cancelled."]]
+            [
+                [_fence("install_skill", {"url": "https://github.com/o/r"})],
+                ["Cancelled."],
+            ]
         ),
         skills_service=scope_service,
     )
@@ -1266,7 +1352,9 @@ def test_e2e_agent_install_skill_confirm_deny(tmp_path, monkeypatch):
         conversation_id="conv-e2e-deny",
         session_id=session.id,
         resolution=_provider_resolution(),
-        assistant_message_id=assistant.id, model="m", session_system_prompt="",
+        assistant_message_id=assistant.id,
+        model="m",
+        session_system_prompt="",
         agent_messages=[{"role": "user", "content": "install it"}],
         should_cancel=lambda: False,
         request_skill_install_confirm=lambda url: False,
