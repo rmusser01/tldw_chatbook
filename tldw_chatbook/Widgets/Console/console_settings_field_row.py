@@ -25,6 +25,7 @@ from typing import Any
 
 from textual import events
 from textual.containers import Horizontal
+from textual.content import Content
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Collapsible, Input, Select, Static
@@ -85,8 +86,9 @@ _CHOICE_FIELDS = frozenset(
 )
 #: Hidden only on an authoritative "unsupported"; "unknown" stays visible.
 _SUPPORT_CONTROL_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
-#: Apply refuses these blank (``_required_sampling_errors``).
-_REQUIRED_FIELDS = frozenset({"temperature", "top_p"})
+#: Apply refuses these blank while the provider accepts them
+#: (``_required_sampling_errors``), in error order.
+_REQUIRED_FIELDS = ("temperature", "top_p")
 #: Recovery actions that are not a connection blocker: tuning opens first.
 _TUNING_RECOVERY_ACTIONS = frozenset({None, "wait_for_active_run"})
 #: The focusable control each connection recovery action lands on.
@@ -296,6 +298,39 @@ class ConsoleSettingsFieldRowsMixin:
             return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}"
         return text
 
+    def _control_support(self, control: str) -> str:
+        """Return the shared support answer for one control of the draft.
+
+        Args:
+            control: A reasoning or thinking control's field-table name.
+
+        Returns:
+            ``supported``, ``unsupported`` or ``unknown``, a registry
+            endpoint decided as its family.
+        """
+        return console_generation_control_support(
+            self._active_provider, self._current_model_value(), control, self._app_config
+        )
+
+    def _required_sampling_errors(self) -> list[str]:
+        """Return Apply's errors for blank required fields.
+
+        A required field the provider does not accept is hidden and committed
+        blank, so it is never required (Custom OpenAI 2's Top P).
+
+        Returns:
+            One "<label> is required." per blank required field it accepts.
+        """
+        supported = supported_generation_fields(
+            self._active_provider, self._current_model_value(), self._app_config
+        )
+        return [
+            f"{MODEL_FIELD_LABELS[name]} is required."
+            for name in _REQUIRED_FIELDS
+            if name in supported
+            and not self.query_one(f"#{field_control_id(name)}", Input).value.strip()
+        ]
+
     def _sync_generation_control_support(self) -> None:
         """Hide the fields the draft's provider does not accept (spec rule 2).
 
@@ -315,7 +350,7 @@ class ConsoleSettingsFieldRowsMixin:
         unknown: set[str] = set()
         for name in SAMPLING_FIELDS + CORE_FIELDS:
             if name in _SUPPORT_CONTROL_FIELDS:
-                support = console_generation_control_support(provider, model, name)
+                support = self._control_support(name)
                 shown = support != "unsupported"
                 if support == "unknown":
                     unknown.add(name)
@@ -328,7 +363,9 @@ class ConsoleSettingsFieldRowsMixin:
                     self.call_after_refresh(self._focus_highest_priority_connection)
             row.display = shown
         self._unknown_support_fields = frozenset(unknown)
-        self.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible).title = (
+        # Literal Content: a registry display name is user text, and a str
+        # title is parsed as markup ("Lab [gpu]" vanished, "[/b]" raised).
+        self.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible).title = Content(
             hidden_fields_line(provider_display_name(provider, self._app_config), hidden)
         )
         self._sync_unsaved_hint()  # re-reads each row's help line
