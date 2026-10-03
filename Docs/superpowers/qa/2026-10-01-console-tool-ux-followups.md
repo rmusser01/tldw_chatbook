@@ -843,3 +843,17 @@ and zero-new Ruff35 pass. Earlier question194+ordinary3, exact37 Perf, mounted
 no functional/native replay is claimed for this test-only rebase. QA
 cloud_fixture_dev_rebase records paths, exact range-diff and source proof.
 Fresh final-head CI/Qodo/current dev still precede normal protected merge.
+
+
+Latest-dev Roleplay design-docs rebase (PR2960, 2026-10-03 UTC)
+
+All36 Console patches rebase unchanged onto dev1d566b9d. Its31 changed paths
+are Markdown Roleplay design/review/task files; every inherited path matches
+dev exactly.
+All238 qualified source pins retain exact bytes. No production, shared conftest,
+dependency, CI, budget or qualified-source change. Fresh full artifact preflight
+and zero-new Ruff35 pass. Earlier question194+ordinary3, exact37 Perf, mounted
+17-journey and native receipts retain their recorded code/head/fixture identities;
+no functional/native replay is claimed for this documentation-only rebase. QA
+roleplay_design_docs_dev_rebase records paths, exact range-diff and source proof.
+Fresh final-head CI/Qodo/current dev still precede normal protected merge.
