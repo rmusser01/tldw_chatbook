@@ -15,7 +15,7 @@ from typing import Any
 
 import pytest
 from textual.screen import Screen
-from textual.widgets import Button
+from textual.widgets import Button, Input
 
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
@@ -33,6 +33,9 @@ from tldw_chatbook.UI.Library_Modules.library_conversation_reader_freshness impo
 from tldw_chatbook.UI.Screens.library_screen import (
     LIBRARY_ROW_BROWSE_CONVERSATIONS,
     LibraryScreen,
+)
+from tldw_chatbook.Widgets.Library.library_conversation_reader import (
+    LibraryConversationReader,
 )
 
 # Building the app goes through config-participant admission, which the
@@ -184,6 +187,83 @@ async def test_return_visit_reloads_a_transcript_whose_saved_epoch_moved() -> No
             lambda: len(screen.query(".library-conversation-reader-message")) == 3,
             message="the reloaded transcript was not painted",
         )
+
+
+@pytest.mark.asyncio
+async def test_reload_keeps_info_mode_and_the_find_query() -> None:
+    """The User Guide promises Read/Info and the Find text survive a reload.
+
+    The query only matches the message the reload adds, so the kept query is
+    also proven to have been re-run against the reloaded transcript.
+    """
+    host = _harness()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, service = await _open_alpha(pilot, host)
+        reader = screen.query_one(
+            "#library-conversation-reader", LibraryConversationReader
+        )
+        find = reader.query_one("#library-conversation-reader-find", Input)
+        find.value = "message 3"
+        find.focus()
+        await pilot.press("enter")
+        reader.query_one("#library-conversation-reader-info", Button).press()
+        await pilot.pause()
+        before = screen._conversations_state.reader_state
+        assert (before.mode, before.find_query) == ("info", "message 3")
+        assert before.find_complete and before.find_matches == ()
+        service.set_saved_count("chat-a", 3)
+
+        await _leave_and_return(host, pilot)
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._conversations_state.reader_state.message_total == 3
+                and screen._conversations_state.reader_state.loaded_actions_eligible
+            ),
+            message=lambda: screen._conversations_state.reader_state,
+        )
+        after = screen._conversations_state.reader_state
+        assert after.loaded_generation != before.loaded_generation
+        assert (after.mode, after.find_query) == ("info", "message 3")
+        assert [match.message_id for match in after.find_matches] == [
+            "chat-a-message-3"
+        ]
+        await pilot.pause()
+        assert reader.query_one("#library-conversation-reader-info-body").display
+        assert find.value == "message 3"
+
+
+@pytest.mark.asyncio
+async def test_row_press_load_is_not_rechecked_in_the_same_list_read() -> None:
+    """A row press loads the transcript fresh; a later ensure must not re-read it.
+
+    The row press goes straight to the reader pipeline, and compose, the
+    source-snapshot reconcile, inspection admission and leaving select mode
+    can all call ``_ensure_library_conversation_reader_selection`` again
+    within the same list read.
+    """
+    host = _harness()
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, service = await _open_alpha(pilot, host)
+        await screen.workers.wait_for_complete()
+        screen.query_one("#library-conversation-row-1", Button).press()
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._conversations_state.reader_state.loaded_id == "chat-b"
+                and screen._conversations_state.reader_state.loaded_actions_eligible
+            ),
+            message=lambda: screen._conversations_state.reader_state,
+        )
+        await screen.workers.wait_for_complete()
+
+        screen._ensure_library_conversation_reader_selection()
+        await pilot.pause()
+        await screen.workers.wait_for_complete()
+
+        assert _rechecks(service) == []
+        assert screen._conversations_state.reader_state.loaded_id == "chat-b"
 
 
 @pytest.mark.asyncio

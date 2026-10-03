@@ -14,8 +14,10 @@ reader-visible message write moves) beside the exact ``message_total``. Once
 per list read, a loaded transcript is re-checked with a one-message,
 one-character read of those two values. When either moved, the reader's
 existing fenced pipeline reloads it in place, keeping Read/Info and the Find
-query. A load this list read started is not re-checked: it is already
-current.
+query. A load started during this list read is not re-checked: it is already
+current. The mark is ``(list request generation, reader generation)``, and a
+loaded generation at or past the mark's covers loads this module started and
+loads a row press started straight through the reader pipeline alike.
 """
 
 from __future__ import annotations
@@ -41,7 +43,7 @@ def ensure_reader_current(controller: Any, conversation_id: str) -> None:
     record_version = controller._conversation_reader_record_version(
         controller._conversation_reader_record(conversation_id)
     )
-    list_read = (conversation_id, controller._library_conversation_request_generation)
+    list_read = controller._library_conversation_request_generation
     if state.selected_id == conversation_id and (
         (
             state.loading
@@ -52,19 +54,27 @@ def ensure_reader_current(controller: Any, conversation_id: str) -> None:
             and (record_version is None or state.loaded_version == record_version)
         )
     ):
-        if (
-            state.loaded_actions_eligible
-            and controller._library_conversation_reader_checked_read != list_read
+        checked = controller._library_conversation_reader_checked_read
+        if state.loaded_actions_eligible and not (
+            checked is not None
+            and checked[0] == list_read
+            and state.loaded_generation >= checked[1]
         ):
-            controller._library_conversation_reader_checked_read = list_read
+            controller._library_conversation_reader_checked_read = (
+                list_read,
+                state.loaded_generation,
+            )
             controller.run_worker(
                 recheck_loaded_transcript(controller, state),
                 exclusive=True,
                 group=RECHECK_WORKER_GROUP,
             )
         return
-    controller._library_conversation_reader_checked_read = list_read
     controller._start_library_conversation_reader_selection(conversation_id)
+    controller._library_conversation_reader_checked_read = (
+        list_read,
+        controller._library_conversation_reader_state.generation,
+    )
 
 
 async def recheck_loaded_transcript(
