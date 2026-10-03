@@ -69,6 +69,5 @@ async def test_search_text_and_panel_identity_survive_save(scratch_config):
 
         search_after = panel_after.query_one("#internal-prompts-search", Input)
         assert search_after.value == "subagent", (
-            "Save wiped the panel's search text -- screen-level recompose "
-            "regression"
+            "Save wiped the panel's search text -- screen-level recompose regression"
         )

@@ -301,10 +301,12 @@ async def test_reveal_reference_focuses_the_exact_installed_row_without_activati
         )
         await _wait_until(
             pilot,
-            lambda: app.focused is not None
-            and any(
-                getattr(ancestor, "reference", None) == target
-                for ancestor in app.focused.ancestors_with_self
+            lambda: (
+                app.focused is not None
+                and any(
+                    getattr(ancestor, "reference", None) == target
+                    for ancestor in app.focused.ancestors_with_self
+                )
             ),
         )
 
@@ -381,10 +383,12 @@ async def test_reveal_reference_focuses_after_a_fresh_inventory_load(
         )
         await _wait_until(
             pilot,
-            lambda: app.focused is not None
-            and any(
-                getattr(ancestor, "reference", None) == target
-                for ancestor in app.focused.ancestors_with_self
+            lambda: (
+                app.focused is not None
+                and any(
+                    getattr(ancestor, "reference", None) == target
+                    for ancestor in app.focused.ancestors_with_self
+                )
             ),
         )
 
@@ -449,8 +453,9 @@ async def test_reveal_reference_inventory_error_keeps_retryable_identity(
 
         assert view._revealed_reference == target
         assert not view.query("#installed-reveal-status")
-        assert "The local model inventory could not be loaded." in _rendered_static_text(
-            view
+        assert (
+            "The local model inventory could not be loaded."
+            in _rendered_static_text(view)
         )
 
 

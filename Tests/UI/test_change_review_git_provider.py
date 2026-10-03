@@ -25,6 +25,7 @@ These tests pin the provider's THIN-wrapper contract:
   `"failed"`) for an ordinary push outcome; `pr_url` NEVER raises, always
   returning `str | GitWorkspaceRefusal`.
 """
+
 from __future__ import annotations
 
 import subprocess
@@ -342,9 +343,9 @@ def test_git_actions_enabled_coerces_a_string_false(monkeypatch):
     """
     for raw in ("false", "False", "no", "off", "0"):
         _patch_git_actions(monkeypatch, raw)
-        assert (
-            AgentRunsChangeReviewProvider.git_actions_enabled() is False
-        ), f"{raw!r} must disable git actions"
+        assert AgentRunsChangeReviewProvider.git_actions_enabled() is False, (
+            f"{raw!r} must disable git actions"
+        )
 
 
 def test_git_actions_enabled_coerces_a_string_true(monkeypatch):
@@ -355,9 +356,9 @@ def test_git_actions_enabled_coerces_a_string_true(monkeypatch):
     # set this feature would have invented for itself.
     for raw in ("true", "True", "yes", "1"):
         _patch_git_actions(monkeypatch, raw)
-        assert (
-            AgentRunsChangeReviewProvider.git_actions_enabled() is True
-        ), f"{raw!r} must keep git actions enabled"
+        assert AgentRunsChangeReviewProvider.git_actions_enabled() is True, (
+            f"{raw!r} must keep git actions enabled"
+        )
 
 
 def test_git_actions_enabled_treats_none_as_on(monkeypatch):

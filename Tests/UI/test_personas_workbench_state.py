@@ -333,9 +333,7 @@ class TestPreviewRestore:
             )
             pane.append_user("hi")
             await pilot.pause()
-            assert pane.transcript_text() == (
-                "Elara: Greetings, traveller.\nUser: hi"
-            )
+            assert pane.transcript_text() == ("Elara: Greetings, traveller.\nUser: hi")
 
     async def test_restore_refreshes_provider_readout_without_character_load(
         self, mock_app_instance, stub_characters
@@ -388,9 +386,7 @@ class TestPreviewRestore:
             pane.append_user("hi")
             screen.preview.history.append({"role": "user", "content": "hi"})
             pane.append_reply("well met")
-            screen.preview.history.append(
-                {"role": "assistant", "content": "well met"}
-            )
+            screen.preview.history.append({"role": "assistant", "content": "well met"})
             expected_transcript = (
                 "Elara: Greetings, traveller.\nUser: hi\nElara: well met"
             )
@@ -438,9 +434,7 @@ class TestPreviewRestore:
             pane.append_user("hi")
             screen.preview.history.append({"role": "user", "content": "hi"})
             pane.append_reply("well met")
-            screen.preview.history.append(
-                {"role": "assistant", "content": "well met"}
-            )
+            screen.preview.history.append({"role": "assistant", "content": "well met"})
             saved = screen.save_state()
 
         app2 = _RestoringPersonasTestApp(mock_app_instance, saved)
@@ -557,9 +551,7 @@ class TestNonCharacterModeRestore:
             assert screen2.state.selected_entity_kind == "dictionary"
             assert screen2.state.selected_entity_name == "Some Dictionary"
             assert screen2._pending_restore is None
-            assert (
-                screen2.query_one("#personas-dictionary-detail").display is True
-            )
+            assert screen2.query_one("#personas-dictionary-detail").display is True
             assert not list(screen2.query("#ccp-character-editor-view"))
             assert not list(screen2.query("#ccp-persona-editor-view"))
             assert not list(screen2.query("#personas-lore-detail"))

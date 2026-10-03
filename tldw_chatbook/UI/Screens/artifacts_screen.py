@@ -427,12 +427,10 @@ class ArtifactsScreen(BaseAppScreen):
 
     def _dreams_capture_scope(self) -> Any:
         """The app's active read-it-later capture scope, or None."""
-        ensure = getattr(self.app_instance, "ensure_collections_capture_services",
-                         None)
+        ensure = getattr(self.app_instance, "ensure_collections_capture_services", None)
         if callable(ensure):
             return ensure()
-        return getattr(self.app_instance, "collections_capture_scope_service",
-                       None)
+        return getattr(self.app_instance, "collections_capture_scope_service", None)
 
     def _open_dreams_story_row(self, widget_id: str) -> None:
         """Push the story modal for one dreams row (story or synthetic).
@@ -561,10 +559,7 @@ class ArtifactsScreen(BaseAppScreen):
     def _apply_report_preview(
         self, generation: int, briefing_id: int, row: dict[str, Any] | None
     ) -> None:
-        if (
-            not self.is_attached
-            or generation != self._report_preview_generation
-        ):
+        if not self.is_attached or generation != self._report_preview_generation:
             # Qodo #15: a newer preview (or a clear, or the screen going
             # away) superseded this one.
             return
@@ -1134,8 +1129,7 @@ class ArtifactsScreen(BaseAppScreen):
                             tooltip=keep_tooltip,
                         )
                         export_tooltip = (
-                            "Save the previewed report's briefing as a "
-                            "Markdown file."
+                            "Save the previewed report's briefing as a Markdown file."
                         )
                         if not self._previewed_report_complete:
                             export_tooltip += " View a completed report first."
@@ -1157,9 +1151,7 @@ class ArtifactsScreen(BaseAppScreen):
                                 tooltip=DAILY_REPORT_DEMO_TOOLTIP,
                             )
                     else:
-                        yield Static(
-                            "  Reports: none yet", id="artifacts-list-reports"
-                        )
+                        yield Static("  Reports: none yet", id="artifacts-list-reports")
                         yield Button(
                             "Create Your First Daily Report",
                             id="artifacts-daily-report-demo",
@@ -1191,13 +1183,9 @@ class ArtifactsScreen(BaseAppScreen):
                             dream_row.can_focus = True
                             yield dream_row
                     elif self._dreams_enabled:
-                        yield Static(
-                            "> Dreams: none yet", id="artifacts-list-dreams"
-                        )
+                        yield Static("> Dreams: none yet", id="artifacts-list-dreams")
                     else:
-                        yield Static(
-                            "> Dreams: disabled", id="artifacts-list-dreams"
-                        )
+                        yield Static("> Dreams: disabled", id="artifacts-list-dreams")
                     yield Static(
                         "  Datasets: none available", id="artifacts-list-datasets"
                     )
@@ -1419,7 +1407,9 @@ class ArtifactsScreen(BaseAppScreen):
             return
         # First share interaction materializes the app-owned controller
         # (deferred import chain keeps the UI-ready module census in budget).
-        ensure_controller = getattr(self.app_instance, "_get_artifact_share_controller", None)
+        ensure_controller = getattr(
+            self.app_instance, "_get_artifact_share_controller", None
+        )
         if callable(ensure_controller):
             ensure_controller()
         self._share_dialog_worker = self._run_share_dialog_open()
@@ -1432,8 +1422,7 @@ class ArtifactsScreen(BaseAppScreen):
         notifies onto an app this screen no longer belongs to.
         """
         return (
-            not self._chatbook_unmounted
-            and generation == self._share_dialog_generation
+            not self._chatbook_unmounted and generation == self._share_dialog_generation
         )
 
     @work(exclusive=True, thread=True, group="artifacts-share-dialog")
@@ -1476,7 +1465,9 @@ class ArtifactsScreen(BaseAppScreen):
         controller = getattr(self.app_instance, "artifact_share_controller", None)
         if controller is None:
             self.app.call_from_thread(
-                self._notify, "Artifact sharing is unavailable in this session.", "error"
+                self._notify,
+                "Artifact sharing is unavailable in this session.",
+                "error",
             )
             return
         try:
@@ -1696,15 +1687,12 @@ class ArtifactsScreen(BaseAppScreen):
                     title="Export Daily Report as Markdown",
                     default_file=default_filename,
                 ),
-                callback=lambda path: self._write_report_export_file(
-                    path, enriched
-                ),
+                callback=lambda path: self._write_report_export_file(path, enriched),
             )
             pushed = True
         except Exception as exc:  # noqa: BLE001 - a worker crash exits the app
             logger.warning(
-                "Failed to open the report export dialog "
-                "(exception_category={}).",
+                "Failed to open the report export dialog (exception_category={}).",
                 type(exc).__name__,
             )
             self._notify("Could not open the export dialog.", severity="error")
@@ -1760,9 +1748,7 @@ class ArtifactsScreen(BaseAppScreen):
                     severity="error",
                 )
                 return
-            self._notify(
-                f"Report exported successfully to {validated_path.name}"
-            )
+            self._notify(f"Report exported successfully to {validated_path.name}")
         finally:
             self._report_export_in_flight = False
 

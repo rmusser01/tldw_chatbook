@@ -9,6 +9,7 @@ Renders the generated image with the low-level `rich_pixels`/PIL primitives
 directly (NOT the Console transcript/attachment rendering path), since this
 panel has no message list to attach an image to.
 """
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -39,7 +40,7 @@ class ImageGenDemoScreen(BaseAppScreen):
             yield Label("Image Gen (dev) — throwaway Phase-1 panel")
             opts = [
                 (
-                    f'{entry["name"]}{"" if entry.get("is_configured") else "  (not configured)"}',
+                    f"{entry['name']}{'' if entry.get('is_configured') else '  (not configured)'}",
                     entry["name"],
                 )
                 for entry in list_image_models_for_catalog()

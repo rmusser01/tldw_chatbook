@@ -285,7 +285,9 @@ def real_persona_scope_service(tmp_path):
     local_service = LocalCharacterPersonaService(
         None, persona_store_path=tmp_path / "personas_save_in_place.json"
     )
-    return CharacterPersonaScopeService(local_service=local_service, server_service=None)
+    return CharacterPersonaScopeService(
+        local_service=local_service, server_service=None
+    )
 
 
 async def _enter_personas_mode(pilot):
@@ -313,9 +315,9 @@ class TestPersonaSaveInPlace:
             screen.query_one(
                 "#personas-editor-personality-traits", TextArea
             ).text = "brave, kind"
-            screen.query_one("#personas-editor-mode", Select).value = (
-                "persistent_scoped"
-            )
+            screen.query_one(
+                "#personas-editor-mode", Select
+            ).value = "persistent_scoped"
             screen.query_one("#personas-editor-enabled", Switch).value = False
             await pilot.pause()
             await pilot.press("ctrl+s")

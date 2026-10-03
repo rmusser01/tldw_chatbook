@@ -16,6 +16,7 @@ P4  With no UI wired, what is the wall time to a risk-tagged tool's denial
     in a wake turn, and what is the effective `[mcp]
     approval_timeout_seconds`?
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -95,6 +96,7 @@ async def _seed_console(app, pilot, gateway):
 
 def _terminal_survivor_run(runs_db, conversation_id, *, result="child answer"):
     from uuid import uuid4
+
     chain_id = runs_db.automatic_work.create_chain(
         conversation_id, root_submission_id=uuid4().hex
     )
@@ -198,7 +200,9 @@ async def test_probe_p2_post_unmount_fanout(tmp_path):
         ledger = (runs_db.get_run(run_id) or {}).get("wake_delivered_at")
         findings.append(f"P2(ledger) wake_delivered_at={ledger}")
 
-    _report("P2 -- post-unmount fan-out (real teardown, shutdown NOT skipped)", findings)
+    _report(
+        "P2 -- post-unmount fan-out (real teardown, shutdown NOT skipped)", findings
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -240,6 +244,7 @@ async def test_probe_p3_controller_survives_unmount(tmp_path, monkeypatch):
         slot_names = sorted(slots)
         findings.append(f"P3(hooks) screen-bound controller slots: {slot_names}")
         for name, fn in slots.items():
+
             def _wrap(_name=name, _fn=fn):
                 def _recorder(*a, **kw):
                     touched.append(_name)
@@ -248,22 +253,22 @@ async def test_probe_p3_controller_survives_unmount(tmp_path, monkeypatch):
                     except Exception as exc:  # noqa: BLE001
                         touched.append(f"{_name}!RAISED:{type(exc).__name__}")
                         raise
+
                 return _recorder
+
             setattr(controller, name, _wrap())
         ui_hook = wake.delivery_ui_hook
-        findings.append(
-            f"P3(hooks) wake.delivery_ui_hook wired: {ui_hook is not None}"
-        )
+        findings.append(f"P3(hooks) wake.delivery_ui_hook wired: {ui_hook is not None}")
         if ui_hook is not None:
+
             def _hook_recorder(session, _fn=ui_hook):
                 touched.append("wake.delivery_ui_hook")
                 try:
                     return _fn(session)
                 except Exception as exc:  # noqa: BLE001
-                    touched.append(
-                        f"wake.delivery_ui_hook!RAISED:{type(exc).__name__}"
-                    )
+                    touched.append(f"wake.delivery_ui_hook!RAISED:{type(exc).__name__}")
                     raise
+
             wake.delivery_ui_hook = _hook_recorder
 
         monkeypatch.setattr(ConsoleChatController, "shutdown", _no_shutdown)
@@ -315,10 +320,12 @@ async def test_probe_p3_controller_survives_unmount(tmp_path, monkeypatch):
                 ]
             )
         )
-        findings.append(f"P3(hooks) slots TOUCHED during the wake turn: {sorted(set(touched))}")
+        findings.append(
+            f"P3(hooks) slots TOUCHED during the wake turn: {sorted(set(touched))}"
+        )
         findings.append(
             "P3(hooks) slots NOT touched: "
-            + str(sorted(set(slot_names) - {t.split('!')[0] for t in touched}))
+            + str(sorted(set(slot_names) - {t.split("!")[0] for t in touched}))
         )
 
         # P3b -- the composition of P1 and P3, the decision-relevant fact:

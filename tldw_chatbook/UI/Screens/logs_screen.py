@@ -51,7 +51,9 @@ class LogsScreen(BaseAppScreen):
             ),
             id="logs-destination-header",
         )
-        self.logs_window = LogsWindow(self.app_instance, classes="window", id="logs-window")
+        self.logs_window = LogsWindow(
+            self.app_instance, classes="window", id="logs-window"
+        )
         # Leave room for the destination header above the window.
         self.logs_window.add_class("h-fill")
         yield self.logs_window

@@ -607,9 +607,7 @@ async def test_first_time_user_character_chat_journey(
         from textual.widgets import Static as _Static
 
         auto_speak = chat_screen.query_one("#console-auto-speak", _Switch)
-        auto_speak_label = chat_screen.query_one(
-            "#console-auto-speak-label", _Static
-        )
+        auto_speak_label = chat_screen.query_one("#console-auto-speak-label", _Static)
         assert str(auto_speak_label.renderable) == "Speak replies"
         assert auto_speak.name == "Speak replies"
         assert auto_speak.value is False

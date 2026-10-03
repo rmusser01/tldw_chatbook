@@ -14,6 +14,7 @@ the warning method in its source, so the wiring can't silently regress (a
 future refactor moving/removing the call would otherwise pass every other
 test in this file while quietly disarming the warning at boot).
 """
+
 from __future__ import annotations
 
 import inspect
