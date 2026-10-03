@@ -96,9 +96,7 @@ class ConsoleAgentSteeringState:
 
 
 #: The hidden default: what a bar shows when nothing is drilled into.
-STEERING_STATE_HIDDEN = ConsoleAgentSteeringState(
-    visible=False, target_id="", queued=0
-)
+STEERING_STATE_HIDDEN = ConsoleAgentSteeringState(visible=False, target_id="", queued=0)
 
 
 def _queued_text(queued: int) -> str:
@@ -156,10 +154,14 @@ class ConsoleAgentSteeringBar(Vertical):
             placeholder="Steer this sub-agent…",
             id=STEERING_INPUT_ID,
         )
-        steer_input.remove_class(*(name for name in steer_input.classes if name.startswith("w-")))
+        steer_input.remove_class(
+            *(name for name in steer_input.classes if name.startswith("w-"))
+        )
         steer_input.set_styles(width=None)
         steer_input.add_class("w-full")
-        steer_input.remove_class(*(name for name in steer_input.classes if name.startswith("h-")))
+        steer_input.remove_class(
+            *(name for name in steer_input.classes if name.startswith("h-"))
+        )
         steer_input.set_styles(height=None)
         steer_input.add_class("h-3")
         yield steer_input
@@ -234,9 +236,7 @@ class ConsoleAgentSteeringBar(Vertical):
 
     def show_delivery_refusal(self) -> None:
         """Explain failed admission while preserving the submitted draft."""
-        self._set_note(
-            "Queue is full or agent unavailable. Draft kept."
-        )
+        self._set_note("Queue is full or agent unavailable. Draft kept.")
 
     def clear_draft(self) -> None:
         """Clear the input after a submit the bridge actually QUEUED.

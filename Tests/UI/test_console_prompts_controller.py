@@ -273,7 +273,9 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
         await _wait_for_selector(console, pilot, "#console-shell")
         recovery = AsyncMock()
         console._open_console_provider_recovery = recovery
-        console._console_provider_blocker_copy = lambda *, settings_readiness=None: "No provider configured."
+        console._console_provider_blocker_copy = lambda *, settings_readiness=None: (
+            "No provider configured."
+        )
 
         console._open_console_prompts_modal()
         await pilot.pause()
@@ -284,7 +286,9 @@ async def test_prompts_modal_reads_provider_recovery_off_the_screen_at_open() ->
 
 
 @pytest.mark.asyncio
-async def test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider() -> None:
+async def test_improve_stays_unavailable_during_an_active_run_even_with_a_healthy_provider() -> (
+    None
+):
     """task-32345: Improve's active-run gate is independent of the provider
     blocker copy -- a healthy, unblocked provider (empty blocker copy, the
     correct state during a mere active run since task-32345's fix to
@@ -377,16 +381,20 @@ class _CountingResolutionGateway:
 
     async def resolve_for_send(self, selection):
         self.resolve_calls += 1
-        return with_destination(ConsoleProviderResolution(
-            provider="llama_cpp",
-            base_url=selection.base_url or "http://127.0.0.1:9099",
-            model=(
-                selection.explicit_model or selection.configured_model or "local-model"
-            ),
-            ready=True,
-            readiness_key="llama_cpp",
-            execution_key="llama_cpp",
-        ))
+        return with_destination(
+            ConsoleProviderResolution(
+                provider="llama_cpp",
+                base_url=selection.base_url or "http://127.0.0.1:9099",
+                model=(
+                    selection.explicit_model
+                    or selection.configured_model
+                    or "local-model"
+                ),
+                ready=True,
+                readiness_key="llama_cpp",
+                execution_key="llama_cpp",
+            )
+        )
 
 
 async def _open_prompts_modal(host, pilot, console) -> ConsolePromptsModal:

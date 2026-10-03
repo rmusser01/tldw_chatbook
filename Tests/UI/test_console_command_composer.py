@@ -521,9 +521,7 @@ async def test_escaped_chat_stash_keeps_segment_payload_and_restore_consistent()
 
     dispatched: list[tuple[str, ConsoleDraftStash | None]] = []
 
-    async def dispatch(
-        draft: str, *, stash: ConsoleDraftStash | None = None
-    ) -> bool:
+    async def dispatch(draft: str, *, stash: ConsoleDraftStash | None = None) -> bool:
         dispatched.append((draft, stash))
         return True
 

@@ -133,9 +133,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
     def compose(self) -> ComposeResult:
         with Vertical(id="trace-export-dialog"):
             yield Static("Export shared Trace", id="trace-export-title", markup=False)
-            yield Static(
-                "Analyzing privacy inventory…", id="trace-export-inventory"
-            )
+            yield Static("Analyzing privacy inventory…", id="trace-export-inventory")
             yield Static(
                 "Credentials are always blocked in every profile.",
                 id="trace-export-policy",
@@ -289,9 +287,7 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
 
     async def _confirm_full_export(self) -> bool:
         return bool(
-            await self.app.push_screen_wait(
-                full_trace_confirmation(noun="Trace")
-            )
+            await self.app.push_screen_wait(full_trace_confirmation(noun="Trace"))
         )
 
     @on(Button.Pressed, "#trace-export-submit")

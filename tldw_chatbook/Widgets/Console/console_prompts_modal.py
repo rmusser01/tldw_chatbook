@@ -653,8 +653,8 @@ class ConsolePromptsModal(
 
     def _supports_structured_save(self, artifact_type: str) -> bool:
         source = self.state.selected_source or self.state.source
-        capabilities = self.state.selected_capabilities or self._capabilities_by_source.get(
-            source
+        capabilities = (
+            self.state.selected_capabilities or self._capabilities_by_source.get(source)
         )
         if capabilities is None:
             return False
@@ -794,9 +794,7 @@ class ConsolePromptsModal(
                     fallback_page = result.total_pages
                     self.state = self.state.with_page(fallback_page)
                     raw = await _maybe_await(self._list_page(source, fallback_page))
-                    result = self._normalize_list_result(
-                        raw, source, fallback_page
-                    )
+                    result = self._normalize_list_result(raw, source, fallback_page)
             else:
                 raw = await _maybe_await(self._search(source, query))
                 result = self._normalize_search_result(raw, source)
@@ -916,9 +914,8 @@ class ConsolePromptsModal(
 
         if source == "draft_shelf":
             collection_options = await self._load_draft_collections()
-            if (
-                not self.is_mounted
-                or not self.state.accepts_detail(detail_token, source, identifier)
+            if not self.is_mounted or not self.state.accepts_detail(
+                detail_token, source, identifier
             ):
                 return
             self._selected_record = record
@@ -1734,9 +1731,7 @@ class ConsolePromptsModal(
                 "#console-prompts-recipe-save-confirmation-panel", Vertical
             )
             confirmation.display = False
-            open_library = self.query_one(
-                "#console-prompts-open-saved-recipe", Button
-            )
+            open_library = self.query_one("#console-prompts-open-saved-recipe", Button)
             open_library.can_focus = False
 
     def _show_dirty_guard(self) -> None:
@@ -2397,9 +2392,7 @@ class ConsolePromptsModal(
             confirmation = self.query_one(
                 "#console-prompts-recipe-save-confirmation", Static
             )
-            open_library = self.query_one(
-                "#console-prompts-open-saved-recipe", Button
-            )
+            open_library = self.query_one("#console-prompts-open-saved-recipe", Button)
         except NoMatches:
             return
         record = dict(saved) if isinstance(saved, Mapping) else {}
