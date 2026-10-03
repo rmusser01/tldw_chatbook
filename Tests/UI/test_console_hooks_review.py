@@ -4,6 +4,7 @@ import asyncio
 
 import pytest
 
+from Tests.Agents.test_hook_permissions import _approve
 from Tests.Agents.test_hook_permissions import hook_file as _hook_file
 from Tests.UI.test_console_workbench_contract import (
     ConsoleHarness,
@@ -58,6 +59,43 @@ async def test_hooks_action_is_reachable_and_returns_focus(size, hook_file):
         await pilot.press("escape")
         await pilot.pause()
         assert host.screen is console and console.focused is button
+
+
+async def test_a_warm_console_refresh_shows_an_unsafe_store_directory(hook_file):
+    """TASK-33642: a warm refresh reuses the hook snapshot, not past a change.
+
+    The Console's visit refresh reuses the last hook snapshot while nothing
+    it read moved; a profile directory made group-writable after approval
+    must reach the control bar on the next refresh, as a full read would.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+    """
+    app = _build_test_app()
+    _configure_native_ready_console(app)
+    host = ConsoleHarness(app)
+    async with host.run_test(size=(120, 40)) as pilot:
+        console = host.screen
+        await _wait_for_selector(console, pilot, "#console-control-hooks")
+        owner = console._console_runtime().ensure_hook_permissions()
+        assert _approve(owner).ready
+        for _ in range(3):  # settle the reuse (a reconcile write costs one)
+            await console._refresh_console_hooks()
+        assert console._console_hook_review_snapshot.ready
+        approved_tooltip = console.query_one("#console-control-hooks").tooltip
+        directory = console._console_hook_review_snapshot.store_path.parent
+        mode = directory.stat().st_mode & 0o777
+        directory.chmod(mode | 0o020)
+        try:
+            await console._refresh_console_hooks()
+            await pilot.pause()
+            refreshed = console._console_hook_review_snapshot
+            tooltip = console.query_one("#console-control-hooks").tooltip
+        finally:
+            directory.chmod(mode)
+
+    assert not refreshed.ready, "the control bar kept the approved state"
+    assert tooltip != approved_tooltip, tooltip
 
 
 @pytest.mark.parametrize("v2", [False, True])

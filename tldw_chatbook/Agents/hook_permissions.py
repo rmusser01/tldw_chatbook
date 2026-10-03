@@ -31,6 +31,7 @@ from tldw_chatbook.Agents.run_hooks import (
     inspect_hooks_config,
 )
 from tldw_chatbook.Backup_Recovery.bootstrap import RecoveryRequired
+from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Utils.private_paths import (
     PrivateFileWritePrecondition,
     atomic_private_write_text,
@@ -491,9 +492,15 @@ class HookPermissions:
             except OSError:
                 pass
         try:
-            before = self._visit_stamp(
-                Path(config.get_cli_config_path()), default_hook_permissions_path()
+            # Validated as locked_hooks_config_snapshot validates it, before any
+            # metadata probe touches the environment-selected path.
+            selected = validate_path_simple(
+                config.get_cli_config_path(),
+                require_exists=False,
+                probe_existing=False,
+                reject_shell_metacharacters=False,
             )
+            before = self._visit_stamp(selected, default_hook_permissions_path())
         except (OSError, ValueError, RecoveryRequired):
             before = None
         snapshot = self.snapshot()
