@@ -2426,13 +2426,11 @@ class ProviderStep(SetupStep):
         self._credential_revision = revision
         self._last_credential_decision = credential_decision
         discovery_key = self._model_discovery_key(provider_draft)
-        # TASK-34100.1 (cross-cutting-14): a settled discovery is reused for
-        # the same provider identity, whatever it returned. A failure used to
-        # restart here on every Next, each one up to the 8 s guard. Changing
-        # the key or endpoint makes a new identity; Model's Retry asks again.
+        # A list fetched for this identity is reused; a failure is not (the
+        # user may have started the server: "Check it's running, then
+        # continue"). It runs in the background, so Next never waits on it.
         if discovery_key != self._selected_discovery_key or (
-            self._selected_discovery_state
-            not in {"in_progress", "complete", "failed"}
+            self._selected_discovery_state not in {"in_progress", "complete"}
         ):
             self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults

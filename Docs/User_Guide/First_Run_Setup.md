@@ -43,10 +43,11 @@ The search for local servers that the Provider step starts runs in the
 background, so the screen keeps responding while it looks.
 
 The model list that the Provider step fetches is kept for that provider, key
-and address. Going Back to Provider and forward again reuses it, even when
-that check failed, instead of waiting for the server again. **Retry** on the
-Model step (shown when the server couldn't be reached) checks again, and a
-different key or address counts as a new check.
+and address, so going Back to Provider and forward again reuses it. A check
+that failed is not kept: once you have started the server (or fixed the key),
+**Next →** on Provider checks again in the background. **Retry** on the Model
+step (shown when the server couldn't be reached) also checks again, and a
+different key or address always counts as a new check.
 
 The Provider step lists the same providers as Settings ▸ Providers & Models:
 Popular first, then Cloud, Local and Other. Every row can be picked with the

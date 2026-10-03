@@ -166,7 +166,7 @@ _BUDGETS: dict[str, int] = {
     # new helper module beside the step (first_run_<step>_<topic>.py), never
     # in a raised row. That is the room the split made: a fix lands beside a
     # small step module, not inside one 9,866-line module at its limit.
-    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2466,
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2464,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
     "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
