@@ -3,26 +3,35 @@
 from __future__ import annotations
 
 import argparse
+import asyncio
 import hashlib
 import importlib
 import importlib.metadata
+import importlib.util
 import json
+import math
 import os
 import platform
 import re
 import shutil
 import stat
+import statistics
 import struct
 import subprocess  # nosec B404 - fixed local commands and arguments only
 import sys
 import tarfile
 import tempfile
+import time
 from collections.abc import Iterable, Mapping
 from contextlib import closing
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import uuid4
 
 from defusedxml import ElementTree as ET
+
+if TYPE_CHECKING:
+    from tldw_chatbook.Notes.git_process_containment import ProcessTreeControl
 
 _NATIVE_TESTS = (
     "Tests/Utils/test_windows_files.py",
@@ -226,6 +235,7 @@ _SELECTABLE_GROUP_TESTS = (
     "Tests/UI/test_backup_data_groups.py",
 )
 _PRODUCT_SELECTIONS = {
+    "admission-metrics": (),
     # Resolved per native OS below; ordinary source tests and installed F9
     # remain explicitly distinct in the existing runner receipts.
     "admission-amortization": (),
@@ -702,11 +712,15 @@ def _run_git(workspace: Path, *arguments: str) -> str:
     return completed.stdout.rstrip("\r\n")
 
 
-def _tracked_files(workspace: Path) -> tuple[str, ...]:
+def _tracked_files(workspace: Path, revision: str = "HEAD") -> tuple[str, ...]:
     """Return exact tracked path names without Git's display quoting."""
     return tuple(
         relative
-        for relative in _run_git(workspace, "ls-files", "-z").split("\0")
+        for relative in (
+            _run_git(workspace, "ls-files", "-z")
+            if revision == "HEAD"
+            else _run_git(workspace, "ls-tree", "-r", "--name-only", "-z", revision)
+        ).split("\0")
         if relative
     )
 
@@ -730,8 +744,12 @@ def _create_private_root(evidence_root: Path) -> Path:
     return private_root
 
 
-def _copy_tracked_source(workspace: Path, private_root: Path) -> tuple[Path, str]:
+def _copy_tracked_source(
+    workspace: Path, private_root: Path, *, revision: str = "HEAD"
+) -> tuple[Path, str]:
     """Copy exact tracked HEAD bytes into the private runtime without secrets."""
+    if revision != "HEAD" and not re.fullmatch(r"[0-9a-f]{40}", revision):
+        raise ValueError("exact_source_revision_required")
     if _run_git(workspace, "status", "--porcelain=v1"):
         raise RuntimeError("source_checkout_not_clean")
     archive_path = private_root / "tracked-head.tar"
@@ -747,13 +765,13 @@ def _copy_tracked_source(workspace: Path, private_root: Path) -> tuple[Path, str
     if executable is None:
         raise RuntimeError("Git is unavailable for tracked source copy")
     subprocess.run(  # nosec B603 - fixed Git archive of the selected HEAD
-        [executable, "archive", "--format=tar", "-o", str(archive_path), "HEAD"],
+        [executable, "archive", "--format=tar", "-o", str(archive_path), revision],
         cwd=workspace,
         check=True,
         capture_output=True,
         timeout=60,
     )
-    tracked = set(_tracked_files(workspace))
+    tracked = set(_tracked_files(workspace, revision))
     with tarfile.open(archive_path, mode="r:") as archive:
         members = archive.getmembers()
         archived = {member.name.rstrip("/") for member in members if member.isfile()}
@@ -773,10 +791,10 @@ def _copy_tracked_source(workspace: Path, private_root: Path) -> tuple[Path, str
 
 
 def _source_receipt(
-    workspace: Path, source_copy: Path, archive_sha256: str
+    workspace: Path, source_copy: Path, archive_sha256: str, *, revision: str = "HEAD"
 ) -> dict[str, object]:
     """Identify and hash every tracked file in the private execution copy."""
-    tracked = _tracked_files(workspace)
+    tracked = _tracked_files(workspace, revision)
     files = {}
     for relative in tracked:
         candidate = source_copy / relative
@@ -787,10 +805,12 @@ def _source_receipt(
     package = importlib.metadata.distribution("tldw_chatbook")
     return {
         "schema": 2,
-        "git_head": _run_git(workspace, "rev-parse", "HEAD"),
+        "git_head": _run_git(workspace, "rev-parse", revision),
         "git_status": _run_git(workspace, "status", "--porcelain=v1"),
         "distribution_version": package.version,
-        "execution_source": "private_tracked_head_copy",
+        "execution_source": "private_tracked_head_copy"
+        if revision == "HEAD"
+        else "private_exact_revision_copy",
         "source_archive_sha256": archive_sha256,
         "files": files,
     }
@@ -1669,10 +1689,487 @@ def _artifact_hashes(artifacts: Path) -> dict[str, str]:
     }
 
 
+_ADMISSION_HISTORICAL_REF = "840ed2ca58509f896cb45d80ccae12518c390b04"
+_ADMISSION_BASELINE_REF = "c40094be8496e904176bc097ee346f6bb73b9065"
+_ADMISSION_FIXED_SHA256 = (
+    "34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428"
+)
+
+
+def _metric_preflight(workspace: Path, baseline: str) -> dict[str, str]:
+    """Accept only disclosed exact ancestors for Windows nested-Job execution."""
+    if platform.system() != "Windows":
+        raise ValueError("windows_nested_job_required")
+    if not re.fullmatch(r"[0-9a-f]{40}", baseline):
+        raise ValueError("exact_admission_baseline_required")
+    if _run_git(workspace, "status", "--porcelain=v1"):
+        raise RuntimeError("source_checkout_not_clean")
+    final = _run_git(workspace, "rev-parse", "HEAD")
+    refs = {
+        "historical": _ADMISSION_HISTORICAL_REF,
+        "baseline": baseline,
+        "final": final,
+    }
+    if len(set(refs.values())) != 3:
+        raise ValueError("distinct_admission_sources_required")
+    for revision in refs.values():
+        if _run_git(workspace, "rev-parse", revision + "^{commit}") != revision:
+            raise ValueError("exact_admission_commit_required")
+        _run_git(workspace, "merge-base", "--is-ancestor", revision, final)
+    return refs
+
+
+def _metric_fixed_summary(receipts: Mapping, sources: Mapping) -> dict[str, object]:
+    """Retain the original complete boundary and historical three-boot targets."""
+    result: dict[str, object] = {"qualified": False}
+    try:
+        for side in ("historical", "final"):
+            for phase, iterations in (("transaction", 100), ("boot", 3)):
+                receipt = receipts[f"{side}-{phase}"]
+                if (
+                    receipt["protocol"] != "reconstructed-v1"
+                    or receipt["phase"] != phase
+                    or receipt["iterations"] != iterations
+                    or receipt["platform"] != "win32"
+                    or receipt["native_windows_measured"] is not True
+                    or receipt["source"] != sources[side]
+                    or receipt["probe_sha256"] != _ADMISSION_FIXED_SHA256
+                    or receipt["exit_code"] != 0
+                    or len(receipt["runs"]) != (3 if phase == "boot" else 1)
+                ):
+                    raise ValueError("incomplete_fixed_receipt")
+                children = [receipt["seed"], *receipt["runs"]]
+                if phase == "boot":
+                    children.append(receipt["warmup"])
+                for child in children:
+                    if (
+                        child["retired"] is not True
+                        or child["supervisor_retired"] is not True
+                        or child["exit_code"] != 0
+                        or child["network_attempts"] != 0
+                        or child["foreign_source_modules"] != 0
+                        or child["source_sha256"] != sources[side]["content_sha256"]
+                        or not child["outstanding_ownership"]
+                        or any(child["outstanding_ownership"].values())
+                        or child["live_children_before_reaping"] != 0
+                        or child.get("supervisor_error_type")
+                        or child.get("cleanup_error_type")
+                    ):
+                        raise ValueError("unretired_fixed_child")
+                for child in receipt["runs"]:
+                    if (
+                        any(
+                            type(child[key]) is not int or child[key] <= 0
+                            for key in (
+                                "native_handle_opens",
+                                "native_acl_reads",
+                            )
+                        )
+                        or type(child["os_opens"]) is not int
+                        or child["os_opens"] < 0
+                    ):
+                        raise ValueError("missing_native_fixed_costs")
+        boundary = receipts["final-transaction"]["runs"][0][
+            "transaction_boundary_median_ns"
+        ]
+        historical = statistics.median(
+            row["os_opens"] for row in receipts["historical-boot"]["runs"]
+        )
+        final = statistics.median(
+            row["os_opens"] for row in receipts["final-boot"]["runs"]
+        )
+        if (
+            type(boundary) not in (int, float)
+            or not math.isfinite(boundary)
+            or boundary <= 0
+        ):
+            raise ValueError("invalid_complete_boundary")
+        reduction = 100 * (1 - final / historical)
+        result.update(
+            complete_transaction_boundary_median_ns=boundary,
+            boot_reduction_percent=reduction,
+            qualified=boundary < 500000 and reduction >= 80,
+        )
+    except (KeyError, TypeError, ValueError, ZeroDivisionError) as error:
+        result["error_type"] = type(error).__name__
+    return result
+
+
+async def _metric_supervise(
+    controller: ProcessTreeControl,
+    command: list[str],
+    workspace: Path,
+    environment: dict[str, str],
+    deadline: float,
+) -> dict[str, object]:
+    """Own the entire Windows phase, including nested benchmark and build Jobs."""
+    tree, pumps = None, []
+    result = {"exit_code": 1, "supervisor_retired": False}
+
+    async def discard(reader) -> None:
+        while await reader.read(8192):
+            pass
+
+    try:
+        remaining = deadline - time.monotonic() - 2
+        if remaining <= 0:
+            raise TimeoutError("admission_phase_deadline")
+        tree = await controller.spawn(
+            *command, cwd=str(workspace), environment=environment, stdin=False
+        )
+        pumps = [
+            asyncio.create_task(discard(reader))
+            for reader in (tree.process.stdout, tree.process.stderr)
+        ]
+        result["exit_code"] = await asyncio.wait_for(
+            tree.process.wait(), max(0, deadline - time.monotonic() - 2)
+        )
+    except BaseException as error:  # noqa: BLE001 - no raw child streams or messages
+        tree = tree or getattr(error, "tree", None)
+        result["supervisor_error_type"] = type(error).__name__[:80]
+    finally:
+        if tree is not None:
+            empty = await controller.wait(tree, timeout=0)
+            if not empty:
+                controller.kill(tree)
+                empty = await controller.wait(tree, timeout=2)
+            result["supervisor_retired"] = empty
+            if empty:
+                controller.close(tree)
+            else:
+                for pump in pumps:
+                    pump.cancel()
+            errors = await asyncio.gather(*pumps, return_exceptions=True)
+            if empty and any(isinstance(error, BaseException) for error in errors):
+                result["supervisor_error_type"] = "StreamDrainError"
+    if not result["supervisor_retired"] or result.get("supervisor_error_type"):
+        result["exit_code"] = result["exit_code"] or 1
+    return result
+
+
+def _metric_phase(
+    workspace: Path, private_root: Path, artifacts: Path, baseline: str
+) -> int:
+    """Prepare separate snapshots/wheels and execute only the existing probes."""
+    from Tests.Packaging import test_backup_helper_distribution as packaging
+
+    refs = _metric_preflight(workspace, baseline)
+    module_spec = importlib.util.spec_from_file_location(
+        "admission_idle_metric",
+        workspace / "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py",
+    )
+    idle = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(idle)
+    if _sha256(idle.FIXED) != _ADMISSION_FIXED_SHA256:
+        raise ValueError("fixed_probe_changed")
+    sources, manifests, installed, wheels, receipts = {}, {}, {}, {}, {}
+    for side, revision in refs.items():
+        if shutil.disk_usage(private_root).free < 2 * 1024**3:
+            raise RuntimeError("metric_phase_reserve_below_two_gib")
+        root = private_root / f"metric-{side}"
+        root.mkdir(mode=0o700)
+        source, archive = _copy_tracked_source(workspace, root, revision=revision)
+        _write_json(
+            artifacts / f"metric-{side}-source.json",
+            _source_receipt(workspace, source, archive, revision=revision),
+        )
+        manifests[side] = {
+            "commit": revision,
+            "tree": _run_git(workspace, "rev-parse", revision + "^{tree}"),
+            "content_sha256": idle.fixed.source_digest(source),
+        }
+        _write_json(source / idle.fixed.MANIFEST, manifests[side])
+        idle.fixed.select_source(source)
+        sources[side] = source
+        if side == "historical":
+            continue
+        build_source = root / "build-source"
+        build_source.mkdir(mode=0o700)
+        packaging.REPO_ROOT = source
+        packaging._copy_build_source(build_source)
+        wheel = packaging._build_wheel(build_source, root / "wheels")
+        target = root / "installed"
+        completed = subprocess.run(  # nosec B603 - original fixed offline local wheel install
+            [
+                sys.executable,
+                "-m",
+                "pip",
+                "install",
+                "--no-index",
+                "--no-deps",
+                "--disable-pip-version-check",
+                "--target",
+                str(target),
+                str(wheel),
+            ],
+            cwd=root,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=60,
+            check=False,
+        )
+        if completed.returncode:
+            raise RuntimeError("admission_wheel_install_failed")
+        idle.installed_join(source, target, wheel)
+        installed[side], wheels[side] = target, wheel
+        _write_json(
+            root / "native-package.json",
+            {
+                "wheel": str(wheel),
+                "sha256": _sha256(wheel),
+                "installed": str(target),
+                "installed_files": len(idle.package_files(target)),
+            },
+        )
+    before_installed = _installed_receipts(private_root)
+    joins = {
+        side: idle.installed_join(sources[side], installed[side], wheels[side])
+        for side in installed
+    }
+    _write_json(artifacts / "metric-sources.json", manifests)
+    summary = {
+        "protocol": "windows-admission-metrics-v1",
+        "sources": manifests,
+        "calls": [],
+        "fixed": {"qualified": False},
+        "idle_qualified": False,
+        "exit_code": 1,
+    }
+    raw = private_root / "metric-receipts"
+    raw.mkdir(mode=0o700)
+    try:
+        calls = [
+            (side, phase, iterations)
+            for phase, iterations in (("transaction", 100), ("boot", 3))
+            for side in ("historical", "final")
+        ]
+        for side, phase, iterations in calls:
+            if shutil.disk_usage(private_root).free < 2 * 1024**3:
+                raise RuntimeError("metric_phase_reserve_below_two_gib")
+            label = f"{side}-{phase}"
+            receipt_path = raw / f"{label}.json"
+            call = {"label": label, "status": "running"}
+            summary["calls"].append(call)
+            _write_json(artifacts / "metric-summary.json", summary)
+            completed = subprocess.run(  # nosec B603 - immutable original fixed probe argv
+                [
+                    sys.executable,
+                    str(idle.FIXED),
+                    "--source",
+                    str(sources[side]),
+                    "--phase",
+                    phase,
+                    "--iterations",
+                    str(iterations),
+                    "--receipt",
+                    str(receipt_path),
+                ],
+                cwd=workspace,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+            call.update(status="completed", returncode=completed.returncode)
+            _write_json(artifacts / "metric-summary.json", summary)
+            if receipt_path.is_file():
+                _sanitize_file(
+                    receipt_path,
+                    artifacts / f"metric-{label}.json",
+                    private_root=private_root,
+                )
+                receipts[label] = json.loads(receipt_path.read_text(encoding="utf-8"))
+            if completed.returncode:
+                raise RuntimeError("fixed_execution_failed")
+            if idle.fixed.select_source(sources[side]) != manifests[side]:
+                raise ValueError("fixed_source_changed")
+        summary["fixed"] = _metric_fixed_summary(receipts, manifests)
+        receipt_path = raw / "idle.json"
+        call = {"label": "installed-idle", "status": "running"}
+        summary["calls"].append(call)
+        _write_json(artifacts / "metric-summary.json", summary)
+        completed = subprocess.run(  # nosec B603 - original paired installed idle CLI
+            [
+                sys.executable,
+                str(idle.FIXED.with_name("backup_admission_idle_benchmark.py")),
+                "--source",
+                str(sources["final"]),
+                "--baseline",
+                str(sources["baseline"]),
+                "--baseline-description",
+                f"Reviewed contemporary pre-Task2/3 1Hz/schema75/PERF07/release0.2.3/trace baseline {baseline}",
+                "--installed",
+                str(installed["final"]),
+                "--wheel",
+                str(wheels["final"]),
+                "--baseline-installed",
+                str(installed["baseline"]),
+                "--baseline-wheel",
+                str(wheels["baseline"]),
+                "--receipt",
+                str(receipt_path),
+            ],
+            cwd=workspace,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=False,
+        )
+        call.update(status="completed", returncode=completed.returncode)
+        if receipt_path.is_file():
+            result = json.loads(receipt_path.read_text(encoding="utf-8"))
+            _sanitize_file(
+                receipt_path, artifacts / "metric-idle.json", private_root=private_root
+            )
+            summary["idle_qualified"] = (
+                completed.returncode == 0 and result["comparison"]["qualified"] is True
+            )
+            for run in [*result["seeds"], *result["runs"]]:
+                for helper in run.get("child_receipts", ()):
+                    path = Path(helper["receipt"]).resolve(strict=True)
+                    if (
+                        not path.is_relative_to(private_root)
+                        or _sha256(path) != helper["sha256"]
+                    ):
+                        raise ValueError("helper_receipt_join_failed")
+                    target = artifacts / f"metric-helper-{path.name}"
+                    _sanitize_file(path, target, private_root=private_root)
+                    if _sha256(target) != helper["sha256"]:
+                        raise ValueError("helper_metadata_projection_changed")
+        for side, source in sources.items():
+            if idle.fixed.select_source(source) != manifests[side]:
+                raise ValueError("metric_source_changed")
+        for side, target in installed.items():
+            if idle.installed_join(sources[side], target, wheels[side]) != joins[side]:
+                raise ValueError("installed_join_changed")
+        if (
+            _installed_receipts(private_root) != before_installed
+            or _sha256(idle.FIXED) != _ADMISSION_FIXED_SHA256
+        ):
+            raise ValueError("metric_artifact_changed")
+        summary["exit_code"] = int(
+            not (summary["fixed"]["qualified"] and summary["idle_qualified"])
+        )
+    except Exception as error:  # noqa: BLE001 - retain finite failed receipts without raw output
+        summary["error_type"] = type(error).__name__[:80]
+    finally:
+        _write_json(
+            artifacts / "metric-installed.json", _installed_receipts(private_root)
+        )
+        _write_json(artifacts / "metric-summary.json", summary)
+    return summary["exit_code"]
+
+
+def _run_admission_metrics(workspace: Path, evidence_root: Path, baseline: str) -> int:
+    """One <=80min preparation/execution phase with failure-preserving artifacts."""
+    deadline = time.monotonic() + 80 * 60
+    refs = _metric_preflight(workspace, baseline)
+    artifacts = evidence_root / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True, mode=0o700)
+    if (artifacts / "metric-summary.json").exists():
+        raise ValueError("metric_receipts_already_exist")
+    from Tests import network_guard
+
+    network_guard.install()
+    network_guard.set_allowed(False)
+    import keyring
+    from keyring.backends.null import Keyring
+
+    keyring.set_keyring(Keyring())
+    private_root = _create_private_root(evidence_root)
+    environment = _private_environment(workspace, private_root)
+    spec = importlib.util.spec_from_file_location(
+        "metric_containment",
+        workspace / "tldw_chatbook/Notes/git_process_containment.py",
+    )
+    containment = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = containment
+    spec.loader.exec_module(containment)
+    bootstrap = (
+        "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+        "from Tests.network_guard import install; install(); "
+        "import keyring; from keyring.backends.null import Keyring; keyring.set_keyring(Keyring()); "
+        "from Tests.Backup_Recovery.run_platform_product import _metric_phase; "
+        "raise SystemExit(_metric_phase(Path(sys.argv[1]), Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4]))"
+    )
+    _write_json(
+        artifacts / "metric-summary.json",
+        {"sources": refs, "exit_code": 1, "status": "preparation"},
+    )
+    try:
+        if shutil.disk_usage(private_root).free < 2 * 1024**3:
+            raise RuntimeError("metric_phase_reserve_below_two_gib")
+        supervised = asyncio.run(
+            _metric_supervise(
+                containment.ProcessTreeController(),
+                [
+                    sys.executable,
+                    "-I",
+                    "-c",
+                    bootstrap,
+                    str(workspace),
+                    str(private_root),
+                    str(artifacts),
+                    baseline,
+                ],
+                workspace,
+                environment,
+                deadline,
+            )
+        )
+    except Exception as error:  # noqa: BLE001 - preserve safe preparation failure
+        supervised = {
+            "exit_code": 1,
+            "supervisor_retired": False,
+            "error_type": type(error).__name__[:80],
+        }
+    summary = json.loads(
+        (artifacts / "metric-summary.json").read_text(encoding="utf-8")
+    )
+    summary["outer"] = supervised
+    summary["exit_code"] = summary["exit_code"] or supervised["exit_code"]
+    summary["parent_network_attempts"] = len(network_guard.blocked_attempts())
+    summary["limits"] = {
+        "phase_seconds": 4800,
+        "benchmark_child_seconds": 300,
+        "job_minutes": 90,
+    }
+    partials = []
+    paths = (
+        sorted((private_root / "metric-receipts").rglob("*-child.json"))
+        if supervised["supervisor_retired"] is True
+        else ()
+    )
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            summary["exit_code"] = 1
+            continue
+        relative = path.relative_to(private_root).as_posix()
+        label = (
+            "metric-partial-" + hashlib.sha256(relative.encode()).hexdigest() + ".json"
+        )
+        _sanitize_file(path, artifacts / label, private_root=private_root)
+        partials.append(
+            {"artifact": label, "qualified": False, "join": "partial-child-only"}
+        )
+    summary["partial_child_receipts"] = partials
+    if summary["parent_network_attempts"]:
+        summary["exit_code"] = 1
+    _write_json(artifacts / "metric-summary.json", summary)
+    _write_json(artifacts / "artifact-sha256.json", _artifact_hashes(artifacts))
+    return summary["exit_code"]
+
+
 def run(
-    workspace: Path, evidence_root: Path, *, product_selection: str = "full"
+    workspace: Path,
+    evidence_root: Path,
+    *,
+    product_selection: str = "full",
+    admission_baseline_ref: str = _ADMISSION_BASELINE_REF,
 ) -> int:
     """Execute the finite qualification and retain safe failure evidence."""
+    if product_selection == "admission-metrics":
+        return _run_admission_metrics(
+            workspace.resolve(), evidence_root.resolve(), admission_baseline_ref
+        )
     product_tests = _PRODUCT_SELECTIONS[product_selection]
     native_tests = _NATIVE_TESTS
     if product_selection == "admission-amortization":
@@ -1832,11 +2329,13 @@ def main(arguments: Iterable[str] | None = None) -> int:
         choices=tuple(_PRODUCT_SELECTIONS),
         default="full",
     )
+    parser.add_argument("--admission-baseline-ref", default=_ADMISSION_BASELINE_REF)
     options = parser.parse_args(arguments)
     return run(
         options.workspace,
         options.evidence_root,
         product_selection=options.product_selection,
+        admission_baseline_ref=options.admission_baseline_ref,
     )
 
 
