@@ -674,9 +674,13 @@ async def _census_idle_and_visit(
         The loop's first pass collects at once (uncounted); the moment it
         returns, the GC interval becomes too long to reach, so the loop parks
         and stays parked. The graph epoch is then advanced with no exchange
-        signal and billing is armed; only then does the interval drop to
-        zero, so the next park poll wakes the loop into exactly one pass that
-        collects and compacts. That pass
+        signal -- so the next pass is eligible whether or not a collection is
+        still pending -- and billing is armed; only then does the interval
+        drop to zero, so the next park poll wakes exactly one GC pass. On the
+        census's small database the first compaction defers
+        (``database_threshold``, a retryable reason), so the loop keeps that
+        collection pending and the billed pass is the epoch read plus the
+        compaction retry -- the steady state of an idle small profile. That pass
         is billed from its epoch read through compaction; it fails the census
         if compaction raises or the collection is unusable.
         """
@@ -697,9 +701,11 @@ async def _census_idle_and_visit(
             try:
                 result = await real_owned(database_, operation, *args, **kwargs)
             except BaseException as error:
-                if name == "run_after_gc" and window["started"]:
+                # Any call in the billed pass -- epoch read, collection or
+                # compaction -- ends the census with its name, not a timeout.
+                if window["started"] and not billed.is_set():
                     counting["on"] = False
-                    window["error"] = f"run_after_gc raised {type(error).__name__}"
+                    window["error"] = f"{name or 'an owned call'} raised {type(error).__name__}"
                     billed.set()
                 raise
             if name == "run_after_gc":
@@ -1020,7 +1026,8 @@ MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK = {
 #: 127-133 storage, pinned max + 1; 42,830-44,712 opens). TASK-33642 takes
 #: that refresh off the visit path and lowers these again.
 #: TASK-33644: one eligible GC interval of the production maintenance loop
-#: (graph-epoch read, collection, compaction), billed on its own. Pinned
+#: after it parked, billed on its own (on the census's small database: the
+#: graph-epoch read and the retried compaction of the pending collection). Pinned
 #: 2026-10-03 at dev 2612fc56b2: 0 / 5 / 2 / 34 in every run (three runs,
 #: both evidence variants) -- three owned database calls, two of them on a
 #: fresh helper.
