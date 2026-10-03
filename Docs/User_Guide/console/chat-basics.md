@@ -726,6 +726,11 @@ prior exports, or backups. See [Context, RAG, and exchange capture](context-and-
   detail text names the HTTP status the provider actually returned — it no
   longer pairs that with a mismatched generic status elsewhere in the same
   message.
+- **A request Chatbook stops before sending says so.** If a turn has nothing
+  the provider can accept (for example, an Anthropic or Cohere request with no
+  user message), the failure says the app could not build the request, that
+  it was not sent, and which field failed the check (`messages`). It does not
+  report a provider HTTP error, because the provider never saw the request.
 
 —
 

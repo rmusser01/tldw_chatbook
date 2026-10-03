@@ -1444,10 +1444,13 @@ def chat_api_call(
                 # task-32342: keep the carried status. Dropping it here
                 # restored the 500 default under the sensitive policy, and a
                 # client-side request-preparation failure carries none.
+                # TASK-32369 (Qodo #2974): keep the failed field too, or a
+                # sensitive run's local refusal loses the field Console names.
                 raise ChatConfigurationError(
                     provider=endpoint_lower,
                     message=safe_message,
                     status_code=status_code,
+                    field=getattr(e_chat_direct, "field", None),
                 ) from None
             if isinstance(e_chat_direct, ChatProviderError):
                 raise ChatProviderError(

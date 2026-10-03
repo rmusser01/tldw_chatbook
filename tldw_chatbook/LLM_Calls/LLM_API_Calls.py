@@ -1657,8 +1657,12 @@ def chat_with_anthropic(
             )
 
     if not any(m["role"] == "user" for m in anthropic_messages):
-        raise ChatBadRequestError(
-            provider="anthropic", message="No valid user messages found for Anthropic."
+        # TASK-32369: a local check -- nothing was sent, so no HTTP status.
+        raise ChatConfigurationError(
+            provider="anthropic",
+            message="Request not sent: Anthropic needs at least one user message.",
+            status_code=None,
+            field="messages",
         )
 
     headers = {
@@ -2747,9 +2751,15 @@ def chat_with_cohere(
             cohere_messages.append({"role": "user", "content": custom_prompt_arg})
 
     if not any(m["role"] in ("user", "assistant", "tool") for m in cohere_messages):
-        raise ChatBadRequestError(
+        # TASK-32369: a local check -- nothing was sent, so no HTTP status.
+        raise ChatConfigurationError(
             provider="cohere",
-            message="No user/assistant/tool messages found for Cohere chat after processing system message.",
+            message=(
+                "Request not sent: Cohere needs a user, assistant or tool "
+                "message besides the system prompt."
+            ),
+            status_code=None,
+            field="messages",
         )
 
     payload: Dict[str, Any] = {

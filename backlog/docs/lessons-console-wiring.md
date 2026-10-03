@@ -163,3 +163,20 @@ round-trip test must edit at least one field from each restore path; the
 parametrized `test_suspended_draft_round_trip_keeps_its_edits_unsaved` and the
 production-router `test_credential_round_trip_keeps_the_restored_edit_unsaved`
 in `Tests/UI/test_console_settings_unsaved_guard.py` do.
+
+## A provider failure leaves Console by two exits; classify it at both
+
+**TASK-32369, 2026-10-03.** task-32342 stopped a status-less
+`ChatConfigurationError` (a request that never reached the provider) from being
+reported as a provider outage. The fix sat in `ConsoleProviderGateway`'s
+non-stream path, which re-raises such an error untouched. `stream_chat` has a
+second exit: its worker thread turns any exception into a queue error item, and
+the consumer raised `ChatProviderError(item.text, status_code=... or 502)` for
+every item. So the same local failure, streamed, still read "provider returned
+HTTP 502". Nothing pinned the stream path, so this went unnoticed for three
+weeks. It turned up only because TASK-32369 drove a real handler through
+`stream_chat` instead of calling `safe_provider_error_copy` directly.
+**What to do:** a change to how Console classifies or words a provider failure
+must cover both the non-stream re-raise and the stream queue consumer
+(`_QueueItem.error` and its `item.kind == "error"` branch). Its test should drive
+the real failure through `stream_chat`, which is the path Console sends on.
