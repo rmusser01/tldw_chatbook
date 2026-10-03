@@ -1,5 +1,5 @@
 ---
-id: TASK-33802
+id: TASK-34201
 title: Design Console chat destinations and bounded agent starts
 status: Done
 assignee:
@@ -53,5 +53,7 @@ Validation passed for 19 local links, required contract/lifecycle/recovery field
 
 Renumbering provenance: Backlog CLI assigned TASK-33167. A scan of all locally available Git refs and 107 worktrees found task IDs through 33801, so this design task moved to TASK-33802 before any inbound references were written.
 
-Planning identified the remaining conversation-storage dependency: dispatch checkpoints currently restrict origin to manual/queued, so the spec now explicitly requires a conversation-database migration alongside AgentRunsDB. The implementation plan is saved in Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md, with TASK-33804 and TASK-33805 created for planning; their implementation acceptance criteria remain unchecked. Plan review checked source owner boundaries, exact test/guide paths, signatures, 22 local links and seven syntactically valid Python snippets. Application code and runtime tests remain outside this completed design task.
+Planning identified the remaining conversation-storage dependency: dispatch checkpoints currently restrict origin to manual/queued, so the spec now explicitly requires a conversation-database migration alongside AgentRunsDB. The implementation plan is saved in Docs/superpowers/plans/2026-10-02-console-chat-destinations-and-starts.md, with the foundation implementation task and the feature implementation task created for planning; their implementation acceptance criteria remain unchecked. Plan review checked source owner boundaries, exact test/guide paths, signatures, 22 local links and seven syntactically valid Python snippets. Application code and runtime tests remain outside this completed design task.
 <!-- SECTION:NOTES:END -->
+
+Current-dev publication identity: 34201 replaces unmerged 33802. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.

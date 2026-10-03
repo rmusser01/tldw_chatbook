@@ -1,5 +1,5 @@
 ---
-id: TASK-33805
+id: TASK-34203
 title: Console workspace or casual chats with bounded background starts
 status: Done
 assignee:
@@ -10,7 +10,7 @@ labels:
   - console
   - agents
 dependencies:
-  - TASK-33804
+  - TASK-34202
 ---
 
 ## Description
@@ -59,7 +59,7 @@ Primary Console new_chat now supports same_workspace/casual destinations and dra
 
 Both approval caches bind exact live source incarnation, destination and mode. Runtime-owned starts reserve shared automatic capacity/allowance, check required project decisions before acceptance, and require exact AgentRunsDB plus conversation receipts before provider dispatch or Started. Native machine provenance remains literal and cannot grant human/profile authority. Physical provider completion retains capacity through Stop; initial preparation and uncertain settlement remain owned and conservative. Prepared manual Send wins before busy admission; accepted targets survive source Stop. Historical launch facts persist, while consumed handoffs stop contributing live blocked activity.
 
-AgentRunsDB v19 provides canonical allowance membership/native attempts (TASK33804); ChaChaNotes v74 preserves the new machine origin and exact receipt. Context Next Send uses explicit schema flags and previews without creating chats (AC8). Updated controller/store/bridge/runtime/checkpoint/metadata owners, approval card, composer/queue/workspace/switcher projections, migration/tests and the existing tool guide. ADR required:yes; governing ADR backlog/decisions/211-console-chat-destinations-and-bounded-starts.md.
+AgentRunsDB v19 provides canonical allowance membership/native attempts (TASK34202); ChaChaNotes v74 preserves the new machine origin and exact receipt. Context Next Send uses explicit schema flags and previews without creating chats (AC8). Updated controller/store/bridge/runtime/checkpoint/metadata owners, approval card, composer/queue/workspace/switcher projections, migration/tests and the existing tool guide. ADR required:yes; governing ADR backlog/decisions/211-console-chat-destinations-and-bounded-starts.md.
 
 Independent task reviews approved the foundation and integration after two scoped fix rounds. Targeted evidence includes foundation100, planned Chat700, final native-start/switcher group163, migration/metadata/receipt and mounted Send/Stop checks, scoped Ruff, new-file formatting, formatter ratchets and whitespace checks. These overlapping selections are not summed. Canonical reports, exact full logs, real Console frames/receipts and rulings:Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md. Real isolated Console/local provider verification covers all four destination/mode combinations, source custody and grants, draft edit/clear/restart, refusal/no replay, target Stop, saved status and successful manual recovery.
 
@@ -71,3 +71,7 @@ Final amended-owner selection: 140 passed precedes the last one-line capture ref
 
 QA packaging also exposed ignored readable log copies. All 45 manifest-listed copies are explicitly tracked and all 141 artifact paths were verified against Git blobs before scratch cleanup. The observed incident and repeatable check are recorded in backlog/docs/lessons-backlog-hygiene.md.
 <!-- SECTION:NOTES:END -->
+
+Current-dev publication identity: 34203 replaces unmerged 33805. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.
+
+Current-dev integration note: the historical implementation notes above describe the reviewed source revision and its original schemas. TASK34203.2 qualifies the integrated branch with AgentRuns22 and ChaChaNotes76, current native continuation/maintenance owners and new QA. Historical verification artifacts retain their original schema names and bytes.

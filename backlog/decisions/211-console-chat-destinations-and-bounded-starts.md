@@ -2,7 +2,7 @@
 
 Date: 2026-10-02
 Status: Accepted after written-spec review on 2026-10-02
-Task: [TASK-33802](../tasks/task-33802%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
+Task: [TASK-34201](../tasks/task-34201%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
 Spec: [Console chat destinations and bounded agent starts](../../Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md)
 Extends: [ADR-150 for agent chat creation](150-agent-chat-fork-and-spawn.md)
 Amends for automatic chat starts: [ADR-134](134-fleet-admission-and-automatic-work-budgets.md), [ADR-135](135-fleet-completion-delivery-and-crash-recovery.md)
