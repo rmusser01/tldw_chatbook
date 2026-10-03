@@ -210,13 +210,17 @@ class ConfigEncryption:
         return self._decrypt_config(config, password, strict=False)
 
     def decrypt_config_strict(
-        self, config: Dict[str, Any], password: str
+        self, config: Dict[str, Any], password: str, *, log_failure: bool = True
     ) -> Dict[str, Any]:
         """Decrypt a configuration dictionary, failing on any invalid value.
 
         Args:
             config: Dictionary with potentially encrypted values.
             password: Password to use for decryption.
+            log_failure: Log a failed decrypt at ERROR. The startup unlock
+                passes False: a value that does not decrypt is an answer it
+                reports to the user, not an error to print between prompts
+                (TASK-34100.4).
 
         Returns:
             Dictionary with decrypted values.
@@ -224,7 +228,9 @@ class ConfigEncryption:
         Raises:
             ValueError: If any encrypted value cannot be decrypted.
         """
-        return self._decrypt_config(config, password, strict=True)
+        return self._decrypt_config(
+            config, password, strict=True, log_failure=log_failure
+        )
 
     def _decrypt_config(
         self,
@@ -232,13 +238,16 @@ class ConfigEncryption:
         password: str,
         *,
         strict: bool,
+        log_failure: bool = True,
     ) -> Dict[str, Any]:
         decrypted_config: Dict[str, Any] = {}
 
         for key, value in config.items():
             if self.is_encrypted(value):
                 try:
-                    decrypted_config[key] = self.decrypt_value(value, password)
+                    decrypted_config[key] = self.decrypt_value(
+                        value, password, log_failure=log_failure
+                    )
                 except ValueError:
                     if strict:
                         raise
@@ -250,6 +259,7 @@ class ConfigEncryption:
                     value,
                     password,
                     strict=strict,
+                    log_failure=log_failure,
                 )
             else:
                 # Keep non-encrypted values as-is

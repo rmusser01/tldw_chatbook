@@ -3,6 +3,16 @@
 from tldw_chatbook.Backup_Recovery.storage_admission import admit_startup
 
 admit_startup()
+if __name__ == "__main__":
+    # TASK-34100.4: `python -m tldw_chatbook.app` unlocks through the same
+    # pre-TUI startup unlock as `tldw-cli`, and at the same point: before this
+    # module imports config, which would otherwise load the still-encrypted
+    # file (and warn) ahead of the prompt. Spawn workers (`__mp_main__`) skip it.
+    from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
+
+    _unlock_exit = startup_unlock()
+    if _unlock_exit is not None:
+        raise SystemExit(_unlock_exit)
 
 # tldw_cli - Textual CLI for LLMs
 # Description: This file contains the main application logic for the tldw_cli, a Textual-based CLI for interacting with various LLM APIs.
