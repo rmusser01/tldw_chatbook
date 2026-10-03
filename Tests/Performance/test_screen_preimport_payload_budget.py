@@ -105,8 +105,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 #: route after the first measurement (owner approved 556; ADR-097 ledger).
 #: 556 -> 557 on 2026-09-30 after the rebase onto dev 75c06af39a: #2922's
 #: ``settings_screen`` imports ``settings_hooks`` at module level (owner
-#: approved; TASK-33642 makes it lazy again).
-MAX_PASS_ADDED_MODULES = 557
+#: approved). 557 -> 556 on 2026-10-03: TASK-33642 made it lazy again.
+MAX_PASS_ADDED_MODULES = 556
 
 #: TASK-31552 pinned 378,740 (363,740 + 15,000 slack). TASK-33260 re-pin:
 #: 410,347 measured + 15,000 standard slack; TASK-33276 pays it down.

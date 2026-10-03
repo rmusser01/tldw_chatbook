@@ -861,13 +861,16 @@ MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK = {
 #: Re-pinned 39/112/35,351 -> 43/134/44,712 on 2026-09-30 (owner approved)
 #: when #2888 was rebased onto dev 75c06af39a: #2922's Console hooks refresh
 #: hook-permission state from disk on every visit (four runs: 43 config;
-#: 127-133 storage, pinned max + 1; 42,830-44,712 opens). TASK-33642 takes
-#: that refresh off the visit path and lowers these again.
+#: 127-133 storage, pinned max + 1; 42,830-44,712 opens). TASK-33642 took
+#: that refresh off the visit path (a warm visit reuses the hook snapshot
+#: while nothing it read changed) and restored 39/112/35,351 on 2026-10-03;
+#: the same census then read 8 config, 56 storage, 9 helpers, ~2,160 opens
+#: on macOS (dev at 2612fc56b2: 8, 59-60, 8-9, ~2,530).
 MAX_VISIT_STORAGE_UNITS = {
-    "config_admissions": 43,
-    "storage_admissions": 134,
+    "config_admissions": 39,
+    "storage_admissions": 112,
     "helper_spawns": 9,
-    "os_opens": 44_712,
+    "os_opens": 35_351,
 }
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05

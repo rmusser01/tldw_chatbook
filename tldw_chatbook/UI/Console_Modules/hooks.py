@@ -137,7 +137,8 @@ class ConsoleHooksController:
             owner = self._permissions()
         except RuntimeError:  # Runtime disposal may precede a queued UI refresh.
             return
-        snapshot = await asyncio.to_thread(owner.snapshot)
+        # TASK-33642: a visit reuses the last read while nothing it read moved.
+        snapshot = await asyncio.to_thread(owner.visit_snapshot)
         if generation == self._generation:
             self._on_state(snapshot)
 

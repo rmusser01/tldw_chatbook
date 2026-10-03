@@ -62,7 +62,6 @@ from tldw_chatbook.UI.focus_ownership import (
 # module is reached by the screen pre-importer.
 
 from ...Chat.console_runtime import ensure_console_runtime
-from .settings_hooks import HooksSettingsPanel
 from ...Agents.agent_models import LOOP_DETECTION_N
 from ...Chat.Chat_Deps import ChatConfigurationError
 from ...Chat.console_chat_models import CONSOLE_DEFAULT_MAX_PARALLEL_RUNS
@@ -488,10 +487,27 @@ if TYPE_CHECKING:
     # one call site (handle_workspace_create) to avoid a real import cycle.
     from ...Widgets.workspace_create_modal import WorkspaceCreateResult
     from .settings_endpoint_probe import SettingsEndpointProbeOutcome
+    from .settings_hooks import HooksSettingsPanel
     from .settings_network_defaults import SettingsNetworkTLS
 
 
 logger = logging.getLogger(__name__)
+
+
+#: The Hooks panel's widget id; the screen queries it by this selector.
+_HOOKS_PANEL_ID = "settings-hooks-panel"
+_HOOKS_PANEL_SELECTOR = f"#{_HOOKS_PANEL_ID}"
+
+
+def _hooks_settings_panel_class() -> type["HooksSettingsPanel"]:
+    """Load the hook editor only when the Hooks category opens.
+
+    TASK-33642: a module-level import added it to the Settings pre-import pass.
+    """
+
+    from .settings_hooks import HooksSettingsPanel
+
+    return HooksSettingsPanel
 
 
 def _personal_context_settings_panel_class() -> type["PersonalContextSettingsPanel"]:
@@ -3676,7 +3692,7 @@ class SettingsScreen(BaseAppScreen):
         if self._web_search_settings is not None:
             self._web_search_settings.capture_pending_input()
             state["web_search_session"] = self._web_search_settings
-        for panel in self.query(HooksSettingsPanel):
+        for panel in self.query(_HOOKS_PANEL_SELECTOR):
             panel.capture()
         state["hooks_snapshot"] = self._hooks_snapshot
         state["settings_drafts"] = copy.deepcopy(self._settings_drafts)
@@ -4604,8 +4620,17 @@ class SettingsScreen(BaseAppScreen):
     def _hooks_owner(self):
         return ensure_console_runtime(self.app_instance).ensure_hook_permissions()
 
-    @on(HooksSettingsPanel.Requested)
-    def _hooks_requested(self, event: HooksSettingsPanel.Requested) -> None:
+    # Textual routes HooksSettingsPanel.Requested here by name, so the panel
+    # module is not needed to define this screen (TASK-33642).
+    def on_hooks_settings_panel_requested(
+        self, event: "HooksSettingsPanel.Requested"
+    ) -> None:
+        """Run the Hooks panel's requested action.
+
+        Args:
+            event: The panel's request; ``action`` is one of ``load``,
+                ``edited``, ``save``, ``revert``, ``review`` or ``advanced``.
+        """
         event.stop()
         if event.action == "load":
             self.run_worker(
@@ -4631,7 +4656,7 @@ class SettingsScreen(BaseAppScreen):
         )
         if reset or not draft.is_dirty:
             self._hooks_snapshot = snapshot
-        for panel in self.query(HooksSettingsPanel):
+        for panel in self.query(_HOOKS_PANEL_SELECTOR):
             panel.load(snapshot, reset=reset)
         self._update_draft_status_widgets(SettingsCategoryId.HOOKS)
 
@@ -4648,7 +4673,7 @@ class SettingsScreen(BaseAppScreen):
         if self._hooks_saving or self._hooks_snapshot is None:
             return
         try:
-            panel = self.query_one(HooksSettingsPanel)
+            panel = self.query_one(_HOOKS_PANEL_SELECTOR)
             section, legacy_ids = panel.submission()
         except (QueryError, ValueError) as error:
             self.app.notify(str(error), severity="error")
@@ -22476,10 +22501,10 @@ class SettingsScreen(BaseAppScreen):
     def _render_detail_pane(self) -> ComposeResult:
         category = SettingsCategoryId(self.active_category)
         if category is SettingsCategoryId.HOOKS:
-            yield HooksSettingsPanel(
+            yield _hooks_settings_panel_class()(
                 self._settings_drafts.setdefault(category, SettingsDraft(category)),
                 self._hooks_snapshot,
-                id="settings-hooks-panel",
+                id=_HOOKS_PANEL_ID,
                 disabled=self._hooks_saving,
             )
         elif category is SettingsCategoryId.OVERVIEW:
