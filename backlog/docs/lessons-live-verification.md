@@ -47,14 +47,15 @@ relaunch will show, before you go looking for it.
 the detached-tmux trap below: the `/generate-video` cost confirm (then the capacity choice) ignored
 Tab, Escape and clicks, the process sat idle, and a SIGUSR2 dump showed the main loop in
 `_run_once` and the input thread in `select`. Attaching a client changed nothing, and the MiniMax
-request kept polling in a worker thread. The cause was the app. The Enter-key send awaits the
-whole `/generate-video` command, so every input event queued behind it. Priority **Ctrl+Q**
-never logged `Application quit initiated`, and F1 did nothing. The same freeze reproduced on
-clean dev. A **mouse** click on Send took a path that left input alive, and the choice, the
-picker and their quit prompts then all worked.
+request kept polling in a worker thread. The fault was in the app, not tmux: priority
+**Ctrl+Q** never logged `Application quit initiated`, F1 did nothing, and the same freeze
+reproduced on clean dev. A **mouse** click on Send took a path that left input alive, and the
+choice, the picker and their quit prompts then all worked. The likely mechanism -- the Enter-key
+send awaiting the whole `/generate-video` command, so input queues behind it -- is inferred from
+those symptoms and was **not** confirmed with a stack of the send path.
 
 **What to do.** When a modal goes dead right after a send, press Ctrl+Q and grep the app log
-for `Application quit initiated`. If it is missing, input is queued behind an awaited send:
+for `Application quit initiated`. If it is missing, input is probably queued behind the send:
 check `console_send_stage ... status=entered` with no outcome line, and retry with a different
 send path before blaming the harness. Before filing it as yours, reproduce it on the merge base.
 
