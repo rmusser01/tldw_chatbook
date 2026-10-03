@@ -17,7 +17,10 @@ PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"]
 PUSH_ONLY_CANCELLATION = (
     "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
 )
-LANES = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')"
+LANES = (
+    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
+    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+)
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",

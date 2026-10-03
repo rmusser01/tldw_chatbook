@@ -98,11 +98,15 @@ Everything lives on `dev` and runs on the built-in token.
 3. **`.github/workflows/derived-artifacts.yml` (changed).**
    - Add `workflow_dispatch` with a string input `pr`.
    - Define one condition for when the lanes run: `github.event_name == 'pull_request'`, or `workflow_dispatch` with a
-     non-empty `pr`. Use it for both lanes and both verdict steps, so a queue dispatch runs the full fast lanes.
-   - A dispatch with no `pr` is a manual queue kick: the lanes and verdicts are skipped, and the required check is not
-     reported red on `dev`.
+     non-empty `pr`, or `workflow_dispatch` with no `pr` on any ref other than `refs/heads/dev`. Use it for both lanes and
+     both verdict steps, so a queue dispatch runs the full fast lanes, and so does a manual dispatch on a PR branch.
+   - A dispatch with no `pr` on `dev` is a manual queue kick: the lanes and verdicts are skipped, and the required check is
+     not reported red on `dev`. A dispatch with no `pr` on any other branch (the Actions UI "Run workflow" default, or
+     `gh workflow run derived-artifacts.yml --ref <branch>`) runs the full gate instead, so the required check can never be
+     greened on a PR head with zero tests run.
    - Add a non-required `queue-tick` job:
-     - `needs: derived-artifacts`, with `if: always()`;
+     - `needs: derived-artifacts`, with `if: '!cancelled()'` (not `always()`, so a run the queue itself cancelled is
+       skipped, while a failed aggregate still lets the queue evict);
      - it runs only when the queue mode is `dry` or `on`, and the event is a dispatch, or a `pull_request` from a same-repo
        PR with auto-merge armed;
      - job-level write permissions, so the top-level `contents: read` stays for every other job;

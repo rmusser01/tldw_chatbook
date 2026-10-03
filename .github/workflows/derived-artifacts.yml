@@ -24,8 +24,10 @@ on:
     branches: [dev, main]
   # Merge queue (Docs/superpowers/specs/2026-10-03-merge-queue-design.md): the queue
   # dispatches this workflow on a rebased PR head with `pr` set, so the required check
-  # runs on exactly the head that merges. A dispatch without `pr` is a manual queue
-  # kick: the lanes skip and only queue-tick runs.
+  # runs on exactly the head that merges. A dispatch without `pr` on dev is a manual
+  # queue kick: the lanes skip and only queue-tick runs. A dispatch without `pr` on any
+  # other branch runs the full gate, so the required check can never go green without
+  # tests actually running.
   workflow_dispatch:
     inputs:
       pr:
@@ -74,7 +76,7 @@ permissions:
 jobs:
   pr-fast-lane:
     name: PR Fast Lane
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
     # TASK-32831: the main and admission-sensitive invocations measured 14m45s
     # and 4m59s, plus setup; keep both required steps within one bounded job.
@@ -168,7 +170,7 @@ jobs:
     # a particular predecessor was relying on leaked state, which is a bug the
     # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
     name: UI Fast Lane
-    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -227,7 +229,7 @@ jobs:
           python-version: '3.12.11'
 
       - name: Require successful PR fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -238,7 +240,7 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && (inputs.pr != '' || github.ref != 'refs/heads/dev'))) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
@@ -367,7 +369,7 @@ jobs:
     name: Merge queue tick
     needs: [derived-artifacts]
     if: >-
-      always() &&
+      !cancelled() &&
       (vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on') &&
       (github.event_name == 'workflow_dispatch' ||
        (github.event_name == 'pull_request' &&
@@ -383,6 +385,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: dev
+          persist-credentials: false
       - name: Advance the queue
         env:
           GH_TOKEN: ${{ github.token }}

@@ -21,7 +21,10 @@ yaml = pytest.importorskip("yaml")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
-LANES = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')"
+LANES = (
+    "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && "
+    "(inputs.pr != '' || github.ref != 'refs/heads/dev'))"
+)
 CHECKERS = (
     "tldw_chatbook/css/check_bundle_sync.py",
     "scripts/check_canvas_mermaid_assets.py",
@@ -298,14 +301,37 @@ def test_queue_tick_runs_after_ci_and_is_never_required():
     tick = jobs["queue-tick"]
     assert tick["needs"] == ["derived-artifacts"]
     assert "queue-tick" not in jobs["derived-artifacts"].get("needs", [])
-    assert tick["if"].startswith("always() &&")
+    assert tick["if"].startswith("!cancelled() &&")
     assert "vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on'" in tick["if"]
+    assert "github.event_name == 'workflow_dispatch'" in tick["if"]
     assert "github.event.pull_request.auto_merge != null" in tick["if"]
     assert "github.event.pull_request.head.repo.full_name == github.repository" in tick["if"]
     assert "push" not in tick["if"], "pushes to dev are merge-queue.yml's job"
     assert tick["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}
     assert _workflow()["permissions"] == {"contents": "read"}
     checkout = tick["steps"][0]
-    assert checkout["uses"] == "actions/checkout@v4" and checkout["with"] == {"ref": "dev"}
+    assert checkout["uses"] == "actions/checkout@v4" and checkout["with"] == {
+        "ref": "dev",
+        "persist-credentials": False,
+    }
     assert tick["steps"][1]["run"] == "python3 scripts/merge_queue.py"
     assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}"}
+
+
+def test_branch_dispatch_without_pr_runs_the_gate():
+    """A no-`pr` dispatch off `dev` must still run the lanes, or the required check
+
+    can be greened with zero tests run (spike F2: a dispatched run counts as the
+    PR's required context). Only a no-`pr` dispatch ON `dev` is the cheap manual
+    queue kick.
+    """
+    workflow = _workflow()
+    for job_name in ("pr-fast-lane", "ui-fast-lane"):
+        assert workflow["jobs"][job_name]["if"] == LANES
+    for step_name in ("Require successful PR fast lane", "Require successful UI fast lane"):
+        step = next(
+            step
+            for step in workflow["jobs"]["derived-artifacts"]["steps"]
+            if step.get("name") == step_name
+        )
+        assert "github.ref != 'refs/heads/dev'" in step["if"]
