@@ -1359,3 +1359,150 @@ def test_a_temporary_chat_with_an_edited_first_message_still_saves(fork_projecti
         assert row["parent_message_id"] is None
         marker = json.loads(row["metadata_json"] or "{}").get("root_fork", False)
         assert marker is (marked and not fork_projection)
+
+
+# --- TASK-33628.7: hidden NULL-parent rows between legacy flat rows ------------
+#
+# A legacy flat conversation can hold rows the Console never shows: a tool-role
+# row (never a store node) or an empty row (dropped at hydration). Saved in the
+# flat era, they are NULL-parent roots between the flat rows, so they are not
+# nodes in the in-memory chain, not seeds of the DB delete, and not parent-link
+# descendants of one. Deleting a flat row above them left them live: invisible,
+# but still in search and exports.
+
+
+def _seed_flat(
+    db: CharactersRAGDB,
+    rows: list[tuple[str, str, str | None, str]],
+    *,
+    leaf: str,
+    metadata: dict[str, str] | None = None,
+) -> str:
+    """Seed ``(id, role, parent, content)`` rows oldest first."""
+    conversation_id = db.add_conversation({"title": "Hidden flat rows"})
+    for index, (message_id, role, parent, content) in enumerate(rows):
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": role,
+                "role": role,
+                "content": content or "placeholder",
+                "parent_message_id": parent,
+                "timestamp": f"2026-09-30T00:00:{index:02d}.000000+00:00",
+                "metadata_json": (metadata or {}).get(message_id),
+            }
+        )
+        if not content:
+            # add_message now refuses an empty row; older builds saved them.
+            db.update_message(
+                message_id, {"content": ""}, 1, preserve_descendants=True
+            )
+    db.set_conversation_active_cursor(
+        conversation_id, active_leaf_message_id=leaf, before_message_id=None
+    )
+    return conversation_id
+
+
+def _flat(message_id: str, role: str) -> tuple[str, str, None, str]:
+    return (message_id, role, None, f"{message_id} text")
+
+
+#: A tool row and an empty row saved flat, as the flat era wrote them.
+_TOOL_ROW = ("t1", "tool", None, "t1 text")
+_EMPTY_ROW = ("x1", "assistant", None, "")
+
+
+@pytest.mark.parametrize(
+    ("rows", "target", "removed", "metadata"),
+    [
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f1",
+            {"f1", "t1", "f2", "f3"},
+            None,
+            id="tool-row-between",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _EMPTY_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f1",
+            {"f1", "x1", "f2", "f3"},
+            None,
+            id="empty-row-between",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _flat("f2", "user"),
+             _flat("f3", "assistant"), _TOOL_ROW],
+            "f2",
+            {"f2", "f3", "t1"},
+            None,
+            id="hidden-row-after-the-last",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _TOOL_ROW, _flat("f1", "assistant"),
+             _flat("f2", "user"), _flat("f3", "assistant")],
+            "f2",
+            {"f2", "f3"},
+            None,
+            id="earlier-hidden-row-stays",
+        ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"), _TOOL_ROW,
+             _flat("f2", "user"), _flat("f3", "assistant"),
+             ("e0", "user", None, "e0 text"), ("e1", "assistant", "e0", "e1 text")],
+            "f1",
+            {"f1", "t1", "f2", "f3"},
+            {"e0": _ROOT_FORK_METADATA},
+            id="marked-fork-stays",
+        ),
+    ],
+)
+def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
+    rows, target, removed, metadata
+):
+    """AC#1/#2: hidden flat rows later in the chain go with it, and come back."""
+    from tldw_chatbook.Character_Chat.Character_Chat_Lib import (
+        export_conversation_to_text,
+    )
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    ids = [row[0] for row in rows]
+    hidden = {"t1", "x1"} & set(ids)
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed_flat(db, rows, leaf="f3", metadata=metadata)
+    store, session_id, native = _open_store(db, conversation_id)
+    shown = [m for m, _role in _visible(store, session_id)]
+    # Preconditions: the store chained the flat rows and never shows a hidden one.
+    assert shown == ["f0", "f1", "f2", "f3"]
+    assert not hidden & _tree_ids(store, session_id)
+    assert "t1" not in ids or "t1 text" in (
+        export_conversation_to_text(db, conversation_id) or ""
+    )
+
+    scope = console_delete_scope(store, native[target])
+    deleted, held = delete_subtree_for_undo(store, native[target])
+
+    # The prompt and receipt count what the transcript showed ...
+    assert scope.removed_count == deleted.count == len(removed - hidden)
+    # ... and the durable delete takes the hidden rows later in that chain too.
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert set(held) == removed
+    if "t1" in removed:
+        assert not db.search_messages_by_content("t1", conversation_id=conversation_id)
+        assert "t1 text" not in (export_conversation_to_text(db, conversation_id) or "")
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == set(ids) - removed - hidden
+
+    restore_deleted_subtree(store, deleted)
+
+    assert _deleted(db, ids) == [0] * len(ids)
+    assert [m for m, _role in _visible(store, session_id)] == shown
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == set(ids) - hidden

@@ -63,13 +63,24 @@ chains is shown, counted, deleted and restored by Undo together.
   (only USER rows are marked on append; a video row stores a different record
   in the same column).
 * An unmarked all-USER set whose fork has no reply on either branch chains.
+
+DELETE (:func:`delete_seeds`). The durable subtree delete follows parent links,
+so the store passes it the saved ids of its whole in-memory subtree: the
+chained flat roots reach the database only that way (TASK-33628.6). A flat
+conversation can also hold rows the Console never shows -- a tool-role row
+(never a store node) or an empty row (dropped at hydration) -- saved as
+parentless roots between the flat rows. They are later rows of the same
+chain, so a Delete that removes chained roots also removes every such hidden
+root after the first deleted root, in the database's root order
+(TASK-33628.7). Undo restores them with the rest. They are not counted in the
+prompt, which counts only what the transcript shows.
 """
 
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleChatMessage,
@@ -219,3 +230,99 @@ def legacy_flat_chain(
     if not has_assistant_root and any(children.get(root) for root in flat):
         return []
     return flat
+
+
+def delete_seeds(
+    store: Any, session_id: str, subtree_ids: Sequence[str]
+) -> list[str | None]:
+    """Return the ids a Delete of ``subtree_ids`` passes to the durable delete.
+
+    Args:
+        store: The Console store about to delete the subtree.
+        session_id: The session holding it.
+        subtree_ids: The native ids the delete removes, selected row first.
+
+    Returns:
+        The subtree's saved ids (``None`` for unsaved nodes, which the
+        database ignores), then the hidden flat rows later in its chain.
+    """
+    nodes = store._nodes_by_session.get(session_id, {})
+    seeds = [nodes[n].persisted_message_id for n in subtree_ids if n in nodes]
+    if not any(_was_chained(store, nodes, node_id) for node_id in subtree_ids):
+        return seeds
+    session = store._sessions.get(session_id)
+    conversation_id = getattr(session, "persisted_conversation_id", None)
+    database = getattr(store.persistence, "db", None) if store.persistence else None
+    reader = getattr(database, "get_message_tree_rows_for_conversation", None)
+    if conversation_id is None or not callable(reader):
+        return seeds
+    roots = [row for row in reader(conversation_id) if row["parent_message_id"] is None]
+    return seeds + hidden_rows_after(roots, {seed for seed in seeds if seed})
+
+
+def hidden_rows_after(
+    root_rows: Sequence[Mapping[str, Any]], deleted: set[str]
+) -> list[str]:
+    """Return the never-shown root rows after the first deleted root.
+
+    Args:
+        root_rows: The conversation's live parentless rows in the database's
+            root order (timestamp order, as resume reads them).
+        deleted: Saved ids the delete already removes.
+
+    Returns:
+        Ids of the unmarked tool-role or empty roots positioned after the
+        first root in ``deleted``.
+    """
+    hidden: list[str] = []
+    later = False
+    for row in root_rows:
+        if row["id"] in deleted:
+            later = True
+        elif later and _never_shown(row):
+            hidden.append(str(row["id"]))
+    return hidden
+
+
+def _was_chained(
+    store: Any, nodes: Mapping[str, ConsoleChatMessage], node_id: str
+) -> bool:
+    """Whether the flat repair hung this saved row under another node.
+
+    A restored node's ``parent_message_id`` is its saved parent; a chained
+    root's native parent is the previous flat root instead.
+    """
+    node = nodes.get(node_id)
+    parent = nodes.get(store._native_parent_by_message.get(node_id))
+    return bool(
+        node is not None
+        and node.persisted_message_id
+        and parent is not None
+        and node.parent_message_id != parent.persisted_message_id
+    )
+
+
+def _never_shown(row: Mapping[str, Any]) -> bool:
+    """Whether resume leaves this row out of the transcript, and it is unmarked.
+
+    Mirrors ``console_messages_from_conversation_tree`` (an empty row is
+    dropped) and ``ConsoleChatStore._ingest_full_tree`` (a tool row is never a
+    node).
+    """
+    from tldw_chatbook.Chat.console_conversation_hydration import (
+        _console_message_role_from_persisted,
+    )
+
+    marker = MessageMetadata.from_json(row.get("metadata_json"))
+    if marker is not None and marker.root_fork:
+        return False
+    shown = (
+        bool(row.get("content"))
+        or bool(row.get("has_image"))
+        or row.get("image_data") is not None
+        or row.get("assistant_generation_state") is not None
+        or row.get("provider_continuation_json") is not None
+    )
+    return not shown or (
+        _console_message_role_from_persisted(row) is ConsoleMessageRole.TOOL
+    )

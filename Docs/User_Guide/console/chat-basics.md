@@ -618,6 +618,14 @@ itself, and offers Undo afterwards.
    something changed them after the delete, Undo is refused and the delete
    stands.
 
+**Conversations saved before branching.** Older versions of Chatbook saved
+each message on its own, without a link to the message before it. Console
+reads such a conversation as one chain in saved order, so "later messages"
+means every message saved after the one you delete. Rows the transcript never
+shows, such as a tool result or an empty message saved between them, are
+deleted with them, so they leave search and exports too. They are not part of
+the count, and Undo puts them back with the rest.
+
 ### Capture a reply into a note
 1. Select the assistant reply, click **More…**, then choose
    **Capture as note**.

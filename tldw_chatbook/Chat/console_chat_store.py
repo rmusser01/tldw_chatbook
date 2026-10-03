@@ -13837,11 +13837,9 @@ class ConsoleChatStore:
             deleter = getattr(self.persistence, "delete_message_subtree", None)
             if not callable(deleter):
                 raise RuntimeError("Message deletion could not be persisted.")
+            from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
             with self._dispatch_branch_mutation(session_id):
-                # The in-memory subtree: flat legacy roots chain only here (TASK-33628.6).
-                saved = [
-                    nodes[n].persisted_message_id for n in subtree_ids if n in nodes
-                ]
+                saved = flat_roots.delete_seeds(self, session_id, subtree_ids)  # TASK-33628.6/.7
                 tombstones = deleter(
                     message_id=message.persisted_message_id, subtree_message_ids=saved
                 )
