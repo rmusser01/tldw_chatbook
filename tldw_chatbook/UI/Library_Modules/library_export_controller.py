@@ -767,10 +767,11 @@ class LibraryExportController:
         if note_flush.kind is not NoteFlushOutcomeKind.PERMITTED:
             return
         # task-4023 AC#7: remember which canvas opened Export so Escape
-        # (action_library_export_back) can return there -- "Export… from
-        # within Media navigates away with no return path". Recorded
-        # AFTER the flush admits the switch, BEFORE the row id moves.
-        self._library_export_origin_row_id = self._library_selected_row_id
+        # (action_library_export_back) can return there. Recorded AFTER the
+        # flush admits the switch, BEFORE the row id moves; a repeat press
+        # (Export already selected) keeps the first press's origin.
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            self._library_export_origin_row_id = self._library_selected_row_id
         self._set_library_destination_with_conversation_fence(LIBRARY_ROW_INGEST_EXPORT)
         self._reset_library_export_transient_state(scope)
         # task-31249: schedule the projection after the press dispatch;
