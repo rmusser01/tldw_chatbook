@@ -1,0 +1,30 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  N   ‹ Items  Reading · paper-retrieval-practice ⇄ Note · Notes — paper… (saved 20:12)
+  a  paper-retrieval-practice
+  v  file:///Users/you/Papers/paper-retrieval-practice.pdf
+       Find  Read later  Use in Console  Note  More
+       Read (selected)  Analysis  Highlights  Info
+      Rendered (selected) |      Raw                                               ¶12 of 31  Quote
+     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+     ┃   Discussion. Effects held across subject areas.                                            ┃
+---> ┃                                                                                             ┃
+     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.             ┃
+     ┃                                                                                          ▄▄ ┃
+     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.             ┃
+     ┃                                                                                             ┃
+     ┃   Discussion. Effects held across subject areas.                                            ┃
+     ┃                                                                                          ▄▄ ┃
+     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.             ┃
+---> ┃                                                                                             ┃
+     ┃ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.             ┃
+     ┃                                                                                             ┃
+     ┃   Discussion. Effects held across subject areas.                                            ┃
+     ┃                                                                                             ┃
+     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.             ┃
+     ┃                                                                                             ┃
+     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+  n flip to note | q quote | j/k paragraph | ]/[ next item | F1 · F6 · Ctrl+P · Ctrl+Q

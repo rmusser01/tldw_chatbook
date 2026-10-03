@@ -1,0 +1,24 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay   More ▾
+────────────────────────────────────────────────────────────
+ Library | Local
+  N   ‹ Items  Note · paper… (saved 20:12) ⇄ Reading
+  a  Quoted ¶12 · saved 20:12
+  v    Edit (selected)  Preview  Info                 Save
+     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+     ┃ Source: paper-retrieval-practice ↗                  ┃
+     ┃                                                     ┃
+---> ┃ ## Key claims                                       ┃
+     ┃                                                     ┃
+     ┃ - Retrieval beats rereading at one week, in every   ┃
+     ┃ subject tested.                                     ┃
+     ┃                                                     ┃
+     ┃ > Results. Retrieval practice improved 7-day        ┃
+---> ┃ retention by 21 percentage points.                  ┃
+     ┃ > — paper-retrieval-practice, ¶12 ↗                 ┃
+     ┃                                                     ┃
+     ┃                                                     ┃
+     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+                                            31 words · 10:1
+  esc back to reader | F1 · F6 · Ctrl+P · Ctrl+Q
