@@ -2879,6 +2879,19 @@ ancestor. A painted-label test must change the label on a MOUNTED widget (walk
 every state in one app run); a fresh mount per label measures the first label
 only and passes against this bug.
 
+**Recurred, TASK-33006 final review, 2026-10-03 -- a Collapsible title.** The
+review read `ConsoleSettingsModal CollapsibleTitle { width: 100% }` as a rule
+that only let the long Sampling title wrap, and said to drop it once every title
+was one row. Dropping it cut the Connection title to the word "Connection":
+Chat settings sets each title after mount, and an auto-width `CollapsibleTitle`
+keeps its first measure, as the Buttons above did. Nine painted-title tests in
+`Tests/UI/test_console_settings_disclosures.py` failed. The rule stayed, with
+its real reason in the comment.
+
+**What to do.** Before deleting a width rule as "only for X", check every
+widget it sizes whose content changes after mount, and run the painted tests
+without it.
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width
