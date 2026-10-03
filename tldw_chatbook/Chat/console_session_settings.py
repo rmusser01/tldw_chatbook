@@ -1836,7 +1836,15 @@ def build_console_settings_readiness(
             "environment" if readiness.api_key_source.startswith("env:") else "stored"
         )
 
-    if not readiness.requires_api_key and declared_credential is None:
+    if (
+        not readiness.requires_api_key
+        and declared_credential is None
+        # TASK-34100.4 review round 2: a keyless provider whose saved key is
+        # still encrypted is blocked on that credential (readiness reports
+        # credential_missing); "not_required" would leave the blocked
+        # readiness without a blocker.
+        and readiness.configuration_issue != "credential_missing"
+    ):
         credential: CredentialFacet = "not_required"
         credential_source = "none"
     elif not readiness.ready:

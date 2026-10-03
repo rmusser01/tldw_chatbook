@@ -486,6 +486,34 @@ def test_a_still_encrypted_saved_key_is_never_ready(provider, key):
     assert "Providers & Models" in readiness.recovery
 
 
+@pytest.mark.parametrize("provider", ["llama_cpp", "ollama"])
+def test_console_blocks_a_keyless_provider_whose_saved_key_is_still_encrypted(
+    provider,
+):
+    # Found live in review round 2: Console mapped every keyless provider's
+    # credential to "not_required", so the blocked readiness above produced
+    # no blocker while its configuration was incomplete -- and the Console
+    # screen failed to load ("Ready Console settings contain blocking
+    # facets").
+    from tldw_chatbook.Chat.console_session_settings import (
+        ConsoleSessionSettings,
+        build_console_settings_readiness,
+    )
+
+    ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
+    readiness = build_console_settings_readiness(
+        ConsoleSessionSettings(provider=provider, model="local-model-sentinel"),
+        app_config={"api_settings": {provider: {"api_key": ciphertext}}},
+        environ={},
+    )
+
+    assert readiness.operability == "not_ready"
+    assert readiness.blocker == "credential_missing"
+    assert readiness.label == "Missing key"
+    assert "still encrypted" in readiness.detail
+    assert "Providers & Models" in readiness.detail
+
+
 def test_an_environment_key_still_beats_a_stranded_saved_key():
     from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 
