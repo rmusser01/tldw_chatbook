@@ -208,9 +208,7 @@ def _resolve_stale_allow(controller, decision_type: str, decision_id: str) -> No
     elif decision_type == "skill_install":
         controller.resolve_pending_skill_install(True, request_id=decision_id)
     else:
-        controller.resolve_pending_skill_script(
-            True, True, request_id=decision_id
-        )
+        controller.resolve_pending_skill_script(True, True, request_id=decision_id)
 
 
 def _round_is_claimable(controller, session_id) -> bool:
@@ -235,9 +233,7 @@ def _round_is_claimable(controller, session_id) -> bool:
     # PR0 (task-15661): the map is keyed by ROUND now, so "this session has
     # a retained payload" is a head lookup, not a `.get(session_id)`.
     return (
-        controller._head_round_payload(
-            controller._parked_approval_payloads, session_id
-        )
+        controller._head_round_payload(controller._parked_approval_payloads, session_id)
         is not None
     )
 
@@ -433,14 +429,10 @@ async def test_widget_promotion_and_navigation_gate_exact_answerable_head(
         controller.mcp_approval_timeout_seconds = lambda: 60.0
         controller.skill_install_confirm_timeout_seconds = lambda: 60.0
 
-        approval_thread, approval_box = _arm(
-            controller, session_id, call=_risk_row()
-        )
+        approval_thread, approval_box = _arm(controller, session_id, call=_risk_row())
         assert await _settle(lambda: bool(list(chat.query(".approval-row"))))
         approval_id = _armed_round_ids(controller, session_id)[0]
-        assert controller._answerable_decision_by_session == {
-            session_id: approval_id
-        }
+        assert controller._answerable_decision_by_session == {session_id: approval_id}
 
         install_thread, install_box = _arm_install(controller, session_id)
         assert await _settle(lambda: bool(controller.pending_skill_install_ids()))
@@ -478,14 +470,9 @@ async def test_widget_promotion_and_navigation_gate_exact_answerable_head(
         # A meaningful reconciliation retry mounts the same exact successor.
         monkeypatch.setattr(install_card, "set_install", original_set_install)
         assert controller.project_pending_decision_for_active_session() is True
-        assert controller._answerable_decision_by_session == {
-            session_id: install_id
-        }
+        assert controller._answerable_decision_by_session == {session_id: install_id}
         assert chat._task_resume_state.pending_skill_install is not None
-        assert (
-            chat._task_resume_state.pending_skill_install["request_id"]
-            == install_id
-        )
+        assert chat._task_resume_state.pending_skill_install["request_id"] == install_id
 
         clock.advance(2.0)
         await _navigate(app, pilot, "library", expect="LibraryScreen")
@@ -502,15 +489,11 @@ async def test_widget_promotion_and_navigation_gate_exact_answerable_head(
         assert await _settle(
             lambda: (
                 successor._task_resume_state.pending_skill_install is not None
-                and successor._task_resume_state.pending_skill_install.get(
-                    "request_id"
-                )
+                and successor._task_resume_state.pending_skill_install.get("request_id")
                 == install_id
             )
         )
-        assert controller._answerable_decision_by_session == {
-            session_id: install_id
-        }
+        assert controller._answerable_decision_by_session == {session_id: install_id}
         controller.resolve_pending_skill_install(False, request_id=install_id)
         await asyncio.to_thread(install_thread.join, 5.0)
         assert install_box["allowed"] is False
@@ -571,9 +554,7 @@ async def test_a_headless_round_announces_through_the_app_not_the_screen():
 @pytest.mark.asyncio
 async def test_positive_timeout_counts_only_successfully_answerable_time():
     """A hidden round keeps its allowance; only an answerable head consumes it."""
-    runtime, controller, _store, session, _app = _detached_rig(
-        timeout_seconds=5.0
-    )
+    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=5.0)
     clock = _DecisionClock()
     controller.decision_monotonic_clock = clock
     await _leave(runtime)
@@ -609,9 +590,7 @@ async def test_positive_timeout_counts_only_successfully_answerable_time():
     assert controller._announced_pending_decision_ids == set()
 
 
-@pytest.mark.parametrize(
-    "decision_type", ["approval", "skill_install", "skill_script"]
-)
+@pytest.mark.parametrize("decision_type", ["approval", "skill_install", "skill_script"])
 @pytest.mark.parametrize("lifecycle", ["detach", "session_switch"])
 @pytest.mark.parametrize("elapsed", [5.0, 6.0], ids=["exact", "over"])
 @pytest.mark.asyncio
@@ -642,9 +621,7 @@ async def test_pausing_at_exhaustion_settles_exact_round_fail_closed(
     pending_ids = functools.partial(
         _pending_ids_for_type, controller, session.id, decision_type
     )
-    stale_allow = functools.partial(
-        _resolve_stale_allow, controller, decision_type
-    )
+    stale_allow = functools.partial(_resolve_stale_allow, controller, decision_type)
     if decision_type == "approval":
         worker, box = _arm(controller, session.id, call=_risk_row())
     elif decision_type == "skill_install":
@@ -654,8 +631,7 @@ async def test_pausing_at_exhaustion_settles_exact_round_fail_closed(
     assert await _settle(lambda: bool(pending_ids()))
     decision_id = pending_ids()[0]
     assert await _settle(
-        lambda: controller._answerable_decision_by_session
-        == {session.id: decision_id}
+        lambda: controller._answerable_decision_by_session == {session.id: decision_id}
     )
 
     clock.advance(elapsed)
@@ -700,14 +676,10 @@ async def test_pausing_at_exhaustion_settles_exact_round_fail_closed(
     assert controller.pending_decision_projection(session.id) is None
 
 
-@pytest.mark.parametrize(
-    "decision_type", ["approval", "skill_install", "skill_script"]
-)
+@pytest.mark.parametrize("decision_type", ["approval", "skill_install", "skill_script"])
 @pytest.mark.parametrize("elapsed", [5.0, 6.0], ids=["exact", "over"])
 @pytest.mark.asyncio
-async def test_reprojection_never_renders_an_exhausted_head(
-    decision_type, elapsed
-):
+async def test_reprojection_never_renders_an_exhausted_head(decision_type, elapsed):
     """Production re-projection settles before exposing a zero-budget card."""
     store = ConsoleChatStore()
     session = store.ensure_session(title="Timed reproject")
@@ -739,9 +711,7 @@ async def test_reprojection_never_renders_an_exhausted_head(
     )
     assert await _settle(lambda: bool(pending_ids()))
     decision_id = pending_ids()[0]
-    assert controller._answerable_decision_by_session == {
-        session.id: decision_id
-    }
+    assert controller._answerable_decision_by_session == {session.id: decision_id}
 
     clock.advance(elapsed)
     rendered.clear()
@@ -806,8 +776,10 @@ async def test_cross_type_publication_keeps_first_admitted_round_as_fifo_head():
 
     install_thread, _install_box = _arm_install(controller, session.id)
     assert await _settle(
-        lambda: bool(controller.pending_skill_install_ids())
-        and (bool(mounted) or bool(app.notifications)),
+        lambda: (
+            bool(controller.pending_skill_install_ids())
+            and (bool(mounted) or bool(app.notifications))
+        ),
         seconds=3.0,
     )
     install_id = controller.pending_skill_install_ids()[0]
@@ -815,8 +787,7 @@ async def test_cross_type_publication_keeps_first_admitted_round_as_fifo_head():
 
     release_first.set()
     assert await _settle(
-        lambda: bool(mounted)
-        and getattr(mounted[-1], "decision_id", None) == mcp_id,
+        lambda: bool(mounted) and getattr(mounted[-1], "decision_id", None) == mcp_id,
         seconds=3.0,
     )
     controller.resolve_pending_approval(
@@ -824,8 +795,9 @@ async def test_cross_type_publication_keeps_first_admitted_round_as_fifo_head():
     )
     mcp_thread.join(timeout=5)
     assert await _settle(
-        lambda: bool(mounted)
-        and getattr(mounted[-1], "decision_id", None) == install_id,
+        lambda: (
+            bool(mounted) and getattr(mounted[-1], "decision_id", None) == install_id
+        ),
         seconds=3.0,
     )
     controller.resolve_pending_skill_install(False, request_id=install_id)
@@ -837,9 +809,7 @@ async def test_cross_type_publication_keeps_first_admitted_round_as_fifo_head():
 @pytest.mark.asyncio
 async def test_mixed_rounds_project_only_one_stable_fifo_head():
     """MCP/install/script share one ordered projection and one answerable head."""
-    runtime, controller, _store, session, _app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=60.0)
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     controller.skill_script_confirm_timeout_seconds = lambda: 60.0
     await _leave(runtime)
@@ -857,18 +827,15 @@ async def test_mixed_rounds_project_only_one_stable_fifo_head():
     mounted: list[tuple[str, dict | None]] = []
     view = _View(
         {
-            "set_pending_approval": lambda payload: mounted.append(
-                ("approval", payload)
-            )
-            or True,
-            "set_pending_skill_install": lambda payload: mounted.append(
-                ("skill_install", payload)
-            )
-            or True,
-            "set_pending_skill_script": lambda payload: mounted.append(
-                ("skill_script", payload)
-            )
-            or True,
+            "set_pending_approval": lambda payload: (
+                mounted.append(("approval", payload)) or True
+            ),
+            "set_pending_skill_install": lambda payload: (
+                mounted.append(("skill_install", payload)) or True
+            ),
+            "set_pending_skill_script": lambda payload: (
+                mounted.append(("skill_script", payload)) or True
+            ),
         }
     )
     generation = runtime.attach_view(view)
@@ -895,9 +862,7 @@ async def test_mixed_rounds_project_only_one_stable_fifo_head():
             for kind, payload in mounted
         )
     ), f"install was not promoted after MCP head: {mounted}"
-    assert controller._answerable_decision_by_session == {
-        session.id: install_id
-    }
+    assert controller._answerable_decision_by_session == {session.id: install_id}
     controller.resolve_pending_skill_install(False, request_id=install_id)
     install_thread.join(timeout=5)
     assert await _settle(
@@ -916,9 +881,7 @@ async def test_mixed_rounds_project_only_one_stable_fifo_head():
 @pytest.mark.asyncio
 async def test_render_failure_keeps_exact_round_paused_and_retryable():
     """A projection exception cannot consume time or tear down domain work."""
-    runtime, controller, _store, session, app = _detached_rig(
-        timeout_seconds=5.0
-    )
+    runtime, controller, _store, session, app = _detached_rig(timeout_seconds=5.0)
     clock = _DecisionClock()
     controller.decision_monotonic_clock = clock
     failed = threading.Event()
@@ -953,11 +916,7 @@ async def test_render_failure_keeps_exact_round_paused_and_retryable():
     assert runtime.detach_view(failing_view, failing_generation)
     mounted: list[dict | None] = []
     successor = _View(
-        {
-            "set_pending_approval": lambda payload: (
-                mounted.append(payload) or True
-            )
-        }
+        {"set_pending_approval": lambda payload: mounted.append(payload) or True}
     )
     successor_generation = runtime.attach_view(successor)
     assert runtime.finish_view_reconciliation(successor, successor_generation)
@@ -977,9 +936,7 @@ async def test_render_failure_keeps_exact_round_paused_and_retryable():
             lambda controller, session_id: _arm(
                 controller, session_id, call=_risk_row()
             ),
-            lambda controller, session_id: _armed_round_ids(
-                controller, session_id
-            ),
+            lambda controller, session_id: _armed_round_ids(controller, session_id),
             lambda controller, decision_id: controller.resolve_pending_approval(
                 {"builtin__write_file": "deny"}, round_id=decision_id
             ),
@@ -1042,9 +999,7 @@ async def test_late_projection_failure_cannot_resurrect_terminal_announcement(
     assert projection is not None
     assert projection.decision_type == decision_type
     assert app.notifications == []
-    controller._announce_hidden_decision(
-        decision_type, "wrong-session", decision_id
-    )
+    controller._announce_hidden_decision(decision_type, "wrong-session", decision_id)
     controller._announce_hidden_decision(
         decision_type, session.id, "missing-decision-id"
     )
@@ -1075,9 +1030,7 @@ async def test_late_projection_failure_cannot_resurrect_terminal_announcement(
 @pytest.mark.asyncio
 async def test_hidden_announcer_rejects_session_type_and_id_mismatch():
     """Only the exact live registry record can admit an app-wide notice."""
-    runtime, controller, _store, session, app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, _store, session, app = _detached_rig(timeout_seconds=60.0)
     outgoing = runtime.view
     outgoing_generation = runtime._attached_generation
     assert await runtime.leave_console(outgoing, outgoing_generation)
@@ -1085,20 +1038,12 @@ async def test_hidden_announcer_rejects_session_type_and_id_mismatch():
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
     worker, _box = _arm(controller, session.id, call=_risk_row())
-    assert await _settle(
-        lambda: bool(_armed_round_ids(controller, session.id))
-    )
+    assert await _settle(lambda: bool(_armed_round_ids(controller, session.id)))
     decision_id = _armed_round_ids(controller, session.id)[0]
 
-    controller._announce_hidden_decision(
-        "approval", "wrong-session", decision_id
-    )
-    controller._announce_hidden_decision(
-        "skill_install", session.id, decision_id
-    )
-    controller._announce_hidden_decision(
-        "approval", session.id, "missing-decision-id"
-    )
+    controller._announce_hidden_decision("approval", "wrong-session", decision_id)
+    controller._announce_hidden_decision("skill_install", session.id, decision_id)
+    controller._announce_hidden_decision("approval", session.id, "missing-decision-id")
     assert app.notifications == []
     assert controller._announced_pending_decision_ids == set()
 
@@ -1120,9 +1065,7 @@ async def test_hidden_announcer_rejects_session_type_and_id_mismatch():
             lambda controller, session_id: _arm(
                 controller, session_id, call=_risk_row()
             ),
-            lambda controller, session_id: _armed_round_ids(
-                controller, session_id
-            ),
+            lambda controller, session_id: _armed_round_ids(controller, session_id),
             lambda controller, decision_id: controller.resolve_pending_approval(
                 {"builtin__write_file": "deny"}, round_id=decision_id
             ),
@@ -1150,9 +1093,7 @@ async def test_hidden_notice_marker_records_only_successful_delivery(
     decision_type, arm, pending_ids, resolve
 ):
     """A failed app notice remains retryable and does not claim the stable ID."""
-    runtime, controller, _store, session, app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, _store, session, app = _detached_rig(timeout_seconds=60.0)
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     controller.skill_script_confirm_timeout_seconds = lambda: 60.0
     await _leave(runtime)
@@ -1175,15 +1116,11 @@ async def test_hidden_notice_marker_records_only_successful_delivery(
     assert app.notifications == []
     assert decision_id not in controller._announced_pending_decision_ids
 
-    controller._announce_hidden_decision(
-        decision_type, session.id, decision_id
-    )
+    controller._announce_hidden_decision(decision_type, session.id, decision_id)
     assert attempts == 2
     assert len(app.notifications) == 1
     assert controller._announced_pending_decision_ids == {decision_id}
-    controller._announce_hidden_decision(
-        decision_type, session.id, decision_id
-    )
+    controller._announce_hidden_decision(decision_type, session.id, decision_id)
     assert attempts == 2
 
     resolve(controller, decision_id)
@@ -1201,13 +1138,11 @@ async def test_background_decision_updates_runtime_attention_until_resolution():
     background_session = store.create_session(title="Background", activate=False)
     assert store.active_session_id == active_session.id
     app.console_attention_updates = []
-    app.set_console_attention_projection = (
-        lambda value: app.console_attention_updates.append(bool(value))
+    app.set_console_attention_projection = lambda value: (
+        app.console_attention_updates.append(bool(value))
     )
 
-    worker, _box = _arm(
-        controller, background_session.id, call=_risk_row()
-    )
+    worker, _box = _arm(controller, background_session.id, call=_risk_row())
     assert await _settle(
         lambda: bool(_armed_round_ids(controller, background_session.id))
     )
@@ -1228,9 +1163,7 @@ async def test_background_decision_updates_runtime_attention_until_resolution():
 @pytest.mark.asyncio
 async def test_each_hidden_decision_id_emits_one_sanitized_notice():
     """All three types notify once without decision bodies or opaque IDs."""
-    runtime, controller, _store, session, app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, _store, session, app = _detached_rig(timeout_seconds=60.0)
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     controller.skill_script_confirm_timeout_seconds = lambda: 60.0
     await _leave(runtime)
@@ -1290,9 +1223,7 @@ async def test_each_hidden_decision_id_emits_one_sanitized_notice():
 
 async def _background_decision_rig():
     """Keep Console attached to A while decisions arm for hostile-named B."""
-    runtime, controller, store, active, app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, store, active, app = _detached_rig(timeout_seconds=60.0)
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     controller.skill_script_confirm_timeout_seconds = lambda: 60.0
     background = store.create_session(
@@ -1314,9 +1245,7 @@ async def _background_decision_rig():
 @pytest.mark.asyncio
 async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_park():
     """Same-type background rounds neither coalesce nor expose session labels."""
-    controller, background, app, legacy_park_calls = (
-        await _background_decision_rig()
-    )
+    controller, background, app, legacy_park_calls = await _background_decision_rig()
 
     thread_a, _box_a = _arm(controller, background.id, call=_risk_row())
     thread_b, _box_b = _arm(
@@ -1390,9 +1319,7 @@ async def test_two_rapid_background_rounds_announce_exact_ids_without_legacy_par
 @pytest.mark.asyncio
 async def test_mixed_background_rounds_announce_individually_and_cleanup_exactly():
     """Mixed rounds share no screen notice registry and clean only their ID."""
-    controller, background, app, legacy_park_calls = (
-        await _background_decision_rig()
-    )
+    controller, background, app, legacy_park_calls = await _background_decision_rig()
 
     mcp_thread, _mcp_box = _arm(controller, background.id, call=_risk_row())
     install_thread, _install_box = _arm_install(controller, background.id)
@@ -1442,9 +1369,7 @@ async def test_mixed_background_rounds_announce_individually_and_cleanup_exactly
 @pytest.mark.parametrize("terminal", ["session_close", "app_dispose"])
 async def test_terminal_scope_releases_all_three_announcement_ids(terminal):
     """Destructive terminal scopes release every exact mixed decision ID."""
-    runtime, controller, _store, session, _app = _detached_rig(
-        timeout_seconds=60.0
-    )
+    runtime, controller, _store, session, _app = _detached_rig(timeout_seconds=60.0)
     controller.skill_install_confirm_timeout_seconds = lambda: 60.0
     controller.skill_script_confirm_timeout_seconds = lambda: 60.0
     await _leave(runtime)
@@ -1533,11 +1458,7 @@ async def test_a_round_armed_with_a_view_attached_does_not_double_announce():
     outgoing_generation = runtime._attached_generation
     assert await runtime.leave_console(outgoing, outgoing_generation)
     view = _View(
-        {
-            "set_pending_approval": lambda payload: (
-                mounted.append(payload) or True
-            )
-        }
+        {"set_pending_approval": lambda payload: mounted.append(payload) or True}
     )
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
@@ -1718,9 +1639,7 @@ async def test_two_headless_rounds_each_mount_in_turn():
     # Both announced: a sibling round must never silence a new one.
     assert len(app.notifications) == 2, app.notifications
 
-    round_b = [
-        r for r in _armed_round_ids(controller, session.id) if r != round_a
-    ][0]
+    round_b = [r for r in _armed_round_ids(controller, session.id) if r != round_a][0]
 
     # Attaching mounts the FIFO HEAD -- round A, armed FIRST. Pre-PR0 this
     # was round B, because B's arm had overwritten A's payload.
@@ -1806,9 +1725,7 @@ async def test_exact_user_resolution_works_after_detach_and_reattach():
     successor_generation = runtime.attach_view(successor)
     assert successor_generation is not None
     assert runtime.view is successor
-    controller.resolve_pending_approval(
-        {"write_file": "deny"}, round_id=round_id
-    )
+    controller.resolve_pending_approval({"write_file": "deny"}, round_id=round_id)
     thread.join(timeout=5)
     assert box["decisions"] == {"write_file": "deny"}, box["decisions"]
 
@@ -1877,9 +1794,7 @@ async def test_app_exit_denies_a_round_armed_before_any_visit_ever_opened():
     await asyncio.wait_for(runtime.dispose(), timeout=10)
     thread.join(timeout=10)
     assert controller._disposed is True
-    assert not thread.is_alive(), (
-        "app exit never reached the born-headless round"
-    )
+    assert not thread.is_alive(), "app exit never reached the born-headless round"
     assert box["decisions"] == {"write_file": "deny"}, box.get("decisions")
 
 
@@ -1955,11 +1870,7 @@ async def test_a_configured_deadline_waits_for_answerable_time():
 
     mounted: list[dict | None] = []
     view = _View(
-        {
-            "set_pending_approval": lambda payload: (
-                mounted.append(payload) or True
-            )
-        }
+        {"set_pending_approval": lambda payload: mounted.append(payload) or True}
     )
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
@@ -1989,11 +1900,7 @@ async def test_no_headless_path_returns_an_approval_without_a_human():
     assert await _wait_for_round(controller, session.id)
     mounted: list[dict | None] = []
     view = _View(
-        {
-            "set_pending_approval": lambda payload: (
-                mounted.append(payload) or True
-            )
-        }
+        {"set_pending_approval": lambda payload: mounted.append(payload) or True}
     )
     generation = runtime.attach_view(view)
     assert runtime.finish_view_reconciliation(view, generation)
@@ -2135,7 +2042,11 @@ async def test_the_risk_floor_still_raises_a_card_in_a_headless_turn(
     def _run() -> None:
         verdicts.update(
             hook(
-                [ToolCall(name="read_file", args={"file_path": "notes.md"}, call_id="c1")],
+                [
+                    ToolCall(
+                        name="read_file", args={"file_path": "notes.md"}, call_id="c1"
+                    )
+                ],
                 "run-1",
             )
         )

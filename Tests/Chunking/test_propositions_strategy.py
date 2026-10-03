@@ -3,7 +3,9 @@ import re
 import pytest
 
 from tldw_chatbook.Chunking.engine import Chunker
-from tldw_chatbook.Chunking.engine.strategies.propositions import PropositionChunkingStrategy
+from tldw_chatbook.Chunking.engine.strategies.propositions import (
+    PropositionChunkingStrategy,
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -111,7 +113,9 @@ class TestPropositionStrategy:
     def test_nested_parentheses_degrade_gracefully(self):
         strategy = PropositionChunkingStrategy()
         text = "foo (bar (baz) qux) end"
-        chunks = strategy.chunk(text, max_size=1, overlap=0, aggressiveness=1, min_proposition_length=1)
+        chunks = strategy.chunk(
+            text, max_size=1, overlap=0, aggressiveness=1, min_proposition_length=1
+        )
         _assert_non_empty_chunks(chunks)
         _assert_preserves_text(text, chunks)
         assert chunks[0].startswith("foo")
@@ -122,7 +126,9 @@ class TestPropositionStrategy:
     @pytest.mark.unit
     def test_chunk_with_metadata_offsets_align_source(self):
         strategy = PropositionChunkingStrategy()
-        text = "Alice wrote code—then Bob reviewed it;  after that,   Carol approved it."
+        text = (
+            "Alice wrote code—then Bob reviewed it;  after that,   Carol approved it."
+        )
         results = strategy.chunk_with_metadata(
             text,
             max_size=2,
@@ -142,7 +148,9 @@ class TestChunkerIntegration:
     def test_chunker_with_propositions_method(self):
         chunker = Chunker()
         text = "Alice founded a company and Bob joined later."
-        result = chunker.chunk_text(text, method="propositions", max_size=1, overlap=0, aggressiveness=2)
+        result = chunker.chunk_text(
+            text, method="propositions", max_size=1, overlap=0, aggressiveness=2
+        )
         assert isinstance(result, list)
         assert len(result) == 2
 

@@ -48,7 +48,9 @@ def _dispatch_hierarchical(
     return [
         NormalizedChunk(
             text=item.get("text", "") if isinstance(item, dict) else str(item),
-            metadata=_metadata_to_dict(item.get("metadata") if isinstance(item, dict) else None),
+            metadata=_metadata_to_dict(
+                item.get("metadata") if isinstance(item, dict) else None
+            ),
         )
         for item in (raw_chunks or [])
     ]
@@ -166,7 +168,11 @@ def _append_fallback_results(
     """Append fallback string/dict results while clamping offsets to a paragraph."""
     cursor = start
     for chunk in base_results or []:
-        txt = chunk if isinstance(chunk, str) else (chunk.get("text") if isinstance(chunk, dict) else str(chunk))
+        txt = (
+            chunk
+            if isinstance(chunk, str)
+            else (chunk.get("text") if isinstance(chunk, dict) else str(chunk))
+        )
         pos = processed_text.find(txt, cursor, end)
         if pos == -1:
             pos = cursor
@@ -218,7 +224,11 @@ def _dispatch_normal(
                 txt = json.dumps(chunk["json"], ensure_ascii=False)
             except CHUNKER_NONCRITICAL_EXCEPTIONS:
                 txt = str(chunk["json"])
-            norm_chunks.append(NormalizedChunk(text=txt, metadata=_metadata_to_dict(chunk.get("metadata"))))
+            norm_chunks.append(
+                NormalizedChunk(
+                    text=txt, metadata=_metadata_to_dict(chunk.get("metadata"))
+                )
+            )
         elif isinstance(chunk, dict) and "text" in chunk:
             norm_chunks.append(
                 NormalizedChunk(

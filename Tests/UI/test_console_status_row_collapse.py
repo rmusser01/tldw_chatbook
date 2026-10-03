@@ -376,9 +376,7 @@ async def test_widget_constructor_honors_initial_collapsed_state() -> None:
         strip = app.query_one("#console-status-chips", ConsoleStatusChips)
 
         assert strip.collapsed is True
-        assert not _is_effectively_displayed(
-            app.query_one("#console-status-expanded")
-        )
+        assert not _is_effectively_displayed(app.query_one("#console-status-expanded"))
         assert _is_effectively_displayed(app.query_one("#console-status-collapsed"))
 
 
@@ -411,9 +409,7 @@ async def test_widget_preserves_conditional_chip_updates_while_collapsed() -> No
         strip.sync_cost_state(_cost_state())
         await pilot.pause()
 
-        assert not _is_effectively_displayed(
-            app.query_one("#console-status-expanded")
-        )
+        assert not _is_effectively_displayed(app.query_one("#console-status-expanded"))
         assert _is_effectively_displayed(app.query_one("#console-status-collapsed"))
         assert all(
             not _is_effectively_displayed(chip)
@@ -464,9 +460,7 @@ async def test_screen_fresh_status_row_starts_expanded() -> None:
 
         assert console._console_status_chips_collapsed is False
         assert strip.collapsed is False
-        assert _is_effectively_displayed(
-            strip.query_one("#console-status-expanded")
-        )
+        assert _is_effectively_displayed(strip.query_one("#console-status-expanded"))
         assert not _is_effectively_displayed(
             strip.query_one("#console-status-collapsed")
         )

@@ -39,6 +39,7 @@ from ...Chat.console_image_view import (
     resolve_render_remote_images,
 )
 from ...Widgets.Console.console_generation_card import ConsoleGenerationCardSpec
+
 REMOTE_IMAGE_SCAN_WINDOW = 20
 REMOTE_IMAGE_MAX_BYTES = 8 * 1024 * 1024
 REMOTE_IMAGE_FETCH_ATTEMPT_LIMIT = 256
@@ -254,7 +255,9 @@ class ConsoleImageController:
         """Build image-row payloads for prepared, visible image messages."""
         state, cache = self._ensure_console_image_view()
         default_mode = self._console_image_default_mode
-        specs, recovered_ids = self._recovered_console_image_specs(messages, state, cache)
+        specs, recovered_ids = self._recovered_console_image_specs(
+            messages, state, cache
+        )
         for message in self._recent_console_image_messages(messages):
             if message.id in recovered_ids:
                 continue
@@ -270,7 +273,9 @@ class ConsoleImageController:
                 pixels=cache.get_pixels(message.id) if mode == "pixels" else None,
                 pil=pil if mode == "graphics" else None,
             )
-        self._extend_specs_with_remote_images(messages, specs, state, cache, blocked=recovered_ids)
+        self._extend_specs_with_remote_images(
+            messages, specs, state, cache, blocked=recovered_ids
+        )
         return specs
 
     def _recovered_console_image_specs(self, messages, state, cache):
@@ -280,11 +285,19 @@ class ConsoleImageController:
         root = getattr(self.app_instance, "recovered_media_root", None)
         if root is None:
             config = getattr(self.app_instance, "app_config", {}) or {}
-            root = user_data_dir(config.get("COMPREHENSIVE_CONFIG_RAW", config)) / "recovered_media"
+            root = (
+                user_data_dir(config.get("COMPREHENSIVE_CONFIG_RAW", config))
+                / "recovered_media"
+            )
         profile = getattr(self.app_instance, "recovered_media_profile", None)
-        identities = tuple((message.id, getattr(message, "persisted_message_id", None) or message.id,
-                            state.mode_for(message.id, default=self._console_image_default_mode))
-                           for message in messages)
+        identities = tuple(
+            (
+                message.id,
+                getattr(message, "persisted_message_id", None) or message.id,
+                state.mode_for(message.id, default=self._console_image_default_mode),
+            )
+            for message in messages
+        )
         selection = (root, profile, identities)
         if not self._recovered_image_tasks and not self._recovered_image_paused:
             task = asyncio.create_task(self._load_recovered_images(selection, cache))
@@ -304,10 +317,14 @@ class ConsoleImageController:
                 continue
             pil = cache.get_pil(key) if status == "ready" else None
             specs[message.id] = ConsoleImageRowSpec(
-                message_id=message.id, mode=mode,
-                pixels=cache.get_pixels(key) if pil is not None and mode == "pixels" else None,
+                message_id=message.id,
+                mode=mode,
+                pixels=cache.get_pixels(key)
+                if pil is not None and mode == "pixels"
+                else None,
                 pil=pil if mode == "graphics" else None,
-                recovered_status=status, recovered_key=key,
+                recovered_status=status,
+                recovered_key=key,
             )
         return specs, known
 
@@ -324,8 +341,11 @@ class ConsoleImageController:
             )
             from ...Chat.console_image_view import IMAGE_CACHE_MAX_ENTRIES
 
-            metadata = message_image_metadata(root, profile or current_profile_id(),
-                                              list(dict.fromkeys(row[1] for row in identities)))
+            metadata = message_image_metadata(
+                root,
+                profile or current_profile_id(),
+                list(dict.fromkeys(row[1] for row in identities)),
+            )
             rows, visible = {}, 0
             for message_id, identity, mode in reversed(identities):
                 item = metadata.get(identity)
@@ -364,9 +384,14 @@ class ConsoleImageController:
             worker.result()  # Native IO settles before owner retirement.
             raise
         except (OSError, ValueError, sqlite3.Error):
-            rows = {mid: ("missing", "recovered:unavailable", mode)
-                    for mid, _identity, mode in identities}
-        changed = self._recovered_image_lookup != selection or self._recovered_image_rows != rows
+            rows = {
+                mid: ("missing", "recovered:unavailable", mode)
+                for mid, _identity, mode in identities
+            }
+        changed = (
+            self._recovered_image_lookup != selection
+            or self._recovered_image_rows != rows
+        )
         self._recovered_image_lookup, self._recovered_image_rows = selection, rows
         if changed:
             await self._sync_native_console_chat_ui()
@@ -392,7 +417,8 @@ class ConsoleImageController:
         specs: dict[str, ConsoleImageRowSpec],
         state: Any,
         cache: Any,
-        *, blocked=(),
+        *,
+        blocked=(),
     ) -> None:
         """Add egress-hardened remote image rows when explicitly enabled."""
         app_config = getattr(self.app_instance, "app_config", {}) or {}
@@ -402,7 +428,11 @@ class ConsoleImageController:
         for message in messages[-REMOTE_IMAGE_SCAN_WINDOW:]:
             if message.role is not ConsoleMessageRole.ASSISTANT:
                 continue
-            if message.id in specs or message.id in blocked or message.status == "failed":
+            if (
+                message.id in specs
+                or message.id in blocked
+                or message.status == "failed"
+            ):
                 continue
             urls = extract_image_urls(message.content or "", limit=1)
             if not urls:

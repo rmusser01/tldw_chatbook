@@ -347,9 +347,7 @@ async def test_a_slow_first_run_shows_the_preparing_message_not_a_frozen_button(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
@@ -407,9 +405,7 @@ async def test_an_unrelated_ui_refresh_cannot_wipe_the_preparing_message(monkeyp
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
 
             await pilot.click("#console-dictation")
@@ -447,9 +443,7 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
     try:
         async with host.run_test(size=(140, 42)) as pilot:
             console = await _mounted_console(host, pilot)
-            composer = console.query_one(
-                "#console-native-composer", ConsoleComposerBar
-            )
+            composer = console.query_one("#console-native-composer", ConsoleComposerBar)
             chip = composer.query_one("#console-voice-status", Static)
             composer.load_draft("keep this draft")
 
@@ -478,8 +472,7 @@ async def test_cancelling_a_long_first_run_returns_to_idle_without_an_error(
             ]
             assert errors == []
             assert any(
-                "cancel" in str(call.args[0]).lower()
-                for call in notify.call_args_list
+                "cancel" in str(call.args[0]).lower() for call in notify.call_args_list
             )
 
             # Releasing the model load afterwards must not resurrect anything.

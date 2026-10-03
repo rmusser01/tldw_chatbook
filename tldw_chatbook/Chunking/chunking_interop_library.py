@@ -818,7 +818,9 @@ class ChunkingInteropService:
         }
 
     @staticmethod
-    def _parse_template_body(template_json: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
+    def _parse_template_body(
+        template_json: Union[str, Dict[str, Any]],
+    ) -> Dict[str, Any]:
         """Parse a template body to a dict, raising ``InputError`` on bad JSON.
 
         Args:

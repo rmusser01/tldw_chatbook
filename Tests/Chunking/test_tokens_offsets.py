@@ -13,7 +13,13 @@ def _has_tiktoken():
     except Exception:
         return False
 
-    network_enabled = os.getenv("ENABLE_NETWORK_TESTS", "").lower() in {"1", "true", "yes", "y", "on"}
+    network_enabled = os.getenv("ENABLE_NETWORK_TESTS", "").lower() in {
+        "1",
+        "true",
+        "yes",
+        "y",
+        "on",
+    }
     if network_enabled:
         return True
 
@@ -25,7 +31,9 @@ def _has_tiktoken():
     if cache_dir == "":
         return False
 
-    blob_url = "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+    blob_url = (
+        "https://openaipublic.blob.core.windows.net/encodings/cl100k_base.tiktoken"
+    )
     cache_key = hashlib.sha1(blob_url.encode()).hexdigest()  # nosec B324
     cache_path = os.path.join(cache_dir, cache_key)
     return os.path.exists(cache_path)
@@ -40,7 +48,10 @@ def test_tokens_offsets_tiktoken_monotonic_and_slice_match():
         TokenChunkingStrategy,
     )
 
-    text = "Hello,  world!\nHello world!  Goodbye.\n" "Repeated phrase. Repeated phrase. Repeated phrase."
+    text = (
+        "Hello,  world!\nHello world!  Goodbye.\n"
+        "Repeated phrase. Repeated phrase. Repeated phrase."
+    )
     strat = TokenChunkingStrategy(tokenizer_name="gpt-3.5-turbo")
     results = strat.chunk_with_metadata(text, max_size=12, overlap=4)
 
@@ -72,7 +83,11 @@ def test_tokens_offsets_tiktoken_repeated_substrings_heavy_overlap():
     )
 
     # Repeated patterns can confuse naive substring matching; ensure offsets handle it
-    text = "foo bar foo bar foo bar foo bar\n" "foo bar foo bar foo bar foo bar\n" "foo bar foo bar foo bar"
+    text = (
+        "foo bar foo bar foo bar foo bar\n"
+        "foo bar foo bar foo bar foo bar\n"
+        "foo bar foo bar foo bar"
+    )
     strat = TokenChunkingStrategy(tokenizer_name="gpt-3.5-turbo")
     results = strat.chunk_with_metadata(text, max_size=8, overlap=7)
 
@@ -116,7 +131,9 @@ def test_tokens_offsets_tiktoken_unicode_emojis_multibyte():
         # Boundary should not split grapheme: no combining mark or joiner right after e
         if e < len(text):
             cat = _ud.category(text[e])
-            assert cat not in ("Mn", "Me", "Cf"), f"Boundary splits cluster at pos {e}: U+{ord(text[e]):04X} ({cat})"
+            assert cat not in ("Mn", "Me", "Cf"), (
+                f"Boundary splits cluster at pos {e}: U+{ord(text[e]):04X} ({cat})"
+            )
 
 
 def test_tokens_offsets_transformers_path_via_mock():
@@ -128,7 +145,13 @@ def test_tokens_offsets_transformers_path_via_mock():
     text = "abcdef ghij klmno"
 
     class FakeHFTokenizer:
-        def __call__(self, txt, add_special_tokens=False, return_offsets_mapping=False, **_: object):
+        def __call__(
+            self,
+            txt,
+            add_special_tokens=False,
+            return_offsets_mapping=False,
+            **_: object,
+        ):
             assert txt == text
             # char-level tokenization; optionally add specials (-1 at both ends)
             input_ids = list(range(len(txt)))
@@ -155,7 +178,9 @@ def test_tokens_offsets_transformers_path_via_mock():
     # Force our mocked wrapper
     strat._tokenizer = wrapper  # type: ignore[attr-defined]
 
-    results = strat.chunk_with_metadata(text, max_size=5, overlap=2, add_special_tokens=True)
+    results = strat.chunk_with_metadata(
+        text, max_size=5, overlap=2, add_special_tokens=True
+    )
 
     assert results
     # Validate per-chunk spans map back to original text
@@ -221,14 +246,20 @@ def test_tokenizer_override_resets_between_calls(monkeypatch):
             return list(range(len(text)))
 
         def decode(self, token_ids, skip_special_tokens: bool = True):
-            return "".join(self._last_text[i] for i in token_ids if i < len(self._last_text))
+            return "".join(
+                self._last_text[i] for i in token_ids if i < len(self._last_text)
+            )
 
     monkeypatch.setattr(tokens_mod, "TiktokenTokenizer", StubTokenizer)
 
     chunker = Chunker()
     text = "abcde"
-    chunker.chunk_text(text, method="tokens", max_size=2, overlap=0, tokenizer_name="tok-a")
-    chunker.chunk_text(text, method="tokens", max_size=2, overlap=0, tokenizer_name="tok-b")
+    chunker.chunk_text(
+        text, method="tokens", max_size=2, overlap=0, tokenizer_name="tok-a"
+    )
+    chunker.chunk_text(
+        text, method="tokens", max_size=2, overlap=0, tokenizer_name="tok-b"
+    )
 
     assert created == ["tok-a", "tok-b"]
 
@@ -249,7 +280,9 @@ def test_tokens_chunk_preserves_trailing_newlines(monkeypatch):
             return list(range(len(text)))
 
         def decode(self, token_ids, skip_special_tokens: bool = True):
-            return "".join(self._last_text[i] for i in token_ids if i < len(self._last_text))
+            return "".join(
+                self._last_text[i] for i in token_ids if i < len(self._last_text)
+            )
 
     monkeypatch.setattr(tokens_mod, "TiktokenTokenizer", StubTokenizer)
 

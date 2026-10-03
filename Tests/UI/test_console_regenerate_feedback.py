@@ -58,9 +58,7 @@ class FailingRegenerateGateway(_ReadyResolutionGateway):
 async def _seed_selected_assistant_message(console, pilot):
     store = console._ensure_console_chat_store()
     session = store.ensure_session(title="Chat 1")
-    store.append_message(
-        session.id, role=ConsoleMessageRole.USER, content="question"
-    )
+    store.append_message(session.id, role=ConsoleMessageRole.USER, content="question")
     source = store.append_message(
         session.id, role=ConsoleMessageRole.ASSISTANT, content="seed"
     )
@@ -225,9 +223,7 @@ async def test_console_retry_streams_first_chunk_while_in_flight():
         )
         source = store.mark_message_failed(pending.id)
         await console._sync_native_console_chat_ui()
-        transcript = console.query_one(
-            "#console-native-transcript", ConsoleTranscript
-        )
+        transcript = console.query_one("#console-native-transcript", ConsoleTranscript)
         transcript.select_message(source.id)
         await console._sync_native_console_chat_ui()
         await _wait_for_selector(

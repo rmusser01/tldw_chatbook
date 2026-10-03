@@ -201,12 +201,27 @@ def test_ai_assist_opt_in_without_adapter_preserves_deterministic_plan():
     )
 
     assert requested_without_adapter.chunk_options == baseline.chunk_options
-    assert requested_without_adapter.chunking_plan["method"] == baseline.chunking_plan["method"]
-    assert requested_without_adapter.chunking_plan["max_size"] == baseline.chunking_plan["max_size"]
-    assert requested_without_adapter.chunking_plan["overlap"] == baseline.chunking_plan["overlap"]
+    assert (
+        requested_without_adapter.chunking_plan["method"]
+        == baseline.chunking_plan["method"]
+    )
+    assert (
+        requested_without_adapter.chunking_plan["max_size"]
+        == baseline.chunking_plan["max_size"]
+    )
+    assert (
+        requested_without_adapter.chunking_plan["overlap"]
+        == baseline.chunking_plan["overlap"]
+    )
     assert requested_without_adapter.chunking_plan["used_llm"] is False
-    assert "ai_assist_unavailable" in requested_without_adapter.chunking_plan["fallback_reason"]
-    assert "no boundary adapter is available" in requested_without_adapter.chunking_plan["rationale"]
+    assert (
+        "ai_assist_unavailable"
+        in requested_without_adapter.chunking_plan["fallback_reason"]
+    )
+    assert (
+        "no boundary adapter is available"
+        in requested_without_adapter.chunking_plan["rationale"]
+    )
 
 
 def test_profile_builders_detect_text_signals_and_merge_source_hints():

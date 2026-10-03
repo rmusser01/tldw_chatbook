@@ -171,7 +171,9 @@ def convert_template_body(
                 continue
             stage_name = stage.get("stage")
             if stage_name == "preprocess":
-                preprocessing.extend(_convert_operations(stage.get("operations"), dropped))
+                preprocessing.extend(
+                    _convert_operations(stage.get("operations"), dropped)
+                )
             elif stage_name == "chunk":
                 if chunk_method is None and isinstance(stage.get("method"), str):
                     chunk_method = stage["method"]
@@ -179,7 +181,9 @@ def convert_template_body(
                 if isinstance(options, dict):
                     chunk_options.update(options)
             elif stage_name == "postprocess":
-                postprocessing.extend(_convert_operations(stage.get("operations"), dropped))
+                postprocessing.extend(
+                    _convert_operations(stage.get("operations"), dropped)
+                )
             # unknown stages are dropped silently — nothing ever produced them
     else:
         # Already flat (no pipeline/base_method): the existing chunking block
@@ -190,8 +194,12 @@ def convert_template_body(
             config = chunking.get("config")
             if isinstance(config, dict):
                 chunk_options.update(config)
-        preprocessing.extend(_convert_operations(repaired.pop("preprocessing", None), dropped))
-        postprocessing.extend(_convert_operations(repaired.pop("postprocessing", None), dropped))
+        preprocessing.extend(
+            _convert_operations(repaired.pop("preprocessing", None), dropped)
+        )
+        postprocessing.extend(
+            _convert_operations(repaired.pop("postprocessing", None), dropped)
+        )
 
     if chunk_method is None:
         chunk_method = base_method if isinstance(base_method, str) else None
@@ -229,9 +237,7 @@ def _load_body(name: str, raw: Any) -> tuple[Optional[dict], Optional[Any]]:
     return None, raw
 
 
-def _quarantine_body(
-    name: str, description: Any, unconverted: Any
-) -> Dict[str, Any]:
+def _quarantine_body(name: str, description: Any, unconverted: Any) -> Dict[str, Any]:
     """The repairable flat body a quarantined row keeps (spec §5.4)."""
     body: Dict[str, Any] = {"name": name + QUARANTINE_SUFFIX}
     if description is not None:
