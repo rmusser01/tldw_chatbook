@@ -53,6 +53,10 @@ derivation while per-call `lstat` stamps of every walked chain and the
 records/registry/selector content stay identical. See "PERF-07/PERF-08
 amendment" at the end of this ADR.
 
+2026-10-03 owner-approved amendment (TASK-34100.17): provider keys a user chose
+to keep in the OS keychain are Chatbook-owned keyring values for backup and
+isolated restore. See "TASK-34100.17 amendment" at the end of this ADR.
+
 Task: [TASK-31978](../tasks/task-31978%20-%20Design-complete-local-backup-and-restore.md)
 
 Design: [Complete local backup and restore](../../Docs/superpowers/specs/2026-09-07-complete-local-backup-restore-design.md)
@@ -1126,3 +1130,20 @@ storage-admission and later-rollback scope checks refuse. Nothing that was
 refused before is admitted. A malformed stored token is never normalized, so it
 cannot match. The PERF-08 per-call posture stamps keep
 `st_dev`: they never outlive a process, so a renumbering cannot reach them.
+
+### TASK-34100.17 amendment — first-run setup confirmation and keychain-held provider keys (2026-10-03)
+
+Source: the [first-run setup shape spec](../../Docs/superpowers/specs/2026-10-03-first-run-setup-shape-design.md), approved by the owner on
+2026-10-03, and [TASK-34100.17](../tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md).
+
+**Confirmed.** Restore stays reachable from first-run setup (decision 1: "exposed
+through canonical F9 Settings, first-run setup, and a dependency-light
+pre-bootstrap recovery launcher"). It stays on Welcome, and plain-text setup names
+the recovery command.
+
+**Amendment.** Provider keys a user chose to keep in the OS keychain (an opt-in; the
+default store stays config.toml) are Chatbook-owned keyring values under decisions 5
+and 8: excluded from portable export by default, and captured in local rollback
+archives through a typed owner adapter. Under decision 9, isolated restore remaps the
+persisted `credential_scope_id`, so a restored profile never reads or overwrites
+another profile's keys.
