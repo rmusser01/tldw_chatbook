@@ -86,6 +86,20 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     _provider_options,
 )
 
+#: TASK-34100.1 AC#1 (the wizard slice of TASK-33621.36): the mounted steps
+#: read and write config through the ADR-126 admission (Model's curated
+#: fallback calls get_cli_providers_and_models, the provider-rotation tests
+#: call apply_settings_mutation_to_cli_config). Under the per-test sandbox the
+#: bound selection no longer matches, so 41 `-k provider` nodes (119 in the
+#: file) failed with RecoveryRequired('raw_source_selection_changed') before
+#: reaching an assertion. Keep the collection-time profile, the same per-file
+#: opt-in Tests/conftest.py documents for config participants. Re-selecting a
+#: fresh source per test (install_config_source) left 20 red, because the
+#: wizard's module-level config imports stay bound to the old module.
+#: Tests/Wizards/conftest.py restores the shared config.toml after each test,
+#: so one test's writes cannot leak into the next.
+pytestmark = pytest.mark.bootstrap_profile
+
 
 def _first_chat_store_snapshot(store: ConsoleChatStore) -> list[dict[str, object]]:
     snapshots = []
