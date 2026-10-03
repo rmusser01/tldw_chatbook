@@ -20,7 +20,12 @@ from .audio_processing import LocalAudioProcessor, build_ffmpeg_trim_args
 from ..config import get_cli_setting
 from ..DB.Client_Media_DB_v2 import MediaDatabase
 from ..Metrics.metrics_logger import log_counter, log_histogram
-from ..Utils.egress import EgressBlockedError, check_url_or_raise, origin_set
+from ..Utils.egress import (
+    EgressBlockedError,
+    UrlProvenance,
+    check_url_or_raise,
+    trusted_origins_for,
+)
 
 # Optional imports
 try:
@@ -46,7 +51,9 @@ class VideoDownloadError(VideoProcessingError):
     pass
 
 
-def check_media_url_egress(url: str) -> None:
+def check_media_url_egress(
+    url: str, *, url_provenance: UrlProvenance = UrlProvenance.UNKNOWN
+) -> None:
     """Apply the app's egress policy to a media URL before yt-dlp sees it.
 
     The media arm of ingest never consulted ``Utils/egress.py`` (TASK-19556
@@ -56,14 +63,23 @@ def check_media_url_egress(url: str) -> None:
     This is that same check, applied at the two yt-dlp seams, so both arms
     behave identically.
 
-    The URL is its own trusted origin, exactly as in the audio arm: a media
-    URL the user typed into the ingest form is an explicitly configured URL,
+    (TASK-20973) A URL is its own trusted origin only when its PROVENANCE
+    establishes that trust: ``url_provenance`` must be
+    ``UrlProvenance.USER_ENTERED`` for the self-trust, and the default is
+    ``UNKNOWN`` -- fail closed. Before this parameter the check computed
+    ``origin_set(url)`` unconditionally, so the URL always vouching for
+    itself was safe only by wiring (every caller happened to be the
+    user-entered ingest form); a URL arriving from a config value, an API
+    payload, a feed or an agent tool would have instructed the policy to
+    trust its own host. The user-entered case is unchanged: a media URL
+    the user typed into the ingest form is an explicitly configured URL,
     which ``config.py``'s ``[web_security]`` contract permits to be private
-    (an intranet media server is a legitimate source). What the check still
-    refuses is what no configured URL may be: a cloud metadata endpoint
-    (blocked regardless of trust) and anything that is not http(s) -- yt-dlp
-    itself is happy to hand ``file://`` and dozens of other protocols to its
-    extractors.
+    (an intranet media server is a legitimate source), and the ingest
+    queue mints ``USER_ENTERED`` for exactly those submissions. What the
+    check still refuses for everyone is what no configured URL may be: a
+    cloud metadata endpoint (blocked regardless of trust) and anything
+    that is not http(s) -- yt-dlp itself is happy to hand ``file://`` and
+    dozens of other protocols to its extractors.
 
     WHAT THIS DOES NOT COVER, stated plainly: yt-dlp performs its own HTTP
     fetching. This is a pre-check on the entry URL only. It cannot
@@ -76,12 +92,17 @@ def check_media_url_egress(url: str) -> None:
 
     Args:
         url: The media URL about to be handed to yt-dlp.
+        url_provenance: How this process came to hold ``url``. Only
+            ``UrlProvenance.USER_ENTERED`` earns self-trust; the default
+            (``UNKNOWN``) passes no trusted origins.
 
     Raises:
         VideoDownloadError: If the egress policy refuses the URL.
     """
     try:
-        check_url_or_raise(url, trusted_origins=origin_set(url))
+        check_url_or_raise(
+            url, trusted_origins=trusted_origins_for(url, url_provenance)
+        )
     except EgressBlockedError as exc:
         log_counter(
             "video_processing_download_error",
@@ -226,6 +247,8 @@ class LocalVideoProcessor:
         download_video_flag: bool = False,
         use_cookies: bool = False,
         cookies: Optional[Dict] = None,
+        *,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
     ) -> Optional[str]:
         """
         Download video or just audio from URL using yt-dlp.
@@ -236,6 +259,9 @@ class LocalVideoProcessor:
             download_video_flag: If True, download full video; if False, extract audio only
             use_cookies: Whether to use cookies for download
             cookies: Cookie dict if use_cookies is True
+            url_provenance: (TASK-20973) How this process came to hold
+                ``url``. Only ``UrlProvenance.USER_ENTERED`` lets a private
+                host through the egress check; the default fails closed.
 
         Returns:
             Path to downloaded file or None if failed
@@ -259,7 +285,8 @@ class LocalVideoProcessor:
         # (TASK-19556) Before ANY yt-dlp work -- the probe below is itself a
         # fetch. Outside the try/except so a policy refusal keeps its own
         # reason instead of being rewrapped as "Download failed".
-        check_media_url_egress(url)
+        # (TASK-20973) The egress decision consumes the threaded provenance.
+        check_media_url_egress(url, url_provenance=url_provenance)
 
         # Resolved before the try so an unusable cookies value fails with
         # its own reason instead of being wrapped as a download failure.
@@ -464,7 +491,12 @@ class LocalVideoProcessor:
             self._discard_temp_cookiefile(owned_temp_cookiefile)
 
     def extract_metadata(
-        self, url: str, use_cookies: bool = False, cookies: Optional[Dict] = None
+        self,
+        url: str,
+        use_cookies: bool = False,
+        cookies: Optional[Dict] = None,
+        *,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
     ) -> Optional[Dict[str, Any]]:
         """Extract metadata from video URL without downloading.
 
@@ -475,6 +507,9 @@ class LocalVideoProcessor:
                 pairs, or that mapping. (task-3306 review round) These two
                 arguments were declared and then ignored, so metadata for a
                 gated URL failed even when the caller had cookies.
+            url_provenance: (TASK-20973) How this process came to hold
+                ``url``. Only ``UrlProvenance.USER_ENTERED`` lets a private
+                host through the egress check; the default fails closed.
 
         Returns:
             The metadata dict, or ``None`` on any failure.
@@ -491,8 +526,9 @@ class LocalVideoProcessor:
 
         # (TASK-19556) The metadata seam fetches too -- same guard as the
         # download seam, reported through this function's None contract.
+        # (TASK-20973) The egress decision consumes the threaded provenance.
         try:
-            check_media_url_egress(url)
+            check_media_url_egress(url, url_provenance=url_provenance)
         except VideoDownloadError as exc:
             log_counter(
                 "video_processing_metadata_error",
@@ -571,6 +607,8 @@ class LocalVideoProcessor:
         download_video_flag: bool = False,
         start_time: Optional[str] = None,
         end_time: Optional[str] = None,
+        *,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
         **kwargs,
     ) -> Dict[str, Any]:
         """
@@ -581,6 +619,12 @@ class LocalVideoProcessor:
             download_video_flag: If True, keep video file; if False, extract audio only
             start_time: Optional start time for video extraction (HH:MM:SS or seconds)
             end_time: Optional end time for video extraction (HH:MM:SS or seconds)
+            url_provenance: (TASK-20973) How this process came to hold any
+                URL in ``inputs``. Only ``UrlProvenance.USER_ENTERED`` lets
+                a private host through the egress check; the default fails
+                closed. Threaded unchanged to every input -- a mixed list
+                would mean two different trust questions answered by one
+                parameter, so do not mix provenances in one call.
             **kwargs: Additional arguments passed to audio processing
 
         Returns:
@@ -614,6 +658,7 @@ class LocalVideoProcessor:
                         download_video_flag=download_video_flag,
                         start_time=start_time,
                         end_time=end_time,
+                        url_provenance=url_provenance,
                         **kwargs,
                     )
                     results.append(result)
@@ -664,9 +709,16 @@ class LocalVideoProcessor:
         input_item: str,
         temp_dir: str,
         download_video_flag: bool = False,
+        *,
+        url_provenance: UrlProvenance = UrlProvenance.UNKNOWN,
         **kwargs,
     ) -> Dict[str, Any]:
-        """Process a single video file or URL."""
+        """Process a single video file or URL.
+
+        (TASK-20973) ``url_provenance`` is consumed here and forwarded to
+        the two yt-dlp seams' egress check; it never leaks into the audio
+        stage's ``**kwargs``.
+        """
         start_time = time.time()
         logger.info(f"Starting single video processing for: {input_item}")
         logger.debug(f"Video processing kwargs: {kwargs}")
@@ -739,7 +791,10 @@ class LocalVideoProcessor:
                 # Extract metadata
                 logger.info(f"[VIDEO] Extracting metadata for URL: {input_item}")
                 metadata = self.extract_metadata(
-                    input_item, kwargs.get("use_cookies", False), kwargs.get("cookies")
+                    input_item,
+                    kwargs.get("use_cookies", False),
+                    kwargs.get("cookies"),
+                    url_provenance=url_provenance,
                 )
                 if metadata:
                     result["metadata"] = metadata
@@ -766,6 +821,7 @@ class LocalVideoProcessor:
                     download_video_flag=download_video_flag,
                     use_cookies=kwargs.get("use_cookies", False),
                     cookies=kwargs.get("cookies"),
+                    url_provenance=url_provenance,
                 )
 
                 if not downloaded_path:
