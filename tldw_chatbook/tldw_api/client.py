@@ -13057,11 +13057,20 @@ class TLDWAPIClient:
         page: int = 1,
         size: int = 50,
         order: Literal["asc", "desc"] = "asc",
-    ) -> Dict[str, Any]:
+        scope_type: Literal["global", "workspace"] | None = None,
+        workspace_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Export diagnostics using the validated conversation scope, if supplied."""
+        scope_params = self._normalize_conversation_scope_params(
+            scope_type=scope_type, workspace_id=workspace_id
+        )
+        params: dict[str, Any] = {"page": page, "size": size, "order": order}
+        if scope_params is not None:
+            params.update(scope_params.model_dump(exclude_none=True, mode="json"))
         return await self._request(
             "GET",
             f"/api/v1/chats/{chat_id}/diagnostics/lorebook",
-            params={"page": page, "size": size, "order": order},
+            params=params,
         )
 
     async def list_chat_conversations(

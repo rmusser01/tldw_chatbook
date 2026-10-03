@@ -5,6 +5,7 @@ Tests for character/persona/chat-session endpoint wiring on the shared API clien
 from unittest.mock import AsyncMock
 
 import pytest
+from pydantic import ValidationError
 
 from tldw_chatbook.tldw_api.client import TLDWAPIClient
 from tldw_chatbook.tldw_api.character_persona_schemas import (
@@ -795,6 +796,61 @@ class TestCharacterPersonaClient:
             "persona_id": "persona-1",
             "project_id": "project-1",
         }
+
+    @pytest.mark.parametrize(
+        ("scope_kwargs", "expected_scope"),
+        [
+            (
+                {"scope_type": "workspace", "workspace_id": "ws-1"},
+                {"scope_type": "workspace", "workspace_id": "ws-1"},
+            ),
+            (
+                {"workspace_id": "ws-1"},
+                {"scope_type": "workspace", "workspace_id": "ws-1"},
+            ),
+            ({"scope_type": "global"}, {"scope_type": "global"}),
+            (
+                {"scope_type": "global", "workspace_id": "ws-1"},
+                {"scope_type": "global"},
+            ),
+        ],
+    )
+    async def test_lorebook_diagnostics_forwards_normalized_scope(
+        self, monkeypatch, scope_kwargs, expected_scope
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock(return_value={"turns": [], "total_turns": 0})
+        monkeypatch.setattr(client, "_request", mocked)
+
+        await client.export_lorebook_diagnostics(
+            "chat-1", page=2, size=10, order="desc", **scope_kwargs
+        )
+
+        mocked.assert_awaited_once_with(
+            "GET",
+            "/api/v1/chats/chat-1/diagnostics/lorebook",
+            params={"page": 2, "size": 10, "order": "desc", **expected_scope},
+        )
+
+    @pytest.mark.parametrize(
+        "scope_kwargs",
+        [
+            {"scope_type": "workspace"},
+            {"scope_type": "workspace", "workspace_id": ""},
+            {"scope_type": "invalid", "workspace_id": "ws-1"},
+        ],
+    )
+    async def test_lorebook_diagnostics_rejects_invalid_scope_before_dispatch(
+        self, monkeypatch, scope_kwargs
+    ):
+        client = TLDWAPIClient("http://localhost:8000")
+        mocked = AsyncMock()
+        monkeypatch.setattr(client, "_request", mocked)
+
+        with pytest.raises(ValidationError):
+            await client.export_lorebook_diagnostics("chat-1", **scope_kwargs)
+
+        mocked.assert_not_awaited()
 
     async def test_character_namespace_gateway_routes_server_only_surfaces(
         self, monkeypatch
