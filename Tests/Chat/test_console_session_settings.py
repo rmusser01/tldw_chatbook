@@ -405,6 +405,7 @@ def test_new_chats_resolve_the_chat_defaults_pair() -> None:
                 ChatScreen._effective_console_provider_model(screen)
             ),
             _provider_readiness_app_config=lambda: config,
+            _console_default_settings_memo=None,
         )
         settings = ConsoleSessionController._default_console_session_settings(session)
         return settings.provider, settings.model
