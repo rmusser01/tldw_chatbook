@@ -12402,7 +12402,21 @@ class LibraryScreen(BaseAppScreen):
             None,
         )
         if strip_mounted != strip_needed or mounted_reader != destination_reader:
-            await self.recompose()
+            # task-31249: hold the projection marker across the structural
+            # recompose too. The seam is awaited, and a media detail worker
+            # (or any state sync) landing inside the window finds its
+            # viewer momentarily unmounted and fires the retired
+            # ``refresh(recompose=True)`` fallback -- a second whole-screen
+            # rebuild racing this one. The M3 rule in
+            # ``_sync_library_canvas`` suppresses exactly this for the
+            # canvas syncs; the marker extends the same protection here so
+            # ``_sync_library_media_surfaces_or_recompose`` can suppress
+            # and let the resync replay paint the state instead.
+            self._library_canvas_projection_depth += 1
+            try:
+                await self.recompose()
+            finally:
+                self._finish_library_canvas_projection()
             if then is not None:
                 self.call_after_refresh(then)
             return
@@ -12491,6 +12505,17 @@ class LibraryScreen(BaseAppScreen):
         """
         viewer = self._mounted_library_media_viewer()
         if viewer is None or not self._sync_library_media_viewer_state(viewer):
+            if getattr(self, "_library_canvas_projection_depth", 0) > 0:
+                # task-31249: the M3 suppression (see ``_sync_library_canvas``):
+                # a projection -- the canvas-child swap or the structural
+                # screen recompose it falls back to -- owns the surface
+                # across its awaits, and this seam's whole-screen fallback
+                # would fire a second rebuild racing it. Safe rather than
+                # lossy for the same reason: the projection rebuilds the
+                # destination from CURRENT screen state, and the pending
+                # flag replays this sync's state once it settles.
+                self._library_canvas_resync_pending = True
+                return
             self.refresh(recompose=True)
             return
         try:
@@ -19544,6 +19569,33 @@ class LibraryScreen(BaseAppScreen):
 
     async def _open_library_export_canvas(self, scope: ExportScope) -> None:
         return await self._export_controller._open_library_export_canvas(scope)
+
+    async def _project_library_export_canvas(self) -> None:
+        """Project the export canvas outside the section press dispatch.
+
+        task-31249: the section "Export…" press handlers run on their own
+        canvases, and the open-item projection's structural branch
+        (``await self.recompose()``) tears the screen's children down --
+        including the canvas whose dispatch is running the handler. Textual
+        waits for that dispatch to finish while the handler waits for the
+        recompose: a deadlock that hung the press forever (verified by
+        instrumentation -- ``recompose`` ENTER with no EXIT, the export
+        canvas never mounting). Scheduled via ``call_after_refresh`` from
+        ``_open_library_export_canvas``, it runs after the dispatch
+        returns. The counts worker starts here, once the surface has
+        landed, so a fast worker result cannot strand in the no-canvas
+        window (the ordering the rail-press prompts dispatch records).
+        task-21116's canvas-scoped seam still applies: rail selection +
+        canvas-child swap, never a whole-screen rebuild for a per-click
+        section "Export…" action.
+        """
+        await self._apply_library_open_item_surface(
+            lambda: LibraryExportCanvas(
+                self._build_library_export_state(),
+                id="library-export-canvas",
+            )
+        )
+        self._start_library_export_counts_worker()
 
     def _resolve_library_export_chachanotes_db(self) -> Any:
         return self._export_controller._resolve_library_export_chachanotes_db()
@@ -34841,19 +34893,36 @@ class LibraryScreen(BaseAppScreen):
                 return LibraryEntryReconcileResult.APPLIED
             # task-31797: the ingest "Open in Library" deep-link (and the
             # sibling Search/RAG evidence + landing-hub "Open" routes) jump
-            # straight to the media viewer but -- unlike the rail-row path in
-            # _select_library_rail_row_after_source_admission -- never asked
-            # the browse controller to load a page, leaving the middle Items
-            # pane stuck on "0 of 0 · type: None / No page loaded". Mirror the
-            # rail's browse+facets request so the list lands populated
-            # alongside the opened item. focus_identity=None keeps focus on the
-            # just-opened viewer rather than yanking it to the first list row.
+            # straight to the media viewer and must also ask the browse
+            # controller for a page + facets, or the middle Items pane stays
+            # stuck on "0 of 0 · type: None / No page loaded" (the rail-row
+            # path in ``_select_library_rail_row_after_source_admission``
+            # always loads both).
+            #
+            # task-31249: the task-21116 conversion opened this surface
+            # through the targeted projection
+            # (``_apply_library_open_item_surface``); later patches (the
+            # #2367 chrome era, task-28009's seam dedupe, task-31797's
+            # browse+facets requests) left it on the patch-else-recompose
+            # seam with the requests fired BEFORE the media canvas existed,
+            # so one cross-canvas direct open whole-screen-recomposed up to
+            # five times and raced its own canvas mount (the M3
+            # DuplicateIds shape canvas_sync.py records). Mount the media
+            # surface FIRST through the projection -- the same strict
+            # canvas-child replacement the entry lifecycle uses -- and only
+            # then ask for the browse page + facets (task-31797's
+            # "populated Items pane" intent): with the canvas mounted, those
+            # syncs patch it in place instead of taking the whole-screen
+            # fallback. focus_identity=None keeps focus on the just-opened
+            # viewer rather than yanking it to the first list row.
+            await self._apply_library_open_item_surface(
+                self._build_library_media_active_child
+            )
             self._request_library_media_browse(
                 self._library_media_browse_controller.mutation_refresh_scope,
                 focus_identity=None,
             )
             self._request_library_media_facets()
-            await self._apply_library_media_active_surface()
             return None
 
         if source_type == "notes":
