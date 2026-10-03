@@ -5,7 +5,7 @@ title: 135 DB and UI tests fail with RecoveryRequired('raw_source_selection_chan
 status: In Progress
 assignee: []
 created_date: 2026-09-28 20:12
-updated_date: 2026-10-03 06:53
+updated_date: 2026-10-03 15:24
 labels:
 - testing
 - backup-recovery
@@ -99,6 +99,9 @@ Current reviewed Roleplay-only dev rebase onto 2d34cbf80d1d7569abf0490e5c9821101
 2026-10-03 latest-dev integration qualification: normal rebase from reviewed22c/devacc to runtime0c78c1759ff094891230ca76cc31100b2dece6e3/dev74bd039d607b4c961f95d1fb4f1c3d89b4552d99 preserved21 stable patches,33 ordinary own entries and the exact conflict-free shared testing-lessons union. Independent static carry/applicability review: /private/tmp/backup2955-dev74-carry-review.md/.json. Upstream Console queue layout changes warranted focused verification.
 
 All19 unique original cases passed across two nonoverlapping phases (12 painted-label widths,5 mounted composer widths,1 revision guard,1 actual pause/resume hold release), zero failures/errors/skips/parent network attempts. Each phase retained7755 stable Python/SQL byte/stat pins and1423 source-joined parent imports. Independent actual JUnit/source/import/guard attestation passed: /private/tmp/backup2955-dev74-ui-independent-result-review.md/.json; result /private/tmp/backup2955-dev74-ui-result-report.md/.json and receipts /private/tmp/backup2955-dev74-ui-f014x_6v. CSS joins accepted static/Git bytes; no runtime CSS-stat or arbitrary-child network claim. Original assertions/caps unchanged; no full suite/native/F9/CLI/numeric rerun. Historical c4004PASS1FAIL and exact clean-dev2d setupfailure remain failed and source-distinct. All exact22c required checks passed; the new published evidence head still requires current CI/reviews/dev protections before integration. TASK33560 native/performance work remains separate. Status stays In Progress pending verified merge.
+2026-10-03 current-dev qualification: The approved 25 compatibility selectors ran in four separate private processes for their existing fixture-owned profiles. All 27 actual cases passed at UI runtime ae2956966b2d712cc0e842dc4c69214ca1e70b0e, based on dev e355b58c1e95fe467e9161184c3341abc02feda3: Hooks reuse/refusal, mounted Settings, Console pause and durable recovery, database deletion/undo, canonical F9 source composition and changed budget guards. Zero failures, errors, skips or parent network attempts. The initial mixed invocation had three collection errors and ran no selected cases; its unsuccessful receipt is retained. Independent actual JUnit/source/import/byte-and-stat review passed: /private/tmp/backup-workstream-deve355-functional-review.md (JSON SHA256 85b970d775e35b2867d6c1380d747f1ebef4f1bc57b7441e8dcd3e314005a7ef). F9 composition is source-run evidence, not installed/native qualification; the earlier 19 Console cases retain runtime 0c78c1759ff094891230ca76cc31100b2dece6e3.
+
+Normal latest-dev carry: e355..f0ffcf9e819b577bd38c416f38550969c75fb5a0 changes seven Task records only, with no own-path overlap and no new runtime requirement solely for that delta. Independent addendum /private/tmp/backup-workstream-devf0ff-addendum.md passed. Normal rebase produced 01e6bcab14b4da91ab2108dc1c85caf684dbd9e7 with all 22 patches and 34 own blob/mode entries unchanged. Evidence will be committed normally; integration still requires review and fresh exact published-head CI. No full suite, native rerun, deadline change, numerical waiver or relabelled runtime receipt.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 ## Final Summary
 
