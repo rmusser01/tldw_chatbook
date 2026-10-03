@@ -111,7 +111,7 @@ Clean the `ruff-speech-audio` Ruff formatter batch at the owner boundary recorde
 
 **Governance (AC#7).** `git diff --check` clean; `Tests/CI/test_backlog_task_id_uniqueness.py` — 3 passed (run on the fully formatted batch tree).
 
-**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 11 clean-at-base + 1 upstream-deleted = 204 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
+**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 10 clean-at-base + 1 upstream-deleted = 203 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
 
 **Lineage.** 8 paths were already formatter-clean at the base (6 TTS test files, `tldw_chatbook/TTS/__init__.py`, `tldw_chatbook/TTS/backends/alltalk.py`) and were deliberately left untouched; the other 30 carried live debt and were formatted.
 

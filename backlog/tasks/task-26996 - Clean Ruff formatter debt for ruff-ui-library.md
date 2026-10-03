@@ -125,7 +125,7 @@ Clean the `ruff-ui-library` Ruff formatter batch at the owner boundary recorded 
 
 **Governance (AC#7).** `git diff --check` clean; `Tests/CI/test_backlog_task_id_uniqueness.py` — 3 passed (run on the fully formatted batch tree).
 
-**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 11 clean-at-base + 1 upstream-deleted = 204 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
+**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 10 clean-at-base + 1 upstream-deleted = 203 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
 
 **Lineage.** 1 path upstream-deleted (recorded above, same commit as batch-5's task-26977 deletion); 2 paths already formatter-clean at the base (`Tests/UI/test_library_resize_focus_gates_t23025.py`, `Tests/UI/test_post_release_workspaces_library_depth.py`) and deliberately left untouched; the other 49 carried live debt and were formatted.
 

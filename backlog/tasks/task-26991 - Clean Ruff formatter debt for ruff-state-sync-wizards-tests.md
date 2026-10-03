@@ -89,7 +89,7 @@ Clean the `ruff-state-sync-wizards-tests` Ruff formatter batch at the owner boun
 
 **Governance (AC#7).** `git diff --check` clean; `Tests/CI/test_backlog_task_id_uniqueness.py` — 3 passed (run on the fully formatted batch tree).
 
-**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 11 clean-at-base + 1 upstream-deleted = 204 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
+**No hand-written behavior change (AC#8).** Three-way partition verified arithmetically before closeout: 192 committed + 10 clean-at-base + 1 upstream-deleted = 203 assigned paths; zero unassigned paths touched; every content diff is Ruff formatter output.
 
 **Lineage.** No already-formatted paths; all 16 carried live debt and were formatted.
 
