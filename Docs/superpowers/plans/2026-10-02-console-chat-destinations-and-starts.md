@@ -68,7 +68,7 @@ rebuild through `css/build_css.py` under the design constitution.
 
 ## Task 1: Shared allowance and native start-attempt foundation
 
-**Backlog:** [TASK-34202](../../../backlog/tasks/task-34202%20-%20Console-shared-automatic-allowances-and-chat-start-attempts.md).
+**Backlog:** [TASK-34214](../../../backlog/tasks/task-34214%20-%20Console-shared-automatic-allowances-and-chat-start-attempts.md).
 
 **Independently reviewable outcome:** The ledger can represent cross-chat
 automatic descendants without widening conversation/run scope. No tool/UI route
@@ -218,7 +218,7 @@ wrong owner/kind, missing acceptance and current kill switch.
 
 ## Task 2: Destinations, approval, durable drafts and one background start
 
-**Backlog:** [TASK-34203](../../../backlog/tasks/task-34203%20-%20Console-workspace-or-casual-chats-with-bounded-background-starts.md). Depends on TASK-34202.
+**Backlog:** [TASK-34215](../../../backlog/tasks/task-34215%20-%20Console-workspace-or-casual-chats-with-bounded-background-starts.md). Depends on TASK-34214.
 
 **Independently reviewable outcome:** All four `new_chat` combinations work in the
 real Console; the first task's ledger remains the only automatic budget owner.
@@ -481,7 +481,7 @@ ADR required: no
 ADR path: backlog/decisions/211-console-chat-destinations-and-bounded-starts.md
 Reason: This routine bug fix preserves the existing preview and authority boundaries.
 
-Live/closure audit found pre-existing undefined chat-tool references in the bridge builder used by Context Next Send. Repair this directly affected tool-aware preview seam and add a focused actual-builder regression proving preview succeeds without executing chat creation. Backlog TASK34203 AC8 records the outcome before implementation. The controller ruling and its scope cost are preserved in the execution record.
+Live/closure audit found pre-existing undefined chat-tool references in the bridge builder used by Context Next Send. Repair this directly affected tool-aware preview seam and add a focused actual-builder regression proving preview succeeds without executing chat creation. Backlog TASK34215 AC8 records the outcome before implementation. The controller ruling and its scope cost are preserved in the execution record.
 
 ## Execution closure
 

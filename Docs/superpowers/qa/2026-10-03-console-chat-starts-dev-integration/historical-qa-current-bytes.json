@@ -1,0 +1,1386 @@
+{
+  "source": "53065745187aaf4d47fc4357bb9096aa28fd5673",
+  "count": 230,
+  "entries": [
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md",
+      "bytes": 4425,
+      "source_sha256": "e1d84525fa466230d86c574ecd8b80d14709dbcef0331ebb05be4fe7b2a6af15",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/artifact-source-manifest.json",
+      "bytes": 8454,
+      "source_sha256": "c4ef16ee758a7a6ad7c311c6e8e54b2d6063ebb00f8bf21be435a08e4234e45e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/execution-ledger.md",
+      "bytes": 31019,
+      "source_sha256": "cfa439bf88bb79f921e3a19ad6852102a4de89e2f71ddd3f5d7f764dc2fcec0c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review-full.md",
+      "bytes": 22133,
+      "source_sha256": "364c6c228abb03cfbd1b1eb0c41eab27d80a379efb7bb5ce2c08d415f1400823",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review-full.md.gz",
+      "bytes": 7026,
+      "source_sha256": "3ddcd12b1ea9f18d5ef78630280f0dca428f5d801e9fde3f05ff337c10e1eaf5",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-branch-review.md",
+      "bytes": 6167,
+      "source_sha256": "ff6049cc3dfbd08d460eea4b42d954e5dff6ae64e9d44d7ff84a5588d00789d7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-approval-receipt.json",
+      "bytes": 1352,
+      "source_sha256": "95a9a190a2d4ee7d8c8e9ad2c44f729f322dff7af85bbf09842f2f601053381c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-baseline-probe.py.txt",
+      "bytes": 2310,
+      "source_sha256": "b0f1b0308572825850c3bfc7b8dc82de26d34c81cdab434a1fe6947eedff2aba",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-brief.md",
+      "bytes": 4976,
+      "source_sha256": "b8e2c8d75db53f919417b49d4f5ad1ec91e00871c6c6452eca02f5c195262b0f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-live-case.md",
+      "bytes": 1189,
+      "source_sha256": "54c5c4984567053ffd031545cd671cc34b931c8998062dad39df95b5c31e8e0c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-overall-origin.txt",
+      "bytes": 8625,
+      "source_sha256": "62c5655bc0c67ce61a8558715c4b78f66cd7222806943ccbb58d2822a5ced967",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-report.md",
+      "bytes": 16345,
+      "source_sha256": "6e4e83e02a681ff670e47c8e87eef3709bf2050733ead3937409360452bb9a37",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-scoped-review.md",
+      "bytes": 11220,
+      "source_sha256": "751e9b3d004d7f583432d4676a4010647a2dda8820a67278cbb4ae2b7449dd41",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-fix-static.py.txt",
+      "bytes": 1350,
+      "source_sha256": "eaf381ec9df0546c29f61543d8a1d88f574909122a07f0bd091484fe079c1be7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/final-review-source-manifest.json",
+      "bytes": 310,
+      "source_sha256": "97ebe2f3a249f3984c5c12f463c090e24c2b2fbfacf5e566ea248f87d6226196",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/fix-approval-review.md",
+      "bytes": 820,
+      "source_sha256": "fd0c55f6c1545241d8cfc1373e1ef85ed0fa406effaa675e6692408a35a92a24",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/fix-refusal-receipt.json",
+      "bytes": 1406,
+      "source_sha256": "655ddaf6e3d4f0da52ea84877008dae0e41d1ec6b58ce793a2280cac0b2ad2c1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/fix1-recovery-probe.py.txt",
+      "bytes": 1835,
+      "source_sha256": "585813403f6b532ad028675cdf4ec57eeba8f4bd06c412891990ebe7aa881047",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/fix2-recovery-receipt.json",
+      "bytes": 2511,
+      "source_sha256": "0060d473acd3cfa775873ebeb319e4ba82d5c7a60a1d5319c637d3195808b38c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baseline-manifest.json",
+      "bytes": 2501,
+      "source_sha256": "c680f8677e714da7c7fb7290e6d1e0a8528fe4c3946313b23e37916c8475bc6f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/final-fix-format-schema-test.json",
+      "bytes": 837,
+      "source_sha256": "712428871b8b0b3cab2cd7420780b569f39610b8265aaec8bead757e8644cfad",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/final-fix-format.json",
+      "bytes": 11247,
+      "source_sha256": "4e392f48e389d484d5ac894a4567cf2334ce9f6b5aad6c472df939b02afa6b45",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task1-format-baseline.json",
+      "bytes": 3951,
+      "source_sha256": "43ac258f53d0ec90f98037d3c5e7a7f85dc0332b0031356af699ac8cd0ecb48f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-metadata-test.json",
+      "bytes": 865,
+      "source_sha256": "dac8f2291259a5536230508b0167fa67d02529935047c9585a8a18ce2c70f129",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-queue-ui.json",
+      "bytes": 971,
+      "source_sha256": "3d84215dc2a4bf112d4074534b5ea38550f435d0b0ba0d6f7492c1d78749adc9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format-switcher.json",
+      "bytes": 900,
+      "source_sha256": "38632b811c3fc844f0fe53de66266312b3150d15b02c621355c59f8516c246b6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix1-format.json",
+      "bytes": 16271,
+      "source_sha256": "4478dd7e3b104c36c253cf296f70884b0c71ab861c9d0c6a0ab845fd0d6a135d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-fix2-format.json",
+      "bytes": 7080,
+      "source_sha256": "3f982f51d9ad6ad0baa9b318c5a6797a2fc7983a8479fd197cd91f991971dc7f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-composer.json",
+      "bytes": 820,
+      "source_sha256": "5417ddddd07da1989ea852ddf14d4bdd736e51a1e3b7b40420990ee9847948ea",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-extra.json",
+      "bytes": 3779,
+      "source_sha256": "4d5badc8bedddb2775efa538ec32a1f5854794d8b3a13bebc15eb8c42537fe40",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format-queue-ui.json",
+      "bytes": 1021,
+      "source_sha256": "d6fe4bd6598962f80192c79e852d47c464f17fbb810ea9854aa3ea020b5caee8",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/format-baselines/task2-format.json",
+      "bytes": 32997,
+      "source_sha256": "e686db85c21b996cf94cdd6f16cf059f99eeaeb8ce72de11daf1375d0af3f917",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/global-constraints.md",
+      "bytes": 1974,
+      "source_sha256": "c03be82d3461d1dc01fa7f8fc3ac9d0d2373d84bf12c3cb56a8296f2a5fd07b3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/initial-review-probes.py.txt",
+      "bytes": 4672,
+      "source_sha256": "6b499f1cc0736f526176453dfb426e1f4bae593d0d41b4573d9c7bfced90ce68",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/live-qualification.md",
+      "bytes": 10532,
+      "source_sha256": "efbebfa8c4d92f0270e44c0236299b38aa5142f1f29fcded289f0ba5efab5020",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/qualification-receipts.json",
+      "bytes": 28598,
+      "source_sha256": "e5a05c94befbb679d23df6a17797e1425cbc32674a21c07e6840aea16fba15c4",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/rulings.md",
+      "bytes": 3092,
+      "source_sha256": "6f71157a551d3f2d792dbe66d7cc70f2ab252d55b3fdf4518795c27b10dfc073",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-branch-review-full.md.gz",
+      "bytes": 7026,
+      "source_sha256": "3ddcd12b1ea9f18d5ef78630280f0dca428f5d801e9fde3f05ff337c10e1eaf5",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-branch-review.md.gz",
+      "bytes": 2871,
+      "source_sha256": "467d52a95ab8bc0de3ff56d15f8ea3eeb5e0d733ba6c93fb7cd0b3412670d49b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-baseline-manifest.json.gz",
+      "bytes": 234514,
+      "source_sha256": "c5a9d8da3adddf522f38839cf2816e24dc4d0de6a50298c9cbe1c65aad8258c9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-baseline-probe.py.gz",
+      "bytes": 1108,
+      "source_sha256": "8219fbc229b4636d36b774eca7eebb03a44a6ebeffeba78f97661181449e25b3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-brief.md.gz",
+      "bytes": 2438,
+      "source_sha256": "9c802503fb1810bfb7c48f7a1916cf2921e3f62888f1341485e90c70d41d095f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-live-case.md.gz",
+      "bytes": 665,
+      "source_sha256": "51fecd859605a16243f5b4db014e9562e1cd026a3d71177479ecdcf8e7b5be03",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-overall-origin.txt.gz",
+      "bytes": 1613,
+      "source_sha256": "c1d6b73e77d005f1eec3e640b0e95208bc38851090d19c32c7e0b7a8c9ec4259",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-report.md.gz",
+      "bytes": 6222,
+      "source_sha256": "43cd2d31d9bd1b9f4e79be6d627a65de73586c539a5f1666b2d7ad448da3c5a8",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-scoped-review.md.gz",
+      "bytes": 4143,
+      "source_sha256": "ab28255384b6bb34fe9ba0ff57a177a54235b77a53e903eaaee647d32d5e154c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/final-fix-static.py.gz",
+      "bytes": 592,
+      "source_sha256": "4f2578797993cd06a062c97bf706f148d1470d00882dc3b93bfc90c5a8a86c6d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/global-constraints.md.gz",
+      "bytes": 1070,
+      "source_sha256": "674b5e9bbccb5f96f6e6662bf61415767b30cc278eb693216bbddd4d8a50e4f1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/progress.md.gz",
+      "bytes": 12030,
+      "source_sha256": "5c7d4ed0eb1d0e1cabdda2ba7e265ef1f56f648fefcc78e5519269eea00226ef",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-brief.md.gz",
+      "bytes": 6166,
+      "source_sha256": "ad7d84e5e1fd54dfa44d47b5ce9cba65a0a51fac8faa04551f58e147ce6505f5",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-report.md.gz",
+      "bytes": 4275,
+      "source_sha256": "c39cb59466d6389f49cc50524d832c894ec0dd2d63c828b827ce6aa818b90e6e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-1-review.md.gz",
+      "bytes": 1050,
+      "source_sha256": "5f7d19778e5bf5f3787c97a30b52cb5cadc54477de12fa83a9a5fdabe106959b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-brief.md.gz",
+      "bytes": 11231,
+      "source_sha256": "6c42eb6264ec8d4a6356476417706ec60b9de955f733fc216841cce58564b7a5",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-fix1-review.md.gz",
+      "bytes": 2346,
+      "source_sha256": "2812f86f3b72baca8707cae91ff94921e09706eac71501c48d8080cd8228e6b7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-fix2-review.md.gz",
+      "bytes": 1284,
+      "source_sha256": "b2aa1ea37b2c319110fe2b83cb5eef3086bc9e4673b49297642808c2ea5f4326",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-report.md.gz",
+      "bytes": 18320,
+      "source_sha256": "e0c3b0dd3d5c2a2ec0fa3642262ed7737918c729a7870a4c285e562e6aa9dd11",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/source-archives/task-2-review.md.gz",
+      "bytes": 2896,
+      "source_sha256": "930b5764fb3c1594ff4858d94690ab23852b04743b67349cb3b4f880b5a75019",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-brief.md",
+      "bytes": 15917,
+      "source_sha256": "792be3e607c3b69c86223dc347219a70e5a588323151c8637dbce5a72af0c610",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-report.md",
+      "bytes": 10398,
+      "source_sha256": "77952d76b36b05b1e12915dd472ff12a4e5a05fe248620918d71ac6910b5c668",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-1-review.md",
+      "bytes": 1761,
+      "source_sha256": "259e27253b2d6dd3d3b90e5981b7d01bb68d1785a0d8af0286207b489db91e34",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-brief.md",
+      "bytes": 30613,
+      "source_sha256": "838724178cae20fb58d34b161f298be8c2b758d0be752114261ec3c88a2d831e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-fix1-review.md",
+      "bytes": 4535,
+      "source_sha256": "f03d2fbea7d4722923a9bb9abff04dfc9d9987bebe815e9b56b594f72be526c1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-fix2-review.md",
+      "bytes": 2382,
+      "source_sha256": "c098e8a840e9ad34c208d24fba776fb7f0db6fe63011fddad3aee8eafc8a2189",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-initial-review.md",
+      "bytes": 6348,
+      "source_sha256": "451242f3535fd9f360eaa38376781af5be0a641fd1fa9ff1eb91c9cd34e76525",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/task-2-report.md",
+      "bytes": 53102,
+      "source_sha256": "28f03874464c0b61b7fec65aa2d326c7d215f4a77ec0dde3598e4ed12012ecec",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/terminal-captures.txt",
+      "bytes": 427203,
+      "source_sha256": "20e83cd62a298bdf13c8a62cb0f79df90910a8993d767f3add435435fce6ed85",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-log-manifest.json",
+      "bytes": 20957,
+      "source_sha256": "a5995cd7a36e59fd144c66cd86a81acc9c52026daf946cf7bf3d69fb1ef1e352",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/baseline-task-1.log",
+      "bytes": 7141,
+      "source_sha256": "3d8479181a36388d758c745242aca7277a77a08d6e2825853bc1bb996b8b96ce",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/baseline-task-1.log.gz",
+      "bytes": 922,
+      "source_sha256": "8643782464803597438b22c0afb0436a5385fef738428a5fbf3682f5fc98088a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline-manifest.log",
+      "bytes": 39,
+      "source_sha256": "a6b5734e93d0cd6c09d875f445de33eae53fb1702c33f2b66eb681c5069ab4e2",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline-manifest.log.gz",
+      "bytes": 57,
+      "source_sha256": "dd383bad7f278e55a5b0f8d991304a7b16ff086e7addc5f177661086fff7c880",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline.log",
+      "bytes": 2850,
+      "source_sha256": "000df49126012974211df5dbf8ec9fd7495120b1cd9afcec33b2f26b4490ce7c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-baseline.log.gz",
+      "bytes": 1105,
+      "source_sha256": "eaa37659e06e528967f7fbb98da53007efb09d3ba398a4a231e3a414c8bdbdf1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-final.log",
+      "bytes": 786,
+      "source_sha256": "2d6bf2071c8a59dc665240f6c7215cbadf2703f1ae7040c8ce6788cb82beff3c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-final.log.gz",
+      "bytes": 284,
+      "source_sha256": "335819c13bc8256a99db35c8284dc8adcdf36684dafb377fafc64932e3a90920",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-green.log",
+      "bytes": 515,
+      "source_sha256": "4c33fd33387139c67e8d8d0ba1998eeb809ec576f9e806fdda77aae64434a925",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-green.log.gz",
+      "bytes": 227,
+      "source_sha256": "32b80b89e8681faa22a7ae5670786b7da96d7190e78dc04f3af107f5a66fffd2",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-red.log",
+      "bytes": 49651,
+      "source_sha256": "51f7158fd1c5e4c14c88d11c7092f123096f539bd0427546d94aea0def1bc6e6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-capture-red.log.gz",
+      "bytes": 5514,
+      "source_sha256": "e67be6721bf0cc8f9c0c5c66b91de2c78df576decae38a5df91ec4f06c570964",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-final.log",
+      "bytes": 2942,
+      "source_sha256": "452da8d58e1c079c9b661392ad6e2c6970ca34dbfe727b8fd83e497343e44b53",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-final.log.gz",
+      "bytes": 748,
+      "source_sha256": "aa9c2033d970cfbf3d850005ab13ab69f1bb5d3df855bb999d436449bbf1a37a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-fixtures.log",
+      "bytes": 336,
+      "source_sha256": "590c176a839c1d218137cfa14855c420ebe5dd4cc07f807020ea174dd80d4da6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-fixtures.log.gz",
+      "bytes": 192,
+      "source_sha256": "39e682ccda28f324e6dc498d0ed28d77ef93e8f00760cfd45e5d5b5ff75047e7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green.log",
+      "bytes": 329581,
+      "source_sha256": "6ae6b930169529a3ac3736a6fa3861232e69b7e50d0f110ddf9604beace2770e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green.log.gz",
+      "bytes": 34339,
+      "source_sha256": "82e307cef505980f96d742b2508ffe089ddca413b4c29d690ad5c865ba1e1537",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green2.log",
+      "bytes": 43691,
+      "source_sha256": "1fe81b34e1b60cf3910dfcefd65f81c9600f532e961bddd3a03838e352033ef1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green2.log.gz",
+      "bytes": 4821,
+      "source_sha256": "f116da308440425db6731254ff81d9f7f222c2f1735745bbc0e421b2ab9cdeb0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green3.log",
+      "bytes": 1336,
+      "source_sha256": "d7a7182a8b3cd79ca8f84cf6251a79cb8bad4f143fa5dc566d143637b51e7c75",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-green3.log.gz",
+      "bytes": 306,
+      "source_sha256": "32f9d9c3e1f17ebcfbd1d498ddc99b55688d0d15245d794813a6dea3e69b90c3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-overall-base-origin.log",
+      "bytes": 1691,
+      "source_sha256": "e4a1bef534ccf5be1d194de537250fdabf3933265b20055adb6c1cb541869162",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-overall-base-origin.log.gz",
+      "bytes": 732,
+      "source_sha256": "7d2e4947cb8e2c1da9d936f95d1001665685b965cbedbba15561035c86938b4d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-owners.log",
+      "bytes": 86659,
+      "source_sha256": "cd361ab116957a70e56b3d9fb51279bd39d371795f28c932b94e32cf01167e10",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-owners.log.gz",
+      "bytes": 9928,
+      "source_sha256": "4817c1d68925eb594e97bf34be086aebccdb7a2d4be802c4b8c808ee52ab0033",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-red.log",
+      "bytes": 385500,
+      "source_sha256": "7562bcdfcae00fa7d9fa89391ef01218b9fb1eea7f4039cb965d152129f91aba",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-red.log.gz",
+      "bytes": 39167,
+      "source_sha256": "be76a753c5db6e7b29cdf2ef9d1f14f34d6a76886ce8b79a0d944e06251c9f35",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-final.log",
+      "bytes": 2454,
+      "source_sha256": "d7cb0466160b27c0afba84701d7dea988257f1a996d8b2625b6d1c6d248b4349",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-final.log.gz",
+      "bytes": 481,
+      "source_sha256": "e9a41331ba6af73a698c6d805dd82bf7dc24e898eeb8cd85bad1e06c5249a83d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-postcommit.log",
+      "bytes": 2544,
+      "source_sha256": "560b0bbdc996056bd7e002cd83476cc8a815be63e8bc61333f202c991f5a33e6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static-postcommit.log.gz",
+      "bytes": 490,
+      "source_sha256": "9de1bee043f77036a0a4d6e977b45b004992b554ff4734a5a88e7c188c61fb71",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static.log",
+      "bytes": 2072,
+      "source_sha256": "8e394f91091419ec0d1a948ec2801f966d75146935af4f2745ea8c5d413623c0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/final-fix-static.log.gz",
+      "bytes": 456,
+      "source_sha256": "dff95547f36ea6ea8c2a8efdbf1c2a1f443f8a740864ec257138ad87c78d3db9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task1-final-closure.log",
+      "bytes": 1360,
+      "source_sha256": "c6def0eec0be3e6e703d3e5a88ee6d56752b0e3ef03faff24ea8086e38a1ca4f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task1-final-closure.log.gz",
+      "bytes": 475,
+      "source_sha256": "9c9c41d47b7112476ea2883495b03e41f952c00146d424c124698661886df743",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-baseline.log",
+      "bytes": 938766,
+      "source_sha256": "e8beb9e925937d6f5f53a7b8dabd79b1fd00059d1138010d906d9fef0b1fe1e7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-baseline.log.gz",
+      "bytes": 97049,
+      "source_sha256": "532de4660c552c69852ca37586baf73c86bfabdec0645695ccce58ced5e28d56",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-chat-final.log",
+      "bytes": 4040,
+      "source_sha256": "34bb0ca2c6657bb942cbef9437202dd326f542792e7870414f4ca38406807308",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-chat-final.log.gz",
+      "bytes": 1082,
+      "source_sha256": "34f808f46c41b004bd780924f7bdd07dae8c4ba9175f990300ee3af6434692e7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-new-owners.log",
+      "bytes": 18923,
+      "source_sha256": "60382e0c7979f47ffa142f6b47a24c8d2dbf1ec748cbf729035353dcb8dd07e1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-new-owners.log.gz",
+      "bytes": 3030,
+      "source_sha256": "a4ac5c07f7948662d0edba770f16c63efe988cad1e045af3e0bbdb0b3f3d979e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-queue-repair.log",
+      "bytes": 479,
+      "source_sha256": "d036ef31c3150d96e357bae35275366af7753aff7d1525e9c8a2c806f5fc02fb",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-final-queue-repair.log.gz",
+      "bytes": 244,
+      "source_sha256": "50b9ef8575c50b33f1c0812924ff621910ee7f739c4d37a28417766cf34206c8",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-adapter-barrier.log",
+      "bytes": 342,
+      "source_sha256": "03901c7e37f81b128f85254b504d26b2ea3b481ff7571bff4cc5ba1b54d1ccf3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-adapter-barrier.log.gz",
+      "bytes": 193,
+      "source_sha256": "de6a892d165c34a2458354ead696dae35b60d0f664c4b3e5b6c0737f4a3457b4",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-baseline.log",
+      "bytes": 13730,
+      "source_sha256": "c3b947a1afb34835a740758e8ffa024161db4c83a2fdf919c8f09e7c5d06f73c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-baseline.log.gz",
+      "bytes": 2668,
+      "source_sha256": "74ee69155c689745567b792d53ce9be5cd23a592f29951a8b2b86951d72e6d51",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-probe.log",
+      "bytes": 12689,
+      "source_sha256": "38cc02ee9eccef289f9647b5cbdaed84cf7c1475bf194594d2fc60445ec96fd6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-budget-probe.log.gz",
+      "bytes": 2465,
+      "source_sha256": "72cf04428dc6d759266f56c11312011e730185536893b6b113fd70fa2c1c3a72",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-family-row-green.log",
+      "bytes": 126329,
+      "source_sha256": "7a11ce1aac9359a8c688f56598be3ab1684c439ccdaa27d9e04dc9499f8aa34d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-family-row-green.log.gz",
+      "bytes": 14045,
+      "source_sha256": "18049827978134bad03919ec1bb3ac7ff439b10131fa04848bd20f5b9f53f117",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-final-starts.log",
+      "bytes": 3357,
+      "source_sha256": "e53e4f42b7bcc6d2378eb80d4461b3577be1488fc04b638b999cf42e63b43e17",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-final-starts.log.gz",
+      "bytes": 844,
+      "source_sha256": "4d1ff423ceef974c5e1708c43b5dbdb7db31f08271e859b93b653137017d9ede",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-fixtures-green.log",
+      "bytes": 342,
+      "source_sha256": "0bdd4cedebd8a6e8fbeaad990ec67e128deee3e390c6b7977b55abcc7fa8287f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-fixtures-green.log.gz",
+      "bytes": 197,
+      "source_sha256": "37c096ba7ce2988ba3122995d0286f32881bf715b55559a6b6fc59f25e6b70b9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-metadata-green.log",
+      "bytes": 209,
+      "source_sha256": "5cc07f3ba4ce906e3bb5d3ee4c095bca8456bb51504f5b7cc480b0576634a73e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-metadata-green.log.gz",
+      "bytes": 98,
+      "source_sha256": "bd44dda8db808cc6a1ed3a2e8cf1609469a3f7f4e39f545933442ed31cb0c862",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-controls-final.log",
+      "bytes": 462,
+      "source_sha256": "2c37ac6ab6e7ff344f43cc3af8a986ed23b2a953527c904076d5adfbbc58aaa7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-controls-final.log.gz",
+      "bytes": 233,
+      "source_sha256": "7bb124ef2f561cf86798bb4d338321079bb6cff40dd6c6ef47921a24b2a8ce5f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-history-green.log",
+      "bytes": 340,
+      "source_sha256": "a075654987a1de22ed76cc1bc49fc1b308da88d8b0ab7fef202207ee2c5f130a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-mounted-history-green.log.gz",
+      "bytes": 191,
+      "source_sha256": "c64481fae022d39928f1c3966f5b626b24c0b386c0a4fb07d5fd2c0110788bca",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-no-loop-display-green.log",
+      "bytes": 452,
+      "source_sha256": "9a9f72c718de66738e142eff7466ccec05367ac9ca74c45da3c6b0f23f821778",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-no-loop-display-green.log.gz",
+      "bytes": 232,
+      "source_sha256": "5a67d5ad67a0149b32da7c1ff10c09703b47882374467c35b5c2b03260a88525",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-related-owners.log",
+      "bytes": 13012,
+      "source_sha256": "fd135cfcd849072c66b8889aa56d9fdf9712e790fa880ae657c13e68cd8703d4",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-related-owners.log.gz",
+      "bytes": 2587,
+      "source_sha256": "4266ebd5336e54d1d7d46906f8b31e229f7a40cb2f8c1dc611a19bea8d1105d3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-static-postcommit.log",
+      "bytes": 3308,
+      "source_sha256": "84ec40409bada5095454361a1f3c28da6391210f0d93bb12ceabe99227cabe61",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix1-static-postcommit.log.gz",
+      "bytes": 574,
+      "source_sha256": "8fd0df49ee30d1e267569e2e79f40d5cd25d43ed719ab7ab4da512b6ddb64659",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-final.log",
+      "bytes": 3575,
+      "source_sha256": "bde71678abfe40393a95e8df13f937bda449ce49781bbfab0d8e6e5741ed0e7e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-final.log.gz",
+      "bytes": 847,
+      "source_sha256": "3b075ae2a63a186380c586dfee99f28ca0270d6b291c685e2f462d031c31f0bf",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-green.log",
+      "bytes": 578,
+      "source_sha256": "c86dbf5d6ac698700522bc6f36ed264ab8e2bfc5327f0c3bd4b9780a9e488fe0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-green.log.gz",
+      "bytes": 265,
+      "source_sha256": "b8044dea182483448d7348171e86ce1d39bb58fe0034660c8219f08521d3114b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-red.log",
+      "bytes": 97961,
+      "source_sha256": "3ba8a147d109badc1de6c7370f317086ed61d97a3888d5c95f2eebf4ba44f72d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-recovery-red.log.gz",
+      "bytes": 10793,
+      "source_sha256": "f9a88c3ca0ad18e6afeedca298ba6b8bf7524c481dce18a8e47794ccafaa8c2e",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-final.log",
+      "bytes": 1339,
+      "source_sha256": "cbbccdb7bc46d4d91f019f7bcfc640487e3868583405197b9513dc2d1b3233c7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-final.log.gz",
+      "bytes": 390,
+      "source_sha256": "31773ddbd49dad22cdf50ae98cbe985a45cec32a2454478a1a96917a90d79818",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-postcommit.log",
+      "bytes": 1393,
+      "source_sha256": "b7085bb7351a1e8b3873059ab7ca2ed12a450f08be18c19f437c5aeb66ef211b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-fix2-static-postcommit.log.gz",
+      "bytes": 404,
+      "source_sha256": "0c9dba0861f57bc24d3d696e106663e1334cfd7c6574852671b64ce90c706be7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-green-human-edit.log",
+      "bytes": 542,
+      "source_sha256": "f8907632215ce41b57800168e2dc09e521742d90056929b5f086b55930e3b856",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-green-human-edit.log.gz",
+      "bytes": 220,
+      "source_sha256": "3bb83bae0a3d63e5687e0755e21c827025f024cbcaf76a2ab7366d5e97f4f575",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-postcommit-ratchets.log",
+      "bytes": 1008,
+      "source_sha256": "6715fa29187dbcb98810acf052ede0e2e2037963bafea7a828115831aed6e8a2",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-postcommit-ratchets.log.gz",
+      "bytes": 244,
+      "source_sha256": "f49dc119322dd356193a8bb3fa3d5a0e791940f026c8b1a8996f8e33598f6ae9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-recovery-fixed2.log",
+      "bytes": 40395,
+      "source_sha256": "468a798af748b1cb494c006eeb887d1215335c49a5ca8f99963fc9be8da30f33",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-recovery-fixed2.log.gz",
+      "bytes": 4960,
+      "source_sha256": "37c4f45d2b809016c0bc1b4d41f8041fa9b4081e61b00f6923c7756da4d7c0d3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-repaired-ui-clear.log",
+      "bytes": 1207,
+      "source_sha256": "190ce0c1278d6069919d9fe3ba823d3965574494cf05e47001426086f932d30f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-repaired-ui-clear.log.gz",
+      "bytes": 498,
+      "source_sha256": "460711c640b15eec2013d09741e2f5d099076bb5445f131e720064268c39a700",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-static-final.log",
+      "bytes": 2795,
+      "source_sha256": "b26777cea6dcd44ead2c6dc9f6fc3aa78d959c897d7ab07be20f9c3e469da17b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-static-final.log.gz",
+      "bytes": 675,
+      "source_sha256": "a9f50ef6146494d2b49df8e9b3ee8aa78c2486b6bcc55278eefe30c125c45e37",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-stop-preview-owners.log",
+      "bytes": 362,
+      "source_sha256": "c9aeb4a1824e791c157e0af2b3a5dc07b31a573d249d9e9b7dfc38db10cd38e9",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-logs/task2-stop-preview-owners.log.gz",
+      "bytes": 209,
+      "source_sha256": "d8d04bf7101f199711af15f8b25d52f2ce136b1dcf9b40adff1044e22604079b",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-02-console-chat-starts/verification-output.md",
+      "bytes": 190225,
+      "source_sha256": "228a428b575bc64f74d064a895a1ec2817be71cf6418ecd3eddbcccfff201b43",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/README.md",
+      "bytes": 3049,
+      "source_sha256": "a04bdf170649d9b2db9e9bd26b1e79b060d1096762cda0d464c9af366f818a7d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/artifact-source-manifest.json",
+      "bytes": 17835,
+      "source_sha256": "d0053c56e7e94fe7f94cdc7c629b938123613c2313483692ba149d3a3cd4b5af",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/baseline-node-provenance.json",
+      "bytes": 3380,
+      "source_sha256": "32a3ea02e06d83eed2dd99dfcc99db644429a4d50bdb2ace33cbfec266ebc489",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/baseline-nodes.json",
+      "bytes": 2676,
+      "source_sha256": "185fd9fac680c82a210053a8a0116ade0adcf7d43628105d13aec471c57ef5b1",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/format-snapshot-command.json",
+      "bytes": 507,
+      "source_sha256": "780dfcd7ace25c8dc769e4824e52094354d44928b8fa381dcdfec77c630450a6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/head-source-match-command.json",
+      "bytes": 158,
+      "source_sha256": "5968134d8ad4a4ee8971505d46c3260f14366635ac33a36742812d61113ee850",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/owners-green-command.json",
+      "bytes": 677,
+      "source_sha256": "a15e0cb0bb2e9f245ea549aa62d887105805ee5d9a8a8dd9c823a21a43fe5ba6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ratchet-head-command.json",
+      "bytes": 298,
+      "source_sha256": "5d1ec8dd5c4e23b9e4eec739c2b42100372bf481feb68da2064610f37224815d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ratchet-worktree-command.json",
+      "bytes": 240,
+      "source_sha256": "2951cf1d44aae387037cd715c040682c557e4a50d494ae8da10ef894790eda1f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/recorded-green-command.json",
+      "bytes": 3010,
+      "source_sha256": "c0a634661007a522b41fd06cbeb29011832ba112b138b8dd9a66295d7e618094",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/recorded-red-command.json",
+      "bytes": 3008,
+      "source_sha256": "f40127aa72dc511c3f06c50ffcc9bed1d3ed0de0bac137e8c73b8779fbe7c23a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ruff-head-command.json",
+      "bytes": 238,
+      "source_sha256": "e218d83f7d3a75aadd9c744e9cbf29ed39564a1b92431e8d91db58353b30b7fa",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/ruff-worktree-command.json",
+      "bytes": 238,
+      "source_sha256": "e218d83f7d3a75aadd9c744e9cbf29ed39564a1b92431e8d91db58353b30b7fa",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/whitespace-head-command.json",
+      "bytes": 236,
+      "source_sha256": "c589591fe2e7e4fae797e7869c0585e1d494fa1e804a7b3b14f7f4cbd6b05d57",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/commands/whitespace-worktree-command.json",
+      "bytes": 35,
+      "source_sha256": "2cf4c873959d31c535d46af34b5521e1be742aba3eda3d28e63a815163114c66",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/controller-static-evidence.json",
+      "bytes": 1681,
+      "source_sha256": "3dac43d8e964f4650cc1bc4c5109d1b6a4dc4841e2bd47ad1559631bfbc6578c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/execution-ledger.md",
+      "bytes": 4064,
+      "source_sha256": "ae18a2bdd9a5590ed353a9543e516df9f2975ede5607494dd1b27302531dba72",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/final-review.md",
+      "bytes": 3169,
+      "source_sha256": "599e91b7dc2e892f53ec04c4b81fdaf451e10ee4700a7a16a836e50d5a140563",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/format-baseline.json",
+      "bytes": 1071,
+      "source_sha256": "c3bc31be01226d6228fdab08f0113f279c98a8062a661e63f8aac25f29f1b321",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/global-constraints.md",
+      "bytes": 1265,
+      "source_sha256": "d49e2a60f725bcdca1e5096809a4bd037991f11af436d0548506c4ed340507d0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/implementation-sha.txt",
+      "bytes": 41,
+      "source_sha256": "815f7ff36babc862c1443ff37681867dc920b68ac20237d1dcef64a90d5853c0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/review-bc2be106f1..1c1a7e3566.diff.txt",
+      "bytes": 3896,
+      "source_sha256": "6345b4a1e2ee6596ec29f45a7d14c5aee11aaf5efaf18eefddd29794d86b80ad",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/rulings.md",
+      "bytes": 431,
+      "source_sha256": "d2299a0f610994cfd7cbf224d0c2529bffd45a32d73a5cfc856da1527b1fa598",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/baseline-node-provenance.json.gz",
+      "bytes": 843,
+      "source_sha256": "21720b795726408625082581f5140a35ccc08e0c7f948f60272df0de113351a6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/baseline-nodes.json.gz",
+      "bytes": 790,
+      "source_sha256": "8de502a17ba321814c6ffe0f3277ec718ad56809aa209f4428ae43100cb57598",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/controller-static-evidence.json.gz",
+      "bytes": 498,
+      "source_sha256": "f17316721f7e09ab7a1bd9c7183fc87316d7d56e7383e2179918131a36c4a832",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/final-review.md.gz",
+      "bytes": 1596,
+      "source_sha256": "a28deb49a1d24b024b930888a1d5af4cede90c3e06271cdf66b60eccab85241a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-baseline.json.gz",
+      "bytes": 453,
+      "source_sha256": "c75ab61aaa04db07b42f42264ea74da4d43fc49c60230558013963fadf566269",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-snapshot-command.json.gz",
+      "bytes": 329,
+      "source_sha256": "7ced5a8e62a2d0f62ae7856125130b236eebc7899d3630e97e0c80913af0e8fa",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/format-snapshot.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/global-constraints.md.gz",
+      "bytes": 725,
+      "source_sha256": "d5eabd261e34211b1a5f58688faa6e8039f272d6b29c3721b7a291ce4aeb2552",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/head-source-match-command.json.gz",
+      "bytes": 123,
+      "source_sha256": "f84ecc9cb7d9851f26e23327c135d3406a84d642091ea445cf87f1ed7a5785f0",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/head-source-match.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/implementation-sha.txt.gz",
+      "bytes": 59,
+      "source_sha256": "ae0e11019960743653798c03164fb249a4eceb9ceb0dd276719e44f9f1856449",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/owners-green-command.json.gz",
+      "bytes": 366,
+      "source_sha256": "3fd19fc823182b9146057646a1ee9f9f4ba24f3cafb928fdcd1f3fa9c45e8532",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/owners-green.log.gz",
+      "bytes": 1320,
+      "source_sha256": "e4f824f8fc5e516a0a248c882f12cdc2921897b73b9314b91197ef83399fa76f",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/progress.md.gz",
+      "bytes": 2055,
+      "source_sha256": "b8e64bf1891e2d7ef2e0bc1166336d681516211b75b1df824f62ffc5a4b2dade",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-head-command.json.gz",
+      "bytes": 228,
+      "source_sha256": "2db8847b2b574a9261f9932e9eb2244e1db7538a680dedde87c787223df23901",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-head.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-worktree-command.json.gz",
+      "bytes": 189,
+      "source_sha256": "be2de254de376fc47e32cb1823e7e775b1e5bfe97ed4040d06a786b102cb29e2",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ratchet-worktree.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-green-command.json.gz",
+      "bytes": 975,
+      "source_sha256": "bd5556f2383893abeb2c946bad961e30e3e2541accfc199dc2eb417999d852ba",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-green.log.gz",
+      "bytes": 279,
+      "source_sha256": "a04569c60d02a195c933c351767c87c9fefd33978ef0b17adcdd89bf881d1c4a",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-red-command.json.gz",
+      "bytes": 973,
+      "source_sha256": "58c049800bd2a08635d0ed236eeca3f79423a46d950f181404fe9f5947d4c329",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/recorded-red.log.gz",
+      "bytes": 2101,
+      "source_sha256": "e9f5054be15938895959b0bacdb93bdeb1d9100755b11773a0f157bc10839fd3",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/review-bc2be106f1..1c1a7e3566.diff.gz",
+      "bytes": 1250,
+      "source_sha256": "12e49d41eb9cad8561c01f441f853e66c9c14316cb81f810bc2d965a610cce86",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-head-command.json.gz",
+      "bytes": 182,
+      "source_sha256": "c68b2a56ea16f746136c2524e3db71e420fd74e7d3f63a168d6b59adb66739bb",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-head.log.gz",
+      "bytes": 39,
+      "source_sha256": "f3af4d142827f5aad2eb0c72d556d325488a57fb6219aac10afeb51085667d53",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-worktree-command.json.gz",
+      "bytes": 182,
+      "source_sha256": "c68b2a56ea16f746136c2524e3db71e420fd74e7d3f63a168d6b59adb66739bb",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/ruff-worktree.log.gz",
+      "bytes": 39,
+      "source_sha256": "f3af4d142827f5aad2eb0c72d556d325488a57fb6219aac10afeb51085667d53",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/rulings.md.gz",
+      "bytes": 280,
+      "source_sha256": "2c163265233ab1aad5ba1f4603c206bef3b29dee588cbc467ce370372b5fd787",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-brief.md.gz",
+      "bytes": 2661,
+      "source_sha256": "5a84125af93b289a5765c59bafccc17a70512489da3e75b2f3520fc1cad1b012",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-report.md.gz",
+      "bytes": 4353,
+      "source_sha256": "5acf61c3c07f683c5a6724d50dd2834b488c6ad1dfcec93a2a914ba4e9e77ce2",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/task-1-review.md.gz",
+      "bytes": 2124,
+      "source_sha256": "2d0a5546daeb3e96e4f5e9af7f1c412c8e6f1a1d07d22dc6ccdf604e86b73f3d",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-head-command.json.gz",
+      "bytes": 178,
+      "source_sha256": "7dcaa5da30e5bb1aefbaae082b327c44a965c75d4bd20518222282b75f76727c",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-head.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-worktree-command.json.gz",
+      "bytes": 48,
+      "source_sha256": "4fb3e4a48ca3c12f79dd881a229b13176bba473e8f0dc4eed57a44a1ae3bcb38",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/source-archives/whitespace-worktree.log.gz",
+      "bytes": 20,
+      "source_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-brief.md",
+      "bytes": 6966,
+      "source_sha256": "0f4edb231638b7f7cce15f3fe0d54661d515d8ef56a00ae25755fa549791abc6",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-report.md",
+      "bytes": 16865,
+      "source_sha256": "d01cbf19217db3f46b71a2afdb9c1885e44ff30f8be5845b677816eee6d82230",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/task-1-review.md",
+      "bytes": 4333,
+      "source_sha256": "e7b72c7e615141b7e81b1f1796d6b0fa62627b73c05e37c0063c0496b40ff321",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/format-snapshot.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/head-source-match.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/owners-green.log",
+      "bytes": 4928,
+      "source_sha256": "8ab49f331700b8dae7ea3e0ce9f19488c1fcb75b65bc1b6b651201c45ff14152",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ratchet-head.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ratchet-worktree.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/recorded-green.log",
+      "bytes": 689,
+      "source_sha256": "faf0a996729f5bad7ac0d22029bb9568a415bbd8a49cba4f6e15cb338a6961ea",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/recorded-red.log",
+      "bytes": 11229,
+      "source_sha256": "dfb84b15c5ad95e0760beb268618c0981d97a6b196cdbbaa4ca9fe5f94f763f7",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ruff-head.log",
+      "bytes": 19,
+      "source_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/ruff-worktree.log",
+      "bytes": 19,
+      "source_sha256": "82b3e6a6c090a57601d22943bd23fca9218d1031dbe5a7b754092f9a156b4f18",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/whitespace-head.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    },
+    {
+      "path": "Docs/superpowers/qa/2026-10-03-console-baseline-remediation/verification-logs/whitespace-worktree.log",
+      "bytes": 0,
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "matches": true
+    }
+  ]
+}

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12, Textual 8, real SQLite, pytest, Ruff, Git/GitHub CLI.
 
-**Spec:** `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md` at immutable reviewed source `53065745187aaf4d47fc4357bb9096aa28fd5673`; snapshot supplied in this plan's SDD directory until the feature patch restores the canonical file. Existing feature tasks TASK-34202/TASK-34203 and follow-ups TASK-34203.1/TASK-34203.2 bind the deliverable.
+**Spec:** `Docs/superpowers/specs/2026-10-02-console-chat-destinations-and-starts-design.md` at immutable reviewed source `53065745187aaf4d47fc4357bb9096aa28fd5673`; snapshot supplied in this plan's SDD directory until the feature patch restores the canonical file. Existing feature tasks TASK-34214/TASK-34215 and follow-ups TASK-34215.1/TASK-34215.2 bind the deliverable.
 
 ADR required: no
 ADR path: `backlog/decisions/211-console-chat-destinations-and-bounded-starts.md` (existing), with current ADR-163, ADR-126, ADR-158 and both exact ADR-147 provider-routing/archive contracts retained.
@@ -63,7 +63,7 @@ git apply --3way --index /private/tmp/console-chat-feature-only-01a0fa6c.patch
 git diff --name-only --diff-filter=U
 ```
 
-Resolve each reported path, then verify there are no unmerged index entries. Record how each production conflict preserves both contracts. The original unmerged design TASK33802 collided with a landed dev task. Controller reconciliation preserves the landed identity and maps the complete unmerged chain to TASK34201/34202/34203 before final preflight/publication. Do not edit historical archives.
+Resolve each reported path, then verify there are no unmerged index entries. Record how each production conflict preserves both contracts. The original unmerged design TASK33802 collided with a landed dev task. Controller reconciliation preserves the landed identity and maps the complete unmerged chain to TASK34213/34214/34215 before final preflight/publication. Do not edit historical archives.
 
 - [x] **Step 3: Qualify and reconcile schema/storage compatibility with RED/GREEN evidence.** Rename only the feature's unshipped migrations/test as listed; use AgentRuns current22 and ChaChaNotes current76. Retain dev's 73→74/74→75 runner/map and existing AgentRuns constructor fields/history; add 75→76 and22. Update the rebuilt checkpoint temporary table suffix to76. Preserve every old checkpoint field/index, continuation receipt, auxiliary failure reason, definition cap, routing snapshot, worktree row and reservation.
 
@@ -110,7 +110,7 @@ Run the complete groups in `Targeted verification` below. Add a focused integrat
 
 - [x] **Step 7: Self-review and commit only owned integration changes.** Use `git -c gc.auto=0`. Report exact BASE/HEAD, all changed paths, per-conflict dispositions, migration/catalog/receipt/native controls, literal commands/exit codes/output, known warnings and tests not run. Verify committed-source equality and committed-HEAD formatter ratchets. No helpers/reviewers, full sweep, shared stash, installation, source-checkout edit, push, PR or merge. Return DONE/DONE_WITH_CONCERNS/NEEDS_CONTEXT/BLOCKED plus SHA and one-line summary; controller independently reviews.
 
-- [ ] **Step 8: Controller review, qualification and authorized publication.** Independent task review precedes the final whole-dev-branch review; fix loops follow SDD. Qualify actual isolated Console/provider destination/mode/start/refusal/reopen behavior on the integrated tree. Verify the reconciled design TASK34201 and its foundation/feature chain per the landed-keeps-id rule, with current inbound references and provenance; re-sweep immediately before push. Preserve historical artifacts and publish current QA separately. After all required gates pass, push `codex/console-chat-starts-dev`, create the PR with base `dev`, and attach its URL. User authorization is already explicit; no repeated approval question.
+- [ ] **Step 8: Controller review, qualification and authorized publication.** Independent task review precedes the final whole-dev-branch review; fix loops follow SDD. Qualify actual isolated Console/provider destination/mode/start/refusal/reopen behavior on the integrated tree. Verify the reconciled design TASK34213 and its foundation/feature chain per the landed-keeps-id rule, with current inbound references and provenance; re-sweep immediately before push. Preserve historical artifacts and publish current QA separately. After all required gates pass, push `codex/console-chat-starts-dev`, create the PR with base `dev`, and attach its URL. User authorization is already explicit; no repeated approval question.
 
 ## Targeted verification
 
@@ -173,3 +173,7 @@ Migrate the six legacy raw-executor new_chat routing tests through genuine prepa
 ### Latest-dev cost-display qualification
 
 The complete telemetry owners exposed stale fixture protocols and one inherited missing idle-refresh cancellation. Preserve the 2026-09-04 current/next-send spend spec: unaccepted optimistic rows are excluded from both request context and Current; accepted/dispatched rows retain request context. Fix the existing canonical send owner to cancel its pending idle refresh before awaited send work. Retain exact keyboard-send, active-edit and refusal/idle-rearm controls; rerun complete modified owners. ADR required: no. ADR path: existing ADR-052/095 and current/next-send spend spec. Reason: restore an existing lifecycle contract without new authority or owners.
+
+## Publication status after final scoped review
+
+Step8 remains open. Final source3c4c522 has passing recorded21baseline nodes, final runtime owner, scoped static/formatter and derived preflight evidence. The scoped review marks I1 addressed and retains Important I2: caret/selection-only navigation changes the full composer snapshot without authoring a new draft revision, so acceptance can leave the accepted opening visible and resave it. The user-authorized PR is published as a draft, with TASK34215.2 In Progress; this is publication for review, not readiness or task completion. The final-review SDD cap permits one consolidated repair and one scoped review. Remaining load-bearing repair and successor dev qualification must precede readiness. Latest remote dev advanced toefea5e45 after integratedaf138397; existing evidence retains its exact revision.
