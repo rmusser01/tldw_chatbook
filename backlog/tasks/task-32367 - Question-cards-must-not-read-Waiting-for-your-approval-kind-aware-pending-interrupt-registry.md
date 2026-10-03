@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-03 07:20'
+updated_date: '2026-10-03 07:31'
 labels:
   - console
   - approvals
@@ -87,6 +87,8 @@ ADR required: no new ADR.
 ADR paths: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/067-indefinite-human-approval-waits.md; backlog/decisions/195-console-live-tool-call-presentation.md.
 Reason: routine correction in the existing kind-aware UI count; no new host/registry owner, authority, storage or public interface.
 Reproduce a real mounted request_mcp_approvals(session_id=None): its host round exists and its card is answerable, but the kind/badge registry intentionally remains empty. Inspect actual UI and generic workspace attention counts. Add focused controls for finishing cards, positive queued registry counts and unrelated broad app metadata. Preserve the real registry path's kind/session isolation; use only the typed pending-approval card when zero registered approvals need the existing visible-card compatibility fallback. Do not restore generic app/global counts in the real-registry path, which could miscount questions or other sessions. After valid RED, change only _console_pending_approval_count and preserve all older-controller fallbacks. Run complete projection/Close/approval mounted groups, consent/host neighbors, exact Perf Guards, lint/format and fresh artifact preflight. No fresh native replay claim. Keep the task In Progress until fresh published-head Qodo/all four gates/current dev pass before normal merge.
+
+Qodo324cc873 public-test typing follow-up: ADR required: no; ADR path: N/A (test-only annotations, no architecture or behavior change). Annotate the new six-case public boundary test with int, dict[str, object] | None and int parameters plus -> None. Preserve its body and all production/helper/wrapper AST. Rerun its six cases and targeted format/lint/census/backlog checks; carry forward complete mounted/host/Perf receipts only with an explicit annotation-only AST proof and their original source identity. Require fresh final-head review/all four gates before task completion/merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -129,4 +131,6 @@ Mounted navigation and completed-Close regressions reproduce stale source cards 
 Latest-dev PR2964 queue-button integration: all 38 Console patches replay unchanged onto dev74bd039d. Only the inherited queue region and two generated-style pins change; 235 other prior pins remain exact, with the inherited queue regression additionally pinned (239 total). Fresh coupled qualification passes all 23 Console projection/Close/approval journeys plus all 17 inherited queue-button cases (22 top-level cases), and all 37 exact Perf Guards, with zero failures/errors/skips and unchanged caps/budgets/counters. Zero-new Ruff35 and diff checks pass. QA queue_button_dev_integration retains exact sources and fixture modes. Original64-case/native receipts retain their identities; no fresh Chat or native replay claim for this rebase. Fresh artifact preflight and published-head Qodo/all four hosted gates/current dev still required; task remains In Progress.
 
 Qodo62959751 legacy approval count: fixed only ChatScreen._console_pending_approval_count so a real mounted no-session tool card counts one when the kind registry is empty. Positive queued counts remain exact; finishing cards and unrelated global/question metadata do not count. Older-controller fallback and all other screen AST remain unchanged. Six boundary controls, all24 mounted app journeys/five ordinary private wrappers, all99 host/consent cases and exact37 Perf Guards pass; fresh artifact preflight, zero-new Ruff across 35 files, range format/diff and independent review are clean. Guide/incident lesson/QA updated; no fresh native replay. Existing ADR-067/094/195 apply, no new ADR. Mixed legacy+registered behavior intentionally preserves the registered maximum, not a deduplicated additive total. Keep In Progress until final published-head Qodo/all four hosted gates pass; normal merge remains required.
+
+Qodo324cc873 typing follow-up: annotate only the new public boundary-test parameters as int, dict[str, object] | None and int, with -> None. All six cases re-pass; normalized full-module AST outside those annotations and all238 other source pins/production bytes are unchanged. Range format, zero-new Ruff35, diff/backlog checks and unchanged124-file UI census pass. QA preserves complete mounted24/host99/Perf37/preflight receipts at their original19 identities; no fresh broad/native replay claim. ADR required: no; ADR path: N/A (test-only typing). Keep In Progress pending fresh final-head Qodo/all four gates.
 <!-- SECTION:NOTES:END -->

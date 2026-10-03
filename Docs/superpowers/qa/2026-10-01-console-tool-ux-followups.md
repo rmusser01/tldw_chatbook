@@ -986,3 +986,17 @@ total; AC8 explicitly bounds that case. QA legacy_approval_count_review_followup
 records exact bytes, receipts, fixture modes and earlier evidence limits.
 No fresh native/queue replay or full local-suite claim. Task remains In Progress
 until published-head review and all four hosted gates pass before normal merge.
+
+
+Public boundary-test typing (Qodo324cc873, 2026-10-03 UTC)
+
+Add only int, dict[str, object] | None and int annotations plus -> None to the
+new public six-case count test. All six cases re-pass. Normalizing only those
+annotations reproduces the entire reviewed19 module AST; every test body,
+helper and private wrapper is unchanged, as are all238 other source pins and
+all production bytes. Range format, zero-new Ruff35, diff/backlog checks and
+unchanged124-file UI census pass. No new ADR is required for test-only typing.
+QA legacy_approval_test_typing_followup records the exact new test pin and
+proof. Complete mounted24/host99/Perf37/preflight receipts remain at their
+original19 source/fixture identities; no fresh broad/native replay is claimed.
+Task remains In Progress pending fresh final-head review/all four hosted gates.

@@ -6059,5 +6059,67 @@
     "native_replayed": false,
     "prior_evidence_limits": "B306 queue-button 17 cases, preceding Chat64 and native27/29 keep their original source/head/fixture identities. No new queue/native replay claim; their sources are unchanged. Fresh host/consent and mounted/Perf qualification are recorded above. No full local suite.",
     "completion": "TASK-32367 remains In Progress. Fresh published-head Qodo, all four hosted gates, current dev, then verified protected normal merge are still required."
+  },
+  "legacy_approval_test_typing_followup": {
+    "reviewed_head": "19fbb0f0a54988d752fa4b4532a189b685d0818d",
+    "base": "74bd039d607b4c961f95d1fb4f1c3d89b4552d99",
+    "changed_source_pins": {
+      "Tests/UI/test_console_pending_interrupt_projection.py": {
+        "old": "fc1e2a0cdadebb6999838e1cc5973d85cdff159f2ee0e6380d7dd67e5c34928b",
+        "new": "f75ae770fe16a506a65400823ccee23008282ec2c57feae3a3627dd9eefbbae8"
+      }
+    },
+    "unchanged_source_pins": 238,
+    "annotation_only_AST_equal": true,
+    "all_production_sources_unchanged": true,
+    "all_test_bodies_helpers_wrappers_unchanged": true,
+    "parameter_types": [
+      "int",
+      "dict[str, object] | None",
+      "int"
+    ],
+    "return_type": "None",
+    "prior_full_evidence_identity_preserved": true,
+    "finding": "324cc873-e8ec-40d4-93a7-4899a469f1ac",
+    "source_proof": "/tmp/console-tool-ux-legacy-count-type-source-proof.json",
+    "source_proof_sha256": "cc4d72b43b2f6f68f264673d5cee4728caf8ca6d782b3c537f2fbb0f00016cfd",
+    "boundary_receipt": {
+      "label": "legacy-count-type-boundaries",
+      "command": [
+        "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+        "-m",
+        "pytest",
+        "-p",
+        "pytest_asyncio.plugin",
+        "-p",
+        "pytest_timeout",
+        "-p",
+        "no:cacheprovider",
+        "-q",
+        "--basetemp=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-legacy-count-type-boundaries-qx3oz7m8/pytest",
+        "--junitxml=/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-legacy-count-type-boundaries-qx3oz7m8/pytest.xml",
+        "Tests/UI/test_console_pending_interrupt_projection.py::test_registry_count_keeps_tool_card_compatibility_kind_specific"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 7.03,
+      "root": "/var/folders/sn/m80n2j152t9gw3w8qwk2nykh0000gn/T/console-tool-ux-legacy-count-type-boundaries-qx3oz7m8",
+      "sources_stable": true,
+      "plugin": "",
+      "junit": {
+        "tests": 6,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0
+      }
+    },
+    "boundary_receipt_path": "/tmp/console-tool-ux-legacy-count-type-boundaries.json",
+    "lint": "/tmp/console-tool-ux-legacy-count-type-lint.json",
+    "new_ruff_diagnostics": 0,
+    "UI_census": 124,
+    "ADR_required": false,
+    "ADR_path": "N/A",
+    "ADR_reason": "Test-signature typing only; no behavior or architectural change.",
+    "prior_full_evidence": "legacy_approval_count_review_followup retains exact original19 source identities for 24 mounted journeys,99 host/consent and37 Perf checks plus preflight. All production sources and normalized test bodies/helpers/wrappers remain identical. No new mounted/host/Perf/native replay claim for annotations.",
+    "completion": "Task remains In Progress pending fresh final-head review/all four gates."
   }
 }

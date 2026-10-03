@@ -662,8 +662,8 @@ async def _verify_late_chat_create_projection_transition(
     ],
 )
 def test_registry_count_keeps_tool_card_compatibility_kind_specific(
-    registered, task_approval, expected
-):
+    registered: int, task_approval: dict[str, object] | None, expected: int
+) -> None:
     """Use the typed tool card without importing unrelated global attention.
 
     Args:
