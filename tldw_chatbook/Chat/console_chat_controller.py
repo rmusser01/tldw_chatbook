@@ -14730,7 +14730,10 @@ class ConsoleChatController:
                 )
                 raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
             raise
-        self._session_close_generations[session_id] = generation
+        # Commit under the question registry's shared host lock. An earlier
+        # registration is swept below; a later one observes this fence.
+        with self._approval_state_lock:
+            self._session_close_generations[session_id] = generation
         # Admission fences are the first irreversible close action after the
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
@@ -19763,6 +19766,10 @@ class ConsoleChatController:
         # gets `busy`. The host re-registers the same state object at
         # run_round entry, which is idempotent.
         with self._pending_question_lock:
+            # Close publishes its fence and sweeps questions under this same
+            # lock; no delayed worker may register after the sweep has passed.
+            if owning_session_id in self._session_close_generations:
+                return unanswered_result("cancelled")
             live = any(
                 state.get("session_id") == owning_session_id
                 for state in self._pending_question_rounds.values()

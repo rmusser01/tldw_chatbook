@@ -17877,3 +17877,15 @@ wait_for_scheduled_animations after the same positive-scroll check preserves
 every pixel assertion and passes both long-title journeys in the original node
 and the later complete grouped files. A positive scroll offset proves motion
 started; wait for actual animation completion before asserting final pixels.
+
+
+## A Close cancellation sweep also needs a late-registration fence
+
+**TASK-32367 / PR #2953, 2026-10-03.** Qodo found that a delayed question
+could register after committed Close had already swept the question registry.
+The real-host after-registration regression passed, while already-closed and
+paused-before-registration variants both left workers waiting. Publish and check
+the existing committed generation under the shared interrupt lock: earlier
+states are swept and later admission returns cancelled. Keep callbacks outside
+the non-reentrant lock, and assert a sibling question remains answerable.
+Testing only a round present at the cancellation snapshot misses late admission.

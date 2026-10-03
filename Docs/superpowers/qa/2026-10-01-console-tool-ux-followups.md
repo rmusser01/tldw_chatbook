@@ -786,3 +786,46 @@ the same value. Both complete modules pass56 cases, zero failures/errors/skips.
 Range format, zero-new Ruff34 and full artifact preflight pass.
 Only two test-module source pins change; all235 other source pins, production/runtime, grouped UI fixtures and helper owners retain bytes. Whole affected module executable ASTs are identical after replacing the private names with5 and removing their assignments. Current56-case receipts qualify real workers/SQLite in both complete modules; original42/147/native/grouped17 receipts keep recorded identities with this mechanical equivalence proof. Deadlines remain5s/180s/20m; no full suite, new abstraction/dependency or CI/budget change. Fresh published-head review/all four checks/latest dev required before normal merge.
 QA chat_create_timeout_review_followup records current237pins, receipts and limits.
+
+
+Qodo late question admission after Close (d9c05b6a, 2026-10-03 UTC)
+
+Close publishes its committed generation under the existing shared interrupt
+lock. Question admission checks that same persistent fence in its existing
+check/register section. An earlier round is swept; a delayed request returns
+cancelled without a retained card or indefinite wait. Sibling questions remain
+answerable. Callbacks and cancellation stay outside the non-reentrant lock.
+Existing ADR-094/067 apply; no new owner, authority, persistence or service boundary.
+
+The initial unmarked regression raised raw_source_selection_changed and is
+invalid race evidence. With the existing bootstrap_profile ownership marker,
+the real host/store complete-Close test reproduces exactly two late-worker waits
+(before registration and already closed); the already-registered case passes.
+All three pass after the fix and again on final formatted bytes with only their
+checked-in marker, without a temporary plugin. This regression uses the existing
+persisted-store helper and fake UI dispatcher; it is not itself real-SQLite or
+mounted-runtime-drain qualification.
+
+The first194-neighbor run passes186 and has eight setup failures. Restoring only
+the two reviewed controller methods in an otherwise identical combined tree
+reproduces all eight exact failures; it is not a pure-dev comparison. All194
+neighbors then pass with explicit existing collection-profile ownership for the
+question, interrupt-attention and durable-postcommit modules, without getter
+mocking or admission bypass. The separate final ordinary three-case regression
+also passes. Preserve this conditional fixture mode when interpreting the full run.
+
+All37 exact Perf Guard cases pass with unchanged counters, canaries, ticks,
+ceilings and snapshots. Later question-test formatting preserves the entire
+module AST and does not change controller/runtime/guard bytes. Both complete
+mounted approval/Close files pass4 ordinary private wrappers covering17 existing
+journeys, zero failures/errors/skips, in258.01s; the slowest wrapper is115.408s
+under the unchanged180s cap. Fresh full preflight, changed-range format and
+zero-new Ruff across35 changed Python files pass. Independent source review has
+no actionable findings. Existing question-test AST is unchanged after removing
+only the added regression and its private synchronization constant. Only two
+controller methods change; all236 other preceding pins retain bytes, with238
+current source pins. Original native27/29 receipts retain their historical
+identities; native was not replayed for this race correction. No full sweep.
+Fresh published-head Qodo/all four gates/current dev still precede normal merge.
+QA question_close_admission_review_followup records all source and fixture
+identities, valid/invalid red receipts, exact baseline comparison and limitations.
