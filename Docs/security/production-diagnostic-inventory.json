@@ -3137,6 +3137,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "83306dbbc333102655b4",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "c11e1bad4aed6c841a8a",
       "owner": "TASK-494",
@@ -3256,8 +3263,8 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 189,
-      "diagnostic_digest": "1a6b37f5c7fb7d1fd883",
+      "call_count": 188,
+      "diagnostic_digest": "b1c5ffea518366916671",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Screens/personas_screen.py",
       "reason": "remaining Chatbook production diagnostic owner"
