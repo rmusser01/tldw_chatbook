@@ -2,11 +2,19 @@
 
 from __future__ import annotations
 
+import gc
+import warnings
+
 import pytest
 from textual.widgets import Button, Select
 
 from Tests.private_profile import private_profile_test
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
+from Tests.UI.app_factory import (
+    _build_test_app,
+    attach_chachanotes_db,
+    drain_active_service_patches,
+    drain_created_dirs,
+)
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from Tests.UI.test_destination_shells import _wait_for_selector
 from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
@@ -58,9 +66,7 @@ def _assert_painted(host, card, button):
     )
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_every_approval_action_is_painted_and_focusable(request):
+async def _verify_every_approval_action_is_painted_and_focusable(request):
     """Check every geometry on the real screen without repeat app startup.
 
     Args:
@@ -106,9 +112,7 @@ async def test_every_approval_action_is_painted_and_focusable(request):
             assert {button.id for button in buttons} <= focused
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_reflow_preserves_decision_and_reused_round_controls(request):
+async def _verify_reflow_preserves_decision_and_reused_round_controls(request):
     """Preserve choices, focus and control identity across resize and round reuse.
 
     Args:
@@ -156,9 +160,7 @@ async def test_reflow_preserves_decision_and_reused_round_controls(request):
             _assert_painted(host, card, button)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_height_only_resize_reflows_existing_controls(request):
+async def _verify_height_only_resize_reflows_existing_controls(request):
     """Short terminals must retain painted actions even with Inspect closed.
 
     Args:
@@ -189,3 +191,27 @@ async def test_height_only_resize_reflows_existing_controls(request):
         await pilot.pause(0.3)
         assert not card.has_class("approval-compact")
         assert card.query_one(Select) is select and select.value == "deny"
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_compact_approval_layout_journeys(request: pytest.FixtureRequest) -> None:
+    """Run each compact approval journey with independent app ownership.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+    """
+    for verify in (
+        _verify_every_approval_action_is_painted_and_focusable,
+        _verify_reflow_preserves_decision_and_reused_round_controls,
+        _verify_height_only_resize_reflows_existing_controls,
+    ):
+        try:
+            await verify(request)
+        finally:
+            drain_active_service_patches()
+            drain_created_dirs()
+            gc.unfreeze()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()

@@ -17865,3 +17865,15 @@ A peer review then reproduced a placed chat being deleted when its UI callback
 raised before a later source Close reached the worker. Record UI admission
 before calling the current sink; preserve an admitted result and its original
 exception. Soft-delete is compensation, not physical transaction rollback.
+
+
+### End-key scroll checks need animation completion before pixel assertions
+
+PR2953's private-process timing baseline failed the existing short-height Close
+geometry assertion after End: scroll_y was positive, but the bottom consequence
+was not yet painted. The initial234.08s receipt records7 passes/1 failure; it is
+not a successful timing baseline. Waiting on Textual Pilot's existing
+wait_for_scheduled_animations after the same positive-scroll check preserves
+every pixel assertion and passes both long-title journeys in the original node
+and the later complete grouped files. A positive scroll offset proves motion
+started; wait for actual animation completion before asserting final pixels.

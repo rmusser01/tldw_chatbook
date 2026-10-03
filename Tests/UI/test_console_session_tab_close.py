@@ -725,9 +725,7 @@ async def _arm_pending_round(controller, kind: str, session_id: str):
         return asyncio.create_task(asyncio.to_thread(request))
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_background_pending_close_names_consequences_and_cancels_only_its_owner(
+async def _verify_background_pending_close_names_consequences_and_cancels_only_its_owner(
     request,
 ):
     """TASK-33621.16: real background rounds, run cancellation and physical Close.
@@ -881,9 +879,7 @@ async def test_background_pending_close_names_consequences_and_cancels_only_its_
                 await asyncio.wait_for(asyncio.shield(round_task), 5)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_background_pending_close_releases_round_without_an_active_turn(
+async def _verify_background_pending_close_releases_round_without_an_active_turn(
     request: pytest.FixtureRequest,
 ) -> None:
     """Release both real standalone decisions without an owning cancel signal.
@@ -946,9 +942,7 @@ async def test_background_pending_close_releases_round_without_an_active_turn(
                 await asyncio.wait_for(asyncio.gather(sibling, pending), 5)
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_chat_create_enrichment_cannot_arm_after_its_session_closes(
+async def _verify_chat_create_enrichment_cannot_arm_after_its_session_closes(
     request, monkeypatch
 ):
     """A worker returning from fork enrichment must observe the committed Close.
@@ -1049,9 +1043,7 @@ async def _verify_failed_confirmed_close_reoffers_confirmation_without_retrying(
             runtime._voice_promotion_owner = previous_owner
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80x24(
+async def _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24(
     request,
 ):
     """Keep named Close controls reachable while long consequences scroll.
@@ -1149,6 +1141,7 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                 assert await _settle(
                     pilot, lambda container=container: container.scroll_y > 0
                 )
+                await pilot.wait_for_scheduled_animations()
                 painted = "\n".join(
                     strip.text for strip in dialog._compositor.render_strips()
                 )
@@ -1169,9 +1162,7 @@ async def test_all_close_consequences_keep_named_title_and_actions_painted_at_80
                 assert await worker.wait() is False
 
 
-@pytest.mark.asyncio
-@private_profile_test
-async def test_progress_close_failure_reconciles_fleet_before_confirmed_retry(
+async def _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry(
     request,
     tmp_path,
     monkeypatch,
@@ -1528,6 +1519,55 @@ async def test_session_close_failure_and_retry_journeys(
         (_verify_a_refusal_the_user_can_act_on_shows_its_own_reason, {}),
         (_verify_failure_after_the_close_landed_says_so_and_leaves_no_dead_tab, {}),
         (_verify_failed_confirmed_close_reoffers_confirmation_without_retrying, {}),
+    ):
+        try:
+            with monkeypatch.context() as patch:
+                if "monkeypatch" in kwargs:
+                    kwargs["monkeypatch"] = patch
+                await verify(request, **kwargs)
+        finally:
+            drain_active_service_patches()
+            drain_created_dirs()
+            gc.unfreeze()
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", ResourceWarning)
+                gc.collect()
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_session_close_pending_race_and_fleet_journeys(
+    request: pytest.FixtureRequest,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run pending, race, geometry and fleet scenarios with fresh owners.
+
+    Args:
+        request: Pytest request selecting the isolated private-profile child.
+        tmp_path: Parent directory for the fleet scenarios' private databases.
+        monkeypatch: Fixture providing a separate patch context per scenario.
+    """
+    fleet_dir = tmp_path / "fleet-close"
+    fleet_dir.mkdir()
+    for verify, kwargs in (
+        (
+            _verify_background_pending_close_names_consequences_and_cancels_only_its_owner,
+            {},
+        ),
+        (_verify_background_pending_close_releases_round_without_an_active_turn, {}),
+        (
+            _verify_chat_create_enrichment_cannot_arm_after_its_session_closes,
+            {"monkeypatch": monkeypatch},
+        ),
+        (
+            _verify_all_close_consequences_keep_named_title_and_actions_painted_at_80x24,
+            {},
+        ),
+        (
+            _verify_progress_close_failure_reconciles_fleet_before_confirmed_retry,
+            {"tmp_path": fleet_dir, "monkeypatch": monkeypatch},
+        ),
     ):
         try:
             with monkeypatch.context() as patch:

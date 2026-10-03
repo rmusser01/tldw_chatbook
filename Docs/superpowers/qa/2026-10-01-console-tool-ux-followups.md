@@ -728,3 +728,34 @@ Fresh full preflight and zero-new Ruff34 pass. Original147-case and native
 receipts retain identities; no functional/native replay is claimed for strings.
 QA `close_contract_doc_review_followup` records exact byte/semantic proof.
 Fresh final-head CI/Qodo and current dev still precede normal protected merge.
+
+
+Remaining private-startup reduction and paint synchronization (2026-10-03 UTC)
+
+C88 and998d UI jobs hit the unchanged20-minute limit at88%/96%, with no
+reported assertion failure; both Close files cost about251s. Eight remaining
+separate pending/race/fleet/geometry and compact-approval scenarios now run in
+two ordinary private wrappers. All eight complete bodies and145 assertions
+remain; the older nine Close navigation/recovery scenarios retain their two
+existing wrappers. Each scenario retains fresh owners, scoped patches, distinct
+fleet DB paths and existing factory drain/unfreeze/GC cleanup. No production,
+CI, timeout, budget, counter or canary change.
+
+The initial timing baseline records7 passes/1 geometry failure in234.08s and
+is not a successful paired timing baseline. End had started scrolling before
+the final consequence was painted. The sole scenario-body correction awaits
+Textual's existing scheduled-animation completion before unchanged pixel
+assertions; the original geometry node then passes both titles in28.84s.
+Both complete grouped files pass all17 existing journeys in4 private wrappers,
+zero failures/errors/skips, in225.76s; slowest wrapper102.851s under the unchanged
+180s cap. These samples cannot guarantee the hosted20-minute job completes.
+
+Independent read-only AST/isolation review has no actionable findings. All34
+preexisting function signatures/bodies match apart from the one animation wait.
+Of233 current preceding pins,232 retain bytes, the Close test changes and the
+approval test is additionally pinned (234 total). Other production/helper source pins and
+original147-case/native receipts keep identities; no replay is claimed beyond
+these affected files. Fresh preflight, zero-new Ruff34, range format and diff
+checks pass. QA remaining_private_startup_followup records exact hashes,
+real red/green receipts, review and limitations. Fresh final-head gates/Qodo
+and current dev remain required before protected normal merge.

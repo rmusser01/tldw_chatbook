@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-03 00:53'
+updated_date: '2026-10-03 02:08'
 labels:
   - performance
   - ci
@@ -87,6 +87,16 @@ Reason: Rebase unchanged Console patches onto audit-only dev; no application, te
 1. Verify all seven upstream paths are audit files, retain the upstream audit changes and rebase all29 Console patches unchanged.
 2. Prove all233 qualified source pins unchanged, run fresh preflight and zero-new lint, and preserve prior147-case/native receipt identities without claiming a functional replay.
 3. Record the base/source proof, safe-push and require fresh final-head Qodo, all four gates and up-to-date dev before a normal protected merge.
+
+Repeated final-head UI timeout follow-up (c88/998d):
+ADR required: no
+ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: Reduce repeated private interpreter setup within existing selected mounted tests; no application, authority, CI, deadline or budget change.
+1. Preserve exact failure logs: c88 hit20m at88%,998d at96%, without assertion failures; both Close groups cost251s. Measure the five separate pending/race/fleet/geometry children and three compact-approval children serially in fresh private profiles.
+2. If measured setup cost warrants it, group existing complete bodies behind bounded private wrappers, keeping fresh apps/controllers/stores/workers, scoped monkeypatch contexts, distinct database paths and existing factory cleanup between scenarios. Prove all eight scenario-body ASTs and assertions unchanged; retain180-second child and20-minute job deadlines.
+3. Run both complete affected files, compare actual timings, check cleanup/isolation, run zero-new lint/range-format and fresh artifact preflight. Preserve original functional/native evidence identities with precise fixture-equivalence limits. Safe-push and require fresh final-head Qodo/all four gates and current dev before protected normal merge.
+
+Baseline exposed a real geometry-test synchronization race: End starts the scroll animation, but scroll_y >0 becomes true before the bottom consequence is painted. Preserve the red234.08s receipt (7 pass/1 failure, not a successful timing baseline). Before grouping, await the existing Textual scheduled-animation completion after the same positive-scroll check and before unchanged paint assertions; verify the original geometry node and prove this one added await is the sole scenario-body change.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -131,6 +141,8 @@ Latest dev e6ab66b0 (PR2959/TASK33801 known-work idle-check optimization) integr
 Qodo c3c3fc77 documentation correction adds Google-style summaries/Args to three existing Close button tests, documenting request and saved-history tmp_path. Whole executable module AST, decorators and signatures remain identical after removing only the new docstrings; compile and private collection of all3 nodes pass. Audit finds no other modified private-profile tests missing request docs. Zero-new Ruff34, doc-range format/diff check and fresh preflight pass. All232 prior trace-work source pins unchanged, with the documented test file additionally pinned (233). Original147-case/native/46/65/230 receipts keep identities; collection is not functional replay and no logic/native rerun is claimed for strings. No ADR required (documentation only). QA fixture_doc_review_followup records hashes/limits; final published-head CI/Qodo/normal merge remains PR2953.
 
 Audit-only dev2612fc56 (PR2925) retained all seven upstream audit paths; all29 PR patches and233 qualified source pins unchanged. Fresh full preflight and zero-new Ruff34 pass. No app/test/CI/budget/boundary change or new ADR (N/A). Original147-case/native receipts retain identities; no functional replay claimed. Preceding c88 UI job hit20m at88% with no reported assertion failure and comparable groups25–34% slower than successful c814. Preserve limits/coverage and require fresh final-head gates/resolved Qodo before protected normal merge. QA audit_only_dev_rebase records proof and explicit limits.
+
+Repeated c88/998d UI timeouts at88%/96% showed no assertions; both Close files cost251s. Remaining8 mounted scenarios now use2 private wrappers, preserving8 complete bodies/145 assertions, fresh owners, scoped patches, distinct fleet DB paths and existing drain/unfreeze/GC; original9 Close scenarios retain2 wrappers. Initial234.08s timing baseline is7 pass/1 geometry failure, not a successful paired timing baseline. Added only existing Pilot animation-completion wait before unchanged pixel assertions; original geometry node passes28.84s. Complete affected files pass all17 journeys in4 wrappers,225.76s, max102.851s, zero failures/errors/skips. Independent AST/isolation review clear; all34 old function signatures/bodies preserved except that await.232/233 prior pins unchanged; Close test updated and approval test newly pinned,234 current. Other production/helper source pins and native/147-case identities retained; no full suite or extra native replay. Fresh preflight, zero-new Ruff34/range format pass; unchanged180s/20m limits/CI/budgets. Existing ADR-094/126 apply, no new ADR. QA remaining_private_startup_followup and actual animation lesson record evidence/limits. Fresh final-head gates/Qodo/current dev still required for normal merge.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
