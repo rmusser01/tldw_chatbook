@@ -121,9 +121,10 @@ class LibraryConversationsState:
     reader_loaded_metadata: Mapping[str, Any] = field(default_factory=dict)
     reader_selected_metadata: Mapping[str, Any] = field(default_factory=dict)
     find_focus_intent: tuple[int, int, str] | None = None
-    #: (conversation id, list request generation) whose loaded transcript
-    #: is current for that list read (TASK-33628.10).
-    reader_checked_read: tuple[str, int] | None = None
+    #: (list request generation, reader generation): a transcript loaded at
+    #: or past that reader generation is current for that list read
+    #: (TASK-33628.10).
+    reader_checked_read: tuple[int, int] | None = None
     reader_mounted_authority: bool = False
     deleted_selection_id: str = ""
     projection: str = ""
