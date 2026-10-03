@@ -1,7 +1,7 @@
 # ADR-086: Share an adaptive reader shell within Library destinations
 
 Status: Accepted
-Amended by: [ADR-211](211-shared-adaptive-pane-shell.md) (accepted 2026-10-02)
+Amended by: [ADR-212](212-shared-adaptive-pane-shell.md) (accepted 2026-10-02)
 Date: 2026-08-24
 Amended: 2026-08-25 by TASK-22857
 Related Tasks: TASK-22031, TASK-22032, TASK-22033, TASK-22034, TASK-22857
