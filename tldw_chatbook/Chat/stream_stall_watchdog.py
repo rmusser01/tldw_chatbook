@@ -39,6 +39,11 @@ DEFAULT_STALL_TIMEOUT_SECONDS = 90.0
 #: is surfaced instead of silently continuing (AC#4).
 DEFAULT_STALL_WARN_THRESHOLD = 2
 
+#: TASK-34100.5 AC#5: a self-hosted model's FIRST token can take minutes (a
+#: cold load plus CPU prompt processing). Gaps between tokens keep the stall
+#: window; only the wait for the first one is longer.
+DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS = 300.0
+
 
 class StreamStallError(RuntimeError):
     """A stream produced no new content within the stall timeout (AC#3).
@@ -51,13 +56,70 @@ class StreamStallError(RuntimeError):
         provider: Optional provider label for the message.
     """
 
-    def __init__(self, timeout_seconds: float, provider: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        timeout_seconds: float,
+        provider: Optional[str] = None,
+        *,
+        first_token: bool = False,
+    ) -> None:
         self.timeout_seconds = float(timeout_seconds)
         self.provider = provider
+        #: True when NO content ever arrived (the first-token window expired).
+        self.first_token = bool(first_token)
         detail = f" (provider={provider})" if provider else ""
+        what = "no first token" if self.first_token else "no content"
         super().__init__(
-            f"stream produced no content for {self.timeout_seconds:g}s{detail}"
+            f"stream produced {what} for {self.timeout_seconds:g}s{detail}"
         )
+
+
+def first_token_timeout_seconds(
+    provider: Optional[str], *, stall_timeout: float
+) -> Optional[float]:
+    """The window for a stream's FIRST item (TASK-34100.5 AC#5).
+
+    Precedence follows the project rule env -> config.toml -> default:
+    ``TLDW_FIRST_TOKEN_TIMEOUT_SECONDS``, then ``[chat_defaults]
+    first_token_timeout_seconds``, then
+    :data:`DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS` for self-hosted
+    (keyless) providers and the stall window for everything else. Never
+    shorter than the stall window; ``None`` when the watchdog is disabled.
+
+    Args:
+        provider: Provider key of the call.
+        stall_timeout: The between-items stall window in force.
+
+    Returns:
+        Seconds to wait for the first item, or ``None`` (watchdog off).
+    """
+    import math
+    import os
+
+    if stall_timeout is None or stall_timeout <= 0:
+        return None
+    raw: object = os.environ.get("TLDW_FIRST_TOKEN_TIMEOUT_SECONDS")
+    if raw is None or not str(raw).strip():
+        from tldw_chatbook.config import get_cli_setting
+
+        raw = get_cli_setting("chat_defaults", "first_token_timeout_seconds", None)
+    value: Optional[float] = None
+    if raw is not None and str(raw).strip():
+        try:
+            value = float(raw)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            value = None
+        if value is not None and not math.isfinite(value):
+            value = None
+    if value is None:
+        from tldw_chatbook.Chat.provider_readiness import (
+            KEYLESS_PROVIDER_KEYS,
+            provider_config_key,
+        )
+
+        local = provider_config_key(provider or "") in KEYLESS_PROVIDER_KEYS
+        value = DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS if local else stall_timeout
+    return max(float(value), float(stall_timeout))
 
 
 async def watch_content_stalls(
@@ -65,6 +127,7 @@ async def watch_content_stalls(
     timeout_seconds: Optional[float],
     *,
     provider: Optional[str] = None,
+    first_item_timeout_seconds: Optional[float] = None,
 ) -> AsyncIterator[_T]:
     """Yield items from ``source``, tripping on a content stall.
 
@@ -74,6 +137,8 @@ async def watch_content_stalls(
             non-positive value disables the watchdog (pass-through).
         provider: Optional provider label carried on a raised
             :class:`StreamStallError`.
+        first_item_timeout_seconds: A longer window for the FIRST item only
+            (a cold local model); ``None`` uses ``timeout_seconds`` for it.
 
     Yields:
         Each item from ``source`` unchanged; every item resets the clock.
@@ -88,10 +153,16 @@ async def watch_content_stalls(
         async for item in it:
             yield item
         return
+    first = True
     try:
         while True:
+            window = (
+                first_item_timeout_seconds
+                if first and first_item_timeout_seconds
+                else timeout_seconds
+            )
             try:
-                item = await asyncio.wait_for(it.__anext__(), timeout_seconds)
+                item = await asyncio.wait_for(it.__anext__(), window)
             except StopAsyncIteration:
                 return
             except asyncio.TimeoutError:
@@ -100,7 +171,8 @@ async def watch_content_stalls(
                 # source, which unwinds an async-generator consumer. (A sync
                 # provider blocked inside a wedged read is not aborted by that
                 # close -- see TASK-30015; the run is freed regardless.)
-                raise StreamStallError(timeout_seconds, provider)
+                raise StreamStallError(window, provider, first_token=first)
+            first = False
             yield item
     finally:
         # A consumer that breaks/cancels out of the loop must not leak the

@@ -557,11 +557,18 @@ def console_turn_activity_text(
     if step is None:
         label = CONSOLE_GENERATING_PLACEHOLDER
         started_at = getattr(usage, "started_at", None)
-        elapsed = (
-            _format_fleet_elapsed(max(0.0, now - started_at))
-            if started_at is not None
-            else ""
-        )
+        waited = max(0.0, now - started_at) if started_at is not None else None
+        elapsed = _format_fleet_elapsed(waited) if waited is not None else ""
+        if (
+            waited is not None
+            and waited >= _FIRST_TOKEN_HINT_AFTER_SECONDS
+            and not usage_label
+        ):
+            # TASK-34100.5 AC#5: no token yet -- say so, with the cold-load
+            # hint and the way out, instead of an unchanging "Generating…".
+            return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
+                (CONSOLE_TURN_ACTIVITY_FIRST_TOKEN, elapsed, _FIRST_TOKEN_HINT)
+            )
         segments = (label, elapsed, usage_label)
         return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
             segment for segment in segments if segment
@@ -584,6 +591,13 @@ def console_turn_activity_text(
     return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
         segment for segment in segments if segment
     )
+
+
+#: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
+#: "Generating…" (a warm model answers well inside this).
+_FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
+CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for the model to start answering"
+_FIRST_TOKEN_HINT = "a large local model can take a few minutes to load · Stop: Esc"
 
 
 def _live_usage_label(usage: Any) -> str:

@@ -3738,9 +3738,11 @@ class _StreamingModelAdapter:
                 ),
             )
             from tldw_chatbook.Chat.stream_stall_watchdog import (
+                first_token_timeout_seconds,
                 watch_content_stalls,
             )
 
+            stall_timeout = _stall_timeout_seconds()
             async for chunk in watch_content_stalls(
                 self._gateway.stream_chat(
                     effective_resolution,
@@ -3751,8 +3753,13 @@ class _StreamingModelAdapter:
                     capture_mode=self._capture_mode,
                     **stream_kwargs,
                 ),
-                _stall_timeout_seconds(),
+                stall_timeout,
                 provider=effective_resolution.provider,
+                # TASK-34100.5 AC#5: a cold local model's first token waits
+                # longer than the gap between tokens.
+                first_item_timeout_seconds=first_token_timeout_seconds(
+                    effective_resolution.provider, stall_timeout=stall_timeout
+                ),
             ):
                 synthetic = emission_synthetic is True
                 emission_synthetic = None
