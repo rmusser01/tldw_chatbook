@@ -1893,8 +1893,8 @@ class ChatScreen(BaseAppScreen):
     # directly over the Console composer's Send/Attach/Save cluster and the
     # staged-chip strip — and toasts intercept clicks, so a click aimed at those
     # controls during a ~5s toast dismisses the toast instead of pressing the
-    # button. Dock the Console screen's toast rack to the TOP-right so feedback
-    # never obscures, or swallows clicks aimed at, the composer's controls.
+    # button. Dock the Console toast rack TOP-right, below the nav, header and
+    # control rows (5 cells, TASK-34100.5), clear of the composer's controls.
     # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
     # real app and ConsolidatedCSSApp-based test harnesses, which load the
     # generated widget-defaults sheet but not necessarily the full CSS_PATH
@@ -1903,7 +1903,7 @@ class ChatScreen(BaseAppScreen):
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 1;
+        margin-top: 5;
         margin-bottom: 0;
     }
     """
