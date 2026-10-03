@@ -1,6 +1,6 @@
-# ADR-211: Share the adaptive pane shell across destinations (Library and Roleplay)
+# ADR-212: Share the adaptive pane shell across destinations (Library and Roleplay)
 
-Status: Accepted 2026-10-02 (owner-approved design spec, PR #2960). The number is provisional until merge: re-run the all-remotes sweep and renumber if 211 is taken (`backlog/docs/lessons-backlog-hygiene.md`, "ADR numbers collide across concurrent branches").
+Status: Accepted 2026-10-02 (owner-approved design spec, PR #2960). Numbered 212 at merge: the plan's provisional 211 was taken by open PR #2918 (`211-ephemeral-provider-failure-presentation.md`), found by the 2026-10-03 all-remotes sweep (`backlog/docs/lessons-backlog-hygiene.md`, "ADR numbers collide across concurrent branches").
 Date: 2026-10-02
 Task: [TASK-33910.1](../tasks/task-33910.1%20-%20Roleplay-frame-B0-shared-pane-shell-primitives-and-the-frame-ADR-no-visible-change.md)
 Spec: [Roleplay on the Library frame (sub-project B)](../../Docs/superpowers/specs/2026-10-02-roleplay-library-frame-design.md), sections 2.1, 2.12, 4.3, 5.9 (G1, G1a, G1b, G2, G3, G15, G16) and 5.10
