@@ -143,6 +143,21 @@ async def test_encrypt_change_and_turn_off_from_the_card(cfg) -> None:
         assert cfg.verify_config_encryption_password(PASSWORD_B) is True
         assert cfg.verify_config_encryption_password(PASSWORD_A) is False
 
+        # Turn off with the WRONG password (review round 2, R2-F9): refused
+        # inline by the card's own verify gate, file untouched, still on.
+        before = path.read_bytes()
+        app.query_one(f"#{card_module.DISABLE_BUTTON_ID}", Button).press()
+        await _submit_dialog(pilot, app, **{"password-input": PASSWORD_A})
+        await _settle(
+            pilot,
+            app,
+            lambda: _text(app, "#settings-encryption-result")
+            == card_module.RESULT_WRONG_PASSWORD,
+        )
+        assert path.read_bytes() == before
+        assert "On —" in _text(app, "#settings-encryption-state")
+        assert not _disabled(app, card_module.DISABLE_BUTTON_ID)
+
         # Turn off: asks for the current master password.
         app.query_one(f"#{card_module.DISABLE_BUTTON_ID}", Button).press()
         await _submit_dialog(pilot, app, **{"password-input": PASSWORD_B})
