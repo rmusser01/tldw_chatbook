@@ -199,6 +199,75 @@ async def test_private_and_mixed_resolution_rejected():
 
 
 @pytest.mark.asyncio
+async def test_cgnat_shared_space_rejected():
+    # TASK-610: RFC 6598 100.64.0.0/10 (CGNAT/shared space -- Tailscale and
+    # carrier-grade NAT) is NOT is_private on Python 3.12, so the six named
+    # predicates all pass it; only a not-is_global floor catches it. Pin the
+    # standard unreachable-host error for a hostname resolving there, for
+    # the Alibaba metadata endpoint that sits inside the same /10, and for
+    # the raw IP literal.
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes("https://cgnat.example/x.zip",
+                              transport=_transport(lambda r: httpx.Response(200)),
+                              resolver=lambda h: ["100.64.0.1"])
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes("https://meta.example/x.zip",
+                              transport=_transport(lambda r: httpx.Response(200)),
+                              resolver=lambda h: ["100.100.100.200"])
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes("https://100.64.0.1/x.zip",
+                              transport=_transport(lambda r: httpx.Response(200)),
+                              resolver=_PUB)
+
+
+@pytest.mark.asyncio
+async def test_mixed_public_and_cgnat_rejected():
+    # A mixed A/AAAA-style resolution (one public, one CGNAT) must reject:
+    # every address has to be global, not just the first one the resolver
+    # returned.
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes("https://mixed-cgnat.example/x.zip",
+                              transport=_transport(lambda r: httpx.Response(200)),
+                              resolver=lambda h: ["93.184.216.34", "100.127.255.255"])
+
+
+def test_host_allow_shares_the_egress_address_predicate():
+    # TASK-609: skill_remote_fetch and Utils/egress route through ONE shared
+    # address-classification predicate, so the two SSRF layers cannot drift
+    # on which address categories are rejected. Every category must agree in
+    # both directions, and the task-610 CGNAT rejection must survive inside
+    # the shared predicate.
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import _assert_host_allowed
+    from tldw_chatbook.Utils.egress import address_is_fetchable
+
+    fetchable = ["93.184.216.34", "1.1.1.1", "2606:4700::6810:85e5", "192.0.0.9"]
+    not_fetchable = [
+        "10.0.0.5", "127.0.0.1", "169.254.1.1", "0.0.0.0", "224.0.0.1",
+        "100.64.0.1", "100.100.100.200", "2001:db8::1", "250.1.2.3",
+        "64:ff9b::7f00:1", "::ffff:10.0.0.1", "fd00:ec2::254",
+    ]
+    for ip in fetchable:
+        assert address_is_fetchable(ip), ip
+        _assert_host_allowed(ip, resolver=_PUB)  # IP literal: resolver unused
+    for ip in not_fetchable:
+        assert not address_is_fetchable(ip), ip
+        with pytest.raises(RemoteSkillError, match="not reachable"):
+            _assert_host_allowed(ip, resolver=_PUB)
+
+
+@pytest.mark.asyncio
+async def test_nat64_host_rejected_per_hop():
+    # TASK-609 reconciliation: a hostname resolving into the NAT64
+    # well-known prefix -- is_global yet is_reserved, and able to embed
+    # loopback/private IPv4 (64:ff9b::7f00:1 IS 127.0.0.1) -- is rejected
+    # with the standard unreachable-host error, matching Utils/egress.
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        await fetch_zip_bytes("https://nat64.example/x.zip",
+                              transport=_transport(lambda r: httpx.Response(200)),
+                              resolver=lambda h: ["64:ff9b::7f00:1"])
+
+
+@pytest.mark.asyncio
 async def test_redirect_hop_revalidated_and_capped():
     def handler(request):
         host = request.url.host
