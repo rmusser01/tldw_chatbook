@@ -3,7 +3,7 @@ id: TASK-32171
 title: >-
   test_focus_traversal_builds_zero_bodies_for_pass_through_rows fails ~1-in-8 on
   an unchanged tree (genuine nondeterminism, not a load flake)
-status: In Progress
+status: Done
 assignee:
   - '[rmusser01]'
 created_date: '2026-09-09 10:03'
