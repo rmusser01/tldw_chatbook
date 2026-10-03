@@ -31,7 +31,6 @@ from textual.css.query import QueryError
 from tldw_chatbook.config import (
     load_cli_config_and_ensure_existence,
     load_settings,
-    set_encryption_password,
 )
 from tldw_chatbook.css import build_css, widget_css
 from tldw_chatbook.Logging_Config import configure_application_logging
@@ -383,6 +382,19 @@ def _run_module_main() -> None:
 
     _set_launch_cwd()
 
+    # TASK-34100.4: unlock through the SAME pre-TUI startup unlock as
+    # `tldw-cli` (Backup_Recovery.launcher.startup_unlock: strict decrypt,
+    # retry, forgotten-password reset). This path used to run a private
+    # Textual PasswordPromptApp that awaited a wait_for_dismiss push outside a
+    # worker, crashed with NoActiveWorker, printed config frame locals
+    # (including the password verifier) and exited 1 on every encrypted
+    # launch. It runs first, before anything loads or writes config.
+    from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
+
+    stopped = startup_unlock()
+    if stopped is not None:
+        raise SystemExit(stopped)
+
     # Initialize logging first
     early_logging_app = initialize_early_logging()  # noqa: F841 -- verbatim
 
@@ -475,83 +487,6 @@ def _run_module_main() -> None:
 
         except Exception as e_css_main:
             logging.error(f"Error handling CSS file: {e_css_main}", exc_info=True)
-
-    # --- Check for encrypted config (config will be created if it doesn't exist) ---
-    try:
-        config_data = load_cli_config_and_ensure_existence()
-        encryption_config = config_data.get("encryption", {})
-
-        if encryption_config.get("enabled", False):
-            loguru_logger.info("Config file encryption is enabled. Password required.")
-
-            # Import password dialog dependencies here to avoid circular imports
-            import asyncio  # noqa: F401 -- verbatim; was a module-scope rebind
-            from textual.app import App
-            from tldw_chatbook.Widgets.password_dialog import PasswordDialog
-
-            class PasswordPromptApp(App):
-                """Minimal app to prompt for password."""
-
-                def __init__(self):
-                    super().__init__()
-                    self.password = None
-
-                async def on_mount(self) -> None:
-                    """Show password dialog immediately on mount."""
-                    password = await self.push_screen(
-                        PasswordDialog(
-                            mode="unlock",
-                            title="Unlock Configuration",
-                            message="Enter your master password to decrypt the configuration file.",
-                            on_submit=lambda p: None,
-                            on_cancel=lambda: None,
-                        ),
-                        wait_for_dismiss=True,
-                    )
-
-                    if password:
-                        # Verify password
-                        from tldw_chatbook.Utils.config_encryption import (
-                            config_encryption,
-                        )
-
-                        password_verifier = encryption_config.get(
-                            "password_verifier", ""
-                        )
-                        if password_verifier and config_encryption.verify_password(
-                            password, password_verifier
-                        ):
-                            self.password = password
-                            self.exit()
-                        else:
-                            self.notify(
-                                "Invalid password. Please try again.", severity="error"
-                            )
-                            # Re-show the dialog
-                            await self.on_mount()
-                    else:
-                        # User cancelled
-                        loguru_logger.error(
-                            "Password required but not provided. Exiting."
-                        )
-                        self.exit()
-
-            # Run the password prompt app
-            password_app = PasswordPromptApp()
-            password_app.run()
-
-            if password_app.password:
-                # Set the password for the session
-                set_encryption_password(password_app.password)
-                loguru_logger.info("Configuration decrypted successfully.")
-            else:
-                # Exit if no password provided
-                loguru_logger.error("Cannot proceed without decryption password.")
-                sys.exit(1)
-
-    except Exception as e:
-        loguru_logger.error(f"Error checking config encryption: {e}")
-        # Continue without encryption if there's an error
 
     # task-1650: resolve textual_image's rendering protocol NOW, while the
     # terminal still answers escape queries. Textual takes raw mode in
