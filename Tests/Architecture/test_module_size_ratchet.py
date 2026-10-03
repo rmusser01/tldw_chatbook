@@ -159,11 +159,18 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3182,
     # TASK-34100.1: the modules the wizard's steps moved into, each born
     # governed at its exact size so the split cannot regrow one god module a
-    # step at a time. A fix that needs room puts its code in a new helper
-    # module beside the step, never in a raised row.
+    # step at a time. Review round 1 added the two first-run modules that had
+    # no row: the Voice step (moved out by TASK-33921) and the step guard,
+    # which owns contained errors, fenced focus and the worker helpers.
+    # So a fix to a step is net-zero in that step's module: new code goes in a
+    # new helper module beside the step (first_run_<step>_<topic>.py), never
+    # in a raised row. That is the room the split made: a fix lands beside a
+    # small step module, not inside one 9,866-line module at its limit.
     "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2466,
     "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
+    "tldw_chatbook/UI/Wizards/first_run_voice_step.py": 1070,
     "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
+    "tldw_chatbook/UI/Wizards/first_run_step_guard.py": 850,
     "tldw_chatbook/UI/Wizards/first_run_setup_widgets.py": 495,
     "tldw_chatbook/UI/Wizards/first_run_summary_step.py": 469,
     "tldw_chatbook/UI/Wizards/first_run_appearance_step.py": 291,
