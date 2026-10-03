@@ -197,9 +197,7 @@ class TestConvertedSitesStillLogUnderDebug:
                 f"{error_sentinel} path={database_path} credential=PRIVATE_TOKEN"
             )
 
-        monkeypatch.setattr(
-            media_db_module, "connect_private_sqlite", fail_connection
-        )
+        monkeypatch.setattr(media_db_module, "connect_private_sqlite", fail_connection)
         loguru_output = io.StringIO()
         stdlib_output = io.StringIO()
         stdlib_handler = logging.StreamHandler(stdlib_output)

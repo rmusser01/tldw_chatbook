@@ -33,7 +33,11 @@ DEFAULT_MODEL_PATTERNS = {
             "context_window": 128000,
         },  # gpt-4o, gpt-40, gpt-4o-mini
         {"pattern": r"^gpt-4.*turbo", "vision": True, "context_window": 128000},
-        {"pattern": r"^gpt-4\.1", "vision": True, "context_window": 1047576},  # gpt-4.1 series
+        {
+            "pattern": r"^gpt-4\.1",
+            "vision": True,
+            "context_window": 1047576,
+        },  # gpt-4.1 series
         {
             "pattern": r"^o[34](?:-mini)?",
             "vision": True,
@@ -42,9 +46,21 @@ DEFAULT_MODEL_PATTERNS = {
         {"pattern": r"^dall-e", "vision": True, "image_generation": True},
     ],
     "Anthropic": [
-        {"pattern": r"^claude-3", "vision": True, "context_window": 200000},  # All Claude 3 models have vision
-        {"pattern": r"^claude.*opus-4", "vision": True, "context_window": 200000},  # Claude Opus 4 series
-        {"pattern": r"^claude.*sonnet-4", "vision": True, "context_window": 200000},  # Claude Sonnet 4 series
+        {
+            "pattern": r"^claude-3",
+            "vision": True,
+            "context_window": 200000,
+        },  # All Claude 3 models have vision
+        {
+            "pattern": r"^claude.*opus-4",
+            "vision": True,
+            "context_window": 200000,
+        },  # Claude Opus 4 series
+        {
+            "pattern": r"^claude.*sonnet-4",
+            "vision": True,
+            "context_window": 200000,
+        },  # Claude Sonnet 4 series
     ],
     "Google": [
         {"pattern": r"gemini.*vision", "vision": True},
@@ -88,7 +104,11 @@ DEFAULT_MODEL_CAPABILITIES = {
     # OpenAI
     "gpt-4-vision-preview": {"vision": True, "max_images": 1, "context_window": 128000},
     "gpt-4-turbo": {"vision": True, "max_images": 10, "context_window": 128000},
-    "gpt-4-turbo-2024-04-09": {"vision": True, "max_images": 10, "context_window": 128000},
+    "gpt-4-turbo-2024-04-09": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 128000,
+    },
     "gpt-4o": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-4o-mini": {"vision": True, "max_images": 10, "context_window": 128000},
     "gpt-5.6-terra": {"vision": True, "max_images": 10},
@@ -96,14 +116,42 @@ DEFAULT_MODEL_CAPABILITIES = {
     "o4-mini-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
     "o3-2025-04-16": {"vision": True, "max_images": 10, "context_window": 200000},
     "o3-mini-2025-01-31": {"vision": True, "max_images": 10, "context_window": 200000},
-    "gpt-4.1-mini-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
-    "gpt-4.1-nano-2025-04-14": {"vision": True, "max_images": 10, "context_window": 1047576},
+    "gpt-4.1-mini-2025-04-14": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 1047576,
+    },
+    "gpt-4.1-nano-2025-04-14": {
+        "vision": True,
+        "max_images": 10,
+        "context_window": 1047576,
+    },
     # Anthropic
-    "claude-3-opus-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-sonnet-20240229": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-haiku-20240307": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-5-sonnet-20240620": {"vision": True, "max_images": 5, "context_window": 200000},
-    "claude-3-5-sonnet-20241022": {"vision": True, "max_images": 5, "context_window": 200000},
+    "claude-3-opus-20240229": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-sonnet-20240229": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-haiku-20240307": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-5-sonnet-20240620": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
+    "claude-3-5-sonnet-20241022": {
+        "vision": True,
+        "max_images": 5,
+        "context_window": 200000,
+    },
     "claude-sonnet-5": {"vision": True, "max_images": 5},
     # Google
     "gemini-pro-vision": {"vision": True, "max_images": 1, "context_window": 12288},
@@ -200,7 +248,8 @@ def _anthropic_model_family(model: object) -> Optional[Tuple[str, int, Optional[
 
 
 def _anthropic_family_matches(
-    model: object, families: frozenset  # frozenset[Tuple[str, int, Optional[int]]]
+    model: object,
+    families: frozenset,  # frozenset[Tuple[str, int, Optional[int]]]
 ) -> bool:
     """Return whether ``model`` parses into one of ``families``.
 
@@ -845,15 +894,12 @@ def resolve_deepseek_effective_model(model: Optional[str]) -> Optional[str]:
     from tldw_chatbook.config import get_runtime_config_snapshot
 
     try:
-        api_settings = get_runtime_config_snapshot().values.get(
-            "api_settings", {}
-        )
+        api_settings = get_runtime_config_snapshot().values.get("api_settings", {})
         deepseek_config = api_settings.get("deepseek", {})
         resolved = deepseek_config.get("model", _DEEPSEEK_DEFAULT_MODEL)
     except Exception:  # noqa: BLE001 - a budget gate must never crash a call
         logger.warning(
-            "DeepSeek default model resolution failed; assuming the "
-            "documented default."
+            "DeepSeek default model resolution failed; assuming the documented default."
         )
         return _DEEPSEEK_DEFAULT_MODEL
     if isinstance(resolved, str) and resolved.strip():
@@ -1024,7 +1070,9 @@ class ModelCapabilities:
         else:
             provider_key = self._provider_key_by_lower.get((provider or "").lower())
             if provider_key is not None:
-                for pattern, pattern_capabilities in self._compiled_patterns[provider_key]:
+                for pattern, pattern_capabilities in self._compiled_patterns[
+                    provider_key
+                ]:
                     if pattern.match(model):
                         capabilities = pattern_capabilities.copy()
                         logger.debug(

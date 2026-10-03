@@ -93,9 +93,7 @@ async def test_the_rail_can_collapse_and_expand_every_section_from_the_keyboard(
         def open_flags() -> dict[str, bool]:
             return {
                 section_id: bool(
-                    screen.query_one(
-                        f"#console-rail-section-header-{section_id}"
-                    ).open
+                    screen.query_one(f"#console-rail-section-header-{section_id}").open
                 )
                 for section_id in section_ids
             }

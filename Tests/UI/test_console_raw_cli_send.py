@@ -117,6 +117,7 @@ def _controller(
         return object()
 
     if restore_stash is None:
+
         def default_restore_stash(
             session_id: str | None, stash: ConsoleDraftStash
         ) -> bool:
@@ -125,11 +126,13 @@ def _controller(
 
         restore_stash = default_restore_stash
     if append_local_error is None:
+
         def default_append_local_error(session_id: str | None, text: str) -> None:
             errors.append((session_id, text))
 
         append_local_error = default_append_local_error
     if marshal_to_ui is None:
+
         def default_marshal_to_ui(callback: Any, *args: Any) -> None:
             callback(*args)
 
@@ -256,15 +259,12 @@ def test_raw_cli_persisted_anchor_rejects_leaf_owned_by_another_session() -> Non
         content="first-session leaf",
         persist=False,
     )
-    store._nodes_by_session[first.id][leaf.id].persisted_message_id = (
-        "persisted-leaf-a"
-    )
+    store._nodes_by_session[first.id][leaf.id].persisted_message_id = "persisted-leaf-a"
     screen = SimpleNamespace(_ensure_console_chat_store=lambda: store)
 
     assert _raw_cli_persisted_leaf_anchor(screen, second.id, leaf.id) is None
     assert (
-        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id)
-        == "persisted-leaf-a"
+        _raw_cli_persisted_leaf_anchor(screen, first.id, leaf.id) == "persisted-leaf-a"
     )
 
 
@@ -481,13 +481,16 @@ def test_refusal_restore_requires_active_and_visible_origin_ownership() -> None:
     stash = _stash("! pwd")
     composer = _Composer("session b")
 
-    assert restore_refused_raw_cli_stash(
-        None,
-        stash,
-        composer=composer,
-        active_session_id="session-b",
-        visible_session_id="session-b",
-    ) is False
+    assert (
+        restore_refused_raw_cli_stash(
+            None,
+            stash,
+            composer=composer,
+            active_session_id="session-b",
+            visible_session_id="session-b",
+        )
+        is False
+    )
     assert composer.restored == []
 
 
@@ -574,7 +577,9 @@ async def test_escaped_and_untrusted_bang_prefixes_follow_ordinary_chat(
     assert dispatched_stash.raw_cli_prefix_typed is False
     assert (dispatched_stash is not stash) is expected_parse
     if expected_parse:
-        assert "".join(segment.text for segment in dispatched_stash.segments) == expected
+        assert (
+            "".join(segment.text for segment in dispatched_stash.segments) == expected
+        )
 
 
 @pytest.mark.asyncio
@@ -727,9 +732,7 @@ async def test_marshaled_raw_completion_after_runtime_dispose_is_fenced(
     marshalled: list[tuple[Any, tuple[Any, ...]]] = []
     restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
 
-    def refuse_restore(
-        session_id: str | None, stash: ConsoleDraftStash
-    ) -> bool:
+    def refuse_restore(session_id: str | None, stash: ConsoleDraftStash) -> bool:
         restore_attempts.append((session_id, stash))
         return False
 
@@ -765,9 +768,7 @@ async def test_direct_refusal_and_banked_restore_after_dispose_are_fenced(
     owner = ConsoleRuntime(type("App", (), {})())
     restore_attempts: list[tuple[str | None, ConsoleDraftStash]] = []
 
-    def refuse_restore(
-        session_id: str | None, stash: ConsoleDraftStash
-    ) -> bool:
+    def refuse_restore(session_id: str | None, stash: ConsoleDraftStash) -> bool:
         restore_attempts.append((session_id, stash))
         return False
 

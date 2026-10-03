@@ -149,9 +149,7 @@ def _columns(conn: sqlite3.Connection, table: str) -> tuple[str, ...]:
 def _indexes(conn: sqlite3.Connection) -> set[str]:
     return {
         row[0]
-        for row in conn.execute(
-            "SELECT name FROM sqlite_schema WHERE type = 'index'"
-        )
+        for row in conn.execute("SELECT name FROM sqlite_schema WHERE type = 'index'")
     }
 
 
@@ -224,14 +222,10 @@ def _build_v1(path: Path, *, fail_version_write: bool = False) -> None:
 def test_v1_to_v2_schema_is_a_shipped_migration_artifact() -> None:
     module_path = Path(__file__).parents[2] / "tldw_chatbook" / "DB"
     migration_path = (
-        module_path
-        / "migrations"
-        / "subscriptions_v1_to_v2_briefing_provenance.sql"
+        module_path / "migrations" / "subscriptions_v1_to_v2_briefing_provenance.sql"
     )
 
-    assert "CREATE TABLE briefing_items" in migration_path.read_text(
-        encoding="utf-8"
-    )
+    assert "CREATE TABLE briefing_items" in migration_path.read_text(encoding="utf-8")
     assert "SUBSCRIPTIONS_V1_TO_V2_SQL =" not in (
         module_path / "Subscriptions_DB.py"
     ).read_text(encoding="utf-8")
@@ -262,7 +256,9 @@ def test_v1_to_v2_migration_uses_shared_immediate_transaction(
 
 def test_fresh_database_is_direct_v2_with_one_version_row(tmp_path: Path) -> None:
     db = SubscriptionsDB(tmp_path / "fresh.db")
-    assert [tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")] == [(2,)]
+    assert [
+        tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")
+    ] == [(2,)]
     assert "selection_position" in _columns(db.conn, "briefing_items")
     assert "item_effective_date" in _columns(db.conn, "briefing_items")
     assert {
@@ -279,7 +275,9 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     _build_v1(path)
 
     db = SubscriptionsDB(path)
-    assert [tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")] == [(2,)]
+    assert [
+        tuple(row) for row in db.conn.execute("SELECT version FROM schema_version")
+    ] == [(2,)]
     row = dict(db.conn.execute("SELECT * FROM briefing_items").fetchone())
     assert row["item_id"] == 11
     assert row["live_item_id"] == 11
@@ -324,12 +322,19 @@ def test_v1_upgrade_snapshots_legacy_rows_reconciles_duplicates_and_reopens(
     db.close()
 
     reopened = SubscriptionsDB(path)
-    assert [tuple(row) for row in reopened.conn.execute("SELECT version FROM schema_version")] == [(2,)]
-    assert reopened.conn.execute("SELECT COUNT(*) FROM briefing_items").fetchone()[0] == 1
+    assert [
+        tuple(row)
+        for row in reopened.conn.execute("SELECT version FROM schema_version")
+    ] == [(2,)]
+    assert (
+        reopened.conn.execute("SELECT COUNT(*) FROM briefing_items").fetchone()[0] == 1
+    )
     reopened.close()
 
 
-def test_v1_upgrade_failure_rolls_back_table_rebuild_and_version(tmp_path: Path) -> None:
+def test_v1_upgrade_failure_rolls_back_table_rebuild_and_version(
+    tmp_path: Path,
+) -> None:
     path = tmp_path / "rollback-v1.db"
     _build_v1(path, fail_version_write=True)
 
@@ -391,21 +396,27 @@ def test_two_database_owners_resolve_source_run_claim_and_terminal_releases_it(
 
     assert receipts[0]["id"] == receipts[1]["id"]
     assert sorted(receipt["_claim_acquired"] for receipt in receipts) == [False, True]
-    assert first.conn.execute(
-        "SELECT COUNT(*) FROM local_watchlist_runs WHERE status IN ('queued', 'running')"
-    ).fetchone()[0] == 1
+    assert (
+        first.conn.execute(
+            "SELECT COUNT(*) FROM local_watchlist_runs WHERE status IN ('queued', 'running')"
+        ).fetchone()[0]
+        == 1
+    )
     completed = first.transition_watchlist_run(
         int(receipts[0]["id"]),
         status="completed",
         finished_at="2026-08-10T00:01:00+00:00",
     )
     assert completed is not None
-    assert first.transition_watchlist_run(
-        int(receipts[0]["id"]),
-        status="failed",
-        finished_at="2026-08-10T00:01:30+00:00",
-        error_msg="late loser",
-    ) is None
+    assert (
+        first.transition_watchlist_run(
+            int(receipts[0]["id"]),
+            status="failed",
+            finished_at="2026-08-10T00:01:30+00:00",
+            error_msg="late loser",
+        )
+        is None
+    )
     assert tuple(
         first.conn.execute(
             "SELECT status, error_msg FROM local_watchlist_runs WHERE id = ?",
@@ -482,9 +493,7 @@ def test_source_claim_does_not_hide_non_unique_integrity_error(tmp_path: Path) -
     source_id = db.add_subscription(
         name="Claimed", type="rss", source="https://example.test/feed"
     )
-    db.accept_watchlist_run(
-        source_id, created_at="2026-08-10T00:00:00+00:00"
-    )
+    db.accept_watchlist_run(source_id, created_at="2026-08-10T00:00:00+00:00")
 
     with pytest.raises(sqlite3.IntegrityError) as raised:
         db.accept_watchlist_run(source_id, created_at=None)  # type: ignore[arg-type]
@@ -521,9 +530,12 @@ def test_two_database_owners_resolve_briefing_claim_and_terminal_releases_it(
         int(receipts[0]["id"]), status="failed", error="interrupted"
     )
     assert failed is not None
-    assert first.transition_briefing(
-        int(receipts[0]["id"]), status="empty", error="late loser"
-    ) is None
+    assert (
+        first.transition_briefing(
+            int(receipts[0]["id"]), status="empty", error="late loser"
+        )
+        is None
+    )
     assert first.get_briefing(int(receipts[0]["id"]))["status"] == "failed"
     assert first.get_briefing(int(receipts[0]["id"]))["error"] == "interrupted"
     replacement = second.accept_briefing(
@@ -544,9 +556,7 @@ def test_briefing_claim_has_no_stale_winner_resolution_gap(tmp_path: Path) -> No
         watchlist_id = conn.execute(
             "INSERT INTO watchlists (name) VALUES ('Claimed')"
         ).lastrowid
-    first = winner.accept_briefing(
-        watchlist_id, created_at="2026-08-10T00:00:00+00:00"
-    )
+    first = winner.accept_briefing(watchlist_id, created_at="2026-08-10T00:00:00+00:00")
     gap_seen = threading.Event()
     accept_finished = threading.Event()
     terminalized = threading.Event()
@@ -598,9 +608,7 @@ def test_briefing_claim_does_not_hide_non_unique_integrity_error(
         watchlist_id = conn.execute(
             "INSERT INTO watchlists (name) VALUES ('Claimed')"
         ).lastrowid
-    db.accept_briefing(
-        watchlist_id, created_at="2026-08-10T00:00:00+00:00"
-    )
+    db.accept_briefing(watchlist_id, created_at="2026-08-10T00:00:00+00:00")
 
     with pytest.raises(sqlite3.IntegrityError) as raised:
         db.accept_briefing(watchlist_id, created_at=None)  # type: ignore[arg-type]

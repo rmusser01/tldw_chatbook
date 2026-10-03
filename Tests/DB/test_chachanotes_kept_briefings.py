@@ -781,9 +781,7 @@ def test_kept_script_counts_returns_correct_counts_for_multiple_briefings(
             turns_json="[]",
         )
 
-        counts = db.kept_script_counts(
-            [two_scripts_id, one_script_id, zero_scripts_id]
-        )
+        counts = db.kept_script_counts([two_scripts_id, one_script_id, zero_scripts_id])
 
         assert counts == {
             two_scripts_id: 2,
@@ -870,9 +868,7 @@ def test_v28_database_migrates_to_v29_and_gains_kept_tables(
     path = tmp_path / "migrated.sqlite"
     _seed_v28_database(path, monkeypatch)
 
-    db = open_current_chachanotes_from_legacy(
-        path, client_id="kept-migrated"
-    )
+    db = open_current_chachanotes_from_legacy(path, client_id="kept-migrated")
     try:
         connection = db.get_connection()
         # See the dynamic-assertion note above: cost ticker PR1 bumped the

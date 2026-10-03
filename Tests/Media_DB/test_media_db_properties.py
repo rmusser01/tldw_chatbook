@@ -23,6 +23,7 @@ from tldw_chatbook.DB.Client_Media_DB_v2 import (
     fetch_keywords_for_media,
     empty_trash,
 )
+
 MEDIA_DB_SETTINGS = settings(
     suppress_health_check=[
         HealthCheck.too_slow,
@@ -542,9 +543,7 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         assert total == 5
         assert {r["id"] for r in results} == set(seeded_ids)
 
-    def test_large_allowlist_excludes_ids_outside_it(
-        self, db_instance: MediaDatabase
-    ):
+    def test_large_allowlist_excludes_ids_outside_it(self, db_instance: MediaDatabase):
         in_scope_id, _, _ = db_instance.add_media_with_keywords(
             title="In scope",
             media_type="document",
@@ -589,9 +588,7 @@ class TestLargeMediaIdsFilterUsesJsonEach:
         connection.set_trace_callback(captured_sql.append)
 
         try:
-            large_allowlist = [media_id] + list(
-                range(3_000_000, 3_000_000 + 999)
-            )
+            large_allowlist = [media_id] + list(range(3_000_000, 3_000_000 + 999))
             db_instance.search_media_db(
                 search_query=None,
                 media_ids_filter=large_allowlist,

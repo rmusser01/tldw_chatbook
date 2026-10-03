@@ -47,9 +47,7 @@ class AutoSpeakHarness:
         self.destination_gate: asyncio.Event | None = None
         self.destination_resolutions = 0
         self.schedule_failures = 0
-        self.opened: list[
-            tuple[AutoSpeakConsentModal, Callable[[bool], None]]
-        ] = []
+        self.opened: list[tuple[AutoSpeakConsentModal, Callable[[bool], None]]] = []
         self.spoken: list[str] = []
         self.expected_destinations: list[str | None] = []
         self.outcomes: list[Callable[[bool], None]] = []
@@ -177,7 +175,9 @@ def test_console_wiring_opens_auto_speak_consent_on_owning_app() -> None:
 
 
 @pytest.mark.asyncio
-async def test_enabling_auto_speak_confirms_destination_without_replaying_greeting() -> None:
+async def test_enabling_auto_speak_confirms_destination_without_replaying_greeting() -> (
+    None
+):
     harness = AutoSpeakHarness()
 
     harness.coordinator.request_enabled(True)
@@ -217,7 +217,9 @@ async def test_new_active_reply_dispatches_exactly_once() -> None:
 
 
 @pytest.mark.asyncio
-async def test_destination_change_requires_one_reconfirmation_and_drops_extra_reply() -> None:
+async def test_destination_change_requires_one_reconfirmation_and_drops_extra_reply() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     harness.destination = ConsoleTTSDestination(
@@ -385,7 +387,9 @@ async def test_unmount_unsubscribes_and_stale_callbacks_are_noops() -> None:
 
 
 @pytest.mark.asyncio
-async def test_concurrent_enable_requests_share_one_destination_lookup_and_modal() -> None:
+async def test_concurrent_enable_requests_share_one_destination_lookup_and_modal() -> (
+    None
+):
     harness = AutoSpeakHarness()
     harness.destination_gate = asyncio.Event()
 
@@ -400,7 +404,9 @@ async def test_concurrent_enable_requests_share_one_destination_lookup_and_modal
 
 
 @pytest.mark.asyncio
-async def test_modal_open_failure_releases_enable_reservation_and_keeps_state_truthful() -> None:
+async def test_modal_open_failure_releases_enable_reservation_and_keeps_state_truthful() -> (
+    None
+):
     harness = AutoSpeakHarness()
     harness.open_error = True
 
@@ -416,7 +422,9 @@ async def test_modal_open_failure_releases_enable_reservation_and_keeps_state_tr
 
 
 @pytest.mark.asyncio
-async def test_unmount_while_destination_lookup_is_blocked_never_prompts_or_dispatches() -> None:
+async def test_unmount_while_destination_lookup_is_blocked_never_prompts_or_dispatches() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     harness.destination = ConsoleTTSDestination(
@@ -474,7 +482,9 @@ async def test_enable_modal_acceptance_drops_after_active_session_a_b_a_cycle() 
 
 
 @pytest.mark.asyncio
-async def test_failure_after_unmount_still_persists_pause_for_same_opt_in_epoch() -> None:
+async def test_failure_after_unmount_still_persists_pause_for_same_opt_in_epoch() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     message = await harness.complete_reply("Speech starts before unmount.")
@@ -624,7 +634,9 @@ async def test_regeneration_waits_for_prior_speech_then_dispatches_once() -> Non
 
 
 @pytest.mark.asyncio
-async def test_pending_regeneration_reconfirms_changed_destination_before_speech() -> None:
+async def test_pending_regeneration_reconfirms_changed_destination_before_speech() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     message = await harness.complete_reply("First destination.")
@@ -673,8 +685,9 @@ async def test_regeneration_pending_behind_failed_speech_stays_paused() -> None:
 
 
 @pytest.mark.asyncio
-async def test_regeneration_destination_await_rechecks_failure_pause_before_dispatch(
-) -> None:
+async def test_regeneration_destination_await_rechecks_failure_pause_before_dispatch() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     message = await harness.complete_reply("First answer.")
@@ -696,8 +709,9 @@ async def test_regeneration_destination_await_rechecks_failure_pause_before_disp
 
 
 @pytest.mark.asyncio
-async def test_same_id_restore_accepts_new_completion_and_drops_old_generation(
-) -> None:
+async def test_same_id_restore_accepts_new_completion_and_drops_old_generation() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     message = await harness.complete_reply("Original answer.")
@@ -826,7 +840,9 @@ async def test_retry_stale_failed_message_id_fails_closed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_retry_ownership_is_independent_per_session_and_resume_is_scoped() -> None:
+async def test_retry_ownership_is_independent_per_session_and_resume_is_scoped() -> (
+    None
+):
     harness = AutoSpeakHarness()
     await harness.enable()
     first = await harness.complete_reply("A failed reply.")

@@ -50,7 +50,9 @@ def _seed_schema(connection: sqlite3.Connection) -> tuple[object, ...]:
     ).fetchone()
     assert table_sql is not None
     return (
-        tuple(tuple(row) for row in connection.execute(f"PRAGMA table_info({SEED_TABLE})")),
+        tuple(
+            tuple(row) for row in connection.execute(f"PRAGMA table_info({SEED_TABLE})")
+        ),
         str(table_sql[0]),
     )
 
@@ -91,18 +93,30 @@ def test_real_v60_reopen_adds_empty_content_free_seed_state(tmp_path: Path) -> N
         assert CharactersRAGDB._CURRENT_SCHEMA_VERSION >= 61
         assert _schema_version(connection) == CharactersRAGDB._CURRENT_SCHEMA_VERSION
         assert SEED_TABLE in _table_names(connection)
-        assert tuple(
-            str(row[1]) for row in connection.execute(f"PRAGMA table_info({SEED_TABLE})")
-        ) == EXPECTED_COLUMNS
-        assert connection.execute(f"SELECT COUNT(*) FROM {SEED_TABLE}").fetchone()[0] == 0
+        assert (
+            tuple(
+                str(row[1])
+                for row in connection.execute(f"PRAGMA table_info({SEED_TABLE})")
+            )
+            == EXPECTED_COLUMNS
+        )
+        assert (
+            connection.execute(f"SELECT COUNT(*) FROM {SEED_TABLE}").fetchone()[0] == 0
+        )
         assert _organization_counts(connection) == before_counts
         for name in ("Agent_Lessons", "agent-lesson"):
-            assert connection.execute(
-                "SELECT COUNT(*) FROM note_folders WHERE name = ?", (name,)
-            ).fetchone()[0] == 0
-            assert connection.execute(
-                "SELECT COUNT(*) FROM keywords WHERE keyword = ?", (name,)
-            ).fetchone()[0] == 0
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM note_folders WHERE name = ?", (name,)
+                ).fetchone()[0]
+                == 0
+            )
+            assert (
+                connection.execute(
+                    "SELECT COUNT(*) FROM keywords WHERE keyword = ?", (name,)
+                ).fetchone()[0]
+                == 0
+            )
 
         connection.execute(
             f"INSERT INTO {SEED_TABLE}("
@@ -165,7 +179,14 @@ def test_real_v60_reopen_adds_empty_content_free_seed_state(tmp_path: Path) -> N
                 f"INSERT INTO {SEED_TABLE}("
                 "profile_id, dataset_id, scope_mode, state, folder_sync_id, seed_fingerprint"
                 ") VALUES (?, ?, ?, ?, ?, ?)",
-                ("profile-b", "dataset-b", "synchronized", "unknown", None, "NOT-A-DIGEST"),
+                (
+                    "profile-b",
+                    "dataset-b",
+                    "synchronized",
+                    "unknown",
+                    None,
+                    "NOT-A-DIGEST",
+                ),
             )
         connection.commit()
     finally:
@@ -246,9 +267,7 @@ def test_seed_fingerprint_is_opaque_and_service_category_owned() -> None:
             )
         stored = {
             str(row[0])
-            for row in connection.execute(
-                f"SELECT seed_fingerprint FROM {SEED_TABLE}"
-            )
+            for row in connection.execute(f"SELECT seed_fingerprint FROM {SEED_TABLE}")
         }
         columns = {
             str(row[1])

@@ -419,8 +419,7 @@ class TestFailingStepRollsBack:
         finally:
             connection.close()
         assert not leftovers, (
-            f"an interrupted base-schema apply left objects behind: "
-            f"{sorted(leftovers)}"
+            f"an interrupted base-schema apply left objects behind: {sorted(leftovers)}"
         )
 
         monkeypatch.undo()

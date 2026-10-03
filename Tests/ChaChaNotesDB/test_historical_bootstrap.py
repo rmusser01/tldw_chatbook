@@ -110,9 +110,7 @@ def test_bootstrap_at_version_then_replay_matches_fresh_bootstrap(
         )
         assert recorded == stop_version
 
-    migrated = open_current_chachanotes_from_legacy(
-        db_path, client_id="sweep-client"
-    )
+    migrated = open_current_chachanotes_from_legacy(db_path, client_id="sweep-client")
     try:
         migrated_conn = migrated.get_connection()
         version = migrated_conn.execute(
