@@ -1291,7 +1291,15 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             "test_sitemap_crawl_trusted_origins.py",
             "test_github_api_client.py",
             "test_download_caps_wiring.py",
-            "test_settings_probe_egress.py",
+            "test_settings_probe_egress.py",            # TASK-21233: the subscriptions FTS-backfill collision canary
+            # drives the real SubscriptionsDB from a worker thread; the
+            # thread-local connection created there resolves config through
+            # the guarded loader, and under the per-test env redirect the
+            # bound config selection no longer matches (same admission
+            # signature as test_hosted_chat.py above). The file's other
+            # tests are tmp_path DB-level tests that do not depend on the
+            # redirect.
+            "test_fts_backfill.py",
         }
     )
     test_data_dir = (
