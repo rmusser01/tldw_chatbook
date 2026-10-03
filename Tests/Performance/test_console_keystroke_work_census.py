@@ -48,6 +48,10 @@ KEYSTROKES = 24
 SEEDED_MESSAGES = 200
 
 
+#: The census profile's saved key (also the known-evidence connection's).
+CENSUS_API_KEY = "sk-census-000000000000000000000000000000000000"
+
+
 def _scratch_env(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, *, quiet_scheduler: bool = False
 ) -> None:
@@ -74,7 +78,7 @@ def _scratch_env(
         "[_first_run]\nsetup_completed = true\n\n"
         "[splash_screen]\nenabled = false\n\n"
         "[api_settings.openai]\n"
-        'api_key = "sk-census-000000000000000000000000000000000000"\n'
+        f'api_key = "{CENSUS_API_KEY}"\n'
         + (
             "\n[scheduling]\nscheduler_poll_interval_seconds = 3600.0\n"
             if quiet_scheduler
@@ -205,6 +209,7 @@ async def _census(
     seeded_messages: int,
     *,
     storage_units: bool = False,
+    known_evidence: bool = False,
 ) -> dict[str, int]:
     """Boot Console, seed a transcript, type, and return a call census.
 
@@ -217,6 +222,9 @@ async def _census(
             warm Console visit (``<phase>:<unit>`` keys; see
             ``_census_idle_and_visit``). Holds the wall-clock loops still for
             the burst; off, the derivation census runs exactly as before.
+        known_evidence: First settle a test result for the active connection
+            into the app's shared evidence owner, so every readiness build
+            looks it up and finds it (TASK-33005.2 AC#6).
 
     Returns:
         Mapping of counter name to calls observed during the typing burst
@@ -347,11 +355,14 @@ async def _census(
     # TASK-24301: the derivation legs. Patched on the modules the Console
     # session controller resolves them through, so a call that routes around
     # the memo is still seen.
-    _count_calls(
-        settings_module,
-        "build_console_settings_readiness",
-        "settings_readiness_builds",
-    )
+    # TASK-33005 final review I-6: ChatScreen and the defaults module bind the
+    # builder at import, so patching only its home module counted 0 forever.
+    from tldw_chatbook.Chat import console_settings_defaults as defaults_module
+
+    for module in (settings_module, screen_module, defaults_module):
+        _count_calls(
+            module, "build_console_settings_readiness", "settings_readiness_builds"
+        )
     _count_calls(
         session_module,
         "default_console_session_settings",
@@ -408,6 +419,9 @@ async def _census(
         screen = pilot.app.screen
         screen._active_console_settings_context_estimate()
         screen._build_console_cost_state()
+        if known_evidence:
+            _settle_known_connection_evidence(pilot.app, screen)
+            await _settle(pilot, passes=10)  # Its one refresh is not typing.
 
         # The composer is the DEFAULT focus at rest; never call focus() here.
         # The first Input in walk order is a settings field, and a probe that
@@ -417,14 +431,16 @@ async def _census(
             f"{type(pilot.app.focused).__name__}"
         )
 
+        # Hold the wall-clock timers still for the burst, as trace maintenance
+        # is above. The 0.25 s credential poll builds readiness each tick
+        # (billed per tick by the ``idle`` phase): left running, the slower
+        # 400-message run billed more ticks to typing (34 vs 39 builds).
+        screen._stop_console_credential_poll_timer()
         if storage_units:
-            # Hold the wall-clock timers still for the burst, as trace
-            # maintenance is above: the 0.25 s credential poll (billed per
-            # tick by the ``idle`` phase) and the 0.2 s trailing draft-spend
-            # refresh, which a loaded machine that leaves a >0.2 s gap
-            # between two presses fires mid-burst (measured: 49 config
-            # admissions, not 27); the ``pause`` phase fires it exactly once.
-            screen._stop_console_credential_poll_timer()
+            # The 0.2 s trailing draft-spend refresh, which a loaded machine
+            # that leaves a >0.2 s gap between two presses fires mid-burst
+            # (measured: 49 config admissions, not 27); the ``pause`` phase
+            # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
         counting["on"] = True
@@ -436,6 +452,43 @@ async def _census(
             await _census_idle_and_visit(pilot, counts, counting, trace_maintenance)
 
     return counts
+
+
+def _settle_known_connection_evidence(app: Any, screen: Any) -> None:
+    """Settle a reachable result for the census's openai connection.
+
+    The poll absorbs the owner's new version once here, so the measured idle
+    ticks bill only the steady-state lookup, not the one refresh it causes.
+    """
+    from tldw_chatbook.Chat.console_provider_endpoints import (
+        effective_provider_endpoint,
+    )
+    from tldw_chatbook.Chat.provider_endpoint_contract import (
+        canonical_connection_identity,
+    )
+    from tldw_chatbook.Chat.provider_test_evidence import (
+        ProviderDraftIdentity,
+        ProviderProbeResult,
+        ProviderTestEvidenceStore,
+        connection_credential_revision,
+    )
+
+    store = ProviderTestEvidenceStore(lambda: app)
+    identity = ProviderDraftIdentity(
+        provider_key="openai",
+        connection_identity=canonical_connection_identity(
+            "openai", effective_provider_endpoint("openai", None, {})
+        ),
+        credential_source="stored",
+        credential_revision=connection_credential_revision(CENSUS_API_KEY),
+        draft_generation=0,
+    )
+    store.settle(store.begin(identity), ProviderProbeResult("reachable", ("gpt-4o",)))
+    screen._poll_console_credential_readiness()
+    assert screen._active_console_settings_readiness()[1].connection == identity, (
+        "census evidence missed the active connection: every build would look "
+        "it up and miss, so the evidence-hit cost would go unmeasured"
+    )
 
 
 #: Ticks each idle phase drives.
@@ -662,12 +715,29 @@ async def test_keystroke_work_does_not_scale_with_transcript_length(
         ]
     )
 
-    assert empty == loaded, (
+    # TASK-33374: ``context_estimate_max_rows`` is the largest input to any
+    # context-estimate call, and whether Textual coalesces a one-row draft
+    # repaint into the counting window is timing-dependent -- it read 1 for
+    # the EMPTY transcript and 0 for 400 messages, the opposite of scaling.
+    # The O(N) signal is that count reaching the transcript size, which the
+    # <= 1 bounds below catch; every other key must match exactly.
+    # TASK-33005 final review I-6: readiness builds (0 until every binding was
+    # counted) ride the same trailing draft repaint: 25 and 25 on a quiet run,
+    # 25 and 31-34 with six runs in parallel. Readiness never reads the
+    # transcript, so they are bounded per key below instead.
+    timing_bound = {"context_estimate_max_rows", "settings_readiness_builds"}
+    exact_empty = {k: v for k, v in empty.items() if k not in timing_bound}
+    exact_loaded = {k: v for k, v in loaded.items() if k not in timing_bound}
+    assert exact_empty == exact_loaded, (
         f"per-keystroke work differs with transcript length: empty={empty}, "
         f"400 messages={loaded}. Something on the keystroke path is O(N) in "
         "the number of messages, which is what makes long conversations feel "
         "slower to type in than new ones."
     )
+    assert empty["context_estimate_max_rows"] <= 1
+    for census in (empty, loaded):
+        builds = census["settings_readiness_builds"] / KEYSTROKES
+        assert 0 < builds <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, census
 
     for key in (
         "snapshot_rows",
@@ -721,6 +791,8 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
         "a pure function of (app_config, provider, model) and is memoised "
         "across passes; a non-zero count means something bypassed the memo."
     )
+    # Anti-vacuity (TASK-33005 final review I-6): measured 25 per 24 keys.
+    assert readiness_per_key > 0, "no readiness build counted: an unpatched binding"
     assert readiness_per_key <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY, (
         f"{readiness_per_key:.2f} readiness builds per keystroke (budget "
         f"{MAX_SETTINGS_READINESS_BUILDS_PER_KEY}). Readiness is deliberately "
@@ -803,11 +875,22 @@ OS_OPENS_JITTER_SLACK = 1.05
 
 @pytest.mark.ui
 @pytest.mark.asyncio
+@pytest.mark.parametrize("known_evidence", [False, True], ids=["untested", "tested"])
 @private_profile_test
 async def test_console_storage_units_stay_within_their_ratchets(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, request: pytest.FixtureRequest
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    request: pytest.FixtureRequest,
+    known_evidence: bool,
 ) -> None:
     """Typing, an idle tick and a warm visit pay no more storage units than pinned.
+
+    ``tested`` runs the same census with a settled test result for the active
+    connection in the shared evidence owner (TASK-33005.2 AC#6): reading it
+    must not raise a ceiling pinned without it, nor the readiness builds per
+    keystroke. Each build's own provider-config reads with and without
+    evidence are pinned equal by
+    ``test_shared_evidence_adds_no_provider_config_reads``.
 
     The derivation counters above read 0 per key while each key ran 27-69
     guarded ``load_settings`` calls (the 2026-09-27 structural audit): this
@@ -820,7 +903,17 @@ async def test_console_storage_units_stay_within_their_ratchets(
         tmp_path: pytest fixture; the scratch tree's root.
         request: pytest fixture; carries the census as user properties.
     """
-    counts = await _census(monkeypatch, tmp_path, seeded_messages=0, storage_units=True)
+    counts = await _census(
+        monkeypatch,
+        tmp_path,
+        seeded_messages=0,
+        storage_units=True,
+        known_evidence=known_evidence,
+    )
+    assert (
+        counts["settings_readiness_builds"] / KEYSTROKES
+        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
+    )
     measured = {
         "typing (whole burst)": (
             {unit: counts[unit] for unit in IO_UNITS},

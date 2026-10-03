@@ -1310,6 +1310,31 @@ async def test_leaving_settings_discard_leaves_without_saving(request):
 
 @pytest.mark.asyncio
 @private_profile_test
+async def test_a_leave_prompt_closed_without_an_answer_stays(request):
+    """TASK-33622.10 review: only an explicit Discard discards (fail closed).
+
+    A ``ThemeLeaveModal`` dismissed with no answer -- a generic pop, or a
+    third party's bare ``dismiss()`` -- used to fall through to Discard, and
+    on the quit path that silently dropped the theme edits.
+    """
+    from tldw_chatbook.Widgets.settings_theme_editor import ThemeLeaveModal
+
+    host = _host()
+    async with host.run_test(size=(190, 55)) as pilot:
+        settings, editor = await _dirty_theme_editor(host, pilot)
+        decision = settings.run_worker(settings.confirm_navigation(), exit_on_error=False)
+        await pilot.pause(0.2)
+        assert isinstance(host.screen, ThemeLeaveModal)
+        host.screen.dismiss(None)
+        await pilot.pause(0.2)
+        await decision.wait()
+        assert decision.result is False
+        assert host.screen is settings
+        assert editor.is_modified and editor.current_theme_name == "leave_test"
+
+
+@pytest.mark.asyncio
+@private_profile_test
 async def test_leaving_settings_save_writes_then_leaves(request):
     from tldw_chatbook.config import get_user_themes_dir
 

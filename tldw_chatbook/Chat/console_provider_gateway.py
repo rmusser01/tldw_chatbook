@@ -707,6 +707,9 @@ class ConsoleProviderStreamSignals:
         init=False,
         repr=False,
     )
+    provider_work_callback: (
+        Callable[[asyncio.Future[Any], Callable[[], Any]], bool] | None
+    ) = field(default=None, repr=False, kw_only=True)
     model_retry_callback: Callable[[], None] | None = field(
         default=None,
         repr=False,
@@ -769,13 +772,13 @@ class ConsoleProviderStreamSignals:
     ) -> bool:
         """Expose real provider work to an owner that needs cleanup custody.
 
-        Ordinary Console streams have no attempt lifecycle, so their default
-        signal ignores this hook. Attempt-local signals override it without
-        widening this class's audited slot inventory.
+        The callback retains actual gateway futures; cancellation of a stream
+        consumer must not cancel those futures or imply their completion.
+        Attempt-local signals may override this hook with their existing owner.
         """
 
-        del completion, force_close
-        return False
+        callback = self.provider_work_callback
+        return callback(completion, force_close) if callback is not None else False
 
     def mark_synthetic_fallback(self) -> None:
         """Record that locally synthesized fallback copy was emitted."""

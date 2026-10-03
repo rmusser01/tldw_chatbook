@@ -218,10 +218,21 @@ class SettingsEndpointProbeOutcome:
         return self._legacy_model_count
 
 
+def _listing_not_permitted() -> ProviderProbeResult:
+    """A 403 on a model listing: this credential may not LIST models, which
+    says nothing about chatting, so it blocks nothing and verifies nothing.
+    Only a 401 rejects a key (owner ruling 2026-10-02, PR #2958 review)."""
+    return ProviderProbeResult("model_listing_unavailable", (), "http_status")
+
+
 def provider_probe_result_from_settings_outcome(
     outcome: SettingsEndpointProbeOutcome,
 ) -> ProviderProbeResult:
     """Project the shared transport outcome into bounded provider evidence.
+
+    Every local listing probe (Settings 't' on a URL provider, Chat settings'
+    Test connection, the Switch model probe) records through here, so a 403
+    reads as the cloud key check's does: listing not permitted, non-blocking.
 
     Args:
         outcome: Validated result from the shared Settings endpoint probe.
@@ -235,6 +246,8 @@ def provider_probe_result_from_settings_outcome(
 
     if type(outcome) is not SettingsEndpointProbeOutcome:
         raise ValueError("Provider probe outcome is invalid.")
+    if outcome.category == "forbidden":
+        return _listing_not_permitted()
     endpoint = {
         SpeechTTSConnectionState.REACHABLE: "reachable",
         SpeechTTSConnectionState.UNREACHABLE: "unreachable",
@@ -246,6 +259,61 @@ def provider_probe_result_from_settings_outcome(
         model_ids=outcome.model_ids,
         category=outcome.category,
     )
+
+
+def key_check_probe_result(
+    result: object, *, key_sent: bool, model: str = ""
+) -> ProviderProbeResult | None:
+    """Project one explicit cloud key-check listing into bounded evidence.
+
+    TASK-33005.4 (ADR-012 amendment 2026-09-26): Settings 't' lists a cloud
+    provider's models with the draft key. A listing that returned model ids
+    accepted the key it was sent; only a 401 rejects it. A server that gave
+    no usable list -- no model ids, any other HTTP status (403, 404, 429,
+    5xx) or an unreadable body -- checked nothing and blocks nothing: a 429
+    says nothing about whether a send would work (TASK-33005 final review
+    I-4), and a 403 means this key may not list models, not that it cannot
+    chat (Qodo #2958, owner ruling 2026-10-02).
+
+    Args:
+        result: The ``ModelDiscoveryResult`` of the listing.
+        key_sent: Whether the request carried a key.
+        model: The chosen model, kept inside the 100-id evidence bound.
+
+    Returns:
+        The evidence, or ``None`` when no request was sent (no listing
+        configured, no supported listing, or a settings problem).
+    """
+    error = getattr(result, "error", None)
+    kind = getattr(error, "kind", None)
+    category = getattr(error, "category", None)
+    if getattr(result, "status", None) == "success":
+        listed = [str(model_entry.model_id) for model_entry in result.models]
+        if model in listed:
+            listed.insert(0, model)
+        model_ids = model_ids_from_payload(listed) or ()
+        if not model_ids:  # An empty list proves nothing about the key.
+            return ProviderProbeResult("model_listing_unavailable", ())
+        return ProviderProbeResult("reachable", model_ids, key_accepted=key_sent)
+    if kind == "missing_credentials":
+        if not key_sent:
+            return ProviderProbeResult("model_listing_unavailable", ())
+        if category == "forbidden":
+            return _listing_not_permitted()
+        return ProviderProbeResult("unreachable", (), "unauthorized")
+    if kind == "request_failed" and category in {
+        "timeout",
+        "connection_refused",
+        "connection_error",
+    }:
+        return ProviderProbeResult("unreachable", (), category)
+    if kind == "invalid_response" or category == "http_status":
+        return ProviderProbeResult(
+            "model_listing_unavailable",
+            (),
+            "http_status" if category == "http_status" else None,
+        )
+    return None
 
 
 def _reachable_outcome(body: bytes) -> SettingsEndpointProbeOutcome:

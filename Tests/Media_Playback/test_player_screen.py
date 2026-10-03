@@ -1058,3 +1058,194 @@ def test_non_seekable_seek_is_refused_without_touching_pipeline():
     screen._seek_relative(5.0)
     assert pipeline.seeked == []  # AC4: disabled, never reaches the pipeline
     assert notifications and "unavailable" in notifications[0]
+
+
+# --- A quit prompt over the player (TASK-33622.10 review follow-up) ----------
+#
+# Ctrl+Q is a priority binding, so the quit prompt can open over the player.
+# Both of the player's own closes -- a failure's ``_notify_and_dismiss`` and
+# the stream time box in ``_refresh_status`` -- ran a bare ``dismiss()`` from a
+# worker or timer. ``Screen.dismiss`` pops the TOP screen, so either one used
+# to pop the quit prompt instead of the player and leave the player behind
+# with its result already spent: its next close raised InvalidStateError and
+# the app exited with code 1 (reproduced by both reviewers' probes; the time
+# box did it on the next 0.25 s tick with no user action at all).
+
+
+def _quit_prompt():
+    from tldw_chatbook.Widgets.confirmation_dialog import ConfirmationDialog
+
+    return ConfirmationDialog(
+        title="Quit Chatbook?", message="q", confirm_label="Quit", cancel_label="Stay"
+    )
+
+
+async def _until_true(pilot: Any, predicate, what: str, timeout: float = 5.0) -> None:
+    try:
+        async with asyncio.timeout(timeout):
+            while not predicate():
+                await pilot.pause(0.02)
+    except TimeoutError as exc:
+        raise AssertionError(f"timed out waiting for {what}") from exc
+
+
+class _CoveredPlayerApp(App[None]):
+    """Bare host that records notices, so a covered player can be observed."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.notifications: list[str] = []
+
+    def notify(self, message: Any, *args: Any, **kwargs: Any) -> None:
+        self.notifications.append(str(message))
+        super().notify(message, *args, **kwargs)
+
+
+async def _player_under_a_quit_prompt(app: _CoveredPlayerApp, pilot: Any, player):
+    """Push ``player``, then the quit flow's prompt over it; return the pieces."""
+    from tldw_chatbook.Widgets.confirmation_dialog import (
+        ConfirmationDialog,
+        await_quit_prompt,
+    )
+
+    results: list[object] = []
+    await app.push_screen(player, results.append)
+    await _until_true(pilot, lambda: app.screen is player, "the player on top")
+    worker = app.run_worker(
+        await_quit_prompt(app, _quit_prompt(), no_answer="vanished"),
+        exit_on_error=False,
+    )
+    await _until_true(
+        pilot,
+        lambda: isinstance(app.screen, ConfirmationDialog),
+        "the quit prompt over the player",
+    )
+    return results, app.screen, worker
+
+
+async def _stay(pilot: Any, prompt, worker) -> None:
+    prompt.dismiss(False)
+    await _until_true(pilot, lambda: worker.is_finished, "the prompt's answer")
+    assert worker.result is False, "the prompt vanished instead of being answered"
+
+
+def _failure_notices(app: _CoveredPlayerApp) -> list[str]:
+    return [n for n in app.notifications if "system player" in n.lower()]
+
+
+@pytest.mark.asyncio
+async def test_a_player_failing_under_a_quit_prompt_closes_once_uncovered(
+    monkeypatch,
+):
+    """A failure is one-shot: the close it wants waits for the answer, then runs.
+
+    The covered dismiss is refused (it would pop the quit prompt), so the
+    failure defers its close -- and the notice that explains it -- until the
+    player is back on top. Stay must not leave a dead player behind.
+    """
+    release = Event()
+
+    def _probe_then_fail(path: str):
+        release.wait(10)
+        raise RuntimeError(PRIVATE_ERROR)
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.probe_file", _probe_then_fail
+    )
+    app = _CoveredPlayerApp()
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            player = VideoPlayerScreen(PRIVATE_PATH, render_mode="ascii")
+            results, prompt, worker = await _player_under_a_quit_prompt(
+                app, pilot, player
+            )
+
+            # The activation worker fails while covered -> _notify_and_dismiss.
+            release.set()
+            await _until_true(
+                pilot,
+                lambda: (
+                    not [
+                        w
+                        for w in app.workers
+                        if w.group == "video-player-activation" and not w.is_finished
+                    ]
+                ),
+                "the activation worker to fail",
+            )
+            await pilot.pause(0.4)  # past the helper's watch interval + grace
+
+            assert app.screen is prompt, "the player's close popped the quit prompt"
+            assert not worker.is_finished
+            assert results == []
+            assert _failure_notices(app) == [], (
+                "the failure announced a close it could not make yet"
+            )
+
+            await _stay(pilot, prompt, worker)
+            await _until_true(
+                pilot,
+                lambda: player not in app.screen_stack,
+                "the failed player to close once it is on top again",
+            )
+            assert results == [None]
+            assert len(_failure_notices(app)) == 1
+            assert app._exception is None
+            assert app.is_running
+    finally:
+        release.set()
+
+
+@pytest.mark.asyncio
+async def test_a_time_boxed_player_under_a_quit_prompt_closes_once_uncovered(
+    monkeypatch,
+):
+    release = Event()
+
+    def _gated_probe(path: str) -> PlayerProbe:
+        release.wait(10)
+        return PROBE
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Screens.video_player_screen.probe_file", _gated_probe
+    )
+    app = _CoveredPlayerApp()
+    try:
+        async with app.run_test(size=(100, 30)) as pilot:
+            player = VideoPlayerScreen(
+                "https://cdn.example.net/stream",
+                render_mode="ascii",
+                seekable=False,
+                max_seconds=0.0,
+            )
+            results, prompt, worker = await _player_under_a_quit_prompt(
+                app, pilot, player
+            )
+
+            # Activation lands while covered; the box is already spent, so
+            # every 0.25 s status tick from here on wants to close the player.
+            release.set()
+            await _until_true(
+                pilot, lambda: bool(_Pipeline.instances), "the stream to start"
+            )
+            await pilot.pause(1.0)  # four status ticks under the prompt
+
+            assert app.screen is prompt, "the time box popped the quit prompt"
+            assert not worker.is_finished
+            assert results == []
+            assert not [n for n in app.notifications if "time box" in n], (
+                "the time box announced itself while it could not close"
+            )
+
+            await _stay(pilot, prompt, worker)
+            await _until_true(
+                pilot,
+                lambda: player not in app.screen_stack,
+                "the time box to close the player once it is on top again",
+            )
+            assert results == [None]
+            assert len([n for n in app.notifications if "time box" in n]) == 1
+            assert app._exception is None
+            assert app.is_running
+    finally:
+        release.set()

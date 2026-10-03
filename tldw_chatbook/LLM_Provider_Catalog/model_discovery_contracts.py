@@ -75,6 +75,10 @@ class ModelDiscoveryError:
     kind: DiscoveryErrorKind
     message: str
     recovery_hint: str
+    #: TASK-33005.4: the request's bounded failure (the Settings probe's
+    #: categories: "unauthorized", "timeout", "connection_refused", ...);
+    #: ``None`` when no request was sent or none applies.
+    category: str | None = None
 
 
 @dataclass(frozen=True)

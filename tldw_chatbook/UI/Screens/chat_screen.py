@@ -132,10 +132,7 @@ from ..Console_Modules.agent import (
     CONSOLE_AGENT_FLEET_SECTION_ID,
     apply_console_agent_status_state,
 )
-from ..Console_Modules.prompt_queue import (
-    ConsolePromptDispatchStatus,
-    ConsolePromptQueueRegion,
-)
+from ..Console_Modules.prompt_queue import ConsolePromptQueueRegion
 from ..Console_Modules.realtime import CONSOLE_REALTIME_CHIP_MESSAGES
 from ..Console_Modules.dispatch_recovery import ConsoleDispatchRecoveryRegion
 from ..Console_Modules.left_rail import (
@@ -424,6 +421,7 @@ from ...Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderGenerationProbeResult,
     ProviderProbeResult,
+    shared_connection_evidence,
 )
 from ...Chat.console_ephemeral import ACTION_SAVE_CHAT, blocked_reason
 from ...Chat.console_live_work import (
@@ -2873,7 +2871,11 @@ class ChatScreen(BaseAppScreen):
             provider,
             model,
         )
-        return build_console_settings_readiness(settings, app_config=app_config)
+        return build_console_settings_readiness(
+            settings,
+            app_config=app_config,
+            connection_evidence=shared_connection_evidence(lambda: self.app),
+        )
 
     def _commit_console_settings_submission_live(
         self,
@@ -3228,40 +3230,9 @@ class ChatScreen(BaseAppScreen):
         app_config: Mapping[str, object] | None = None,
     ) -> ProviderProbeResult:
         """Run the existing bounded model-catalog probe for one exact draft."""
-        from .settings_endpoint_probe import (
-            SettingsEndpointProbePurpose,
-            probe_settings_endpoint,
-            provider_probe_result_from_settings_outcome,
-        )
+        from ..Console_Modules.connection_probe import probe_console_connection
 
-        probe_kwargs = {}
-        if identity.custom_endpoint_id is not None:
-            from tldw_chatbook.Chat.custom_endpoint_registry import (
-                entry_for,
-                family_execution_key,
-                resolve_entry_credential,
-            )
-            from tldw_chatbook.Chat.provider_endpoint_contract import (
-                canonical_connection_identity,
-            )
-
-            entry = entry_for(app_config or {}, identity.custom_endpoint_id)
-            if (
-                entry is None
-                or canonical_connection_identity(
-                    family_execution_key(entry.family), entry.base_url
-                )
-                != identity.connection_identity
-            ):
-                return ProviderProbeResult("unreachable", (), "connection_error")
-            probe_kwargs["api_key"] = resolve_entry_credential(entry)[0]
-        outcome = await probe_settings_endpoint(
-            identity.connection_identity[1],
-            provider=identity.provider_key,
-            purpose=SettingsEndpointProbePurpose.CHAT_CATALOG,
-            **probe_kwargs,
-        )
-        return provider_probe_result_from_settings_outcome(outcome)
+        return await probe_console_connection(identity, app_config=app_config)
 
     async def _test_console_generation(
         self,
@@ -4797,9 +4768,11 @@ class ChatScreen(BaseAppScreen):
         """Open Console session settings for the active native session."""
         event.stop()
         summary_state = self._build_console_settings_summary_state()
-        recovery_label, _recovery_target, _recovery_tooltip = (
+        recovery_label, recovery_target, _recovery_tooltip = (
             self._console_provider_recovery_action()
         )
+        if recovery_target == "retry":  # TASK-33005.2: one action, no settings.
+            return await self._open_console_provider_recovery()
         await self._open_console_settings(
             focus_model=(
                 self._is_console_choose_model_action(summary_state.action_label)
@@ -7409,7 +7382,7 @@ class ChatScreen(BaseAppScreen):
         self._console_environment_expanded: set[str] = set()
         self._console_environment_poll_timer: Any | None = None
         self._console_credential_poll_timer: Any | None = None
-        self._console_credential_snapshot: tuple[int, str | None] | None = None
+        self._console_credential_snapshot: tuple[int, str | None, int] | None = None
         # The six Console controllers -- their construction and every
         # named dependency they take -- moved verbatim to
         # `Console_Modules/wiring.py` (wave-4 console decomposition,
@@ -9372,20 +9345,14 @@ class ChatScreen(BaseAppScreen):
             rows = self.query(f"#{section_id} .console-model-section-value")
             if rows:
                 rows.first(Static).update(value or "—")
-        readiness = summary_state.readiness
-
-        try:
-            recovery = self.query_one("#console-model-section-recovery", Static)
-        except (NoMatches, QueryError):
-            pass
-        else:
-            if readiness is not None and readiness.operability == "not_ready":
-                recovery.update(
-                    build_console_readiness_presentation(readiness).primary_label
-                )
-                recovery.styles.display = "block"
-            else:
-                recovery.styles.display = "none"
+        # TASK-33005.3: the rail line shows the one word; red only when blocked.
+        word = summary_state.readiness_label
+        blocked = getattr(summary_state.readiness, "operability", "") == "not_ready"
+        for recovery in self.query("#console-model-section-recovery").results(Static):
+            if recovery.content != word:  # Unchanged copy costs no layout pass.
+                recovery.update(word)
+            recovery.styles.display = "block" if word else "none"
+            recovery.set_class(blocked, "conversation-attention-error")
 
         self._sync_console_rail_system_line()
         self._sync_console_agent_section()
@@ -9743,7 +9710,9 @@ class ChatScreen(BaseAppScreen):
         # TASK-33620.4: NEVER `active_run` here (the settings modal alone gates
         # on it), so consumers' `wait_for_active_run` guards are belt-and-braces.
         readiness = build_console_settings_readiness(
-            effective_settings, app_config=self._provider_readiness_app_config()
+            effective_settings,
+            app_config=self._provider_readiness_app_config(),
+            connection_evidence=shared_connection_evidence(lambda: self.app),
         )
         model_warning = self._console_model_capability_warning(
             effective_settings.provider,
@@ -11877,11 +11846,11 @@ class ChatScreen(BaseAppScreen):
         # revision bump, so gating on the revision alone would leave the send
         # controls stale; both signals stay in the snapshot.
         with self._console_derivation_scope():
+            # TASK-33005.2/.5: a test settled on any surface refreshes once. Read
+            # before the build: a switcher probe settles off-thread mid-build.
+            version = getattr(shared_connection_evidence(lambda: self.app), "version", 0)
             _settings, readiness = self._active_console_settings_readiness()
-            snapshot = (
-                subscription_readiness_revision(),
-                readiness.subscription_status,
-            )
+            snapshot = (subscription_readiness_revision(), readiness.subscription_status, version)
             if snapshot == self._console_credential_snapshot:
                 return
             self._console_credential_snapshot = snapshot
@@ -14780,7 +14749,7 @@ class ChatScreen(BaseAppScreen):
             ),
             ConsoleDisplayRow(
                 "Message actions",
-                "Copy, Edit, Fork, Regenerate/Retry, Continue, More…",
+                "Copy, Edit, Fork, Regenerate/Retry/Resend, Continue, More…",
             ),
             ConsoleDisplayRow(
                 "Keyboard",
@@ -14820,7 +14789,7 @@ class ChatScreen(BaseAppScreen):
             rows.append(
                 ConsoleDisplayRow(
                     "Delete confirmation",
-                    "Press Delete again to remove this message.",
+                    self._message.console_pending_delete_copy,
                     status="blocked",
                 )
             )
@@ -14969,7 +14938,8 @@ class ChatScreen(BaseAppScreen):
         )
 
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
-        blocker_copy = self._console_provider_blocker_copy()
+        readiness = self._active_console_settings_readiness()
+        blocker_copy = self._console_provider_blocker_copy(settings_readiness=readiness)
         composer = self._console_composer_or_none()
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
@@ -14984,7 +14954,11 @@ class ChatScreen(BaseAppScreen):
             is not None
         )
         can_stop = image_edit_active or bool(
-            getattr(run_state, "is_stop_allowed", False)
+            getattr(
+                controller,
+                "is_stop_allowed",
+                getattr(run_state, "is_stop_allowed", False),
+            )
         )
         run_allows_send = (
             bool(getattr(run_state, "is_send_allowed", True)) and not image_edit_active
@@ -15005,6 +14979,10 @@ class ChatScreen(BaseAppScreen):
             hook_attention=getattr(
                 getattr(self, "_console_hook_review_snapshot", None), "pending_count", 0
             ),
+            # Single-pane widths keep Ready/Blocked: the word overruns the row.
+            readiness_word=""
+            if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
+            else build_console_readiness_presentation(readiness[1]).primary_label,
         )
 
     def _console_provider_blocker_copy(
@@ -15109,6 +15087,8 @@ class ChatScreen(BaseAppScreen):
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
             return "Save provider endpoint in Conversation settings before sending."
+        if readiness.recovery_action == "retry_connection":
+            return "Provider unreachable. Retry connection before sending."
         return "Finish provider setup before sending."
 
     def _console_provider_recovery_field(self) -> str:
@@ -16549,13 +16529,13 @@ class ChatScreen(BaseAppScreen):
                 id="console-prompt-queue",
                 on_manage_requested=self._open_console_prompt_queue,
                 on_primary_requested=(
-                    lambda session_id, revision, action: self.run_worker(
+                    lambda session_id, revision, action: self.app.run_worker(
                         self._prompt_queue.handle_primary_intent(
                             session_id,
                             action=action,
                             expected_revision=revision,
                         ),
-                        exclusive=True,
+                        # TASK-33621.19: never exclusive -- Pause must not kill a Resume's drain.
                         group="console-prompt-queue-shelf",
                     )
                 ),
@@ -18756,8 +18736,8 @@ class ChatScreen(BaseAppScreen):
         return (
             controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             or controller.in_flight_run_count() > 0
-            or wake_delivering
-            or review_pending
+            or self._console_runtime().has_custodied_turns()
+            or wake_delivering or review_pending
         )
 
     def _start_console_transcript_sync_timer(self) -> None:
@@ -18925,10 +18905,10 @@ class ChatScreen(BaseAppScreen):
                 as a real one.
 
         Returns:
-            Whether the draft was actually queued as a user turn. The button
-            path discards this; the spoken-command path (`Console, send.`)
-            needs it, because every refusal below returns without sending and
-            an ack that says otherwise is simply wrong.
+            Whether the draft was queued as a user turn: False on a refusal,
+            and while a worker owns the Send's hook review (TASK-33621.28). The
+            button path discards this; the spoken path (`Console, send.`) runs
+            in a worker, so it waits for that review and acks the real outcome.
         """
         event.stop()
         return await self._send_console_message_from_visible_action(
@@ -18960,7 +18940,8 @@ class ChatScreen(BaseAppScreen):
             sent = await self._send_console_message_from_visible_action_observed(
                 session_id=session_id, pending_send_token=pending_send_token
             )
-            diagnostic.outcome = "dispatched" if sent else "not_dispatched"
+            if sent or diagnostic.outcome != "awaiting_review":  # TASK-33621.28
+                diagnostic.outcome = "dispatched" if sent else "not_dispatched"
             return sent
 
     async def _send_console_message_from_visible_action_observed(
@@ -18972,11 +18953,11 @@ class ChatScreen(BaseAppScreen):
         """Route the visible Console send action through the native controller.
 
         Returns:
-            True once the draft has been queued as a user turn; False on every
-            refusal -- an empty draft with no attachment, a `/`-command or
-            unknown-command dispatch (which never sends by design), and every
-            gate inside `_dispatch_console_draft_send`. Each refusal has
-            already shown its own toast or system row.
+            True once the draft has been queued as a user turn. False on every
+            refusal (an empty draft with no attachment, a `/`-command or
+            unknown-command dispatch, any `_dispatch_console_draft_send` gate),
+            each with its own toast or system row, and while a worker owns the
+            Send's hook review (TASK-33621.28).
         """
         # A scheduled Enter callback may consume only its own capture.
         # Mouse/Workbench sends have no token and always read the live draft.
@@ -19174,7 +19155,7 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
             diagnostic.outcome = result.status.value
-            return result.status is not ConsolePromptDispatchStatus.REFUSED
+            return result.accepted
 
     def _note_console_follow_intent(self) -> None:
         """Stamp a programmatic jump-to-tail intent on the transcript (TASK-336).
@@ -20499,6 +20480,10 @@ class ChatScreen(BaseAppScreen):
     async def _open_console_provider_recovery(self) -> None:
         """Route provider setup recovery to the smallest relevant settings surface."""
         _label, target, _tooltip = self._console_provider_recovery_action()
+        if target == "retry":
+            from ..Console_Modules.connection_probe import retry_console_connection
+
+            return await retry_console_connection(self)
         if target in {"console", "hidden"} and getattr(self, "is_mounted", False):
             await self._open_console_settings(
                 focus_model=(
@@ -22119,11 +22104,8 @@ class ChatScreen(BaseAppScreen):
     ) -> None:
         """Refresh Console composer action priority from draft, run, and artifact state.
 
-        F1 (task-9 review): the composer bar's own Save Chatbook button is a
-        second door onto the same write the workbench action already gates
-        -- reads ``_console_active_session_is_ephemeral()`` directly here so
-        both doors consult the same accessor without a caller having to
-        remember to thread it through.
+        Both composer and workbench Save Chatbook actions consult the same
+        ephemeral-session accessor (task-9 review F1).
         """
         try:
             composer = self.query_one("#console-native-composer", ConsoleComposerBar)
@@ -22145,12 +22127,9 @@ class ChatScreen(BaseAppScreen):
                     active_id,
                     composer_collapsed=composer.collapsed,
                 )
-                # TASK-22000 (owner decision, 2026-08-24): for a session with
-                # a live queue projection the PRESENTATION is the authority on
-                # whether Send accepts a draft -- not the raw run state. That
-                # was ADR-098's original shape (an assignment here, not an
-                # `or`); `2c7fcd200` folded `send_blocked` back in with `or`
-                # alongside the new recovery predicate, and since
+                # TASK-22000/ADR-098: queue presentation owns Send availability.
+                # Recombining it with raw run status regressed live-turn Queue:
+                # since
                 # `not is_send_allowed` is exactly the VALIDATING/STREAMING/
                 # CHECKING_CITATIONS/RETRYING set that `derive_prompt_queue_
                 # presentation` already reads as `occupies_slot`, the only
@@ -22226,6 +22205,8 @@ class ChatScreen(BaseAppScreen):
         composer.sync_action_state(
             has_draft=bool(composer.draft_text().strip()) or pending is not None,
             run_active=run_active,
+            stop_available=run_active
+            or bool(getattr(controller, "is_stop_allowed", False)),
             can_save_chatbook=can_save_chatbook,
             send_blocked=send_blocked,
             dispatch_recovery_blocked=dispatch_recovery_blocked,
@@ -22365,6 +22346,7 @@ class ChatScreen(BaseAppScreen):
         if band == self._last_console_workspace_width_band:
             return
         self._last_console_workspace_width_band = band
+        self._request_console_control_bar_sync()  # The header word is band-sized.
         try:
             self.query_one("#console-workspace-grid")
         except QueryError:
@@ -22699,9 +22681,9 @@ class ChatScreen(BaseAppScreen):
                 self._console_pending_send = None
                 return
             # Enter and Send converge on the same visible-action handler.
-            # Scheduling it on the app pump preserves the keypress snapshot
-            # while app-owned runtime custody, not a screen worker or timer,
-            # owns accepted work.
+            # Scheduling it on the app pump preserves the keypress snapshot;
+            # app-owned runtime custody owns accepted work, except that a Send
+            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
             self.app.call_later(
                 partial(
                     self._send_console_message_from_visible_action,

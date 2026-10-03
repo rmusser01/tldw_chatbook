@@ -2,6 +2,7 @@
 
 Date: 2026-09-27
 Status: Accepted following written-spec review and requested audit (2026-09-27)
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Task: [TASK-33151](../tasks/task-33151%20-%20Design-Console-hook-settings-and-persistent-review.md)
 Spec: [Console hook settings and review](../../Docs/superpowers/specs/2026-09-27-console-hook-settings-and-review-design.md)
 Implementation: [TASK-33163](../tasks/task-33163%20-%20Add-Console-hook-settings-and-consent-review.md), [plan](../../Docs/superpowers/plans/2026-09-27-console-hook-settings-and-review.md)
@@ -103,3 +104,22 @@ positively on 2026-09-27 and requested an audit before continuing; the resulting
 clarifications preserve the approved layout and feature scope. ADR-148 remains
 authoritative
 for hook execution after consent; its accepted text is not rewritten.
+
+
+## Current-dev integration: standalone v2 consent (TASK-32679)
+
+The Console next-Send review and canonical F9 Hooks settings include standalone
+`hooks.handler` v2 definitions as well as legacy `hooks.hook` entries. V2 consent
+uses the existing app-owned HookPermissions store and grant epochs; its fingerprint
+covers the complete normalized closed-schema definition, including event, effects,
+arguments, environment, matcher, required policy and timeout. Legacy fingerprints
+and grants remain unchanged. A rejected v2 batch stays visible and cannot be
+approved or partially activated. V2 definitions have the schema's master switch,
+without inventing a per-handler enable field.
+
+Runtime admission reads the canonical saved configuration, rather than an app's
+possibly stale dictionary. Configured v2 engines capture exact grants. The existing
+permission owner serializes actual subprocess creation against config/consent
+changes; revocation and changed definitions fence staged effects and queued work.
+Host-injected engines retain their explicit authority resolver and never become
+standalone config grants. Lifecycle session replacement remains idle-only.

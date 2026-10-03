@@ -1,6 +1,9 @@
 import base64
 import json
+import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from uuid import UUID
@@ -176,6 +179,37 @@ _VOICE_PROMOTION_LOCATOR_EXEMPTIONS = frozenset(
 )
 
 
+#: PERF-10 (TASK-33269): bumped after exchange rows are appended, so parked
+#: legacy trace maintenance wakes on new work instead of polling the database
+#: once a second. ``append_message_exchanges`` is the only exchange writer.
+#: A counter, not a cleared event: every runtime compares it with the value it
+#: last saw, so no runtime can consume another's wake.
+_TRACE_MAINTENANCE_WORK_LOCK = threading.Lock()
+_trace_maintenance_work_generation = 0
+
+
+def signal_trace_maintenance_work() -> None:
+    """Tell parked legacy trace maintenance that new exchange rows exist."""
+
+    global _trace_maintenance_work_generation
+    with _TRACE_MAINTENANCE_WORK_LOCK:
+        _trace_maintenance_work_generation += 1
+
+
+def trace_maintenance_work_generation() -> int:
+    """Return the exchange-write generation; it changes on every signal.
+
+    A maintenance loop reads it before each pass and wakes when it differs.
+    A signal raised after the read wakes the loop again; one raised before it
+    had its rows committed first, so the pass about to run reads them.
+
+    Returns:
+        The number of exchange-write signals raised in this process.
+    """
+
+    return _trace_maintenance_work_generation
+
+
 @dataclass(frozen=True, slots=True)
 class ConsoleForkCommitResult:
     """Durable identities returned only after an atomic fork commit."""
@@ -224,6 +258,9 @@ class ChatPersistenceService:
         self.context_repository = ConsoleContextRepository(db)
         self.recovered_media_cleanup_pending = False
         self._recovered_messages = None
+        # Per-thread: a hold diverts only its own thread's releases, so a
+        # worker thread's unrelated delete during the hold is released as usual.
+        self._held_recovered_releases = threading.local()
         try:
             from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
                 RecoveredMessageReferences,
@@ -250,17 +287,65 @@ class ChatPersistenceService:
 
         return CLEANUP_PENDING if self.recovered_media_cleanup_pending else None
 
-    def _release_recovered_messages(self, message_ids) -> None:
+    def _release_recovered_messages(self, message_ids) -> bool:
+        """Release references for committed tombstones; True if left pending."""
         if not message_ids:
-            return
+            return False
+        held = getattr(self._held_recovered_releases, "ids", None)
+        if held is not None:
+            # An undoable delete: keep references until it becomes final.
+            held.extend(message_ids)
+            return False
         try:
             if self._recovered_messages is None:
                 raise ValueError("recovered_message_source_unavailable")
             self._recovered_messages.release(message_ids)
         except Exception:  # noqa: BLE001 - preserve the already committed chat result
+            from tldw_chatbook.Backup_Recovery.recovered_media_messages import (
+                references_absent,
+            )
+
+            if references_absent(self._recovered_messages, tuple(message_ids)):
+                # TASK-33628.2: positive evidence that no reference names
+                # these messages -- nothing is left to clean up, so a
+                # media-free delete must not report pending cleanup.
+                return False
             # Chat committed already. Retain refs for a positive-tombstone retry.
             self.recovered_media_cleanup_pending = True
             logger.warning("Recovered-media reference cleanup is pending.")
+            return True
+        return False
+
+    @contextmanager
+    def hold_recovered_media_release(self) -> Iterator[list[str]]:
+        """Hold reference releases for deletes that can still be undone.
+
+        Yields the list the held message ids accumulate in: exactly the
+        messages the CALLING thread tombstoned while the hold was open (other
+        threads' releases proceed normally). Releasing them is the caller's
+        job once the delete is final
+        (:meth:`release_recovered_media_references`); a crash before that is
+        safe, because startup's positive-tombstone retry releases them.
+        """
+        local = self._held_recovered_releases
+        previous = getattr(local, "ids", None)
+        held: list[str] = []
+        local.ids = held
+        try:
+            yield held
+        finally:
+            local.ids = previous
+
+    def release_recovered_media_references(self, message_ids: Sequence[str]) -> bool:
+        """Release held references for a now-final delete.
+
+        Args:
+            message_ids: The ids :meth:`hold_recovered_media_release` held.
+
+        Returns:
+            True when this release left recovered-media cleanup pending.
+        """
+        return self._release_recovered_messages(list(message_ids))
 
     def retry_recovered_media_references(self) -> bool:
         try:
@@ -1458,12 +1543,18 @@ class ChatPersistenceService:
         policy_candidate: ConsoleLibraryPolicyCandidate,
         conversation_kwargs: Mapping[str, object],
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
+        project_context_json: str | None = None,
     ) -> ConsoleDispatchCheckpoint:
         """Atomically create/validate and accept one durable Console turn.
 
         The service owns the sole outer ``BEGIN IMMEDIATE``.  It intentionally
         returns only durable values and never mutates the live Console session;
         publication is a postcommit store/controller responsibility.
+
+        ``project_context_json`` is the new chat's local project-instruction
+        controls, stored with the conversation it creates -- the same
+        transaction, like promotion and fork bundles (TASK-33621.13). It is
+        ignored for a conversation that already exists.
         """
 
         self.validate_workspace_target(**conversation_kwargs)
@@ -1502,6 +1593,10 @@ class ChatPersistenceService:
                         raise RuntimeError(
                             "Console context settings could not be committed with turn."
                         )
+                if project_context_json is not None:
+                    self.db.set_conversation_console_project_context(
+                        acceptance.conversation_id, project_context_json
+                    )
             else:
                 if conversation["deleted"]:
                     raise RuntimeError("Durable conversation is unavailable.")
@@ -3173,12 +3268,13 @@ class ChatPersistenceService:
         """
         try:
             self.db.append_message_exchanges_local(message_id, rows)
-            return True
         except Exception as exc:  # noqa: BLE001 -- best-effort capture flush
             logger.bind(message_id=message_id, error_type=type(exc).__name__).warning(
                 "exchange_append_failed"
             )
             return False
+        signal_trace_maintenance_work()
+        return True
 
     def list_full_exchange_keys_for_conversation(
         self, conversation_id: str
@@ -3208,6 +3304,36 @@ class ChatPersistenceService:
             expected_version=current_message["version"],
         )
         self._release_recovered_messages([row["message_id"] for row in rows])
+        return rows
+
+    def restore_message_subtree(
+        self,
+        *,
+        tombstones: Sequence[tuple[str, int]],
+        conversation_id: str | None = None,
+        active_cursor: tuple[str | None, str | None] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Undo one subtree delete: undelete its exact tombstones atomically.
+
+        Args:
+            tombstones: ``(message_id, tombstone_version)`` pairs the delete
+                committed; any drift refuses the whole restore.
+            conversation_id: Conversation whose cursor to put back.
+            active_cursor: ``(active_leaf_message_id, before_message_id)``
+                from before the delete, or ``None`` to leave the cursor.
+
+        Returns:
+            The restored rows with their new versions.
+        """
+        with self.db.transaction(immediate=True):
+            rows = self.db.restore_message_subtree(tombstones)
+            if conversation_id is not None and active_cursor is not None:
+                leaf, before = active_cursor
+                self.db.set_conversation_active_cursor(
+                    conversation_id,
+                    active_leaf_message_id=leaf,
+                    before_message_id=before,
+                )
         return rows
 
     def write_trajectory_rows(self, rows: Sequence[TrajectoryRowWrite]) -> bool:

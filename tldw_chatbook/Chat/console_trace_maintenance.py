@@ -741,12 +741,52 @@ class LegacyTraceMaintenance:
         self.max_bytes = max_bytes
         self.max_seconds = float(max_seconds)
         self.clock = clock
+        #: TASK-33801: skip the read-only idle check on the next pass. The check
+        #: costs a storage admission of its own, which a pass with work pays
+        #: only to fall through to the write path. True at first (the state is
+        #: unknown); the runtime loop sets it when an exchange write wakes it.
+        self.expect_work = True
+
+    def _complete_without_pending_work(self) -> bool:
+        """Read-only: True when the migration is complete with no newer exchange.
+
+        PERF-10 (TASK-33269): the common idle answer no longer takes the
+        write lock that user sends contend for. Anything else -- a busy
+        lease, an incomplete migration, a newer row -- falls through to
+        ``run_batch``'s immediate transaction, which re-checks under the lock.
+        """
+
+        with self.db.transaction() as cursor:
+            lease = cursor.execute(
+                "SELECT state FROM console_trace_maintenance_state WHERE singleton_id = 1"
+            ).fetchone()
+            if lease is None or lease[0] != "idle":
+                return False
+            state = cursor.execute(
+                """SELECT status, last_exchange_id
+                     FROM console_trace_migration_state
+                    WHERE migration_name = ?""",
+                (LEGACY_MIGRATION_NAME,),
+            ).fetchone()
+            if state is None or state[0] != "logical_complete":
+                return False
+            last_exchange_id = -1 if state[1] is None else int(state[1])
+            return (
+                cursor.execute(
+                    "SELECT 1 FROM message_exchanges WHERE id > ? LIMIT 1",
+                    (last_exchange_id,),
+                ).fetchone()
+                is None
+            )
 
     def run_batch(self) -> LegacyMaintenanceBatch:
         """Run at most one bounded transaction and yield to the caller."""
 
         if self.provider_active():
             return LegacyMaintenanceBatch(False, 0, 0, False)
+        expect_work, self.expect_work = self.expect_work, False
+        if not expect_work and self._complete_without_pending_work():
+            return LegacyMaintenanceBatch(True, 0, 0, True)
         started = self.clock()
         processed_rows = 0
         processed_bytes = 0

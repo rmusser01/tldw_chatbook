@@ -221,3 +221,75 @@ def test_review_proceed_verdicts_are_not_observed():
     wrapped([ToolCall(name="probe", args={}, call_id="c1")])
 
     assert seen == [], "proceed is not a completion; the dispatch will report"
+
+
+@pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("retire", [False, "before", "between"])
+async def test_definitive_result_survives_hook_owner_retirement(retire):
+    import asyncio
+
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Agents.hooks_v2.tool_pipeline import ToolHookRun
+    from tldw_chatbook.Agents.tool_catalog import ToolExecutionPolicy
+
+    settled = ToolResult(
+        ok=retire != "between", content="settled", dispatch_state="settled"
+    )
+    owner = None
+
+    def finish():
+        if retire == "before":
+            owner.checkpoints.retire_owner("run-1")
+        return settled
+
+    service, config = _service(finish, None)
+    service.registry.execution_policy_for = lambda _name: (
+        ToolExecutionPolicy.DEFINITIVE_AFTER_START
+    )
+    engine = HookEngine(
+        (hook_command("post", event="PostToolUse", required=True),),
+        lambda *_: True,
+        HookBudgetOwner(),
+    )
+    owner = ToolHookRun(
+        engine,
+        run_id="run-1",
+        session_id="session",
+        turn_id="turn",
+        resolve_definition=lambda call: service.registry.snapshot_for_hook(call.name),
+    )
+    call = await asyncio.to_thread(owner.prepare_call, ToolCall("probe", {}, "call-1"))
+    if retire == "between":
+        begin = owner.checkpoints.begin
+
+        def retire_after_first(event, *args, **kwargs):
+            token = begin(event, *args, **kwargs)
+            if event.event == "PostToolUse":
+                owner.checkpoints.retire_owner("run-1")
+            return token
+
+        owner.checkpoints.begin = retire_after_first
+    terminals = []
+    service._notify_tool_terminal = lambda *_args: terminals.append("tool")
+    service._notify_tool_result_terminal = lambda *_args: terminals.append("result")
+    try:
+        invoke = service._make_invoke_tool(
+            config,
+            {"probe"},
+            lambda: False,
+            run_id="run-1",
+            install_post_checkpoint=owner.install_result,
+        )
+        result = await asyncio.to_thread(invoke, call)
+        assert result is settled
+        assert terminals == ["tool", "result"]
+        if retire:
+            assert not owner.checkpoints.is_current("run-1")
+            assert not owner.checkpoints._entries
+        else:
+            await asyncio.to_thread(owner.settle)
+    finally:
+        await engine.close()

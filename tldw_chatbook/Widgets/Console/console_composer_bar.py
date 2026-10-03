@@ -715,6 +715,7 @@ class ConsoleComposerBar(Horizontal):
         self._redo_stack: list[_DraftHistorySnapshot] = []
         self._coalescing_active = False
         self._run_active = False
+        self._stop_available = False
         self._queued_prompt_count = 0
         self._queue_paused = False
         # task-24453: cheap fingerprint of every input `_sync_collapsed_
@@ -2042,6 +2043,7 @@ class ConsoleComposerBar(Horizontal):
             has_draft=bool(self.draft_text().strip())
             or self._pending_attachment_label is not None,
             run_active=self._run_active,
+            stop_available=self._stop_available,
             can_save_chatbook=self._can_save_chatbook,
             send_blocked=self._send_blocked,
             dispatch_recovery_blocked=self._dispatch_recovery_blocked,
@@ -2322,12 +2324,14 @@ class ConsoleComposerBar(Horizontal):
         wake_turn_active: bool = False,
         dispatch_recovery_blocked: bool = False,
         queue_blocked_reason: str = "",
+        stop_available: bool | None = None,
     ) -> None:
         """Refresh composer action priority and disabled state.
 
         Args:
             has_draft: Whether the canonical draft has non-whitespace content.
-            run_active: Whether a Console run is currently stoppable.
+            run_active: Whether a Console generation is active.
+            stop_available: Explicit Stop availability, including pending hooks.
             can_save_chatbook: Whether a Chatbook artifact is available to save.
             send_blocked: Whether the current run state blocks new sends.
             setup_blocked_reason: Provider/model setup copy when setup blocks Send.
@@ -2356,6 +2360,9 @@ class ConsoleComposerBar(Horizontal):
             or self._queue_blocked_reason != queue_blocked_reason
         )
         self._run_active = run_active
+        self._stop_available = (
+            run_active if stop_available is None else bool(stop_available)
+        )
         self._send_blocked = send_blocked
         self._dispatch_recovery_blocked = bool(dispatch_recovery_blocked)
         self._setup_blocked_reason = setup_blocked_reason
@@ -2482,7 +2489,7 @@ class ConsoleComposerBar(Horizontal):
         self._sync_send_disabled_reason(reason, muted=not effective_send_blocked)
 
         stop_button.disabled = False
-        stop_button.variant = "warning" if run_active else "default"
+        stop_button.variant = "warning" if self._stop_available else "default"
         # Fleet-UX expert review F7 (task-1234): this LIVE sync overrides
         # the button's construction-time tooltip on every action-state
         # refresh, so the compose-time copy alone (see `compose()` above)
@@ -2496,11 +2503,12 @@ class ConsoleComposerBar(Horizontal):
         # spend 8 cells of the fixed BASE_ACTIONS_WIDTH budget on a
         # control that is never actionable while shown, so the dead copy
         # goes instead of the budget.
-        stop_button.tooltip = "Stop this tab's run." if run_active else None
-        stop_button.set_class(run_active, "console-stop-active")
-        stop_button.set_class(not run_active, "console-stop-idle")
-        stop_button.set_class(not run_active, "console-action-disabled")
-        stop_button.styles.display = "block" if run_active else "none"
+        stop_button.tooltip = "Stop this tab's run." if self._stop_available else None
+        stop_button.set_class(self._stop_available, "console-stop-active")
+        stop_button.set_class(not self._stop_available, "console-stop-idle")
+        stop_button.set_class(not self._stop_available, "console-action-disabled")
+        stop_button.styles.display = "block" if self._stop_available else "none"
+        # Redirect requires active generation; a pending hook exposes only Stop.
         # TASK-28227: Redirect appears only while this tab's run is active.
         # TASK-33625.1: and only where the row budget holds it whole (see
         # `_redirect_fits`); at narrow widths `/redirect` and the palette
@@ -3420,6 +3428,7 @@ class ConsoleComposerBar(Horizontal):
             status_text,
             raw_cli_active,
             self._run_active,
+            self._stop_available,
         )
         if signature == self._collapsed_presentation_signature:
             return
@@ -3444,7 +3453,7 @@ class ConsoleComposerBar(Horizontal):
             collapsed.set_class(raw_cli_active, "console-raw-cli-danger")
             status.set_class(raw_cli_active, "console-raw-cli-danger")
             status.set_class(raw_cli_active, "console-voice-status-error")
-            stop.styles.display = "block" if self._run_active else "none"
+            stop.styles.display = "block" if self._stop_available else "none"
 
         self._collapsed_presentation_signature = signature
 
@@ -6820,7 +6829,7 @@ class ConsoleComposerBar(Horizontal):
                 # expanded Stop button's tooltip (console-stop-generation).
                 tooltip="Stop this tab's run.",
             )
-            collapsed_stop.styles.display = "block" if self._run_active else "none"
+            collapsed_stop.styles.display = "block" if self._stop_available else "none"
             yield collapsed_stop
 
         recovery_row = Horizontal(id="console-prompt-improvement-recovery")

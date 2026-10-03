@@ -2,6 +2,7 @@
 
 import asyncio
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -163,3 +164,75 @@ async def test_requested_pause_keeps_runtime_coordination_on_monitor_task(monkey
     finally:
         monitoring.cancel()
         await asyncio.gather(monitoring, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
+    """TASK-33560, owner decision 2026-09-29: the idle probe runs at 1 Hz.
+
+    The monitor's sleeps are recorded from inside the probe (patching
+    ``asyncio.sleep`` would also slow this test's own waits).
+
+    Args:
+        monkeypatch: Replaces the monitor's ``asyncio.sleep`` with a recorder
+            and the native pause probe with a stub that reports no pause.
+    """
+    loop = asyncio.get_running_loop()
+    probed = asyncio.Event()
+    delays = []
+    real_sleep = asyncio.sleep
+
+    async def recording_sleep(delay, *args, **kwargs):
+        delays.append(delay)
+        return await real_sleep(0)
+
+    def probe():
+        if len(delays) >= 3:
+            loop.call_soon_threadsafe(probed.set)
+        return False
+
+    monkeypatch.setattr(maintenance.asyncio, "sleep", recording_sleep)
+    monkeypatch.setattr(storage, "_local_pause_requested", probe)
+    monitoring = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        await asyncio.wait_for(probed.wait(), 5)
+    finally:
+        monitoring.cancel()
+        await asyncio.gather(monitoring, return_exceptions=True)
+
+    assert maintenance.MAINTENANCE_PROBE_INTERVAL_SECONDS == 1.0
+    assert delays[:3] == [1.0, 1.0, 1.0]
+
+
+@pytest.mark.asyncio
+async def test_the_unpatched_monitor_probes_about_once_a_second(monkeypatch):
+    """Integration: the real monitor, real sleeps and the real native probe.
+
+    Only a timestamp wraps the probe. The assertion is on the spacing of
+    three probes, not a count in a fixed window, so a slow runner (which only
+    widens the gaps) cannot fail it; the old 10 Hz loop spaced them ~0.1 s
+    apart (Qodo, #2920).
+
+    Args:
+        monkeypatch: Wraps the native pause probe with a timestamp recorder.
+    """
+    started: list[float] = []
+    real_probe = storage._local_pause_requested
+
+    def stamped():
+        started.append(time.monotonic())
+        return real_probe()
+
+    monkeypatch.setattr(storage, "_local_pause_requested", stamped)
+    monitoring = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        deadline = time.monotonic() + 30
+        while len(started) < 3 and time.monotonic() < deadline:
+            await asyncio.sleep(0.05)
+    finally:
+        monitoring.cancel()
+        await asyncio.gather(monitoring, return_exceptions=True)
+
+    assert len(started) >= 3, f"only {len(started)} probes in 30 s"
+    gaps = [later - earlier for earlier, later in zip(started, started[1:])]
+    assert min(gaps) >= 0.5, f"probes {gaps} s apart: faster than once a second"

@@ -561,7 +561,10 @@ class ConsoleSetupModal(Vertical):
             return ""
         text = f"{index}. {step.glyph} {step.label}"
         if step.detail:
-            text = f"{text}  {step.detail}"
+            # TASK-33005.3: the active step's detail is the readiness word; it
+            # gets its own line under the label so a wrap never splits it.
+            joiner = "\n     " if step.state == "active" else "  "
+            text = f"{text}{joiner}{step.detail}"
         return text
 
     @staticmethod

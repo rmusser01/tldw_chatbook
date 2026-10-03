@@ -1446,6 +1446,9 @@ def coerce_float_setting(
 # Global cache for load_settings to avoid redundant file I/O
 _SETTINGS_CACHE: Optional[Dict[str, Any]] = None
 _SETTINGS_CACHE_SOURCE: Optional[Path] = None
+#: PERF-06: the config path's identity (every component), stamped before the
+#: cached settings were read; a warm hit requires it unchanged.
+_SETTINGS_CACHE_POSTURE: Optional[tuple] = None
 _SETTINGS_CACHE_LOCK = None  # Will be initialized when needed
 #: Serializes the miss->rebuild->store sequence (task-3503).
 #:
@@ -1896,7 +1899,94 @@ def _normalize_legacy_provider_api_key(
     return None
 
 
-@_config_participants.guarded
+def _config_file_posture(config_path: Path) -> tuple:
+    """``lstat`` identity of every component from ``/`` down to the config file.
+
+    Each entry is (dev, ino, type, mode, uid), plus nlink for the file itself,
+    or ``None`` for a missing component. A replaced file, a new hard link, a
+    symlink swap of the file, or a parent renamed and replaced by a symlink to
+    itself all change it (Qodo, #2903). ``lstat`` only: nothing is opened or
+    followed.
+    """
+    import stat as _stat
+
+    posture = []
+    for component in (*reversed(config_path.parents), config_path):
+        try:
+            info = os.lstat(component)
+        except FileNotFoundError:
+            posture.append(None)
+            continue
+        except OSError:
+            posture.append(("unreadable",))
+            continue
+        entry = (
+            info.st_dev,
+            info.st_ino,
+            _stat.S_IFMT(info.st_mode),
+            _stat.S_IMODE(info.st_mode),
+            info.st_uid,
+        )
+        posture.append(entry + (info.st_nlink,) if component == config_path else entry)
+    return tuple(posture)
+
+
+def _is_plain_owned_file(posture: tuple) -> bool:
+    """Whether a posture's last entry is a regular file this user owns, linked once.
+
+    Only that may stand in for the config file a load just created: the
+    guarded member checks reject anything else, so a symlink or other object
+    swapped in before the re-stamp keeps the stale stamp and the next read
+    meets those checks (Qodo, #2903).
+
+    Args:
+        posture: A :func:`_config_file_posture` result.
+
+    Returns:
+        True for a plain, owned, singly linked file.
+    """
+    import stat as _stat
+
+    leaf = posture[-1] if posture else None
+    # Windows has no geteuid and reports no owner in st_uid; ownership is
+    # only comparable where it exists (Qodo, #2903).
+    geteuid = getattr(os, "geteuid", None)
+    return (
+        leaf is not None
+        and len(leaf) == 6
+        and leaf[2] == _stat.S_IFREG
+        and (geteuid is None or leaf[4] == geteuid())
+        and leaf[5] == 1
+    )
+
+
+def _settings_cache_hit(active_config_path: Path) -> dict | None:
+    """Return the installed settings for ``active_config_path``, or None.
+
+    One short lock and one ``lstat`` per path component. Shared by the
+    unguarded warm paths and the guarded rebuild's re-check. The config
+    path's identity must still be the one stamped before the cached settings
+    were read: the guarded path rejected a replaced or symlinked config
+    member, or a symlinked parent, on every read, and a warm hit must not
+    hide one (Qodo, #2903), so any change is a miss.
+    """
+    global _SETTINGS_CACHE_LOCK
+
+    if _SETTINGS_CACHE_LOCK is None:
+        import threading
+
+        _SETTINGS_CACHE_LOCK = threading.Lock()
+    with _SETTINGS_CACHE_LOCK:
+        cached = _SETTINGS_CACHE
+        source = _SETTINGS_CACHE_SOURCE
+        posture = _SETTINGS_CACHE_POSTURE
+    if cached is None or source != active_config_path:
+        return None
+    if _config_file_posture(active_config_path) != posture:
+        return None
+    return cached
+
+
 def load_settings(
     force_reload: bool = False,
     *,
@@ -1904,9 +1994,12 @@ def load_settings(
 ) -> Dict:
     """Return the merged application settings, rebuilding at most once.
 
-    Thin wrapper over :func:`_load_settings_uncached` that serializes the
-    cache-miss rebuild (task-3503). The cache-hit path is unchanged: one
-    short lock, no rebuild lock taken at all.
+    PERF-06 (TASK-33265): a warm hit is served here, ahead of the ADR-126
+    admission handshake. It is a pure in-memory read and paid ~650
+    ``open()`` calls per call (the 4 Hz Console poll, every composer
+    keystroke). A miss or forced reload runs the guarded
+    :func:`_load_settings_guarded`, exactly as before; this mirrors
+    TASK-32804.1's ``_warm_config_cache_hit`` for ``get_cli_setting``.
 
     Args:
         force_reload: Rebuild even on a cache hit.
@@ -1921,23 +2014,50 @@ def load_settings(
     Returns:
         The merged settings mapping.
     """
-    global _SETTINGS_CACHE_LOCK
+    if not force_reload:
+        # Lock-free by design, like TASK-21124's get_cli_setting fast path: a
+        # write holds the config locks through fsyncs and TOML parses, and a
+        # loop-side read must not stall behind it. A read overlapping a write
+        # may return the pre-write settings; the writer invalidates the cache
+        # before it returns, so a read after a completed write sees the new
+        # value.
+        cached = _settings_cache_hit(_get_effective_config_path())
+        if cached is not None:
+            return cached
+    return _load_settings_guarded(
+        force_reload=force_reload,
+        reload_bootstrap=reload_bootstrap,
+    )
 
-    if _SETTINGS_CACHE_LOCK is None:
-        import threading
 
-        _SETTINGS_CACHE_LOCK = threading.Lock()
+@_config_participants.guarded
+def _load_settings_guarded(
+    force_reload: bool = False,
+    *,
+    reload_bootstrap: bool | None = None,
+) -> dict:
+    """Guarded body of :func:`load_settings`: serialize the cache-miss rebuild.
 
+    Thin wrapper over :func:`_load_settings_uncached` that serializes the
+    cache-miss rebuild (task-3503).
+
+    Args:
+        force_reload: Rebuild even on a cache hit.
+        reload_bootstrap: Whether the rebuild also force-reloads the CLI
+            bootstrap config from disk. ``None`` (default) follows
+            ``force_reload``, preserving the historical behavior. TASK-21124:
+            ``_publish_runtime_config_unlocked`` passes ``False`` because it
+            has already installed a fresh bootstrap cache under the write
+            lock -- re-reading and re-parsing the file it just wrote was one
+            of the write path's redundant TOML parses.
+
+    Returns:
+        The merged settings mapping.
+    """
     active_config_path = _get_effective_config_path()
 
     def _cache_hit():
-        with _SETTINGS_CACHE_LOCK:
-            if (
-                _SETTINGS_CACHE is not None
-                and _SETTINGS_CACHE_SOURCE == active_config_path
-            ):
-                return _SETTINGS_CACHE
-        return None
+        return _settings_cache_hit(active_config_path)
 
     if not force_reload:
         cached = _cache_hit()
@@ -1982,7 +2102,11 @@ def _load_settings_uncached(
         Dictionary containing all configuration settings.
     """
     global _SETTINGS_CACHE, _SETTINGS_CACHE_SOURCE, _SETTINGS_CACHE_LOCK
+    global _SETTINGS_CACHE_POSTURE
     active_config_path = _get_effective_config_path()
+    # Stamped before anything is read: a file swapped mid-read leaves a stale
+    # stamp, so the next warm read misses rather than trusting it.
+    posture = _config_file_posture(active_config_path)
 
     # Initialize lock on first use to avoid import issues
     if _SETTINGS_CACHE_LOCK is None:
@@ -1995,6 +2119,7 @@ def _load_settings_uncached(
         if (
             _SETTINGS_CACHE is not None
             and _SETTINGS_CACHE_SOURCE == active_config_path
+            and _SETTINGS_CACHE_POSTURE == posture
             and not force_reload
         ):
             logger.debug("load_settings: Returning cached configuration (cache hit)")
@@ -3603,9 +3728,18 @@ def _load_settings_uncached(
         )
 
     if bootstrap.succeeded:
+        if posture and posture[-1] is None:
+            # The file was missing when stamped and this load's bootstrap
+            # created it: stamp what now exists, or every fresh profile pays a
+            # second rebuild. A file that existed keeps its pre-read stamp, so
+            # a mid-read swap still misses (Qodo, #2903).
+            created = _config_file_posture(active_config_path)
+            if _is_plain_owned_file(created):
+                posture = created
         with _SETTINGS_CACHE_LOCK:
             _SETTINGS_CACHE = config_dict
             _SETTINGS_CACHE_SOURCE = active_config_path
+            _SETTINGS_CACHE_POSTURE = posture
             logger.debug("load_settings: Configuration cached for future use")
 
     return config_dict
@@ -3889,6 +4023,10 @@ enabled = true  # master switch for Console run hooks (external commands on sess
 # matcher: tool-name glob, valid only on PreToolUse/PostToolUse
 # command: argv list, no shell — e.g. ["/usr/local/bin/guard.sh", "--strict"]
 # timeout_s: per-hook ceiling in seconds (default 10); PreToolUse fails closed on timeout
+
+# [[hooks.handler]] entries are explicit v2 declarations, independently validated.
+# id/event/type/effects are required; command type uses argv, env and optional cwd.
+# MCP type uses server, tool and optional typed input template. See ADR-163.
 
 [skills]
 # project_skills_prompt_enabled = true  # offer .SKILLS/ import at startup; spec 2026-08-17
@@ -7523,12 +7661,56 @@ def get_runtime_config_generation() -> int:
     return _CONFIG_GENERATION
 
 
-@_config_participants.guarded
 def get_runtime_config_snapshot(
     *,
     force_reload: bool = False,
 ) -> RuntimeConfigSnapshot:
-    """Return a defensive current runtime config view."""
+    """Return a defensive current runtime config view.
+
+    PERF-06 (TASK-33265): a warm snapshot is served without the ADR-126
+    admission handshake (a deep copy of the installed settings under the
+    same two in-process locks). A miss or forced reload runs the guarded
+    :func:`_get_runtime_config_snapshot_guarded`, exactly as before.
+
+    Args:
+        force_reload: Rebuild the settings from disk even when they are cached.
+
+    Returns:
+        A snapshot of the current config generation and a deep copy of the
+        merged settings, safe for the caller to mutate.
+    """
+
+    if not force_reload:
+        # Never block here: a held lock means a write is in flight, and the
+        # guarded path waits for it pause-aware, so recovery can cancel the
+        # wait (Qodo, #2903).
+        rebuild, file_lock = _settings_rebuild_lock(), _config_file_lock()
+        if rebuild.acquire(blocking=False):
+            try:
+                if file_lock.acquire(blocking=False):
+                    try:
+                        # Copy the hit that was checked: a second lookup could
+                        # miss after a lock-free clear and rebuild under the
+                        # locks, reversing admission-then-locks (Qodo, #2903).
+                        cached = _settings_cache_hit(_get_effective_config_path())
+                        if cached is not None:
+                            return RuntimeConfigSnapshot(
+                                generation=_CONFIG_GENERATION,
+                                values=copy.deepcopy(cached),
+                            )
+                    finally:
+                        file_lock.release()
+            finally:
+                rebuild.release()
+    return _get_runtime_config_snapshot_guarded(force_reload=force_reload)
+
+
+@_config_participants.guarded
+def _get_runtime_config_snapshot_guarded(
+    *,
+    force_reload: bool = False,
+) -> RuntimeConfigSnapshot:
+    """Guarded body of :func:`get_runtime_config_snapshot` (miss or reload)."""
 
     with _settings_rebuild_lock(), _config_file_lock():
         values = load_settings(force_reload=force_reload)
@@ -9703,7 +9885,7 @@ def _selected_default_base_data_dir() -> Path:
 def _default_data_root_lock() -> Iterator[None]:
     """Serialize root selection and profile creation across starts (ADR-127)."""
     lock_path = validate_path_simple(
-        _default_base_data_dir().parents[2] / ".tldw_cli-data-root.lock",
+        _default_base_data_dir().parents[2] / profile_paths.DATA_ROOT_LOCK_NAME,
         require_exists=False,
         probe_existing=False,
     )
@@ -9877,12 +10059,122 @@ def get_user_folder_name() -> str:
     return profile_paths.user_folder_name(user_name)
 
 
+#: PERF-07 (TASK-33266; ADR-126 amendment D2, 2026-09-29): the verified user
+#: data directory, reused while its inputs and every stamped path component are
+#: unchanged. ``(key, stamps, path)`` or None; guarded by the lock below.
+_USER_DATA_DIR_MEMO: tuple | None = None
+_USER_DATA_DIR_MEMO_LOCK = _threading.Lock()
+
+
+def _user_data_dir_inputs() -> tuple[tuple, tuple[Path, ...]]:
+    """The memo key and every path whose posture the resolution depends on.
+
+    Returns:
+        ``(key, stamped_paths)``. The key starts with the config cache object
+        (compared by identity) and its generation, so any reload or write
+        invalidates the memo; then the settings the resolution reads and the
+        default data base, which follows HOME. The stamped paths are every
+        component of each candidate user directory's chain plus the entries
+        the default-root selection reads (conventional root, fallback root,
+        root lock file).
+    """
+    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
+
+    user_folder = get_user_folder_name()
+    configured_data_dir = get_cli_setting("paths", "data_dir", None)
+    if configured_data_dir is None:
+        configured_data_dir = get_cli_setting("Paths", "data_dir", None)
+    if configured_data_dir:
+        candidates = (lexical_path(configured_data_dir) / user_folder,)
+        entries: tuple[Path, ...] = ()
+        # Expanded, not as written: a relative value follows the working dir.
+        base = str(candidates[0].parent)
+    else:
+        conventional = _default_base_data_dir()
+        fallback = conventional.parents[2] / _DEFAULT_DATA_FALLBACK_DIRECTORY
+        candidates = (conventional / user_folder, fallback / user_folder)
+        entries = (
+            conventional,
+            fallback,
+            conventional.parents[2] / profile_paths.DATA_ROOT_LOCK_NAME,
+        )
+        base = str(conventional)
+    key = (_CONFIG_CACHE, _CONFIG_GENERATION, _CONFIG_CACHE_SOURCE, user_folder, base)
+    paths = (*(p for c in candidates for p in _chain(c)), *entries)
+    return key, tuple(dict.fromkeys(paths))
+
+
+def _user_data_dir_stamps(paths: tuple[Path, ...]) -> tuple | None:
+    """Posture-stamp every path, or None if one cannot be observed.
+
+    A path that is not a directory, or sits under one the user cannot search,
+    raises here; the memo then steps aside so the resolution reports it as it
+    always has (``PrivatePathError``), rather than a raw ``OSError`` escaping.
+    """
+    from tldw_chatbook.Backup_Recovery.storage_admission import _posture
+
+    try:
+        return tuple(_posture(path) for path in paths)
+    except OSError:
+        return None
+
+
 @_config_participants.guarded
 def get_user_data_dir() -> Path:
-    """Return the secured lexical user-specific data directory."""
+    """Return the secured lexical user-specific data directory.
+
+    PERF-07: after the guarded handshake, a resolution is reused while the
+    config generation, the settings it reads and the posture (identity, type,
+    mode, owner) of every component from ``/`` to each candidate directory
+    are unchanged, re-observed on every call. Anything else runs the
+    unmodified resolution, the only place that creates, hardens or refuses.
+    A result is kept only when stamps taken before and after that resolution
+    are identical, so it describes exactly the state that was verified.
+
+    Returns:
+        The lexical (unresolved) user data directory, created if absent and
+        hardened to owner-only permissions.
+
+    Raises:
+        PrivatePathError: A component of the path is unsafe (for example a
+            group-writable ancestor); the resolution refuses it.
+    """
+    global _USER_DATA_DIR_MEMO
     verified = _config_participants.verified_user_data_directory(sys.modules[__name__])
     if verified is not None:
         return verified
+    key, stamped = _user_data_dir_inputs()
+    with _USER_DATA_DIR_MEMO_LOCK:
+        memo = _USER_DATA_DIR_MEMO
+    if (
+        memo is not None
+        and memo[0][0] is key[0]
+        and memo[0][1:] == key[1:]
+        and memo[1] == _user_data_dir_stamps(stamped)
+    ):
+        return memo[2]
+    before = _user_data_dir_stamps(stamped)
+    result = _resolve_user_data_dir()
+    after = _user_data_dir_stamps(stamped)
+    import stat
+
+    from tldw_chatbook.Backup_Recovery.storage_admission import _chain
+
+    walked = set(_chain(result))
+    # The result must be one of the stamped candidates: a working directory
+    # changed mid-resolution makes a relative data dir resolve elsewhere.
+    if before is not None and before == after and walked <= set(stamped) and all(
+        stamp is not None and not stat.S_ISLNK(stamp[2])
+        for path, stamp in zip(stamped, after)
+        if path in walked
+    ):
+        with _USER_DATA_DIR_MEMO_LOCK:
+            _USER_DATA_DIR_MEMO = (key, after, result)
+    return result
+
+
+def _resolve_user_data_dir() -> Path:
+    """The unmodified resolution: select, create, harden or refuse."""
     user_folder = get_user_folder_name()
     configured_data_dir = get_cli_setting("paths", "data_dir", None)
     if configured_data_dir is None:
@@ -10582,3 +10874,19 @@ APP_CONFIG_GLOBAL = settings
 #
 # End of tldw_cli/config.py
 #######################################################################################################################
+
+
+def create_mcp_credential_service(data_root: Path | None = None):
+    """Build the MCP-only keyring owner for the active data root.
+
+    No arbitrary HTTP header values enter TOML or provider-account namespaces.
+    Unsupported/insecure keyring backends fail closed on first credential use.
+    """
+    from tldw_chatbook.MCP.credential_bindings import (
+        CredentialBindingService,
+        KeyringCredentialBackend,
+    )
+
+    return CredentialBindingService(
+        KeyringCredentialBackend(data_root or get_user_data_dir())
+    )

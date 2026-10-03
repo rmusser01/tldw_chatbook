@@ -18,6 +18,8 @@ from Tests.Chat.test_console_chat_controller import (
 )
 from tldw_chatbook.Chat.console_chat_models import ConsoleRunState, ConsoleRunStatus
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.parametrize("large", [False, True])
 def test_approval_summary_bounds_allocation_and_preserves_small_json(large):
@@ -562,3 +564,69 @@ def test_production_skill_approvals_keep_run_and_target_identity(kind):
         assert summary["skill_name"] == "real-skill"
         assert summary["script_path"] == "scripts/check.py"
         assert summary["args"] == ["verify"]
+
+
+@pytest.mark.asyncio
+async def test_v2_bridge_uses_pinned_owner_and_holds_model_and_normal_completion(
+    tmp_path,
+):
+    from Tests.Agents.test_hooks_v2_tool_pipeline import hook_command
+    from Tests.Chat.test_console_agent_bridge import (
+        _bridge,
+        _fence,
+        _run,
+        _tool_messages,
+    )
+    from tldw_chatbook.Agents.hooks_v2.budgets import HookBudgetOwner
+    from tldw_chatbook.Agents.hooks_v2.engine import HookEngine
+    from tldw_chatbook.Chat.console_agent_bridge import ConsoleAgentBridge
+
+    entered = threading.Event()
+    release = threading.Event()
+    seen_sessions = []
+
+    def authority(_handler, _event, stage):
+        if stage == "accept":
+            entered.set()
+            assert release.wait(30)
+        return True
+
+    engine = HookEngine(
+        (hook_command("post", event="PostToolUse", required=True),),
+        authority,
+        HookBudgetOwner(),
+    )
+    old, db, store, session, aid = _bridge(
+        tmp_path, [[_fence("calculator", {"expression": "6*7"})], ["finished"]]
+    )
+
+    def get_hooks(session_id):
+        seen_sessions.append(session_id)
+        return engine
+
+    bridge = ConsoleAgentBridge(
+        agent_runs_db=db,
+        store=store,
+        provider_gateway=old._gateway,
+        get_hooks_v2=get_hooks,
+    )
+    future = asyncio.create_task(asyncio.to_thread(_run, bridge, store, session, aid))
+    try:
+        assert await asyncio.to_thread(entered.wait, 10)
+        for _ in range(200):
+            if _tool_messages(store, session.id):
+                break
+            await asyncio.sleep(0.005)
+        assert _tool_messages(store, session.id)
+        assert not future.done()
+        assert store.get_message(aid).content != "finished"
+        release.set()
+        outcome = await asyncio.wait_for(future, 5)
+        assert outcome.status == "done"
+        assert store.get_message(aid).content == "finished"
+        assert seen_sessions == [session.id]
+    finally:
+        release.set()
+        await future
+        await engine.close()
+        db.close()

@@ -12,6 +12,8 @@ from tldw_chatbook.Utils.sensitive_paths import (
     sensitive_exclusions_under,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest.mark.parametrize(
     "path",
@@ -530,7 +532,10 @@ def test_an_already_existing_directory_still_reads_as_an_ordinary_container():
     shadow_dir = user_data_dir / "search_history.db"
     shadow_dir.mkdir(parents=True, exist_ok=True)
 
-    assert not is_sensitive_path(shadow_dir)
+    try:
+        assert not is_sensitive_path(shadow_dir)
+    finally:
+        shadow_dir.rmdir()
 
 
 def test_refuses_new_directory_chain_blocks_the_collision():
@@ -699,3 +704,24 @@ def test_merge_preserves_base_entries():
     base = resolve_sensitive_context()
     merged = merge_sensitive_context(base)
     assert merged == base
+
+
+def test_plugin_authority_artifacts_use_protected_production_accessor():
+    from tldw_chatbook import config as app_config
+    from tldw_chatbook.Plugins.authority_store import default_plugin_authority_dir
+    from tldw_chatbook.Skills_Interop.local_skills_service import (
+        default_local_skills_store_dir,
+    )
+
+    root = default_plugin_authority_dir(
+        default_local_skills_store_dir(app_config.get_user_data_dir())
+    )
+    for relative in (
+        "metadata.json",
+        "generation_marker.json",
+        "snapshots/digest.json",
+        "intents/op.json",
+        "certificates/op.json",
+    ):
+        assert is_sensitive_path(root / relative), relative
+    assert is_sensitive_path(root.parent / "plugins-reset-archive" / "metadata.json")

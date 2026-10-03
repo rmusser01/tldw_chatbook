@@ -588,6 +588,48 @@ class ProfileInterviewScreen(
         # the nested modal then starts with its own dismissal generation.
         self.call_after_refresh(self._open_cancel_confirmation)
 
+    def _quit_discards_interview(self) -> bool:
+        """Whether quitting now would lose an interview Escape asks about.
+
+        Escape opens the Leave prompt (``_perform_safe_cancel``'s last
+        branch) only for a loaded interview that is not expired, not being
+        cancelled and not already committed. Of those, only a memory-only
+        interview is lost on quit: an encrypted draft already holds every
+        answer and stays resumable, so quitting is "Keep draft".
+        """
+        session = self._session
+        return bool(
+            session is not None
+            and session.draft_is_memory_only
+            and self._session_id is not None
+            and not self._cancel_after_start
+            and not self._expired_or_cleanup_pending
+            and session.status not in {"committed", "committing"}
+        )
+
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards a memory-only interview (TASK-33622.10).
+
+        Ctrl+Q is a priority binding, so the quit flow consults this modal
+        while it is open. A memory-only interview cannot be kept after
+        Chatbook closes -- its Leave prompt offers only Continue or Discard --
+        so quitting asks first, as Escape does.
+
+        Returns:
+            True to let the quit proceed; False to continue the interview.
+        """
+        if not self._quit_discards_interview():
+            return True
+        from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
+
+        return await confirm_quit_discarding_edits(
+            self,
+            "This interview exists only in memory. Quitting discards it and "
+            "your answers; it cannot be kept after Chatbook closes.",
+            title="Discard interview and quit?",
+            cancel_label="Continue interview",
+        )
+
     def _open_cancel_confirmation(self) -> None:
         self.app.push_screen(
             ProfileInterviewCancelModal(

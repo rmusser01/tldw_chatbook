@@ -220,7 +220,11 @@ def test_every_boot_policy_group_is_acknowledged():
 @pytest.mark.asyncio
 async def test_unknown_worker_group_still_warns_unhandled():
     """Guard for task-2726: acknowledging known fire-and-forget groups must not
-    swallow the unhandled-worker warning for genuinely unknown workers."""
+    swallow the unhandled-worker warning for genuinely unknown workers.
+
+    PERF-03 (TASK-33262): the warning is for a *failure* nobody handles; the
+    routine PENDING/RUNNING/SUCCESS transitions of an unregistered app-owned
+    worker log at DEBUG (see WorkerHandlerRegistry.handle_event)."""
     from loguru import logger as loguru_root_logger
     from textual.worker import Worker
 
@@ -238,7 +242,7 @@ async def test_unknown_worker_group_still_warns_unhandled():
             worker.group = "task-2726-unknown-group"
             worker.error = None
             await app.on_worker_state_changed(
-                Worker.StateChanged(worker, WorkerState.SUCCESS)
+                Worker.StateChanged(worker, WorkerState.ERROR)
             )
             await pilot.pause()
     finally:

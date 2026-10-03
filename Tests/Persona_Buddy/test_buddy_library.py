@@ -114,6 +114,27 @@ def test_builtin_is_independent_and_idempotent(environment):
     assert repo.get_active_persona_pack("local-persona-builtin-pixel-migu") is None
 
 
+def test_installed_builtin_is_never_republished(environment, monkeypatch):
+    """TASK-33561: only a fresh profile publishes; later readiness passes are no-ops.
+
+    Args:
+        environment: The Buddy library over a private profile; its first item
+            is the library.
+        monkeypatch: Replaces the publisher with one that fails the test.
+    """
+    import tldw_chatbook.Persona_Buddy.library as library_module
+
+    library = environment[0]
+    first = library.ensure_builtin()
+
+    def unexpected(*_args, **_kwargs):
+        raise AssertionError("installed builtin Buddy was republished")
+
+    monkeypatch.setattr(library_module, "publish_persona_visual", unexpected)
+    assert library.ensure_builtin() == first
+    assert library.ensure_builtin(legacy_retired=True) == first
+
+
 def test_native_archive_review_is_read_only_and_preserves_notices(
     environment, tmp_path
 ):

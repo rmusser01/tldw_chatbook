@@ -1,6 +1,7 @@
 # ADR-184: Local Console Prompt Draft Shelf
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-09-25
 Related Task: TASK-18930
 Supersedes: N/A

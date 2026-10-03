@@ -3,14 +3,18 @@
 #
 # Imports
 import asyncio
+import copy
 import faulthandler
+import functools
 import logging
 import os
 import signal
 import sys
+import threading
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 #
 # 3rd-Party Imports
@@ -35,6 +39,9 @@ from tldw_chatbook.Utils.persistent_diagnostics import (
     PersistentDiagnosticFilter,
     persist_event,
 )
+
+if TYPE_CHECKING:
+    from tldw_chatbook.app import TldwCli
 #
 ########################################################################################################################
 #
@@ -321,12 +328,22 @@ class RedactingFileFormatter(logging.Formatter):
       embedded in ``str(exc)`` -- the exact shape TASK-23108 was filed about --
       untouched in the ``exc_info`` block appended after it.
 
-    ``redact_log_line`` is reused verbatim -- the same function the in-app Logs
-    buffer applies -- so file and clipboard diagnostics share the same policy.
-    Its ``MAX_REDACTED_LINE_CHARS`` cap is kept rather than disabled: the cap
-    cuts on a token boundary before redaction, preserving credential detection
-    while bounding sanitizer work. A record longer than 2,000 characters is
-    truncated on disk as well as in the Logs screen.
+    ``redact_log_line`` is reused verbatim, and this formatter is also the
+    in-app Logs buffer's (``LogsBufferHandler``), so file and clipboard
+    diagnostics share the same policy. Its ``MAX_REDACTED_LINE_CHARS`` cap is
+    kept rather than disabled: the cap cuts on a token boundary before
+    redaction, preserving credential detection while bounding sanitizer work.
+    A record body longer than 2,000 characters is truncated on disk as well as
+    in the Logs screen.
+
+    PERF-03 (TASK-33262): what is redacted is the record's *body* -- message,
+    exception text and stack, everything a caller controls -- and it is
+    redacted once per record (``_redacted_body``). Each sink then lays its own
+    prefix of code-side metadata (timestamp, level, logger name, line number)
+    around that one result. Redacting each sink's whole line instead cost three
+    sanitizer passes per INFO record: ``RotatingFileHandler.shouldRollover``
+    formats the record before ``emit`` formats it again, and the Logs buffer
+    uses a different layout.
     """
 
     def format(self, record: logging.LogRecord) -> str:
@@ -347,7 +364,42 @@ class RedactingFileFormatter(logging.Formatter):
                 field is absent from the record.
         """
 
-        return redact_log_line(super().format(record))
+        # `message` is the last field of both sink layouts, so the body -- with
+        # its traceback -- lands exactly where Formatter.format would put it.
+        record.message = _redacted_body(record)
+        safe_name = _safe_logger_name(record.name)
+        if safe_name != record.name:
+            # Rare: a logger name carrying a secret or a line break. Lay the
+            # line out from a copy so other handlers keep the original record.
+            record = copy.copy(record)
+            record.name = safe_name
+        if self.usesTime():
+            record.asctime = self.formatTime(record, self.datefmt)
+        return self.formatMessage(record)
+
+
+#: Renders a record's caller-controlled text: message, then exception and stack.
+_BODY_FORMATTER = logging.Formatter()
+_REDACTED_BODY_ATTR = "_tldw_redacted_body"
+
+
+def _redacted_body(record: logging.LogRecord) -> str:
+    """Return the record's redacted body, running the sanitizer at most once."""
+    body = record.__dict__.get(_REDACTED_BODY_ATTR)
+    if body is None:
+        body = redact_log_line(_BODY_FORMATTER.format(record))
+        setattr(record, _REDACTED_BODY_ATTR, body)
+    return body
+
+
+@functools.lru_cache(maxsize=512)
+def _safe_logger_name(name: str) -> str:
+    """Return ``name`` redacted and on one line, as both sink layouts print it.
+
+    The whole-line redaction this replaced covered the logger name too; names
+    are few, so each is sanitized once.
+    """
+    return redact_log_line(name).replace("\r", " ").replace("\n", " ")
 
 
 def _private_file_formatter() -> logging.Formatter:
@@ -357,6 +409,98 @@ def _private_file_formatter() -> logging.Formatter:
         "%(asctime)s [%(levelname)-8s] %(name)s:%(lineno)d - %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+
+
+class LogsBufferHandler(logging.Handler):
+    """Feed the in-app Logs screen and its bounded "Copy all" buffer.
+
+    Both the live view and Copy all get the same credential/PII-redacted line
+    as the private file, from the same single redaction pass. The bounded
+    buffers are appended at emit time, from any thread (``deque.append`` is
+    thread-safe), so Copy all never misses a record. Only the widget update
+    is handed to the app loop when a record arrives from another thread.
+    """
+
+    def __init__(self, app: "TldwCli") -> None:
+        """Feed ``app``'s Logs buffers and its current Logs window.
+
+        Args:
+            app: The running app; owns ``_log_buffer``, ``_log_records`` and
+                ``_current_logs_window``. Gains ``_log_records_lock`` and
+                ``_log_records_seq``, which the Logs window reads when it seeds
+                from the buffer.
+        """
+        super().__init__()
+        self.app = app
+        self.setFormatter(
+            RedactingFileFormatter(
+                "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+            )
+        )
+        self._loop = _running_loop()
+        # A worker record is buffered at once but displayed later on the loop.
+        # Numbering each buffered record under a lock the Logs window also
+        # seeds under lets the deferred display skip a record the window
+        # already loaded from the buffer (Qodo, #2904).
+        self._sequence = 0
+        app._log_records_lock = threading.Lock()
+        app._log_records_seq = 0
+
+    def emit(self, record: logging.LogRecord) -> None:
+        """Append the redacted line to the buffers, then show it in the Logs view.
+
+        Args:
+            record: Record to format, store and display.
+        """
+        try:
+            message = self.format(record)
+            name = _safe_logger_name(record.name)
+            app = self.app
+            with app._log_records_lock:
+                self._sequence += 1
+                sequence = self._sequence
+                app._log_buffer.append(message)
+                app._log_records.append((record.levelname, name, message))
+                app._log_records_seq = sequence
+            loop = self._loop
+            if loop is None or _running_loop() is loop:
+                self._display(record.levelname, name, message, sequence)
+            elif not loop.is_closed():  # else nothing is left to display it
+                loop.call_soon_threadsafe(
+                    self._display, record.levelname, name, message, sequence
+                )
+        except Exception:
+            self.handleError(record)
+
+    def _display(self, level: str, name: str, message: str, sequence: int) -> None:
+        app = self.app
+
+        # Preferred live path: the Logs screen's LogsWindow applies the user's
+        # active filters as records arrive.
+        logs_window = getattr(app, "_current_logs_window", None)
+        if logs_window is not None:
+            if sequence <= getattr(logs_window, "_seeded_through", 0):
+                return  # loaded from the buffer when the window seeded
+            try:
+                logs_window.append_record(level, name, message)
+                return
+            except Exception:
+                pass  # Widget might not be mounted
+
+        # Legacy fallback: write straight to the RichLog widget.
+        widget = getattr(app, "_current_log_widget", None)
+        if widget:
+            try:
+                widget.write(message)
+            except Exception:
+                pass  # Widget might not be mounted
+
+
+def _running_loop() -> asyncio.AbstractEventLoop | None:
+    try:
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
 
 
 def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
@@ -464,6 +608,10 @@ def _configure_private_file_logging(root_logger: logging.Logger) -> bool:
     return True
 
 
+#: The loguru record each thread forwarded last; see _forward_loguru_to_standard.
+_forwarded = threading.local()
+
+
 def _forward_loguru_to_standard(message) -> None:
     """Forward a Loguru record while preserving its original ownership.
 
@@ -473,6 +621,13 @@ def _forward_loguru_to_standard(message) -> None:
     """
 
     record = message.record
+    # While sync_loguru_forward_level swaps sinks, the old and new forwarder
+    # both receive one log call's record dict; forward it once. Keyed by id
+    # plus timestamp so no reference to the record (or its traceback) is kept.
+    key = (id(record), record["time"])
+    if getattr(_forwarded, "key", None) == key:
+        return
+    _forwarded.key = key
     level_mapping = {
         "TRACE": logging.DEBUG,
         "DEBUG": logging.DEBUG,
@@ -494,6 +649,63 @@ def _forward_loguru_to_standard(message) -> None:
         )
     else:
         std_logger.log(std_level, record["message"], extra=extra)
+
+
+#: (loguru sink id, level) of the forwarder ``configure_application_logging``
+#: installed, so ``sync_loguru_forward_level`` re-levels exactly that sink.
+_loguru_forward_sink: tuple[int, int] | None = None
+_LOGURU_FORWARD_FORMAT = (
+    "{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}"
+)
+
+
+def _loguru_forward_level() -> int:
+    """Return the lowest loguru level a forwarded record could still pass at.
+
+    PERF-03 (TASK-33262). The forwarder used to sit at TRACE, so loguru's
+    early level check never fired: every dropped ``logger.debug`` still built
+    a record (~7-8 us instead of ~0.15 us), every ``opt(lazy=True)`` argument
+    was evaluated, and a dropped ``opt(exception=True).debug`` formatted a
+    traceback. Forwarded records land on ``logging.getLogger(<module>)``, so
+    what decides is the effective level of the root and ``tldw_chatbook``
+    loggers. TRACE is forwarded as DEBUG, so a DEBUG threshold keeps TRACE.
+    """
+    threshold = min(
+        logging.getLogger().getEffectiveLevel(),
+        logging.getLogger("tldw_chatbook").getEffectiveLevel(),
+    )
+    return 0 if threshold <= logging.DEBUG else threshold
+
+
+def sync_loguru_forward_level() -> None:
+    """Re-level the loguru->stdlib forwarder after a stdlib level change.
+
+    loguru cannot change a sink's level in place, so the forwarder is replaced:
+    the new sink is added before the old one goes, so no record falls between
+    them, and a record both see is forwarded once. A forwarder that someone
+    else removed stays removed.
+    """
+    global _loguru_forward_sink
+    if _loguru_forward_sink is None:
+        return
+    old_id, old_level = _loguru_forward_sink
+    level = _loguru_forward_level()
+    if level == old_level:
+        return
+    new_id = loguru_logger.add(
+        _forward_loguru_to_standard,
+        format=_LOGURU_FORWARD_FORMAT,
+        level=level,
+        diagnose=False,  # task-2119: see configure_application_logging.
+        backtrace=True,
+    )
+    try:
+        loguru_logger.remove(old_id)
+    except ValueError:
+        loguru_logger.remove(new_id)
+        _loguru_forward_sink = None
+        return
+    _loguru_forward_sink = (new_id, level)
 
 
 #: Where faulthandler writes. Sits beside the private application log, and is
@@ -588,6 +800,7 @@ def enable_crash_forensics():
 
 def configure_application_logging(app_instance):
     """Sets up all logging handlers, including Loguru integration."""
+    global _loguru_forward_sink
     # FIXME - LOGGING MAY BRING BACK BLINKING
     temp_handler = logging.StreamHandler(sys.stdout)
     temp_handler.setLevel(logging.DEBUG)
@@ -604,12 +817,16 @@ def configure_application_logging(app_instance):
     # --- BEGIN LOGURU MANAGEMENT (Your existing code is mostly fine here) ---
     try:
         loguru_logger.remove()  # Good: removes Loguru's default stderr sink
+        _loguru_forward_sink = None
         logging.info("Loguru: All pre-existing sinks removed.")
 
-        loguru_logger.add(
+        # PERF-03: at the stdlib threshold, not TRACE (see
+        # `_loguru_forward_level`); re-levelled by `sync_loguru_forward_level`.
+        forward_level = _loguru_forward_level()
+        forward_sink_id = loguru_logger.add(
             _forward_loguru_to_standard,
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level: <8} | {name}:{function}:{line} - {message}",
-            level="TRACE",
+            format=_LOGURU_FORWARD_FORMAT,
+            level=forward_level,
             # task-2119 (security): diagnose=False is load-bearing, not
             # cosmetic. With it left at loguru's default (True), any
             # exception logged via `logger.opt(exception=True)` -- e.g. the
@@ -628,6 +845,7 @@ def configure_application_logging(app_instance):
             diagnose=False,
             backtrace=True,
         )
+        _loguru_forward_sink = (forward_sink_id, forward_level)
         # This log message will also currently go to the initial basicConfig stderr handler
         logging.info(
             "Loguru: Configured to forward its messages to standard Python logging system."
@@ -677,6 +895,7 @@ def configure_application_logging(app_instance):
     )
     initial_log_level = getattr(logging, initial_log_level_str, logging.INFO)
     root_logger.setLevel(initial_log_level)
+    sync_loguru_forward_level()
     # (A temporary print to confirm, as logging to root_logger now might go to "last resort" until a handler is added)
     if not quiet_startup:
         print(
@@ -789,6 +1008,7 @@ def configure_application_logging(app_instance):
             "Standard Logging: No handlers found on root logger after setup!"
         )
 
+    sync_loguru_forward_level()
     logging.info("Logging setup complete.")
     logging.info("--- _setup_logging END ---")
 

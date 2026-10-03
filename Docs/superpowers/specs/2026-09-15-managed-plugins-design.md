@@ -244,7 +244,9 @@ arguments containing command-looking text remain data.
 ### 4.2 Storage and concurrency
 
 Use a dedicated versioned SQLite plugin registry through the repository's
-private-database seam. Initial plugin schema version is 1; migrations belong
+private-database seam. Initial plugin schema version is 1; F3 upgrades it transactionally to version 2
+with separate mutable revision review state and retained uninstall tombstones.
+Migrations belong
 to the plugin store, not an unrelated conversation schema. The registry holds
 installations, revisions, selections, workspace overrides, source records,
 operation intents and recovery states. Secrets remain references to existing
@@ -425,6 +427,14 @@ rules. Only args, env values and cwd expand portable PLUGIN_ROOT/PLUGIN_DATA;
 command tokens, URLs and headers do not. Set host-controlled variables last.
 See the [portable MCP runtime contract](https://agent-plugins.org/client-implementers/mcp-runtime).
 
+Direct transport ownership follows the reciprocal partial supersession in
+[ADR-162](../../../backlog/decisions/162-managed-agent-plugins.md) and
+[ADR-111](../../../backlog/decisions/111-mcp-remote-transport-and-client-dependency.md):
+the existing `MCPClient`/`httpx` connection retains Chatbook's current permission,
+registry and audit boundaries. The amendment covers direct Streamable HTTP
+only, preserving the historical decision and unrelated future OAuth/transport
+scope. Protocol qualification remains a separate implementation gate.
+
 Direct generic Streamable HTTP is a prerequisite. The existing tldw_server
 MCP API wrapper is not evidence of that capability. Implement it behind the
 existing MCP client interface using the existing HTTP stack, with versioned
@@ -434,7 +444,11 @@ plugin loading. No new mandatory vendor client dependency is assumed.
 Preserve complete typed MCP tool results, including error and structured-content
 fields, through the client/service seam. Hook consumers apply the companion
 spec's error-first normalization; display formatting must not erase the fields
-needed to distinguish a successful hook from a failed tool call.
+needed to distinguish a successful hook from a failed tool call. The existing
+unified execution service remains the shared timeout and audit owner. Original
+bounded result-value bytes and private host decode/dispatch evidence accompany
+typed external results; decoded mappings and legacy built-in display envelopes
+do not acquire wire provenance. See the companion hook spec's R58 contract.
 
 The initial protocol profiles to qualify are 2026-07-28, 2025-11-25 and the
 existing local client's 2025-03-26 baseline. Implement the current per-request
@@ -446,6 +460,16 @@ Use side-effect-free discovery for detection; do not probe with tools/call.
 Connection readiness is host state even when the wire protocol is stateless.
 Unknown versions and optional unimplemented capabilities produce clear
 unsupported diagnostics. No arbitrary protocol extensions are advertised.
+
+Negotiation stays within the selected protocol era (R60). After a recognized
+modern unsupported-version error, select only a different qualified modern
+revision; with no such revision, report unsupported version. An offer containing
+only legacy/unknown versions, or repeating the rejected version, does not cause
+legacy initialization or a retry loop. Explicit legacy initialize may negotiate
+either qualified legacy revision, but rejects modern/unknown counteroffers.
+Selecting a legacy profile is a separate explicit connection attempt. This
+conservative reading of the versioning contract can require manual selection for
+some dual-era servers; it never authorizes replay of an uncertain invocation.
 
 Use host-managed credentials, explicit header/token mappings and the existing
 authentication service for supported OAuth flows. Unsupported authentication
@@ -1159,3 +1183,408 @@ The written design incorporates all accepted section reviews:
 This is the approved implementation contract, not a report of implemented
 features or passing runtime tests. Written-spec review is complete; the delivery
 plan records the implementation and qualification work still required.
+
+
+F5 integration note: schema v3 adds optional stable installation aliases while
+preserving exact pre-alias authenticated projections. Protected authority uses
+the canonical Skills trust subtree, shared context carriers preserve hook and
+plugin attribution, and native worker caches retire through existing owners.
+
+## F7 implementation contract amendment (R29/R32/R37/R38, 2026-09-16)
+
+This amendment refines §§5.1/7/8.2/8.3/10 without adding another runtime owner.
+
+- Ordinary reviews carry a host-issued `operation_id`; commit requires exact original
+  review custody and equality. Request handles are `lr1.<32 lower-hex session nonce>.
+  <32 lower-hex request nonce>` (69 ASCII bytes). Durable identities are `pi1.<16
+  lower-hex generation>.<64 lower-hex binding digest>.<64 lower-hex nonce>.<64
+  lower-hex MAC>` (215 bytes), generations 1..2**63-1. The existing prepared key uses
+  the distinct `issued_operation` purpose and binds the expected closed result without
+  its ID as well as exact marker/snapshot/review/request/drain inputs. No arbitrary-ID
+  mutation overload remains. Original custody expires at 900 seconds; retries do not
+  extend it or abandon already owned cleanup/recovery.
+- `begin_disable`/`begin_uninstall` synchronously retain immutable target custody and
+  seal/cancel before worker access. `finish_revocation` shields the retained task.
+  Receipts distinguish stable request ID, optional durable ID and current cleanup.
+  Lookup is read-only: retained request nonce lookup is unambiguous, absence means
+  unavailable/expired, and restart never creates mutation custody from an ID.
+- Metadata v2 preserves the salt and names the digest of a fixed `legacy-cutover.json`,
+  authenticated with the existing committed key and `legacy_cutover` purpose. Its
+  closed payload records version, exact anchor and sorted unique ID/result-digest
+  entries; caps are 1,001 entries, 8 KiB/entry and 16 MiB/envelope. Before v2, a pending
+  map must be authenticated, its anchor reached through exact contiguous ancestry,
+  and every retained entry requalified before union/replacement. Owner-held durable
+  order is map, metadata, pruning; v2 never rebuilds or grows the map. No legacy bytes
+  are rewritten. New bootstrap uses v2 and an empty anchored map; reset archives it.
+- After every present artifact and unresolved branch is validated, unmatched hints
+  may expire only with a matching authenticated result/ID generation <= current or
+  exact fixed legacy-map membership. Newer/invalid/foreign/mismatched hints require
+  recovery. A restored old SQLite backup reconstructs current authority. Recovery
+  accepts an exact authenticated suffix endpoint but rejects disconnected present
+  material. Keep the 1,000 transition cap and SQLite-hint -> certificate -> intent ->
+  unreferenced snapshot pruning order. Live reviews and unresolved cleanup never
+  expire solely because receipt age elapsed.
+- Applying a review activates its exact reserved drain under the shared lifecycle
+  lock, without holding that lock while waiting. Existing admitted work may finish;
+  new children/Stop continuations cannot extend it. Pre-prepare cancellation releases
+  only that ticket's admission fence. Explicit work cancellation transfers exact
+  callbacks and retains actual completion evidence. Replacement roots are disjoint
+  from initial immutable packages. Current selection intersected with previously
+  supported compatible components supplies the update maximum; new/newly supported
+  components remain unselected. Rollback performs fresh current-policy review.
+- Closed managed continuation V2 uses `archive-pin-v1` purpose-separated authentication
+  with the existing committed key. The envelope binds namespace, run, durable owner,
+  entire checkpoint body digest, exact revision, actual per-component definitions and
+  required closure, mappings/configuration/credential bindings, scoped generations,
+  and applicable root ownership/generations with qualified_none/known/unknown coverage.
+  Empty roots alone do not prove absence of data use. Seal each final store-resolved
+  event before the existing write/dispatch barrier under captured admitted custody.
+  Validate before context assembly and under fresh admission; never restore old leases,
+  approvals or tokens. Same-session live generations also constrain reuse.
+- V1/pinless exact recovery has zero managed admission for tools, rules/context and
+  children. Malformed V2 or foreign/remapped owner refuses exact managed recovery.
+  Ordinary history/new turns and standalone V1 remain available. Immutable fleet pins
+  follow existing transcript eviction, count toward its 200,000-character budget and
+  remain memory-only. Envelopes cap at 256 KiB inside 8 MiB checkpoints, with 64
+  installations, 512 components/installation, 1,024 total and 256 roots; never truncate.
+
+#### F7 bounded retention operation (R40/R42)
+
+Internal `retain` reviews freeze the exact inactive revision list into the issued
+mutation identity, use a distinct nonce and the same prepare/commit/certificate/
+marker pipeline. Current references and all unresolved owners are protected.
+The full current snapshot first removes eligible references; only then may exact
+owned package roots be removed. Failed removal remains cleanup pending. Existing
+receipt metadata supplies advisory first-observed dates without authorizing deletion.
+Quota includes protected/unowned cache and staging bytes. The staging cleanup seam
+requires reconciled owner custody, a terminal producer, original directory identity,
+no recovery reference and age at least 24 hours. I3/I4 qualify their future producers.
+
+R44 cleanup custody lives in the existing authenticated `retain` operation result:
+`retired_revisions` is required only for this kind, has 1–1,000 exact records and a
+1 MiB canonical UTF-8 cap. Each record freezes revision digest, immutable path,
+directory device/inode and enclosing owner-root/anchor device/inode before issuance.
+No fields are added to historical results. Pending files protect this evidence;
+restart retries recheck current references, owners and exact physical containment.
+
+### R45: interrupted snapshot retirement (2026-09-16)
+
+After successful reconciliation and durable metadata-v2/fixed-cutover validation,
+the existing exclusive storage owner may rediscover orphan historical snapshots.
+Inventory the entire private snapshot directory before cleanup, bounded at
+`2 * MAX_TRANSITIONS + 2` (2,002) regular digest-named files; unexpected names,
+links, unqualified ancestry, overflow or invalid authentication refuse cleanup.
+Keep the existing 32 MiB per-file bound and decode bodies sequentially. New snapshot
+allocation obeys the same count cap; an existing exact snapshot remains retryable
+at capacity. Authenticate each candidate's exact header/body/digest and bind those
+bytes to its opened file and directory identity before descriptor-relative unlink.
+Recheck current marker and authenticated transition references before removal.
+
+Protect bootstrap, current, generation >= current, every present intent/certificate's
+new snapshot, unresolved/live-review/recovery material, and separately owned reset
+archives/receipts. A retained suffix's old endpoint tuple does not require its old
+body under R29. An older unreferenced result qualifies only through its valid pi1
+MAC with matching issued/snapshot generation or exact result-digest membership in
+the fixed legacy cutover map. Unknown legacy results refuse cleanup; never expand
+that map, infer commitment, authorize replay or select package/data/reset bytes.
+No live admission/revocation lock is held during this storage work.
+
+### F8 exact-root custody and runtime checkpoint (R18/R43, 2026-09-16)
+
+Plugin registry migration 004 adds noncascading exact-root users and a closed
+process coverage/expected-grants commitment. Initial owner and all grants commit
+together before access; idle, pending, reader and old-generation grants remain
+until trusted host terminal evidence. Missing joins or unknown coverage refuse
+cleanup. A live pending claim spans storage work under the existing lifecycle
+owner, without holding its lock during IO. Original root ownership never changes;
+reviewed attachment is separate and advances generation after drain.
+
+Each authenticated root may carry an optional closed physical binding and cleanup
+intent. Absent legacy fields preserve historical signed bytes and mean unknown
+custody. A cleanup group contains 1–256 exact roots of one original owner, bounded
+at 256 KiB. Waiting, deleting and final completion/cancellation each use a distinct
+issued review ID/nonce through the existing commit pipeline. Commit deleting before
+first unlink; errors or cancellation after that point retain fenced cleanup pending.
+Only confirmed removal and directory durability advance generation. No read-only
+lookup starts destruction. Every destructive step rechecks exact authenticated
+root targets and descriptor-relative no-follow ancestry. Platform proof must be
+qualified from actual identity fields; unsupported identity refuses.
+
+One separate, overwriteable checkpoint in the existing marker backend records
+version 1, session nonce, namespace identity, exact PluginMarker and clean/dirty
+phase (at most 4 KiB). It changes neither PluginMarker nor archived pin identity.
+Verified dirty publication precedes every session's first root grant/operation.
+Shutdown closes root admission, confirms all owners/handles terminal and settles
+joins, then publishes clean against the final authority marker before owner release.
+Missing, dirty, malformed or mismatched prior state quarantines every retained root,
+including orphans, until explicit reviewed host reconciliation. Empty restored SQL
+rows, a released lock or PID liveness are never quiescence proof. Clean publication
+failure preserves dirty/recovery state. Fresh bootstrap may initialize clean only
+with no prior root custody; reset cannot erase retained unresolved evidence.
+
+The secure backend guards against SQLite rollback relative to that backend; the
+explicitly accepted file backend retains reduced rollback protection, including
+its separate checkpoint file. Co-restoring those files does not prove drain.
+F7 admission/pins compare exact attached membership, original/current owner,
+scope, binding, generation and fence; package-only qualified-none is explicit
+producer evidence. H2/M4/H6 own actual grants and terminal callbacks through this
+owner; I6/I7 keep committed fence, drain, cleanup and recovery outcomes distinct.
+
+R46 qualifies the native APFS binding within one authenticated Darwin boot-session
+UUID, read with bounded native sysctl and stable readback. Bind exact native
+fstat device/inode/birth seconds and nanoseconds for the owned anchor and leaf;
+Python floating birth time and zero st_gen are insufficient. Changed, missing or
+malformed boot identity refuses retained-root grant/reuse/deletion with the specific
+root_boot_identity_changed reason until explicit reviewed quiescence/rebinding
+advances generation. Package-only use remains available. Same-boot application
+restart still requires every R43 clean/ownership/identity check. This is a tested
+host-owned comparison model, not mathematical non-reuse or cross-boot proof;
+after system reboot users must reconcile retained data. No production compiler or
+new dependency is used, and simulated boot changes are not reboot experiments.
+
+### F8 retained intent and lifecycle entry
+
+Pending root groups authenticate their action (create/delete/attach) and explicit attachment target alongside membership and phase. Restart resumes that same action; an attachment can never become deletion. Root authority commits require the root lifecycle entry, which owns dirty-checkpoint, proof, drain and phase checks; generic commit cannot bypass it. Cancelling a failed proposal clears only its own live fence after authority recovery proves no deleting phase was committed. A committed deleting phase remains fenced for reviewed recovery. The service installs the exact reviewed live fence before queuing worker storage.
+
+### F8 review corrections: completed absence and final publication
+
+An authenticated `cleaned_absent` root remains a tombstone: reconciliation may confirm its missing leaf only through its exact current no-follow ancestry and original binding. Any unexpected leaf or replaced/missing ancestry refuses; a missing `present` root is never completed absence. Reviewed whole-root proof, generation advancement and boot rebinding rules still apply.
+
+Shutdown seals ordinary service admission before finalization and rejects queued ordinary callbacks on the worker. Already executing calls must finish before clean can be published; a refused close continues to admit exact terminal settlement, not new authority work. The final checkpoint remains the last protected publication. Later root grants preserve all still-owned original epochs, and every cleanup phase retains the original review deadline; expiry leaves pending recovery for a fresh explicit review.
+
+M1 exposes complete external results through `MCPClient.call_tool_result`,
+`LocalMCPControlService.execute_external_tool_result` and the shared unified
+`execute_hub_tool_result` entry. Legacy presentation uses `project_tool_result`.
+Its stdio evidence retains exact original result bytes and host dispatch state;
+HTTP must establish equivalent evidence at its own raw receive/write boundary.
+Builtin application mappings and decoded-only adapters remain unqualified for
+native MCP hook effects. See the companion hook spec's R58 implementation notes
+for the exact byte/depth limits and H6's smaller complete-result cap.
+
+
+### Bounded MCP bridge audit publication (R59)
+
+The provider and existing unified execution service share one host-owned,
+per-invocation atomic audit publication claim. A bridge Future timeout or
+cancellation cannot establish that service audit did not start, nor prove a
+possibly dispatched operation was blocked. Claim before attempted publication;
+keep claim/capacity locks out of audit I/O and preserve sanitized uncertainty.
+
+The unified service may perform bridge-fallback metadata publication on at most
+one in-flight daemon thread per service, with no waiting queue and no caller
+join. This covers failed submissions even when the target loop is closed, while
+keeping provider completion bounded. It adds no execution/permission owner or
+durable schema and retains no tool arguments/results. Saturation or thread-start/
+write failure may lose a best-effort row; it cannot permit a duplicate publication,
+change execution authority, infer remote completion or authorize replay. An
+unscheduled fallback does not consume an otherwise available service publication.
+Capacity remains held until the actual writer exits. A stalled filesystem write
+may retain that one daemon writer and metadata until it returns or process exit.
+
+### M2 direct connection API and qualification limits (TASK-32682)
+
+The connection uses the existing `MCPClient.connect_profile(TransportProfile)`
+readiness/cleanup owner. `TransportProfile`, owned by `MCP/local_store.py`, is a
+closed resolved stdio/Streamable HTTP record, with explicit protocol version,
+URL and loopback-development selection. Resolved stdio arguments/environment
+retain literal strings. Manual-profile storage keeps its legacy normalization
+and migrates recognized records to JSON schema 2 atomically; unknown/malformed
+authoritative stores are not replaced. Transport/version/endpoint changes clear
+stored discovery. Service authentication failures expose fixed diagnostics.
+
+M1 exact raw result-value spans and private dispatch evidence survive both JSON
+and SSE. HTTP dispatch becomes uncertain at httpcore's request-header write
+trace, after connection setup; only validated terminal typed/RPC results settle
+it. Cancellation or transport cleanup never proves remote completion. The
+existing unified service remains the timeout/audit owner. No request is replayed
+on reconnect, session expiry, header mismatch or uncertain response loss.
+
+HTTP admission closes before resource teardown. Request scopes drain independently
+of arbitrary caller finalization. The existing five-second client cleanup bound
+still applies: a cancelled wait leaves the same cleanup task and unready session
+owned for a later close attempt, with its live catalog withdrawn. A pending close
+may finish and then ordinary disconnect/reconnect can release/reuse the profile.
+An actual lower close failure remains incomplete and cannot be automatically
+replaced: HTTPX marks its client closed before closing the pool, so that flag or
+a second no-op client close cannot establish resource closure. Local cleanup
+never settles an uncertain remote outcome or authorizes invocation replay.
+
+The three explicit profiles have controlled stdio and HTTP JSON/SSE exchanges.
+Legacy HTTP can resume identified SSE responses using GET/Last-Event-ID and
+respects retry within the existing deadline; modern HTTP never uses protocol
+sessions, GET resumption or initialized/cancelled notifications. Legacy
+unsupported server requests receive method errors; optional capabilities are
+not advertised. Modern input-required results remain explicitly unsupported.
+Unadvertised catalogs are omitted with diagnostics. List-change observations
+retire readiness; reconnection rediscovers definitions through ordinary owners.
+
+Bounds apply to identity-encoded raw bytes before JSON/SSE decode: 1 MiB per
+HTTP exchange including resumption, 1,024 events per stream, three resumptions,
+M1's 768 KiB complete-result cap/depth 64, and the shared 100-page/10,000-item
+catalog limits. Non-identity Content-Encoding is refused before decompression.
+Modern MCP routing values use the specified UTF-8 Base64 sentinel when needed;
+invalid header annotations exclude their tool, preserving ordinary siblings
+and raw schema constraints. Custom/authentication header bindings and arbitrary
+Unicode-to-octet mapping are not yet a supported transport input; M3/M4 own them.
+
+HTTPS uses httpx's normal trust checks with redirects and environment proxies
+disabled. Plain HTTP is restricted to explicitly selected numeric loopback
+origins; localhost-name resolution is not implicitly authorized. The controlled
+HTTP fixtures qualify loopback exchanges, not public HTTPS-server trust stores,
+OAuth, arbitrary vendor servers, other operating systems or complete portable
+plugin conformance. Standalone legacy push listeners and modern subscription
+listeners are not activated; request-scoped SSE and legacy GET response
+resumption are separate supported behaviors. Optional mcp-unified integration
+retains the predecessor's unavailable-extra qualification gap.
+
+### Literal MCP endpoint queries (R61)
+
+Preserve literal routing query parameters in an MCP endpoint URL, including
+duplicates and empty values. They are visible configuration, not credential
+references, and changing the full endpoint invalidates its discovery. Do not
+expand placeholders/environment values or insert host credentials into URLs.
+Host authorization uses its selected-origin credential service. Existing
+HTTPS/explicit-loopback, userinfo/fragment and redirect restrictions still apply.
+This follows the [Agent Plugins endpoint contract](https://agent-plugins.org/specification)
+without adding a blanket query-string restriction.
+
+### M3 credential reference recovery boundary (R62)
+
+M3 captures and validates complete connection mappings through the actual local MCP and credential owners: saved profile target, retained component definition, effective configuration and stable credential binding must all match. Authenticated recovery may reconstruct only those supported current references. M3 recovery fixtures may seed the existing protected snapshot/transaction boundary, but this does not qualify a public mapping-edit or launch workflow. M4 supplies reviewed publication and registration before plugin connections launch. No mapping, successful recovery or credential binding creates tool permission or vendor grants.
+
+### Credential reference identity after record loss (R63)
+
+New MCP credential records receive immutable UUID reference IDs from the host credential service. A supplied missing reference is unready and cannot be recreated at generation one. Normal replacement, renewal and revocation reread the protected record under the existing owner lock; retained tombstones and monotonically advancing signed-64-bit authority generations prevent ordinary reuse, and generation exhaustion refuses. After record loss, the user must create and review a fresh reference before rebinding a plugin mapping. No credential creation restores prior tool permission or proves a prior remote invocation completed.
+
+### Credential I/O and async transport deadlines (R64)
+
+Blocking credential-store and file-lock operations run outside the shared MCP event loop. The existing credential service retains at most one worker operation; other async callers wait within their applicable deadlines before performing a fresh operation, without a queued worker backlog or secret-result cache. Cancellation ends the wait and cannot trigger later HTTP dispatch; it does not terminate an OS keychain call. A stalled backend may retain one daemon worker until completion or process exit and cause authenticated requests to time out, while anonymous connections remain responsive. Capacity releases only after actual completion, and local waiting or cleanup never proves remote invocation completion or permits replay.
+
+M3's implemented credential owner exposes fresh UUID creation, existing-reference
+replacement/renewal, monotonic reviewed generations and transport-only current
+secret resolution. JSON MCP profile schema 3 persists the reference/generation
+pair; no secret-bearing TOML convention was added. The explicit supported header
+wire encoding is Latin-1 octets with reserved protocol headers, with wider Unicode
+reported unsupported rather than rewritten. Generic MCP OAuth remains
+`unsupported_authentication`. See the MCP subplan's **M3 implementation and
+operation contract** for storage, bounded async lookup, recovery APIs and the
+controlled-test/platform qualification boundary.
+
+### Shared MCP session qualification and uncertain request custody (R65/R66)
+
+Owned MCP profiles default to separate scoped connections. Sharing requires an explicit host-controlled `request_independent` qualification bound by the same immutable configure review and authenticated mapping as the exact execution, definition, effective configuration and credential authority. Package metadata, a server claim or transport multiplexing cannot supply it. Unknown qualification stays isolated. Every request retains its workspace/parent/permission and current-authority checks; changed qualification or binding requires review. The host attestation can be mistaken and does not prove arbitrary external-server or original-host isolation.
+
+A same-session request with an uncertain outcome retains its published active owner, durable host identity/outcome and complete root joins while exact connection custody remains. Local waiter cancellation does not call recovery settlement merely to mark uncertainty, release a request, or block unrelated authorized B work globally. Existing unresolved and foreign-session records are never promoted; lost custody and restart follow the existing recovery/dirty-checkpoint gates. Request completion cannot settle idle writer-capable server lifetime, and local transport closure cannot prove uncertain remote completion or permit replay. Uncertain requests can continue blocking revision drain and data deletion until positive terminal evidence exists.
+
+### Initial owned MCP setup and discovered definitions (R67)
+
+Saving owned configuration is data-only. Publish its exact connection mapping through the existing immutable configure review/commit before explicit connect or test. That authorized discovery can produce tool definitions; publish their exact reviewed tool mappings through the same configuration owner before plugin advertisement. Unchanged already-reviewed discovery may be reused. First setup can therefore require a connection review followed by a discovered-tool review. Neither step grants ordinary tool permission, starts execution implicitly or creates another approval owner; all per-call checks and no-tools/call probing rules still apply.
+
+
+### Portable literal HTTP headers and credential separation (R68)
+
+Agent Plugins 1.0.0 section 7.2.1 defines remote headers as visible package data,
+with client-generated HTTP/MCP/authorization headers taking precedence by
+case-insensitive name. Only the authenticated retained package definition may
+supply an owned profile's literal header map; arbitrary save-time raw overrides
+and foreign per-install header import remain forbidden. The reviewed exact
+configuration digest covers that public declaration. Runtime credentials stay
+in the protected credential owner and are resolved fresh for the selected origin;
+no resolved secret goes into an authority snapshot, profile, audit or diagnostic.
+Header spelling cannot prove a value is non-secret.
+
+Compose one case-insensitive map from package literals, then current credential
+headers, then authoritative host HTTP/MCP/routing/session fields. Preserve host
+framing, hop-by-hop, proxy and MCP namespace controls, including headers normally
+generated by the HTTP client. Never expand placeholders in URL/header names or
+values, forward across origins, or follow redirects. Preserve the existing exact
+Latin-1 wire policy for empty/interior-HTAB/obs-text values; wider Unicode remains
+explicitly unsupported at runtime. Package literals are not a credential mechanism,
+and standalone raw secret fields remain refused. Actual controlled-peer observation,
+case-collision precedence and no-launch save tests qualify this boundary; they do
+not qualify external services, arbitrary Unicode or foreign app behavior.
+
+Source: [Agent Plugins specification, remote MCP configuration](https://agent-plugins.org/specification#streamable-http-and-legacy-httpsse).
+
+
+### Component readiness and immutable MCP capture ceilings (R69)
+
+A missing, changed or unusable MCP owner mapping makes its own component and
+declared dependents unready. It does not discard a valid independent sibling.
+Global authenticated authority, retained interpretation and current installation,
+scope and root generations remain exact; unknown/missing required dependencies
+cannot be treated as independent. Recovery still validates every supported
+reference in the complete authenticated snapshot.
+
+The existing MCP capture API may take an explicit component ceiling, checked
+against current authenticated selection with the complete prerequisite closure.
+Unavailable explicitly requested components refuse instead of silently shrinking
+the request. Mappings, dependency records and advertised tools respect that
+immutable ceiling. Default capture uses the currently eligible set. An already
+admitted snapshot containing a newly failed component still refuses; a fresh
+narrower independent capture is required. A B-only snapshot need not fail merely
+because unrelated A becomes unready, provided B's captured mappings, complete
+requirements and generations still match. No narrowing restores an old approval,
+replays an invocation or weakens whole-snapshot recovery.
+
+
+### M4 owning-service API and operation sequence
+
+`LocalMCPControlService.save_owned_profile(installation_id, inspection, component_id, data_root=None, session_isolation="separate", ...)` saves configuration from retained material only. It resolves portable stdio arguments/environment/cwd once, assigns host `PLUGIN_ROOT` and the explicitly bound persistent `PLUGIN_DATA` last, and never starts a connection. Package HTTP URL/header strings remain literal public package data; secret values remain solely in M3. Standalone edit/delete/launch entries cannot take ownership of these records. Local profile schema 4 preserves schema 1–3 credential references and refuses older-schema owned fields or malformed source records without rewriting them.
+
+On the persistent plugin worker, `PluginService.review_configuration(installation_id, connections={component_id: profile_id}, tools={component_id: (tool_name, ...)})` captures the complete desired set of current owner references. The ordinary protected `commit(review, review.operation_id)` publishes those exact mappings. First setup commits connections, explicitly connects/discovers, then reviews and commits discovered tool hashes. An unchanged reviewed discovery can be reused. A new revision does not inherit old-revision tool authority.
+
+`capture_mcp_snapshot(installation_id, workspace_id, run_id, component_ceiling=None)` captures immutable authority. An explicit ceiling includes its complete prerequisite closure and refuses unavailable/unselected identities. `PluginMCPProvider` registers through `ToolCatalogRegistry` and uses the existing MCP permission, persona, profile, parent ceiling, audit and typed-result path. Current authority is checked before launch/dispatch and before accepting results. Hook-dependent components remain unavailable without their required qualified graph mappings; M4 does not replace the H3/I1 graph owner.
+
+`ConnectionOwnership` runs on the existing MCP client loop. Its frozen key includes installation/revision, executable/argv/environment/cwd or endpoint, reviewed configuration digest, credential bindings and the host isolation attestation. Before spawning or sending, it registers exact `PluginRunOwnership`/root grants with F5–F8. Idle connections retain grants until actual transport/process cleanup. Detach closes only the affected scope's acceptance; independent owners continue. Unknown HTTP completion remains durable active request custody even after its pool closes. Actual stdio child closure can settle its remaining request custody. No unknown call is replayed.
+
+The real `apply_revision` drain closes only idle connections of its exact revision; active/uncertain requests keep it waiting. Data deletion also waits for connection/root custody and uses the existing explicit `cancel_data_work` action. Cancellation returns an awaitable to the existing lifecycle owner. A lower transport marked closed but still cleaning up is retained and cannot be replaced under another owned connection ID. These guarantees are qualified with native same-boot process identity and controlled peers, not arbitrary remote session-isolation or OS keychain claims.
+
+### Current native owner integration (M4)
+
+Retained MCP launch/request tasks acquire their own recovery admission through the existing worker-isolation seam; inherited task state is never treated as a transferable storage lease. Direct profile admission refusal returns false, and owned launch requires an actual true result plus the exact retained session.
+
+For an exact host-qualified request-independent stdio session with another attached owner, a request deadline/cancel retains its original native producer/source admission until its original validated terminal reply or actual child exit. It never replays or terminates the shared peer to settle one request. Ordinary/separate/last-owner cleanup retains native kill-and-reap custody. Revoked scopes still refuse late results.
+
+Portable MCP expansion recognizes only ${PLUGIN_ROOT} and ${PLUGIN_DATA} in args, env values and cwd, once. Unknown placeholder text remains literal. Stdio configuration requires an explicitly created persistent plugin data-root binding before publication/launch; saving configuration never creates a root or launches a peer.
+
+
+### I1 implemented native owner contract
+
+The actual Console composes selected commands, always/manual rules, ephemeral agent
+presets, owned MCP and v2 hook sets from the same admitted snapshot. Host tool/model
+references are captured by `review_configuration` and published by existing commit;
+owned MCP labels require their reviewed source in the dependency closure. Inline and
+fork tool constraints retain EMPTY through live typed context, and actual host child
+ceilings refuse impossible approvals before invocation. Agent model mappings stay
+within the actual parent provider/endpoint route; skill model overrides remain
+explicitly unsupported. No historical string can recreate this live witness.
+
+Selected hook variables/paths are projected before per-component readiness. Existing
+F2/H2 owners retain actual process/root custody until settlement, including revocation.
+Per-definition and live-material graph requirements use existing H3 checkpoints.
+See `tldw_chatbook/Plugins/README.md` for the exact supported API and current-dev
+integration evidence for TASK-32686; no original-host or cross-platform certification
+is implied.
+
+
+### I2 pinned foreign interpretation
+
+OpenAI/Cursor adapters `2026-10-01.1` normalize only supported package/instruction
+contracts into the existing immutable inventory. Inline OpenAI overlays replace
+compatibility wholesale; portable identity/locations remain canonical. Cursor
+explicit paths replace defaults, including empty exclusions. Catalog execution
+fields must survive as `.chatbook-plugin/catalog.json` retained bytes; manifest
+fields take precedence. Existing review/materialization/recovery retain the exact
+chosen dialect, and foreign effective identity includes complete content/exec bits.
+No second trust, permission, snapshot store or acquisition owner is introduced.
+
+Unknown vendor constraints, unavailable variables/apps, conditional rules and
+undocumented Codex presets remain unavailable. Full foreign hook timing, payload,
+matcher, output, cwd, argv and timeout contracts are not yet runtime-qualified.
+Source hooks remain non-executable proposals; unknown/required root, group or
+handler guard scope fences the affected package. Known optional observers remain
+visible. Parsing and exercised Chatbook behavior are separate from original-host
+comparison; fixtures record immutable upstream references and license context in
+`Tests/Plugins/fixtures/interop/README.md`. TASK-32687 implements this conservative
+subset, with evidence in the current-dev integration report.

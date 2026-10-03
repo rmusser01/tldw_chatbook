@@ -189,3 +189,51 @@ async def test_apply_world_info_multimodal_preserves_interleaved_order():
     assert parts[0] == {"type": "text", "text": "[START]\n\nText1"}
     assert parts[1] is image_part
     assert parts[2] == {"type": "text", "text": "Text2\n\n[END]"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("multimodal", [False, True])
+@pytest.mark.parametrize("edit", ["wrap", "change", "duplicate"])
+async def test_world_info_preserves_only_whole_host_plugin_material(multimodal, edit):
+    from tldw_chatbook.Agents.agent_models import PluginContextText
+    from tldw_chatbook.Plugins.admission import PluginUnavailable
+    from tldw_chatbook.Plugins.context import check_send_context, instruction_block
+
+    block = instruction_block(
+        "install", "skill:test", "revision", "PLUGIN_BODY:" + "x" * 6800
+    )
+    image = {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}}
+    content = (
+        [
+            {"type": "text", "text": block},
+            image,
+            {"type": "text", "text": "ordinary tail"},
+        ]
+        if multimodal
+        else block
+    )
+
+    def apply(_conversation, text, _history):
+        if edit == "change":
+            return text.replace("PLUGIN_BODY:", "EDITED_BODY:")
+        if edit == "duplicate":
+            return text + text
+        return "WORLD_PREFIX\n" + text + "\nWORLD_SUFFIX"
+
+    controller, store = _controller(apply)
+    session = _session_with_conv(store)
+    messages = [{"role": "user", "content": content}]
+    if edit != "wrap":
+        with pytest.raises(PluginUnavailable, match="transform"):
+            await controller._apply_world_info(messages, session.id)
+        return
+    result = await controller._apply_world_info(messages, session.id)
+    carried = result[0]["content"][0]["text"] if multimodal else result[0]["content"]
+    assert isinstance(carried, PluginContextText)
+    if multimodal:
+        assert result[0]["content"][1] is image
+    with pytest.raises(PluginUnavailable, match="send_too_large"):
+        check_send_context(result + [{"role": "tool", "content": block}] * 4)
+    transport = check_send_context(result)
+    sent = transport[0]["content"][0]["text"] if multimodal else transport[0]["content"]
+    assert type(sent) is str and "PLUGIN_BODY:" + "x" * 6800 in sent

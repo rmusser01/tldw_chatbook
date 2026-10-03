@@ -43,6 +43,8 @@ import threading
 import time
 
 import pytest
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
@@ -111,7 +113,11 @@ from Tests.Agents.test_fleet_steering_mailbox import (
 
 @pytest.fixture()
 def db(tmp_path):
-    return AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    database = AgentRunsDB(tmp_path / "runs.db", client_id="test")
+    try:
+        yield database
+    finally:
+        database.close()
 
 
 # =========================================================================

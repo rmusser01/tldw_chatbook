@@ -25,6 +25,7 @@ from loguru import logger
 
 from tldw_chatbook.Chat.attachment_core import image_url_part
 from tldw_chatbook.Chat.console_context_policy import (
+    CompactionFailureBehavior,
     ContextCarryForwardMode,
     ContextCompactionMode,
     ResolvedConsoleContextPolicy,
@@ -41,6 +42,7 @@ from tldw_chatbook.Chat.console_context_repository import (
     MemoryCoverageKind,
     MemoryOriginKind,
     MemorySelectionKind,
+    validate_branch_memory_commit,
 )
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
 from tldw_chatbook.Chat.console_prepared_request import (
@@ -403,6 +405,231 @@ class CompactionTransactionResult:
     terminal: CompactionTerminal
     memory: ConsoleMemoryRecord | None = field(default=None, repr=False)
     reason: str | None = None
+    # TASK-33621.3 (appended, defaulted -- legacy callers unchanged): what the
+    # attempt reported spending, whether a provider summary call was made at
+    # all, and whether an earlier failure suppressed this automatic attempt
+    # before any call -- so failure copy can disclose spend honestly.
+    usage: ProviderUsage | None = None
+    attempted: bool = False
+    suppressed: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class CompactionRetryFence:
+    """What must change before a failed automatic compaction may bill again.
+
+    TASK-33621.3 AC#5. ``settings_key`` digests every input that changes what
+    one summary call would do: provider, model, prompt, the compaction policy
+    except its failure behavior, the model window, and the effective memory.
+    ``history`` is the durable history before the active request. A later
+    fence stays blocked while its settings match and it only APPENDED turns
+    after that history; an edit, delete, branch switch, memory change or
+    policy change lifts the block. ``route`` names the provider and model the
+    summary call goes to: each route keeps its own pause, so a failed Compact
+    now on the auxiliary model never replaces the pause the sends' model set.
+    ``request`` is the active request itself, from its user turn on (empty
+    when the fence has none), so a request that resumes the paused latest
+    exchange -- Continue, regenerate -- stays covered.
+    """
+
+    conversation_id: str
+    settings_key: str
+    history: tuple[DurableMessageSnapshot, ...] = field(repr=False)
+    route: str = ""
+    request: tuple[DurableMessageSnapshot, ...] = field(default=(), repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class _FailedCompaction:
+    """One conversation's last failed attempt: sizes, digests and ids only.
+
+    ``base_length``/``base_digest`` fence the history before the paused
+    history's latest user turn, and ``latest_exchange`` holds one digest per
+    row from that turn on, keyed by message id. They let the pause cover a
+    request that RESUMES that exchange instead of appending to it.
+    """
+
+    settings_key: str
+    history_length: int
+    history_digest: str
+    reason: str
+    base_length: int | None = None
+    base_digest: str = ""
+    latest_exchange: tuple[tuple[str, str], ...] = ()
+
+    @classmethod
+    def from_fence(
+        cls, fence: CompactionRetryFence, reason: str
+    ) -> _FailedCompaction:
+        """Record a failed attempt on ``fence``.
+
+        Args:
+            fence: The retry fence the failed attempt was made on.
+            reason: The failure reason the suppressed copy reports.
+
+        Returns:
+            The pause, with the latest exchange recorded when the fenced
+            history has a user turn.
+        """
+
+        history = fence.history
+        failed = cls(
+            settings_key=fence.settings_key,
+            history_length=len(history),
+            history_digest=_persisted_prefix_digest(history),
+            reason=reason,
+        )
+        user_positions = [i for i, row in enumerate(history) if row.role == "user"]
+        if not user_positions:
+            return failed
+        base = user_positions[-1]
+        return replace(
+            failed,
+            base_length=base,
+            base_digest=_persisted_prefix_digest(history[:base]),
+            latest_exchange=tuple(
+                (row.message_id, _persisted_prefix_digest((row,)))
+                for row in history[base:]
+            ),
+        )
+
+    def blocks(self, fence: CompactionRetryFence) -> bool:
+        """Return whether ``fence`` must stay paused (AC#5).
+
+        Args:
+            fence: The fence of the automatic attempt about to be made.
+
+        Returns:
+            True while the settings match and the attempt either only
+            appended turns after the paused history, or resumes its latest
+            exchange: its history is the paused history before that
+            exchange's user turn, its request starts at that same turn, and
+            every paused row the request still carries is unchanged. A
+            Continue carries the reply it continues, so editing that reply
+            lifts the pause; a regenerate replaces it and does not.
+        """
+
+        if fence.settings_key != self.settings_key:
+            return False
+        if (
+            len(fence.history) >= self.history_length
+            and _persisted_prefix_digest(fence.history[: self.history_length])
+            == self.history_digest
+        ):
+            return True
+        if (
+            self.base_length is None
+            or not fence.request
+            or len(fence.history) != self.base_length
+            or fence.request[0].message_id != self.latest_exchange[0][0]
+            or _persisted_prefix_digest(fence.history) != self.base_digest
+        ):
+            return False
+        paused = dict(self.latest_exchange)
+        return all(
+            _persisted_prefix_digest((row,)) == paused[row.message_id]
+            for row in fence.request
+            if row.message_id in paused
+        )
+
+
+def effective_memory_identity(
+    effective: EffectiveMemoryResult,
+) -> tuple[EffectiveMemoryKind, str | None, str | None]:
+    """Return the kind, generated memory id and legacy boundary in effect.
+
+    Args:
+        effective: The effective memory selected for a conversation.
+
+    Returns:
+        ``(kind, memory_id, legacy_boundary_message_id)``; the id is None
+        without a generated memory and the boundary None without a legacy
+        prefix. Equal tuples mean the same memory is in effect.
+    """
+
+    return (
+        effective.kind,
+        effective.memory.memory_id if effective.memory is not None else None,
+        effective.legacy.boundary_message_id if effective.legacy is not None else None,
+    )
+
+
+def compaction_retry_fence(
+    conversation_id: str,
+    resolution: ConsoleProviderResolution,
+    prompt: CompactionPromptSnapshot,
+    resolved: ResolvedConsoleContextPolicy,
+    effective: EffectiveMemoryResult,
+    snapshots: Sequence[DurableMessageSnapshot],
+    *,
+    active_request: bool = True,
+) -> CompactionRetryFence:
+    """Capture the retry fence for one automatic compaction decision.
+
+    Args:
+        conversation_id: Durable conversation the attempt belongs to.
+        resolution: Provider resolution the summary call would use.
+        prompt: The versioned compaction prompt.
+        resolved: The resolved context policy for this request.
+        effective: The effective memory selected for this request.
+        snapshots: The durable active lineage, active request included.
+        active_request: True for a send or Retry, whose last user turn is
+            the request being prepared. False for Compact now and a
+            micro-compaction tick: only an incomplete last user turn (an
+            unsent message waiting in response recovery) is then a request;
+            a complete latest exchange is history, so editing it lifts the
+            pause like an edit to any earlier turn.
+
+    Returns:
+        A fence whose history excludes the active request, so a Retry or a
+        fresh send after a failure compares only the turns that existed then;
+        the request rows ride along separately.
+    """
+
+    user_positions = [i for i, row in enumerate(snapshots) if row.role == "user"]
+    pending = bool(user_positions) and (
+        active_request
+        or not _is_complete_durable_unit(snapshots[user_positions[-1] :])
+    )
+    split = user_positions[-1] if pending else len(snapshots)
+    history = tuple(snapshots[:split])
+    kind, memory_id, legacy_boundary = effective_memory_identity(effective)
+    settings = {
+        "provider": resolution.provider,
+        "model": resolution.model or "",
+        "prompt": prompt.digest,
+        "policy": repr(
+            replace(
+                resolved.policy,
+                failure_behavior=CompactionFailureBehavior.STOP_AND_ASK,
+            )
+        ),
+        # The model window, not the effective budget: in Automatic budget
+        # mode that budget moves with every request's own length, which
+        # would lift the block on every send.
+        "window": resolved.model_context_window_tokens,
+        "memory": [
+            kind.value,
+            memory_id,
+            effective.memory.revision if effective.memory is not None else None,
+            legacy_boundary,
+            # A legacy summary has no revision: digest its text, as the
+            # repository's memory fence does, so editing it on a fixed
+            # boundary still lifts the pause.
+            (
+                _digest_json(effective.legacy.summary_text)
+                if effective.legacy is not None
+                else None
+            ),
+        ],
+    }
+    return CompactionRetryFence(
+        conversation_id,
+        _digest_json(settings),
+        history,
+        route=f"{resolution.provider}/{resolution.model or ''}",
+        request=tuple(snapshots[split:]),
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1863,6 +2090,9 @@ class ConsoleCompactionService:
         # the capability for the resolution (no bridged provider does today
         # -- this is the seam a future gateway capability flips).
         self._native_compaction_delegation = native_compaction_delegation is True
+        # TASK-33621.3: the last FAILED attempt per conversation and route.
+        # In memory only: the pause lasts for this app session.
+        self._failed_compactions: dict[str, dict[str, _FailedCompaction]] = {}
 
     async def summarize_manual(
         self,
@@ -1873,6 +2103,7 @@ class ConsoleCompactionService:
         prompt: CompactionPromptSnapshot,
         current_admission: Callable[[], BranchMemoryCommit | None],
         prepare_projection: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+        hooks=None,
     ) -> CompactionTransactionResult:
         """Execute one exact manual prefix/range summary and guarded commit."""
         if not _manual_admission_matches(
@@ -1920,6 +2151,28 @@ class ConsoleCompactionService:
             completion = None
             summary_engine = "local"
             for attempt_index, attempt_messages in enumerate(message_attempts):
+                if hooks is not None:
+                    try:
+                        attempt_messages = await hooks.before(
+                            attempt_messages, plan.requested_output_cap
+                        )
+                    except asyncio.CancelledError:
+                        self._finish(
+                            operation_id,
+                            AuxiliaryAttemptStatus.CANCELLED,
+                            started_tick,
+                            failure_reason="cancelled",
+                        )
+                        raise
+                    except Exception as exc:  # noqa: BLE001 -- hook boundary
+                        return self._end(
+                            operation_id,
+                            AuxiliaryAttemptStatus.FAILED,
+                            started_tick,
+                            "required_pre_compact_failed",
+                            error_type=type(exc).__name__,
+                            attempted=False,
+                        )
                 # Same executor-thread ceiling as compact()'s bound above;
                 # additionally a FOCUSED plan may spend up to 2x the bound
                 # (steered + unsteered attempts each get the full timeout).
@@ -1934,35 +2187,33 @@ class ConsoleCompactionService:
                         operation_id,
                         AuxiliaryAttemptStatus.CANCELLED,
                         started_tick,
+                        failure_reason="cancelled",
                     )
                     raise
                 except TimeoutError:
                     # TASK-26016: same bound as automatic compaction -- a hung
                     # manual summarize wedged the run-state at VALIDATING.
-                    self._finish(
-                        operation_id,
-                        AuxiliaryAttemptStatus.TIMED_OUT,
-                        started_tick,
-                    )
                     logger.warning(
                         "console_manual_compaction_auxiliary_timed_out timeout_s={}",
                         self._auxiliary_timeout,
                     )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.TIMED_OUT,
+                        started_tick,
+                        "auxiliary_timed_out",
                     )
                 except Exception as exc:
-                    self._finish(
-                        operation_id,
-                        AuxiliaryAttemptStatus.FAILED,
-                        started_tick,
-                    )
                     logger.warning(
                         "console_manual_compaction_auxiliary_failed error_type={}",
                         type(exc).__name__,
                     )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED, reason="auxiliary_provider_failed"
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "auxiliary_provider_failed",
+                        error_type=type(exc).__name__,
                     )
                 summary = completion.text.strip()
                 if summary and not _contains_reserved_envelope(summary):
@@ -1977,14 +2228,12 @@ class ConsoleCompactionService:
                 completion.usage.output if completion.usage is not None else None
             )
             if not summary or _contains_reserved_envelope(summary):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
+                    "invalid_summary_output",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="invalid_summary_output"
                 )
 
             try:
@@ -2008,15 +2257,12 @@ class ConsoleCompactionService:
                     reported_output is not None
                     and reported_output > plan.requested_output_cap
                 ):
-                    self._finish(
+                    return self._end(
                         operation_id,
                         AuxiliaryAttemptStatus.FAILED,
                         started_tick,
+                        "invalid_summary_output",
                         usage=completion.usage,
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED,
-                        reason="invalid_summary_output",
                     )
                 ceiling = after.capacity.effective_input_ceiling_tokens
                 covered_raw = max(
@@ -2025,19 +2271,16 @@ class ConsoleCompactionService:
                     - after.accounting.compactable_tokens,
                 )
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_manual_compaction_projection_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_projection_failed",
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "summary_projection_failed",
+                    usage=completion.usage,
                 )
             if (
                 after.known_overflow
@@ -2047,15 +2290,12 @@ class ConsoleCompactionService:
                 or after.accounting.total_input_tokens >= plan.before_tokens
                 or covered_raw <= after.accounting.memory_tokens
             ):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
+                    "summary_did_not_make_progress",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_did_not_make_progress",
                 )
 
             try:
@@ -2063,14 +2303,13 @@ class ConsoleCompactionService:
             except Exception:
                 current = None
             if current != admission:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
+                    "admission_changed",
                     usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE, reason="admission_changed"
+                    terminal=CompactionTerminal.STALE,
                 )
 
             memory = replace(
@@ -2119,30 +2358,29 @@ class ConsoleCompactionService:
             try:
                 committed = self._repository.commit_memory_selection_if_current(commit)
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_manual_compaction_commit_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="memory_commit_failed"
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "memory_commit_failed",
+                    usage=completion.usage,
+                    error_type=type(exc).__name__,
                 )
             if not committed:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
+                    "branch_memory_changed_before_commit",
                     usage=completion.usage,
+                    terminal=CompactionTerminal.STALE,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE,
-                    reason="branch_memory_changed_before_commit",
-                )
+            if hooks is not None:
+                hooks.committed(memory)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
@@ -2152,6 +2390,8 @@ class ConsoleCompactionService:
             return CompactionTransactionResult(
                 CompactionTerminal.SUCCEEDED,
                 memory=memory,
+                usage=completion.usage,
+                attempted=True,
             )
 
     async def compact(
@@ -2165,6 +2405,71 @@ class ConsoleCompactionService:
         current_admission: Callable[[], CompactionAdmission | None],
         prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
         prefix_messages: Sequence[DurableMessageSnapshot],
+        retry_fence: CompactionRetryFence | None = None,
+        honor_failure_latch: bool = True,
+        hooks=None,
+    ) -> CompactionTransactionResult:
+        """Run one admitted automatic compaction transaction.
+
+        TASK-33621.3: with a ``retry_fence``, a billed attempt that FAILED
+        suppresses every later automatic attempt on the same fence -- no
+        provider call, no ledger row -- until the conversation or its
+        compaction settings change (AC#5). ``honor_failure_latch=False`` is
+        the explicit user action (Compact now), which may always try again.
+        A pause is kept per ``retry_fence.route`` (provider and model).
+        """
+        conversation_id = admission.conversation_id
+        failed = (
+            self._failed_compactions.get(conversation_id, {}).get(retry_fence.route)
+            if retry_fence is not None
+            else None
+        )
+        if (
+            retry_fence is not None
+            and honor_failure_latch
+            and failed is not None
+            and failed.blocks(retry_fence)
+        ):
+            logger.info("console_compaction_retry_suppressed reason={}", failed.reason)
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason=failed.reason, suppressed=True
+            )
+        result = await self._compact_once(
+            admission=admission,
+            branch_commit=branch_commit,
+            plan=plan,
+            resolution=resolution,
+            prompt=prompt,
+            current_admission=current_admission,
+            prepare_main=prepare_main,
+            prefix_messages=prefix_messages,
+            hooks=hooks,
+        )
+        if result.terminal is CompactionTerminal.SUCCEEDED:
+            self._failed_compactions.pop(conversation_id, None)
+        elif (
+            retry_fence is not None
+            and result.attempted
+            and result.terminal is CompactionTerminal.FAILED
+        ):
+            routes = self._failed_compactions.setdefault(conversation_id, {})
+            routes[retry_fence.route] = _FailedCompaction.from_fence(
+                retry_fence, result.reason or "compaction_failed"
+            )
+        return result
+
+    async def _compact_once(
+        self,
+        *,
+        admission: CompactionAdmission,
+        branch_commit: BranchMemoryCommit,
+        plan: CompactionPlan,
+        resolution: ConsoleProviderResolution,
+        prompt: CompactionPromptSnapshot,
+        current_admission: Callable[[], CompactionAdmission | None],
+        prepare_main: Callable[[PreparedConsoleRequest], PreparedProviderRequest],
+        prefix_messages: Sequence[DurableMessageSnapshot],
+        hooks=None,
     ) -> CompactionTransactionResult:
         if not _automatic_admission_matches(
             admission=admission,
@@ -2174,9 +2479,23 @@ class ConsoleCompactionService:
             prompt=prompt,
             prefix_messages=prefix_messages,
         ):
+            logger.warning(
+                "console_compaction_failed reason=invalid_automatic_admission"
+            )
             return CompactionTransactionResult(
                 CompactionTerminal.FAILED,
                 reason="invalid_automatic_admission",
+            )
+        try:
+            validate_branch_memory_commit(branch_commit)
+        except ValueError as exc:
+            logger.warning(
+                "console_compaction_failed reason=memory_commit_failed "
+                "status=not_started error_type={}",
+                type(exc).__name__,
+            )
+            return CompactionTransactionResult(
+                CompactionTerminal.FAILED, reason="memory_commit_failed"
             )
         lock = self._locks.setdefault(admission.conversation_id, asyncio.Lock())
         if lock.locked():
@@ -2209,11 +2528,34 @@ class ConsoleCompactionService:
             # released -- the user-facing wedge is fixed. Upgrade path: cap
             # the provider HTTP timeout at/below this bound for auxiliary
             # calls in the gateway.
+            auxiliary_messages = plan.auxiliary_messages
+            if hooks is not None:
+                try:
+                    auxiliary_messages = await hooks.before(
+                        auxiliary_messages, plan.requested_output_cap
+                    )
+                except asyncio.CancelledError:
+                    self._finish(
+                        operation_id,
+                        AuxiliaryAttemptStatus.CANCELLED,
+                        started_tick,
+                        failure_reason="cancelled",
+                    )
+                    raise
+                except Exception as exc:  # noqa: BLE001 -- hook boundary
+                    return self._end(
+                        operation_id,
+                        AuxiliaryAttemptStatus.FAILED,
+                        started_tick,
+                        "required_pre_compact_failed",
+                        error_type=type(exc).__name__,
+                        attempted=False,
+                    )
             summary_engine = "local"
             try:
                 completion, summary_engine = await self._summary_completion(
                     resolution=resolution,
-                    messages=plan.auxiliary_messages,
+                    messages=auxiliary_messages,
                     max_output_tokens=plan.requested_output_cap,
                     route=ConsoleRequestRoute.AUTO_COMPACTION,
                 )
@@ -2225,6 +2567,7 @@ class ConsoleCompactionService:
                     operation_id,
                     AuxiliaryAttemptStatus.CANCELLED,
                     started_tick,
+                    failure_reason="cancelled",
                 )
                 raise
             except TimeoutError:
@@ -2232,51 +2575,44 @@ class ConsoleCompactionService:
                 # after completion), so the prior memory state is intact and
                 # the ordinary FAILED terminal routes into
                 # CompactionFailureBehavior (AC#3/AC#4).
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.TIMED_OUT,
-                    started_tick,
-                )
                 logger.warning(
                     "console_compaction_auxiliary_timed_out timeout_s={}",
                     self._auxiliary_timeout,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="auxiliary_timed_out"
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.TIMED_OUT,
+                    started_tick,
+                    "auxiliary_timed_out",
                 )
-            except Exception:
-                self._finish(
+            except Exception as exc:
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="auxiliary_provider_failed"
+                    "auxiliary_provider_failed",
+                    error_type=type(exc).__name__,
                 )
 
             summary = completion.text.strip()
-            reported_output = (
-                completion.usage.output if completion.usage is not None else None
-            )
+            usage = completion.usage
+            reported_output = usage.output if usage is not None else None
             if not summary or _contains_reserved_envelope(summary):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="invalid_summary_output"
+                    "invalid_summary_output",
+                    usage=usage,
                 )
             if current_admission() != admission:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE, reason="admission_changed"
+                    "admission_changed",
+                    usage=usage,
+                    terminal=CompactionTerminal.STALE,
                 )
 
             try:
@@ -2310,47 +2646,39 @@ class ConsoleCompactionService:
                     reported_output is not None
                     and reported_output > plan.requested_output_cap
                 ):
-                    self._finish(
+                    return self._end(
                         operation_id,
                         AuxiliaryAttemptStatus.FAILED,
                         started_tick,
-                        usage=completion.usage,
-                    )
-                    return CompactionTransactionResult(
-                        CompactionTerminal.FAILED,
-                        reason="invalid_summary_output",
+                        "invalid_summary_output",
+                        usage=usage,
                     )
                 after_conversation = (
                     after.accounting.memory_tokens + after.accounting.compactable_tokens
                 )
             except Exception as exc:
-                self._finish(
-                    operation_id,
-                    AuxiliaryAttemptStatus.FAILED,
-                    started_tick,
-                    usage=completion.usage,
-                )
                 logger.warning(
                     "console_compaction_projection_failed error_type={}",
                     type(exc).__name__,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED,
-                    reason="summary_projection_failed",
+                return self._end(
+                    operation_id,
+                    AuxiliaryAttemptStatus.FAILED,
+                    started_tick,
+                    "summary_projection_failed",
+                    usage=usage,
                 )
             if (
                 after.known_overflow
                 or after.accounting.total_input_tokens >= plan.before_input_tokens
                 or after_conversation > plan.target_conversation_tokens
             ):
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="summary_did_not_make_progress"
+                    "summary_did_not_make_progress",
+                    usage=usage,
                 )
 
             record = replace(
@@ -2386,36 +2714,40 @@ class ConsoleCompactionService:
             commit = replace(branch_commit, memory=record)
             try:
                 committed = self._repository.commit_memory_selection_if_current(commit)
-            except Exception:
-                self._finish(
+            except Exception as exc:
+                # TASK-33621.3: this used to be a bare except that discarded
+                # the cause -- a live-session lineage fault billed every send
+                # and left nothing in the log to say why.
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.FAILED,
                     started_tick,
-                    usage=completion.usage,
-                )
-                return CompactionTransactionResult(
-                    CompactionTerminal.FAILED, reason="memory_commit_failed"
+                    "memory_commit_failed",
+                    usage=usage,
+                    error_type=type(exc).__name__,
                 )
             if not committed:
-                self._finish(
+                return self._end(
                     operation_id,
                     AuxiliaryAttemptStatus.STALE,
                     started_tick,
-                    usage=completion.usage,
+                    "branch_memory_changed_before_commit",
+                    usage=usage,
+                    terminal=CompactionTerminal.STALE,
                 )
-                return CompactionTransactionResult(
-                    CompactionTerminal.STALE,
-                    reason="branch_memory_changed_before_commit",
-                )
+            if hooks is not None:
+                hooks.committed(record)
             self._finish(
                 operation_id,
                 AuxiliaryAttemptStatus.SUCCEEDED,
                 started_tick,
-                usage=completion.usage,
+                usage=usage,
             )
             return CompactionTransactionResult(
                 CompactionTerminal.SUCCEEDED,
                 memory=record,
+                usage=usage,
+                attempted=True,
             )
 
     async def summarize_span_to_text(
@@ -2512,18 +2844,56 @@ class ConsoleCompactionService:
         started_tick: float,
         *,
         usage: ProviderUsage | None = None,
+        failure_reason: str | None = None,
     ) -> None:
         elapsed_ms = max(0, int((self._monotonic() - started_tick) * 1000))
         pricing = self._pricing_provenance(usage)
-        self._repository.finish_auxiliary_attempt(
-            operation_id,
-            status=status,
-            finished_at=self._now().isoformat(),
-            elapsed_ms=elapsed_ms,
-            usage=usage,
-            pricing=pricing,
-        )
+        finish_kwargs: dict[str, Any] = {
+            "status": status,
+            "finished_at": self._now().isoformat(),
+            "elapsed_ms": elapsed_ms,
+            "usage": usage,
+            "pricing": pricing,
+        }
+        if failure_reason is not None:
+            finish_kwargs["failure_reason"] = failure_reason
+        self._repository.finish_auxiliary_attempt(operation_id, **finish_kwargs)
         logger.info("console_compaction_auxiliary_finished")
+
+    def _end(
+        self,
+        operation_id: str,
+        status: AuxiliaryAttemptStatus,
+        started_tick: float,
+        reason: str,
+        *,
+        usage: ProviderUsage | None = None,
+        terminal: CompactionTerminal = CompactionTerminal.FAILED,
+        error_type: str | None = None,
+        attempted: bool = True,
+    ) -> CompactionTransactionResult:
+        """Finish a started attempt that did not succeed, recording why.
+
+        TASK-33621.3: the reason reaches the ledger row AND the log (content-
+        free: a reason code, the terminal status, and at most an exception
+        class name), and the result carries the reported usage so the caller
+        can disclose what the failed call spent.
+        """
+        self._finish(
+            operation_id, status, started_tick, usage=usage, failure_reason=reason
+        )
+        if terminal is CompactionTerminal.STALE:
+            logger.info("console_compaction_stale reason={}", reason)
+        else:
+            logger.warning(
+                "console_compaction_failed reason={} status={} error_type={}",
+                reason,
+                status.value,
+                error_type or "none",
+            )
+        return CompactionTransactionResult(
+            terminal, reason=reason, usage=usage, attempted=attempted
+        )
 
     @staticmethod
     def _pricing_provenance(

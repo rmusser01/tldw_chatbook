@@ -98,6 +98,7 @@ VALID_TABLES = {
         "console_conversation_memory_scopes",
         "console_conversation_memory_selections",
         "console_dispatch_checkpoints",
+        "console_hook_continuation_receipts",
         "console_trace_artifacts",
         "console_trace_calls",
         "console_trace_compaction_state",

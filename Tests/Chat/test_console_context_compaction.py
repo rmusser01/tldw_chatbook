@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
+
 from loguru import logger
 
 from tldw_chatbook.Chat.console_context_compaction import (
@@ -91,6 +92,8 @@ from tldw_chatbook.Chat.provider_continuation import (
     parse_provider_continuation_json,
 )
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+
+pytestmark = [pytest.mark.bootstrap_profile, pytest.mark.requires_cleanup]
 
 
 def _message(

@@ -103,6 +103,57 @@ turns the feature off entirely. Each fold rewrites the memory row, which
 breaks the provider prompt cache from that row onward — the cadence bounds
 that to 1 in N turns.
 
+### When compaction fails
+
+A compaction that cannot finish says why, in the transcript and in the run
+status. The note names the cause, for example "the model returned an empty,
+oversized or malformed summary" or "the summary plus the recent turns kept
+with it would still be over the target size". It also says what the failed
+summary call spent, as input and output tokens, with its cost when the model
+is priced. Before a send, the note starts with "Your message was not sent". A
+failed **Compact now** starts with "Compaction failed and nothing changed";
+when the chat has no older complete turns yet, it says "Nothing to compact
+yet" instead.
+
+A note that held your message, or that reports a failed **Compact now**, also
+gives a next step. "Nothing to compact yet" is not a failure and gives none.
+In **Conversation settings > Context and memory** you can raise
+**Conversation max tokens**, set **If compaction fails** to **Omit older
+context** (the message is then sent without compacting), or set **When limit
+nears** to **Off**. You can also start a new chat. In a saved chat, the
+unsent turn stays in response recovery, so you can **Retry response** or
+**Discard** it once you have changed something.
+
+With **If compaction fails** set to **Omit older context**, a failed automatic
+compaction does not hold the message: it is sent without compacting. The
+failed summary call was still made, so a note starting "Your message was sent
+without compacting" names the cause and what the call spent. It appears once,
+on the send that made the call. **Compact now** is not a send, so it always
+reports its failure, whatever this setting says.
+
+After a failed summary call, automatic compaction pauses for that chat on that
+model. A Retry, a new send, a **Continue** or **Regenerate** of the latest
+reply, or a micro-compaction tick makes no further summary call, so nothing
+more is billed. Instead, the note says "automatic compaction is paused … No
+new summary call was made". A failed **Compact now** or a failed
+micro-compaction tick pauses it too. The pause lifts when
+the chat's compaction settings change (budget, **When limit nears**, **Reduce
+context to**, **Summary response max**, **Keep after compaction**,
+representation, or model), when an earlier message changes (edit, delete,
+branch switch, or memory reset), or when a compaction succeeds. It is kept in
+memory only, so it also ends when the app restarts; the first automatic
+attempt after a restart may make one more summary call. Changing only **If
+compaction fails** keeps the pause in place, so the chat goes out without
+compacting. **Compact now** is an explicit retry and makes at most one summary
+call; it makes none when there is nothing to summarize or when the target
+size leaves no room for a summary. If the conversation changed while it was
+being summarized, the note asks you to send again, and automatic compaction
+is not paused. No send makes more than one automatic summary call.
+
+The compaction attempt ledger records the reason code in its `failure_reason`
+column, and the app log writes `console_compaction_failed reason=…`. Neither
+contains transcript or summary text.
+
 ### Upstream model catalog (models.dev)
 
 `[model_catalog] use_models_dev` lets the app fill in unknown models'
@@ -509,9 +560,10 @@ provider-internal framing and prompt-cache markers. The llama.cpp capture is the
 literal wire payload. Missing captures can reflect capture being off, a failed
 capture, or purged history; the modal does not reconstruct missing requests.
 
-**View: Safe/Full** controls local disclosure in both historical views. Changing
-it clears both readers and their cached bodies; switching to Full requires the
-existing confirmation. **Capture settings** applies to future capture and is a
+**View: Safe/Full** (or **v**) controls local disclosure in both historical
+views. Changing it clears both readers and their cached bodies; switching to
+Full requires the existing confirmation, and **Keep Safe** or **Esc** leaves it
+on Safe. **Capture settings** applies to future capture and is a
 separate choice. **Export selected call…** opens the existing governed export
 dialog. If the conversation, profile, or capture authority changes, stale content
 cannot return through a delayed load or export.
@@ -550,9 +602,29 @@ The Inspector places a one-line **Project** status above **Sources**:
 row to open this viewer's metadata-only **Project Instructions** section. It
 shows whether the feature is enabled, the selected binding and locator match,
 override/standard precedence, relative source paths, scopes, byte counts,
-active or omitted outcomes, and deduplicated warning codes. Removed or
-retargeted bindings offer **Choose folder** and **Disable**; **Off** offers
-**Enable**. There is no automatic-file editor or second settings surface.
+active or omitted outcomes, and deduplicated warning codes. When no folder is
+selected yet (**Choose folder**) or a binding was removed or retargeted
+(**Warning**), the section offers **Choose folder** and **Disable**; **Off**
+offers **Enable**. There is no automatic-file editor or second settings
+surface.
+
+**Choose folder** and **Enable** open a picker titled "Project instructions
+need a folder" that lists the folders bound to this conversation's workspace.
+Pick one to select it: you return to the Inspector, its state updates, and the
+Inspect rail's **Project** row stops reading **Choose folder**. **Esc** or
+**Cancel** returns to the Inspector with the selection unchanged, and
+**Disable** turns project instructions off. The Default workspace cannot bind
+folders, so there the picker shows only "No eligible folders"; bind one in a
+named workspace first.
+
+The choice is stored with the conversation and kept after a restart. In a new
+chat with no messages yet, it is saved in the same step as your first
+message, so it is kept even if that send then stops before a reply (for
+example, when the chat shows **Blocked**). Choosing again while the first
+message is still being saved, or while the chat is stopped like that, is
+stored too. A new chat where you never chose a folder reopens the way you
+left it — project instructions on, no folder (**Choose folder**) — not
+**Off**.
 
 The **Context** view's explicit **Preview** sections are the only automatic UI
 surface that may show the exact instruction body, as a disposable preview of

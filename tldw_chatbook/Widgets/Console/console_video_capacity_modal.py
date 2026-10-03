@@ -194,6 +194,29 @@ class ConsoleVideoCapacityModal(SafeModalDismissMixin, ModalScreen[CapacityActio
             ),
         )
 
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q discards the generated video (TASK-33622.10).
+
+        Ctrl+Q is a priority binding, so the quit flow consults this modal
+        while it is open. The video exists only while this choice is pending,
+        and Escape already asks before discarding it
+        (``_perform_safe_cancel``), so quitting always asks the same.
+
+        Returns:
+            True to let the quit proceed; False to stay on this choice.
+        """
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+
+        return await confirm_quit_discarding_edits(
+            self,
+            "Quitting discards this generated video. The generated result "
+            "will be lost and cannot be recovered.",
+            title="Discard generated video and quit?",
+            cancel_label="Stay",
+        )
+
     def _apply_discard_confirmation(
         self,
         confirmed: bool | None,

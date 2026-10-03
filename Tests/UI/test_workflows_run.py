@@ -37,6 +37,7 @@ class WorkflowRunHarness(WorkflowEditorHarness):
     _confirm_and_quit = TldwCli._confirm_and_quit
     _confirm_console_runtime_quit = TldwCli._confirm_console_runtime_quit
     _confirm_workflow_session_quit = TldwCli._confirm_workflow_session_quit
+    _await_quit_prompt = TldwCli._await_quit_prompt
 
     def __init__(self, tmp_path, h):
         super().__init__(tmp_path)

@@ -1,3 +1,5 @@
+import pytest
+
 from tldw_chatbook.tldw_api import (
     CreateEvaluationRequest,
     EvaluationDatasetCreateRequest,
@@ -33,20 +35,25 @@ def test_evaluation_dataset_create_request_round_trips_samples_and_metadata():
     assert dumped["metadata"]["source"] == "local"
 
 
-def test_create_evaluation_request_round_trips_eval_spec():
+@pytest.mark.parametrize("case_sensitive", [True, False])
+def test_create_evaluation_request_round_trips_eval_spec(case_sensitive):
     payload = CreateEvaluationRequest(
         name="demo_eval",
         description="Demo evaluation",
         eval_type="exact_match",
         eval_spec=EvaluationSpec(
-            metrics=["accuracy"], threshold=0.85, model="gpt-4.1-mini"
+            metrics=["accuracy"],
+            threshold=0.85,
+            model="gpt-4.1-mini",
+            case_sensitive=case_sensitive,
         ),
         dataset_id="dataset_123",
         metadata=EvaluationMetadata(project="demo", version="v1", tags=["parity"]),
     )
 
-    dumped = payload.model_dump(exclude_none=True)
+    dumped = payload.model_dump(exclude_none=True, mode="json")
     assert dumped["eval_spec"]["threshold"] == 0.85
+    assert dumped["eval_spec"]["case_sensitive"] is case_sensitive
     assert dumped["metadata"]["project"] == "demo"
     assert dumped["dataset_id"] == "dataset_123"
 
@@ -58,7 +65,8 @@ def test_update_evaluation_request_is_partial():
     }
 
 
-def test_evaluation_response_parses_timestamps_and_metadata():
+@pytest.mark.parametrize("case_sensitive", [True, False])
+def test_evaluation_response_parses_timestamps_and_metadata(case_sensitive):
     payload = EvaluationResponse.model_validate(
         {
             "id": "eval_123",
@@ -66,7 +74,11 @@ def test_evaluation_response_parses_timestamps_and_metadata():
             "name": "demo_eval",
             "description": "Demo evaluation",
             "eval_type": "exact_match",
-            "eval_spec": {"metrics": ["accuracy"], "threshold": 0.8},
+            "eval_spec": {
+                "metrics": ["accuracy"],
+                "threshold": 0.8,
+                "case_sensitive": case_sensitive,
+            },
             "dataset_id": "dataset_123",
             "created": 1713571200,
             "created_at": 1713571200,
@@ -80,6 +92,9 @@ def test_evaluation_response_parses_timestamps_and_metadata():
     assert payload.created == 1713571200
     assert payload.updated_at == 1713571300
     assert payload.metadata["project"] == "demo"
+    update = UpdateEvaluationRequest(eval_spec=payload.eval_spec)
+    dumped = update.model_dump(exclude_none=True, exclude_unset=True, mode="json")
+    assert dumped["eval_spec"]["case_sensitive"] is case_sensitive
 
 
 def test_evaluation_run_response_wraps_progress():
@@ -157,3 +172,17 @@ def test_evaluation_dataset_response_defaults_metadata_to_none():
         created_by="u1",
     )
     assert payload.metadata is None
+
+
+def test_evaluation_spec_defaults_to_case_insensitive():
+    payload = CreateEvaluationRequest(
+        name="demo_eval", eval_type="exact_match", eval_spec=EvaluationSpec()
+    )
+    assert payload.model_dump(mode="json")["eval_spec"]["case_sensitive"] is False
+
+
+def test_partial_evaluation_spec_keeps_case_sensitivity_unset():
+    payload = UpdateEvaluationRequest(eval_spec=EvaluationSpec(threshold=0.8))
+    assert payload.model_dump(exclude_unset=True, mode="json") == {
+        "eval_spec": {"threshold": 0.8}
+    }

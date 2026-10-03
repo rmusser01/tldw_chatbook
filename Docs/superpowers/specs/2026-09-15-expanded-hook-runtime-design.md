@@ -115,6 +115,24 @@ requirement. Context-producing handlers remain effectful even when failure is
 optional; they never enter the lossy observation queue. require_context defines
 valid output rather than changing its failure scope. Optional observation
 failure is diagnostic, not authority to disable an unrelated component.
+If a user v2 batch is rejected whole, retain bounded body-free metadata for
+each inspected declaration's supported event and failure scope: explicit
+required, selected event-policy control, optional or unresolved. An unresolved
+shape prevents activation of that v2 definition set until repaired; it is not
+silently downgraded to an optional handler. `require_context` alone remains an
+output-success rule and never becomes explicit requiredness. A rejected
+optional-only batch does not create a global run requirement. Active dependency
+edges remain host-owned state outside this config record.
+
+The pure phase classifier accepts host-resolved `dependency_required` (default
+false), which is absent from definitions and their digest. `updated_input` wins;
+otherwise deny, explicit required or an active dependency selects validation;
+otherwise context selects context, and empty effects select observation.
+
+`env` names use `[A-Za-z_][A-Za-z0-9_]*`. Values are literal strings or exactly
+`{"variable": "DECLARED_NAME"}`; references require an owning declared-variable
+context. NUL and reserved `PLUGIN_ROOT`/`PLUGIN_DATA` names are invalid. Host
+values are set last. No shell or recursive expansion is implied.
 
 ### 2.2 Event payload
 
@@ -139,6 +157,21 @@ value consisting solely of ${field.path} preserves its JSON type; embedded
 references render bounded scalar text. Missing paths and non-scalar embedded
 values fail validation. Expansion is one pass with no evaluation, environment
 lookup or recursive command substitution. Vendor spellings are adapter-owned.
+
+The host-owned top level is closed: protocol_version=2, nonempty event_id/event/
+timestamp/runtime_session_id, applicable run_id/parent_run_id/turn_id/workspace_id,
+initiator, origin, optional plugin owner_installation_id/owner_component_id,
+causal_chain_id, causal_depth and bounded data. Initial documented data keys are
+SessionStart.reason (startup/resume/configuration_changed), UserPromptSubmit.prompt,
+PreToolUse tool_name/tool_args/tool_id/provider/operation/definition_hash/
+original_arguments/candidate_arguments, PostToolUse and PostToolUseFailure the
+corresponding dispatch identity/status/failure code/result fields,
+ApprovalRequested calls/session_active, SubagentStart child_task/tool_ids/
+budget_caps/model/provider, SubagentStop child_run_id/status, PreCompact
+candidate/reason, PostCompact reason/memory_id/summarized_prefix_digest, and
+Stop.status. Other event data is empty. Future producers must amend
+this projection before exposing further keys or template paths. Tool argument
+and result objects are bounded untrusted JSON, never host identity.
 
 ### 2.3 V2 results
 
@@ -167,6 +200,19 @@ hook output. Output effects not declared in the reviewed definition are
 invalid; they do not silently become new capabilities.
 
 Unknown fields or malformed results follow the event's failure policy.
+`child_limits` is a closed object with at least one of duplicate-free `tool_ids`
+(empty means no catalog tools) or nonempty `budget_caps`. Allowed caps are
+max_steps, max_model_turns, max_wall_seconds, max_subagents,
+max_subagent_result_chars, max_tool_result_chars, max_total_tokens,
+max_tool_call_seconds and max_model_retries. Numeric booleans, nonfinite,
+negative and unknown values fail; steps, model turns, wall seconds and
+subagent-result characters are positive. The accepting owner intersects with
+already contained child authority and separate runtime-tool gates. Zero means
+unlimited for total tokens, tool-call seconds and tool-result characters only;
+it cannot widen an existing finite cap. `continuation` is exactly one nonempty
+UTF-8 `message` of at most 4 KiB; combined Stop settlement remains 8 KiB.
+`stop_continuations` accepts only true. Neither effect supplies scheduler IDs.
+Context lifetime is `turn`, or `runtime` on SessionStart only.
 Nonzero exit, output overflow and invalid JSON are errors; exit code 2 is
 not a new v2 protocol shortcut. Legacy/vendor exit meanings are translated
 by the selected adapter before v2 result validation.
@@ -196,6 +242,13 @@ For native v2 MCP hooks, normalize a successful tool result as follows:
    concatenated blocks or embedded-resource/image-derived effects.
 
 Reject duplicate JSON keys, malformed objects and unsupported result shapes.
+Command stdout and MCP text pass a strict UTF-8 raw gate capped at 16 KiB
+before parsing. It rejects duplicate keys at any level, non-JSON constants,
+trailing data and non-object values. Empty successful command output is a
+separate no-effect success. Object validation cannot recover duplicate-key
+provenance from an already decoded dict. Typed MCP protocol decoding, complete
+result framing/size/depth and representation provenance are M1/M2/M3/H6 owner
+requirements before H1 result normalization.
 The 16 KiB MCP hook result cap covers the complete tool-result payload, including
 both representations and metadata, before v2 normalization; do not truncate it.
 The transport must also enforce finite framing/body/depth limits before parsing
@@ -395,6 +448,15 @@ nonempty arrays of exact values or bounded case-sensitive glob patterns.
 Keys combine with AND; values within a key combine with OR. Empty/unknown
 keys or unavailable fields are invalid for that event. No shell expressions,
 LLM matching or unbounded regular expressions.
+
+SessionStart accepts only reason. PreToolUse/PostToolUse accept tool_id,
+provider and operation. PostToolUseFailure additionally accepts reason. All
+other events accept no matcher. Tool identity/provider are host-resolved catalog
+identities; operation is a qualified canonical operation and failure reason is
+a host-normalized code. An unavailable operation makes a matcher requiring it
+unsupported without invalidating a tool-ID-only matcher. Missing required
+producer identity/reason is invalid producer state, while a supported optional
+occurrence value may genuinely nonmatch. ApprovalRequested is a batch.
 
 The runtime supplies canonical operations for actual tool providers, such as
 file.read, file.write, file.edit, shell.execute and mcp.call. Missing operation
@@ -824,3 +886,525 @@ Written-spec review is complete. The [hook implementation plan](../plans/2026-09
 and [delivery plan](../plans/2026-09-15-managed-plugins-delivery.md) carry the
 remaining work. This spec defines intended behavior and acceptance evidence;
 no implementation or runtime test success is asserted here.
+
+### H2 implemented owner interface
+
+The execution foundation is `Agents/hooks_v2/{budgets,ownership,command_executor,engine}.py`.
+The following APIs implement the accepted bounds without publishing the later
+H3–H6 events or installing plugin adapters:
+
+- `HookBudgetOwner()` binds the running application loop.
+  `reserve(runtime_id, observation)` refuses overflow synchronously and returns
+  a lifetime ticket. `await ticket.acquire()`, `ticket.suspend()` and
+  `ticket.release()` separate execution capacity from lifetime custody.
+  `snapshot(runtime_id=None)` exposes exact `execution`, `tickets`,
+  `observations` (pending) and `workers` (active observation) counts. Release
+  after actual process settlement; suspending a required nested/approval wait
+  never releases its lifetime ticket. Optional observations cannot suspend for
+  approval or nested work.
+- `HookEngine(definitions, authority_check, budget_owner, *, process_owner,
+  environment, host_environment, invalid_admissions, dependency_required,
+  enabled)` keeps an immutable definition tuple and one injected owner.
+  `authority_check(handler, event, stage)` runs outside admission locks at
+  admission, launch and result acceptance. `environment(handler, event)` resolves
+  declared reference names; `host_environment` sets `PLUGIN_ROOT`/`PLUGIN_DATA`
+  last. Ambient reserved roots are removed first. The dependency callback is a
+  synchronous host metadata accessor; active graph ownership stays with its host.
+  `from_config(config, authority_check, budget_owner, **options)` retains H1's
+  disabled and rejected-batch state. A rejected batch never launches any entry;
+  explicit/event-control records retain their event scopes, while optional or
+  unresolved entries do not become blanket requirements.
+- `fire(event)` is the worker-thread facade; `await fire_async(event)` is the
+  Console entry. `begin_event(event)` plus
+  `fire_handler_async(execution, handler_id, event)`/`fire_handler(...)` supports
+  H3's validated transformer chain on the same loop, budgets and process owner.
+  Only data may change in the same execution scope. Unknown definitions,
+  another engine's scope, changed host identity, concurrent use, expired or
+  closed scopes refuse. `execution.close()` retires the caller-owned scope;
+  the handle exposes read-only deadline/accounting/lifetime properties, cannot
+  be publicly constructed or reassigned, and carries private engine-issued
+  accounting without an unbounded registry of contexts. A caller cancellation
+  discards effects while retained command work finishes cleanup.
+- `HookEventOutcome` separates `accepted` `(handler_id, HookResult)` tuples,
+  `failures` (fixed metadata codes and owning-event/dependency requiredness),
+  `omissions` and `outstanding_cleanup`. `succeeded` is successful execution;
+  `allowed` applies owning-event failure/deny scope. Required checkpoint release,
+  aggregate context acceptance and downstream scheduling remain host actions.
+  `notify(event)` admits only optional effect-free deliveries and returns an
+  immediate admission boolean; overflow drops newest and increments the engine's
+  metadata-only `notification_omissions` count. Fixed failure codes from admitted
+  observations are counted in `notification_failures`; raw output is never
+  retained there.
+- `begin_close()` is the idempotent synchronous ordinary admission seal.
+  `fire_teardown_async(event)`/`notify_teardown(event)` provide the still-authorized
+  Interrupt/SessionEnd seam afterward. Their original event wall deadlines are
+  capped by seal + 3 seconds and cannot reset on repeated calls. `close()` seals
+  teardown admission and joins retained cleanup within seal + 8 seconds. Per-run
+  user Stop must use H5's run cancellation, not terminally close the session
+  engine. Revoked callbacks are refused by current authority even in teardown.
+- `ConsoleRuntime.ensure_hooks_v2(session_id, definitions, authority_check,
+  **owner_options)` lazily binds the app loop and shared budget independently
+  of views. Existing snapshots reject replacement definitions. Session close
+  seals only its engine; app disposal seals all before drain. `close_hooks_v2`
+  joins shielded ownership. Exact-session hook custody must be settled before
+  its fleet/wake fences can be released; a bounded close return is insufficient.
+  `hooks_v2_cleanup_pending` prevents detaching an unresolved disposed owner. Actual H4 lifecycle producers supply scoped IDs and
+  snapshots; no automatic SessionStart, Stop continuation or MCP dispatch is
+  added here.
+
+`HookProcessOwner.reserve_launch(event) -> str`,
+`publish_process(token, provenance) -> None` and
+`settle_process(token, confirmed) -> None` are plugin-independent. All root grants
+and protected dirty checkpoint publication must precede reserve returning.
+Publication receives non-secret process metadata; plugin composition must add
+native restart identity and use the final F8 owner, rather than infer identity
+from a PID. False settlement retains root/process ownership. The standalone
+host owner retains the same in-memory custody without a plugin runtime.
+
+Input is validated whole before JSON serialization. Capture drains both pipes,
+retains at most 16 KiB original stdout and 4 KiB stderr, and records stderr
+truncation as a separate marker; diagnostics do not expose raw bodies. Complete
+stdout alone reaches H1 `decode_result`; nonzero exit and partial/invalid output
+never supply effects. Launch tasks and actual transport handles outlive caller
+cancellation. POSIX cleanup requires a child exit callback/return code and an
+absent owned process group; transient signal errors do not substitute for that
+proof. Retained records may be explicitly checked again with
+`engine.processes.reap_pending()` after later host terminal evidence.
+
+Qualification is controlled local Darwin processes, including a live/exited
+leader, retained grandchildren, cancellation during launch/publication and
+refused kill/settlement. Deliberately escaped descendants are outside the group
+guarantee. R47 refuses Windows v2 commands before launch, root reservation or environment
+access, with a fixed `unsupported_platform` outcome and released host reservation.
+Linux POSIX behavior remains explicitly unqualified until its own controls run.
+Future Windows support requires a qualified whole-tree terminal-proof backend
+and real controls; legacy hooks remain unchanged. H6/M4 must likewise supply typed MCP outcomes and exact remote/local
+ownership; this command foundation does not infer them.
+
+H2 callback failures are protocol outcomes: `authority_check_failed` at admission
+or final acceptance, and `dependency_check_failed` for an unavailable dependency
+accessor (including while constructing another failure or considering optional
+notification). Unknown dependency state remains dependency-required for the
+owning capability coordinator; explicit/event-control failure scope is unchanged.
+These outcomes contain no exception text. `CancelledError` retains its original
+cancellation semantics and cannot release unsettled process custody.
+
+### H3 integration contracts (R48–R49)
+
+H3 consumes the exact app-owned immutable H2 session through a read-only runtime
+accessor. It does not initialize H4 sessions. Engine-issued event scopes capture
+host dependency status once for phase planning, execution and failure scope;
+unknown dependency status remains required and cannot enter the lossy lane.
+
+Post-event checkpoint queries accept host-resolved required handler IDs for the
+next input/capability use. Explicit/event requirements always gate their owner;
+dependency-only requirements gate only the selected dependent work. An empty
+selection means positively independent work, never missing dependency resolution.
+Unknown mappings refuse admission. Normal settlement joins every pending required
+post-event, then retains each failure's original scope. I1 owns plugin graph
+mapping; H3 does not create a graph or import Plugins into the hook engine.
+
+`ToolResult.dispatch_state` is optional host provenance: `not_started`, `settled`,
+or `uncertain`. Actual host permission/capacity/start gates publish `not_started`;
+known returned/raised calls are `settled`; an unresolved worker after abandonment
+or timeout is `uncertain`. Remote payload fields and error prose cannot establish
+this state. Not-started results emit neither tool post event. Uncertain results
+retain uncertainty in PostToolUse and never fabricate PostToolUseFailure or replay
+settled tool work. Known errors install both distinct requirements before result
+publication. Lower provider adapters must preserve honest host provenance.
+
+H3 context uses the existing live `PluginContextText` carrier with separate
+`HookContextOrigin` records (R50). User hooks have no invented installation.
+Genuine package origins accompanying hook material remain linked attribution;
+the same block is charged once. Copying and whole-block assembly preserve both
+origin sets. The host-neutral final model-send check enforces hook4KiB/block,
+16KiB/event, package8KiB/block and combined32KiB/send, including multimodal text.
+H3 stages whole rendered contributions before accepting/releasing a checkpoint.
+Only the final checked transport copy loses its live sidecars.
+
+H3 candidate validation is offline (R51): `jsonschema`'s selected validator uses
+`referencing.Registry()` with its no-retrieval default. Embedded/internal refs
+remain supported; unavailable external/file refs fail with fixed metadata before
+hook execution or permission review. No URI, payload, network or filesystem fetch
+is authorized by a tool schema. Future adapters must supply reviewed local schema
+resources rather than silently dropping unresolved constraints.
+
+The concrete preparation entry is `prepare_tool(event, engine, *, definition)`;
+`definition` is a host `ToolDefinitionSnapshot` containing immutable JSON schema,
+name/ID/source and catalog/provider generation. Transformers and required/final
+validators run once on one issued scope. The runtime retains that same scope
+through the legacy final guard, then executes optional context and schedules
+observations before permission review. A denied candidate closes its remaining
+scope at run settlement without executing the optional tail. Dispatch rechecks
+exact argument bytes and current definitions; existing argument repair cannot
+change an approved candidate. Catalog dispatch checks again after repair/gates.
+Live call-object ownership, including explicitly bound host reconstructions,
+separates repeated or missing model call IDs.
+
+`ToolHookRun` supplies `prepare_call`, `validate_dispatch`, `install_result`,
+`admit_input` and `settle` to the existing loop/service. Completion requirements
+are installed idempotently before definitive terminal callbacks, observational
+callbacks (including inline skills), common result publication, next-model
+admission and normal run persistence. Both known-failure events are installed
+before either is allowed to complete. Terminal admission joins all pending
+required events even when another has already failed, then reports failure in
+its original scope. Neither failure nor uncertainty replays a tool.
+
+R52 declares `jsonschema>=4.26,<5` and directly imported
+`referencing>=0.37,<1` as core runtime requirements. The old dev-only jsonschema
+declaration cannot satisfy a base install. These floors match the qualified
+installed APIs; no missing-validator fallback or schema retrieval is permitted.
+Offline wheel import qualification may reuse controlled existing dependency files;
+it does not claim fresh full dependency resolution or broader platform support.
+
+
+## Current-dev integration: standalone v2 consent (TASK-32679)
+
+The Console next-Send review and canonical F9 Hooks settings include standalone
+`hooks.handler` v2 definitions as well as legacy `hooks.hook` entries. V2 consent
+uses the existing app-owned HookPermissions store and grant epochs; its fingerprint
+covers the complete normalized closed-schema definition, including event, effects,
+arguments, environment, matcher, required policy and timeout. Legacy fingerprints
+and grants remain unchanged. A rejected v2 batch stays visible and cannot be
+approved or partially activated. V2 definitions have the schema's master switch,
+without inventing a per-handler enable field.
+
+Runtime admission reads the canonical saved configuration, rather than an app's
+possibly stale dictionary. Configured v2 engines capture exact grants. The existing
+permission owner serializes actual subprocess creation against config/consent
+changes; revocation and changed definitions fence staged effects and queued work.
+Host-injected engines retain their explicit authority resolver and never become
+standalone config grants. Lifecycle session replacement remains idle-only.
+
+
+### H4 session and pre-run checkpoint ownership
+
+The live Console hook session owns one checkpoint coordinator shared with its
+provisional turn/operation and actual agent-run scopes. Host-assigned scope
+identity is separate from optional actual run_id; manual operations do not create
+fake agent runs. Applicable ancestor requirements, event currentness, effect
+publication and input admission share the same coordination, with no external
+await under its lock. Automatic compaction gates its same pending turn before
+the later AgentService run is constructed. Manual summary commits install a
+session-owned PostCompact checkpoint before completion publication, preserving
+committed memory on failure. Manual execution may initialize a hook session after
+real authority and capacity admission; previews/focus/planning cannot do so and
+manual execution never emits a root chat Stop. A local visual projection without
+a compactor model call or memory commit does not fabricate a PostCompact event.
+
+H4 extends the closed data projection with actual producer fields:
+SubagentStart child_task/tool_ids/budget_caps/model/provider; PreCompact candidate
+(the actual auxiliary message array) and reason (manual/automatic); PostCompact
+reason/memory_id/summarized_prefix_digest from the committed memory record.
+Inherited model/provider are descriptive, not replacement authority. Child caps
+use the existing closed nine-name numeric contract. Typed present fields and
+unknown keys remain strictly validated within the existing raw envelope limits;
+actual producers never substitute fabricated identities for unavailable fields.
+
+
+### H4 delivered host API and operation behavior
+
+`HookSessionLifecycle.reserve/initialize/publish/cancel` owns provisional
+SessionStart. `open_scope`, `fire`, `install`, `wait`, `close_scope`, and `seal`
+compose lifecycle work with the injected H3 `HookCheckpointStore`; `install`
+is synchronous and publishes its pending requirement before scheduling external
+execution. Fixed parent scopes carry ancestor requirements; tool events retain
+H3's own exact-definition currentness callback. The ledger and checkpoint store
+use the same reentrant condition lock. Synchronous currentness probes and effect
+publication occur under that lock; external execution and waits for it do not.
+
+`ConsoleRuntime.prepare_hooks_v2` is reached after actual Console validation and
+an atomic reversible capacity reservation. Configuration/workspace/binding
+changes replace the immutable live session only at idle admission. SessionStart
+runtime contributions are untrusted user-role `PluginContextText` with genuine
+`HookContextOrigin`, revalidated and emitted once per receiving model owner.
+`SessionEnd` seals those owners before H2's retained cleanup join, including
+viewless disposal. Existing H2 processes, deadlines and cleanup custody are not
+replaced by a lifecycle-specific process supervisor.
+
+SubagentStart receives the already restricted child draft before inline or fleet
+admission. Tool identifiers narrow catalog and runtime tools. Budget caps
+intersect inherited limits, preserving the existing zero-as-unlimited dimensions;
+model/provider cannot be replaced. SubagentStop is installed after durable child
+settlement and before parent completion publication. A retired parent receives no
+new turn context; the host retains fixed late-context diagnostics and may still
+schedule optional observations.
+
+`CompactionHooks.before` appends required PreCompact material only to the actual
+auxiliary candidate, including each actual focused-plan fallback candidate, then
+checks attribution and prepared capacity. A failed hook aborts without compactor
+or hook replay. The existing per-conversation operation serialization lock is
+separate from the checkpoint lock and the actual memory commit critical section.
+`committed` installs PostCompact immediately after a successful memory commit;
+`finish` joins its execution. Automatic compaction fences the same turn's provider
+admission. Manual compaction retains one handoff for the exact active memory
+identity/revision/digest, branch, workspace and hook session; acceptance claims it
+once after durable owner publication. Cancelled, stale or revoked effects cannot
+attach to another turn. A required post failure preserves the memory and its
+session fence. Hook contributions never become durable summary text.
+
+Lifecycle data is closed and bounded by the existing H1 raw envelope limit.
+Compaction `reason` is required and is `manual` or `automatic`. Present candidate
+values must be arrays of message objects; present memory identifiers and prefix
+digests are nonempty strings bounded to the existing record limits (200 and 256
+characters). Child tool arrays are unique nonempty identifiers, and cap objects
+accept only the nine existing cap names and numeric/zero semantics. Child task,
+model and provider are strings when present. The live producers supply their
+actual candidate/record/draft fields; optional absent model/provider and host
+run IDs stay absent rather than becoming empty invented identities.
+
+
+H4 closed scope IDs remain as identifier-only anti-rebind tombstones for their
+hook-session owner's lifetime. Context bodies, delivery maps, parent/currentness
+mappings and settled checkpoint state retire with their scope; pending cleanup
+retains its original bounded custody. The tombstones do not cross sessions and
+are never a durable or global registry. Their metadata grows with the number of
+closed scopes in a long-lived session; this is not a constant-memory guarantee.
+This preserves rejection of stale string-ID reuse without introducing a second
+owner-handle protocol. Review actual lifecycle disposal and retention alongside
+that tradeoff.
+
+
+Current-dev H4 integration publishes the transaction's exact USER parent and
+assistant parent with both live accepted/recovery owners. This fixes missing
+ancestry at its common publication boundary and preserves the current batched
+version projection; compaction does not restore per-message database reads on
+every dispatch. Configured v2 lifecycle execution uses the ADR-197 exact grant
+owner described above. Worker-refreshed source/epoch checks precede execution and
+result parsing; checkpoint effect publication uses the same owner's cached
+fences without disk I/O or config locks on the app loop. Process creation remains
+inside the existing owner transaction on a worker, with transport custody on the
+app loop. V2 settings reuse the existing Advanced Config editor and review modal;
+no parallel guided schema or per-handler enable switch is introduced.
+
+## H5 continuation admission and retention (TASK-32680)
+
+The existing ConsolePromptQueueCoordinator alone chooses Stop follow-ups. A
+host-issued continuation identity travels with queued custody, separately from
+the existing `queued` dispatch origin: its initiator is `hook_continuation`, never
+a fresh human UserPromptSubmit or child wake. It pins the accepted parent turn,
+Stop event, chain start/count and inherited configuration. Only successful
+accepted root settlement can issue it; retired operation/run scopes are never
+rebound. Required post gates settle before transfer to the live session owner.
+
+ChaChaNotes schema 74 adds `console_hook_continuation_receipts`, keyed uniquely
+by `(parent_turn_id, stop_event_id)`. The existing acceptance transaction inserts
+the receipt, user-role attributed untrusted input, assistant owner and active
+dispatch checkpoint together. A duplicate rolls the competing acceptance back.
+Receipt metadata names machine initiation and the parent assistant/conversation;
+it contains no proposal body. Receipts survive terminal checkpoint deletion and
+soft deletion, and cascade only with permanent parent/conversation removal.
+The active checkpoint remains the sole uncertain-dispatch recovery owner; neither
+a lost response nor restart replays Stop or automatically replays model/tools.
+Ephemeral conversations retain only live-process deduplication.
+
+Each settlement admits at most one combined proposal in declaration order, with
+whole-message refusal above 4 KiB and whole-combination refusal above 8 KiB.
+Three admitted continuations and 120 elapsed seconds bound a host-minted chain.
+Exhausted parent budgets, queued human work, veto, current authority failure,
+reviewed update drain, cancellation and closure discard proposals. Machine work
+is never retained behind newly arrived foreground work. New turns keep normal
+provider/tool authorization, inherited budgets, and the H3 context carrier.
+
+Interrupt observation is installed only after immediate queue/run admission
+sealing, once per cancellation identity, on the shared view-independent interrupt
+host. H2's one-second Interrupt and three-second SessionEnd observation windows
+are separate from retained process cleanup. Revoked callbacks are suppressed;
+repeated cancellation neither releases cleanup custody nor resets deadlines, and
+no hook can veto cleanup. The schema resource is
+`tldw_chatbook/DB/migrations/chachanotes_v74_to_v75_hook_continuation_receipts.sql`;
+its migration test is `Tests/DB/test_chachanotes_v75_hook_continuation_receipts_migration.py`.
+
+
+### H5 admission point across the database worker (R56)
+
+A coordinator-issued, body-free one-use gate is written through the existing
+`ConsoleTransactionContribution` seam after messages/checkpoint/receipt insertion
+and before transaction commit. Admitted human work and Stop synchronously
+invalidate pending gates. Invalidation first rolls the entire transaction back;
+consumption first establishes admission and later human work follows the normal
+queue. Consumption never proves a commit and is never reset after failure or
+uncertainty; the existing checkpoint/receipt owns reconciliation without replay.
+The short gate lock covers only pending/invalidation/consumption. Authority,
+reviewed plugin drain and deadline checks run outside it; no SQL, callbacks,
+cleanup or event-loop waits occur under it. Its canonical fingerprint contains
+only host-issued gate/session/entry/parent/Stop lineage. Ephemeral acceptance
+consumes the same gate without claiming restart durability. Exact claimed-entry
+cleanup releases live captures. The repository Library-policy validator remains
+unchanged; the first-save continuation handoff accepts only identical full policy
+values changing from new_session/no revision to the accepted durable revision 1.
+
+The 120-second clock begins at the accepted root, and actual remaining AgentService
+budgets include time spent waiting for Stop and queue admission. Event envelopes
+use the existing `continuation` initiator; persisted custody/receipts use
+`hook_continuation`, and scheduled roots retain `scheduled`. Hook messages carry
+H3 hook attribution without invented package installation origins; the host's
+untrusted-input label is separate from each contributed message's byte count.
+
+A typed admission refusal permits only synchronous cleanup of the exact owned
+preparation and transient echo. The coordinator acknowledges only that verified
+cleanup epoch; unrelated context changes preserve the normal pause. Other errors
+and uncertain acceptance retain ordinary recovery. User Stop seals its affected
+turn and emits Interrupt once; SessionEnd belongs to graceful session disposal.
+A later ordinary authorized turn can use the same session without reopening the
+cancelled turn's admission.
+
+## H5 pending Stop cancellation ownership (R57)
+
+The accepted parent's original provider cancellation Event may be retained by the
+existing queue coordinator only for that exact session, assistant and turn while
+its Stop settlement is pending. Bind it while the accepted parent is still known;
+provider-map removal does not revoke the coordinator's pending-settlement custody.
+Retire the reference when that settlement finishes. No synthetic cancellation
+identity, retired-scope rebind or later-turn borrowing is permitted.
+
+User Stop first seals admission for that parent, sets its original Event and
+notifies the shared interrupt host once for the exact parent. A child task owned
+by that settlement runs only its Stop fire_async call. Cancel and join that child
+through the existing per-event cancellation path: fire_handler_async stops the
+delivery, closes that event execution and retains the delivery/process cleanup
+owner until actual terminal proof. Never cancel the encompassing queue/root drain,
+close the session or emit SessionEnd for this operation. Suppress CancelledError
+only when this exact settlement's recorded user seal caused the child cancellation;
+unrelated cancellation propagates. Repeated Stop neither resets deadlines nor
+releases unresolved cleanup. Existing Interrupt observation and cleanup bounds
+remain unchanged. A fresh authorized turn on the live session remains usable.
+
+The composer exposes this pending Stop availability separately from generation
+activity. Expanded and collapsed Stop remain reachable while the hook is pending;
+Redirect and the Generating indicator still require an actual active generation.
+
+## Typed MCP transport evidence and shared execution (R58)
+
+The external MCP typed entry runs through the existing local and unified control
+services, preserving their governance, timeout, cancellation and single audit
+owner. The legacy entry retains its explicit display projection. The five public
+`MCPToolResult` fields carry protocol content, structured content, strict error
+status, metadata and a separate sanitized transport failure. Private host evidence
+retains the bounded, immutable original UTF-8 result-value bytes, duplicate-key
+validation and dispatch state. This is the result span, including unknown members
+and internal whitespace, not the JSON-RPC envelope or a reserialization. Existing
+frame/result/depth limits remain independent of the hook result cap.
+
+Decoded mappings/models without original transport evidence remain unqualified
+for hook effects. Remote members cannot populate host evidence. Nested mutable
+fields or model copies cannot borrow qualification for changed effects; hook
+normalization derives its effects from the immutable qualified bytes or verifies
+exact agreement first. In-process built-in application mappings retain their
+legacy contract; they are not silently reinterpreted as wire protocol results.
+
+One per-call host observation may carry dispatch truth across cancelled awaits:
+not_started before proven dispatch, uncertain immediately before the actual write
+attempt, settled on a validated matching terminal protocol response. Invalid or
+lost responses and after-write cancellation retain uncertainty. An unacknowledged
+bridge-future cancellation is not proof that dispatch never occurred or cannot
+still occur. This observation owns no authority, process, lease or timeout. No
+uncertain result authorizes replay or late effects. Audit receives the explicit
+display projection and records tool-declared/transport failure honestly.
+
+M1's concrete external entry is `MCPClient.call_tool_result`, then
+`LocalMCPControlService.execute_external_tool_result`, then
+`UnifiedMCPControlPlaneService.execute_hub_tool_result`. The latter shares the
+existing `execute_hub_tool` execution/audit body; it returns a typed external
+result or an explicitly unqualified legacy/builtin mapping. The provider chooses
+this typed entry when available. `project_tool_result` remains the display
+boundary: successful content blocks retain `{"result": [...]}`, including an
+empty list for structured-only results, while tool and transport errors use
+fixed `{"error": ...}` diagnostics. Hook code must never parse that projection.
+
+The strict raw decoder retains the exact UTF-8 result-value span in single and
+batch responses. The limits are 1,048,576 bytes per frame, 786,432 bytes per
+complete result, and 64 JSON nesting levels; catalog page/item limits remain
+unchanged. Private evidence uses one immutable raw buffer and a 32-byte SHA-256
+of the bounded, type-sensitive public-field snapshot. Mutated fields and model
+copies lose qualification; reserializing plain/model input never adds it.
+H6 must require qualified original bytes, successful error/transport status and
+settled dispatch, apply its 16 KiB cap to those complete original bytes, and
+normalize effects from the immutable bytes. Unqualified builtin/legacy adapter
+mappings require an explicitly reviewed adapter and are not native MCP hooks.
+A valid JSON-RPC error is a settled transport/protocol failure, distinct from a
+valid tool result declaring `isError: true`. Invalid results stay uncertain.
+
+Compatible legacy session adapters have no precise write observer: handoff is
+uncertain until a known result returns, and a raised adapter error cannot claim
+`not_started`. The in-process builtin delegate marks dispatch only after its
+existing governance gates; returned/raised invocations settle, cancellation
+remains uncertain, and its application mapping still gains no wire provenance.
+
+
+### Bounded MCP bridge audit publication (R59)
+
+The provider and existing unified execution service share one host-owned,
+per-invocation atomic audit publication claim. A bridge Future timeout or
+cancellation cannot establish that service audit did not start, nor prove a
+possibly dispatched operation was blocked. Claim before attempted publication;
+keep claim/capacity locks out of audit I/O and preserve sanitized uncertainty.
+
+The unified service may perform bridge-fallback metadata publication on at most
+one in-flight daemon thread per service, with no waiting queue and no caller
+join. This covers failed submissions even when the target loop is closed, while
+keeping provider completion bounded. It adds no execution/permission owner or
+durable schema and retains no tool arguments/results. Saturation or thread-start/
+write failure may lose a best-effort row; it cannot permit a duplicate publication,
+change execution authority, infer remote completion or authorize replay. An
+unscheduled fallback does not consume an otherwise available service publication.
+Capacity remains held until the actual writer exits. A stalled filesystem write
+may retain that one daemon writer and metadata until it returns or process exit.
+
+### R70 — Actual provisional MCP admission
+
+H6 builds its private prospective MCP invocation view through the real validated Console admission path before SessionStart, using the resolved configuration and existing workspace/parent, registry and reservation owners. Host injection is an extension seam; the normal caller must supply the context. The view remains unadvertised and grants no temporary permission or accepted root turn. Missing native dependency declarations remain unavailable until I1 supplies the graph. Later invocations use the actual AgentService run context and existing ToolHookRun guards and post-event settlement.
+
+Initialization uses only independently eligible, already-connected capabilities. Enforce this narrowing at the actual standalone and owned connection/dispatch boundaries so an intervening disconnect refuses instead of reconnecting. Preserve exact current authority, request provenance and lifetime ownership during approval/nested suspension. A cancelled reacquisition waiter cannot release a lifetime ticket for unresolved work. This adds a narrow preparation interface and may add preparation work; it does not add a second permission, budget or lifecycle runtime.
+
+### R71 — Internal hook operations and outer barriers
+
+An MCP operation performing a hook uses a scoped operation checkpoint in the existing shared store. It retains an exact live parent and queries actual parent/ancestor pending and failed requirements for the tool's declared dependencies, including owning-event requirement IDs. Unknown mappings refuse. It runs ordinary tool guards and joins its own required post events before returning.
+
+The outer event's generic next-input and terminal barriers remain installed on that outer owner; they cannot block the internal work needed to complete the same event. They still prevent normal input/settlement until all required outer work, including sibling post events, settles. A fresh unrelated checkpoint or an empty dependency list cannot manufacture readiness. Parent closure/revocation, static and dynamic cycles, actual resource custody and the original event budgets remain controlling. This narrow continuation query avoids self-wait while preserving dependency authority; it requires direct pending/failed ancestor, independent initializer and two-post-event controls.
+
+### R72 — Nested MCP context and pending turn admission
+
+An MCP call that performs a hook still runs ordinary PreToolUse/PostToolUse hooks. Their accepted context keeps its original event/handler attribution and turn lifetime even when their internal operation scope settles before the next input. Stage those contributions through the existing context/checkpoint owners until the containing event succeeds and its current authority is rechecked. Do not publish them directly into a live parent while an enclosing sibling can still deny that event; preserve the parent and sibling joins and complete per-event/shared-send limits.
+
+During SessionStart, nested turn context belongs only to the exact pending submission that triggered initialization. Use its existing admission/lifecycle reservation and release the contribution only to that submission's accepted turn; do not create a root run early, promote it to runtime context, or transfer it to a later submission. SessionStart's own direct context keeps its documented runtime lifetime. Failed or replaced admission, enclosing denial, cancellation, revocation or closed parent discards the nested batch. Required context that cannot be delivered safely fails its controlling admission; omission cannot count as success.
+
+For an already admitted operation, use the actual receiving input scope and the existing context carrier. Normal retirement of the nested request does not by itself retire accepted parent-bound context; parent currentness, original effect/definition authority and the containing acceptance still govern delivery. There is no second context runtime or generic cross-turn transfer. Qualify actual first-input delivery, no next-turn leak, cancelled/failed/replaced admission, sibling denial, required overflow, normal admitted nested context and unchanged direct SessionStart runtime contributions.
+
+### R73 — Session capability views and bounded teardown
+
+A pending submission's MCP view has the exact input lifetime defined by R72. A successful live session may also retain the same prepared registry/configuration ceiling as a private runtime view, with no input-context destination or accepted root identity. Retiring a pending binding cannot overwrite a newer binding, retain a failed admission, or transfer its turn context to the runtime view. Events with an actual run still require their exact run authority.
+
+Seal first closes ordinary admission and starts the original teardown clock through the immediate engine cancellation fence, before entering lifecycle/checkpoint locks. Before retiring ordinary checkpoint/input scopes, the existing lifecycle/checkpoint owner may issue a narrow teardown scope from its already-prepared capability view and positively checked dependency state; ordinary scopes then close without reopening. It must retain the exact source identity/readiness provenance and refuse unknown, pending, failed or changed requirements; a closed or discarded requirement is never evidence of independence. Capturing this host state must not delay cancellation on external I/O. This is one bounded transfer within the existing owner, not a new runtime, restored closed scope, new permission or standalone empty dependency store.
+
+Only an actual host-issued Interrupt/SessionEnd delivery can carry this scope across the seal. Its nested normal tool preparation, guards and post-event joins execute as continuations of that delivery in the same engine and retain its original notification deadline, causal limits, counters and cleanup allowance. A public event label or boolean cannot create that authority. Current tool/configuration/credential/scope permissions and already-connected checks still apply at the real dispatch and acceptance boundaries. Guards are enforced; no approval prompt, connect/reconnect, continuation turn, replay or deadline reset is introduced. A runtime-only view supplies no destination for nested turn context, so an undeliverable required contribution refuses under its ordinary controlling policy.
+
+Retire this scope/view at the bounded notification boundary without confusing that retirement with actual request/process cleanup. Unresolved resource custody stays with its existing owners. Repeated close must neither issue new authority nor extend deadlines. Qualify actual Console close after a completed turn, preserved ordinary post-seal refusal, a denying nested guard, stale/dependency/context refusal, and real notification/cleanup timing. Best-effort omission remains correct whenever ordinary current authority or the exact original deadline no longer permits dispatch.
+
+
+### H6 implemented invocation and host composition APIs
+
+- `normalize_hook_result(result, handler)` requires unchanged original M1 wire evidence, bounds the complete encoded result (including metadata/whitespace) to 16 KiB, and rejects transport/tool errors before parsing effects. Structured-only, a single JSON text object, an exact typed mirror, and empty success are the supported forms; `require_context` still rejects empty context.
+- `capture_mcp_result(provider)` captures before ordinary display projection and consumes only the exact final returned object. `restrict_mcp_invocation(policy)` narrows the same invocation: inherited currentness/cancellation/deadlines, no-connect policy and optional approval waits never replace normal gates.
+- `MCPHookContext` carries the exact registry, allowed names, live checkpoint parent and positively resolved required-handler callback. `None` dependencies refuse. `MCPHookExecutor.bind_context` is the host extension seam; normal Console preparation and admitted AgentService are its production callers. Native managed graph publication remains I1.
+- `HookCheckpointStore.assert_continuation_dependencies` checks pending/failed owning and dependency requirements in actual ancestry. Internal operations retain the same store, run normal guards, install both post events before settlement, and join only their own operation.
+- `ContextLedger.stage_nested` and `commit_nested` preserve original child attribution and stage contributions under the containing event/handler and exact pending input. Denied/cancelled/stale admission discards them; runtime-only/teardown work has no input destination.
+- `HookTicket.acquire(retain_on_cancel=True)` retains the original lifetime ticket while removing the cancelled bounded waiter; default cancellation semantics remain unchanged. Approval/provider/nested waits release execution occupancy only. `InterruptRoundHost.run_round(hard_deadline=...)` enforces the original hook wall/approval deadline without changing ordinary round clocks.
+
+For shutdown, admission/cancellation fencing fixes the clock immediately. The same lifecycle owner then captures already-prepared positive source/dependency provenance before retiring normal checkpoint scopes; its bounded teardown scope cannot reinterpret missing state as independence. Nested guard/post executions require an actual engine-issued teardown delivery and inherit its original deadline. Queued notifications retain their exact admission view. Repeated close neither extends the clock nor reissues authority.
+
+Resource acceptance joins actual local invocation completion, known lower settled/not-started state and every exact M4 owned request completion record. A cancelled Future is not completion evidence. Standalone uncertainty with no positive later evidence deliberately retains cleanup-pending counters; the adapter creates no second request owner to invent settlement. No replay occurs. The Task18 report records actual stdio/controlled HTTP, application-entry, cancellation/approval/teardown evidence and platform limits.
+
+
+### I2 foreign hook qualification boundary
+
+Pinned Codex/Cursor event correspondences are proposals, not HookHandlers. Native
+payloads cannot currently reproduce full vendor cwd/model/permission/transcript,
+input/output, success-only timing and timeout behavior. Every proposal records all
+qualification axes; no incomplete mapping enters H2/H6. Shell syntax/substitution
+and unqualified regex semantics never become argv/globs. Root/group/handler unknown
+or required guard constraints are preserved and fence affected package activation;
+known optional observers remain visible but unavailable. Ordinary user messages
+remain possible without expanding blocked package material. No foreign allow result
+can reach or bypass the native permission store. This documents the deliberately
+unsupported runtime subset of TASK-32687, not original-host qualification.

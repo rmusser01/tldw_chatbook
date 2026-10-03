@@ -36,7 +36,9 @@ SKILLS_LIST_COMMAND_NAME = "skills"
 MENTION_SIGIL = "$"
 """Leading character of a Codex-style skill mention (``$skill-name``)."""
 
-_MENTION_TOKEN = re.compile(r"[A-Za-z0-9-]+")
+_MENTION_TOKEN = re.compile(
+    r"[A-Za-z0-9._-]+:[A-Za-z0-9._-]+:[A-Za-z0-9._-]+|[A-Za-z0-9.-]+:[A-Za-z0-9-]+|[A-Za-z0-9-]+"
+)
 _BACKTICK_RUN = re.compile(r"`+")
 
 SKILL_MENTION_SKIPPED_NOTE = (
@@ -176,7 +178,11 @@ def find_embedded_mentions(
     while index < len(text):
         if text[index] == MENTION_SIGIL and not mask[index]:
             match = _MENTION_TOKEN.match(text, index + 1)
-            if match is not None and match.group(0) in names:
+            if (
+                match is not None
+                and match.group(0) in names
+                and (match.end() == len(text) or text[match.end()] != ":")
+            ):
                 mentions.append(
                     SkillMention(start=index, end=match.end(), name=match.group(0))
                 )

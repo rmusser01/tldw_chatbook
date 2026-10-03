@@ -82,7 +82,9 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_service_wiring.py": 3601,
     # TASK-33011: TldwCli's lifecycle, shutdown and quit flow moved verbatim
     # out of app.py (LifecycleMixin); governed there, so governed here.
-    "tldw_chatbook/app_lifecycle.py": 2140,
+    # TASK-33621.13: 2,140 -> 2,134 (keep-alive dead-pump handling moved
+    # into app_keep_alive.py).
+    "tldw_chatbook/app_lifecycle.py": 2134,
     # TASK-33011: TldwCli's screen navigation moved verbatim out of app.py
     # (NavigationMixin); governed there, so governed here.
     "tldw_chatbook/app_navigation.py": 1110,
@@ -94,7 +96,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
+    # TASK-33622.14: the aggregate Roleplay draft guard moved to
+    # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
+    # over this row; the move brings it to 16,397).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16397,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

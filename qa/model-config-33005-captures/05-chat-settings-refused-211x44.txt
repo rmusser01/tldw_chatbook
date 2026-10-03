@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Co╭─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+────────────────│                                                                                                                                                                                 │────────────────
+ Console — Chat,│   Conversation settings                                                                                                                                                         │ refused :9199
+   New tab     S│                                                                                                                                                                                 │
+────────────────│   Model and generation · Selected  Context and memory                                                                                                                           │────────────────
+                │  Use: this conversation only. Defaults: future provider conversations.                                                                                                          │     │
+                │                         ▊ Anthropic                                    ▎                                                                                                        │     │
+   Terminal     │                         ▊ Arcee AI                                  ▄▄ ▎                                                                                                        │     │
+ ───────────────│                         ▊ Azure OpenAI                                 ▎                                                                                                        │     │
+ Workspaces     │                         ▊ Baidu Qianfan                                ▎                                                                                                        │     │
+ ───────────────│                         ▊ Baseten                                      ▎                                                                                                        │     │
+ Conversations  │                         ▊ ByteDance Seed (BytePlus)                    ▎                                                                                                        │     │
+        Archive │                         ▊ Cerebras                                     ▎                                                                                                        │     │
+          Archiv│                         ▊ Cloudflare Workers AI                        ▎                                                                                                        │     │
+        Search a│                         ▊ Cohere                                       ▎                                                                                                        │     │
+   Chat 1       │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+                │  Endpoint               │ http://127.0.0.1:9199                                           New endpoint…                                                                         │     │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔│  Model                  │ model-a                                                                                                                                               │     │
+  ▊  Filter visi│                         1 model available. Type to filter.                                                                                                                      │     │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁│                         ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                                                        │     │
+                │                         ▊ Saved fallback                               ▎                                                                                                        │     │◂ Inspect
+   New conversat│                         ▊ model-a  ● CURRENT                           ▎                                                                                                        │     │
+  Chats         │                         ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                                                        │     │
+   Chat 1       │  Saved fallback                                                                                                                                                                 │     │
+                │                            Custom model    Test connection & list models                                                                                                        │     │
+ ───────────────│  Tests this endpoint by listing models; this does not test generation.                                                                                                          │     │
+ Character · No │  Not ready · refused :9199                                                                                                                                                      │     │
+ ───────────────│  Provider setup needed: endpoint unreachable                                                                                                                                    │     │
+ Model          │  Credential · Not required                                                                                                                                                      │     │
+  Temperature 0.│  Endpoint · Unreachable — connection refused                                                                                                                                 ▇  │     │
+  Max tokens  40│  Model · Selected — not verified at this endpoint                                                                                                                               │     │
+  Streaming   On│  Generation · Not tested                                                                                                                                                        │     │
+  Not ready · re│   Test generation                                                                                                                                                               │     │
+  System: none ▸│                                                                                                                                                                                 │     │
+   Change  Alt+M│  ▼ more — scroll for the rest                                                                                                                                                   │     │
+ ▼ Agent · Detai│                                                                                                                                    Used by future conversations for llama.cpp.  │     │
+                │                                                                                                                               Reconnect to the llama.cpp endpoint to continue.  │     │  setup
+────────────────│                                                                                                                                                                                 │────────────────
+ Status ▾   Libr│                                                                      Esc close   Cancel    Save as generation defaults  Make default for new chats  Use for this conversation   │rrent $0.00 · O
+                │                                                                                                                                                                                 │
+│  Composer ▾  M╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+  Esc composer · F6 panes | Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Ctrl+P · Ctrl+Q

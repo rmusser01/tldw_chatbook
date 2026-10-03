@@ -8,9 +8,18 @@ import math
 import os
 import re
 from dataclasses import dataclass, fields, replace
+from datetime import datetime
 from enum import Enum
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Callable, Literal, Mapping, Sequence, overload
+from typing import (
+    TYPE_CHECKING,
+    Callable,
+    Literal,
+    Mapping,
+    Sequence,
+    get_args,
+    overload,
+)
 from urllib.parse import urlparse, urlunparse
 
 from tldw_chatbook.Chat.console_provider_support import (
@@ -25,7 +34,8 @@ from tldw_chatbook.Chat.console_provider_support import (
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
     INVALID_LLAMACPP_BASE_URL_COPY,
-    URL_BASED_PROVIDER_KEYS,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
+    URL_BASED_PROVIDER_KEYS,  # also re-exported; console_settings_modal imports it from here
+    effective_provider_endpoint,
     first_configured_endpoint,
     generic_endpoint_differs,
     normalize_generic_endpoint_for_compare,
@@ -37,8 +47,11 @@ from tldw_chatbook.Chat.provider_catalog import (
     PROVIDER_CUSTOM_GROUP_KEYS,
     provider_display_name,
 )
+from tldw_chatbook.Chat.provider_endpoint_contract import canonical_connection_identity
 from tldw_chatbook.Chat.provider_readiness import (
+    KEYLESS_PROVIDER_KEYS,
     ProviderReadiness,
+    configured_provider_credential_source,
     get_provider_readiness,
     provider_config_key,
     safe_provider_label,
@@ -54,8 +67,13 @@ from tldw_chatbook.Chat.provider_test_evidence import (
     GenerationFailureCategory,
     GenerationFacet,
     ModelFacet,
+    PUBLIC_MODEL_LISTING_PROVIDER_KEYS,
+    ProviderConnectionEvidence,
     ProviderDraftIdentity,
+    ProviderReadinessSnapshot,
     ProviderTestEvidence,
+    connection_credential_revision,
+    provider_readiness_verdict,
 )
 from tldw_chatbook.Chat.sampling_params import (
     _is_blank_value,
@@ -77,6 +95,7 @@ from tldw_chatbook.Chat.sampling_params import (
     VERBOSITY_VALUES as _VERBOSITY_VALUES,
 )
 from tldw_chatbook.config import (
+    DEFAULT_CONFIG_FROM_TOML,
     ProviderSettingsError,
     provider_settings_for_key,
     resolve_provider_api_key,
@@ -305,9 +324,9 @@ _CONFIGURATION_VALUES = frozenset({"incomplete", "configured"})
 _CONFIGURATION_ISSUE_VALUES = frozenset(
     {"provider_missing", "credential_missing", "endpoint_missing", "invalid_settings"}
 )
-_CREDENTIAL_VALUES = frozenset(
-    {"not_required", "missing", "present_unverified", "authenticated"}
-)
+_CREDENTIAL_VALUES = frozenset(get_args(CredentialFacet))
+#: Credential states that were checked by the provider (TASK-33005.3).
+_ACCEPTED_CREDENTIALS = frozenset({"listing_accepted", "authenticated"})
 _CREDENTIAL_SOURCE_VALUES = frozenset({"none", "stored", "environment", "draft"})
 _ENDPOINT_VALUES = frozenset(
     {
@@ -561,6 +580,12 @@ class ConsoleSettingsReadiness:
     generation: GenerationFacet = "not_tested"
     generation_category: GenerationFailureCategory | None = None
     subscription_status: Literal["pending", "ready", "expired", "missing"] | None = None
+    #: TASK-33005.2: the connection whose shared test evidence this readiness
+    #: read (the Console's one-action retry probes it) and when its endpoint
+    #: and generation facts were observed. ``None`` when no evidence backs it.
+    connection: ProviderDraftIdentity | None = None
+    observed_at: datetime | None = None
+    generation_observed_at: datetime | None = None
 
     def __post_init__(self) -> None:
         """Normalize legacy construction and reject contradictory typed states."""
@@ -606,9 +631,14 @@ class ConsoleSettingsReadiness:
 
     def _validate_structured_state(self) -> None:
         _validate_console_readiness_literals(self)
+        if type(self.connection) not in {ProviderDraftIdentity, type(None)} or {
+            type(self.observed_at),
+            type(self.generation_observed_at),
+        } - {datetime, type(None)}:
+            raise ValueError("Console readiness evidence is invalid.")
         if self.subscription_status is not None and (
             (self.subscription_status == "ready")
-            != (self.credential in {"present_unverified", "authenticated"})
+            != (self.credential in {"present_unverified", *_ACCEPTED_CREDENTIALS})
         ):
             raise ValueError(
                 "Console subscription state conflicts with its credential."
@@ -641,7 +671,7 @@ class ConsoleSettingsReadiness:
                 raise ValueError("Console credential source conflicts with its facet.")
         elif self.credential_source == "none":
             raise ValueError("Present Console credential requires a source.")
-        if self.configuration == "incomplete" and self.credential == "authenticated":
+        if self.configuration == "incomplete" and self.credential in _ACCEPTED_CREDENTIALS:
             raise ValueError("Incomplete Console settings cannot be authenticated.")
 
         if self.endpoint == "unreachable":
@@ -1719,8 +1749,14 @@ def build_console_settings_readiness(
     current_identity: ProviderDraftIdentity | None = None,
     active_run: bool = False,
     background_credentials: bool = True,
+    connection_evidence: ProviderConnectionEvidence | None = None,
 ) -> ConsoleSettingsReadiness:
-    """Project one deterministic Console blocker and independent evidence."""
+    """Project one deterministic Console blocker and independent evidence.
+
+    ``connection_evidence`` (TASK-33005.2) is the app's shared owner: without
+    explicit ``evidence``, the result settled for this exact connection on any
+    surface applies, keyed from values resolved here (no extra config read).
+    """
     if type(active_run) is not bool:
         raise ValueError("Active-run state must be boolean.")
     # ADR-146 (registry seam): a custom-ep provider resolves through its
@@ -1776,6 +1812,17 @@ def build_console_settings_readiness(
         declared = _custom_endpoint_declared_credential(entry, environ)
         if declared is not None:
             declared_credential, declared_credential_source = declared
+    if (
+        connection_evidence is not None
+        and connection_evidence.version  # Nothing tested yet: no key to build.
+        and evidence is None
+        and (not readiness.requires_api_key or readiness.ready)
+    ):
+        connection = _console_connection_identity(
+            provider_key, base_url, provider_settings, readiness, entry, environ
+        )
+        evidence = connection_evidence.evidence_for(connection) if connection else None
+        current_identity = connection if evidence is not None else current_identity
     exact_identity_evidence = bool(
         evidence is not None
         and current_identity is not None
@@ -1798,9 +1845,9 @@ def build_console_settings_readiness(
         if (
             exact_identity_evidence
             and evidence is not None
-            and evidence.credential == "authenticated"
+            and evidence.credential in _ACCEPTED_CREDENTIALS
         ):
-            credential = "authenticated"
+            credential = evidence.credential
         else:
             credential = "present_unverified"
         if declared_credential is not None:
@@ -1820,9 +1867,13 @@ def build_console_settings_readiness(
         current_identity=current_identity if evidence_is_current else None,
     )
 
+    generation_at = None
     if evidence_is_current and evidence is not None:
-        generation: GenerationFacet = evidence.generation
-        generation_category = evidence.generation_category
+        # Qodo #2958: a paid test proves only the model it sent.
+        tested = evidence.for_model(normalize_console_model_value(settings.model))
+        generation: GenerationFacet = tested.generation
+        generation_category = tested.generation_category
+        generation_at = tested.generation_observed_at
     elif evidence is not None and evidence.generation in {
         "succeeded",
         "failed",
@@ -1890,6 +1941,7 @@ def build_console_settings_readiness(
         blocker, recovery_action = None, None
 
     native_send_supported = blocker is None
+    display_name = provider_display_name(provider_key)
     if blocker == "endpoint_invalid":
         if not endpoint_invalid:
             # Missing-endpoint copy path (see the endpoint_missing branch
@@ -1922,6 +1974,10 @@ def build_console_settings_readiness(
     elif blocker == "model_missing":
         label = "Missing model"
         detail = readiness.user_message
+    elif blocker in {"endpoint_unreachable", "credential_rejected"}:
+        label = "Not ready"
+        reason = str(snapshot.category or "error").replace("_", " ")
+        detail = f"{display_name} failed its last connection test ({reason})."
     elif blocker is not None:
         label = "Not ready"
         detail = readiness.user_message
@@ -1947,7 +2003,7 @@ def build_console_settings_readiness(
         operability="ready_to_send" if blocker is None else "not_ready",
         blocker=blocker,
         recovery_action=recovery_action,
-        provider_display_name=provider_display_name(provider_key),
+        provider_display_name=display_name,
         configuration=configuration,
         configuration_issue=configuration_issue,
         credential=credential,
@@ -1958,6 +2014,9 @@ def build_console_settings_readiness(
         generation=generation,
         generation_category=generation_category,
         subscription_status=readiness.subscription_status,
+        connection=current_identity if evidence_is_current else None,
+        observed_at=evidence.observed_at if evidence_is_current and evidence else None,
+        generation_observed_at=generation_at,
     )
 
 
@@ -2094,7 +2153,7 @@ def build_console_settings_summary_state(
         ),
         streaming="On" if settings.streaming else "Off",
         identity_row=identity_row,
-        readiness_label="",
+        readiness_label=readiness_words(readiness),
         provider_row=f"Provider: {provider_label}",
         endpoint_row=_format_endpoint_summary_row(settings, readiness),
         credential_row=_format_credential_summary_row(readiness),
@@ -2340,6 +2399,137 @@ def _custom_endpoint_declared_credential(
     return None
 
 
+def _console_connection_identity(
+    provider_key: str,
+    base_url: str | None,
+    provider_settings: Mapping[str, object],
+    readiness: ProviderReadiness,
+    entry: CustomEndpointEntry | None,
+    environ: Mapping[str, str] | None,
+) -> ProviderDraftIdentity | None:
+    """Return the connection a send uses, keyed as Chat settings keys it.
+
+    TASK-33005.2: mirrors ``ConsoleSettingsModal._current_connection_probe_
+    identity`` (endpoint the send uses, sent key's digest, credential source)
+    from values the readiness build already resolved.
+
+    Returns:
+        The connection identity, or ``None`` when no endpoint resolves.
+    """
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        CUSTOM_ENDPOINT_ID_PREFIX,
+        resolve_entry_credential,
+    )
+
+    endpoint = effective_provider_endpoint(provider_key, base_url, provider_settings)
+    if endpoint is None and provider_key in {"llama_cpp", "local_llamacpp"}:
+        endpoint = DEFAULT_LLAMACPP_BASE_URL  # The origin a new chat sends to.
+    connection = canonical_connection_identity(provider_key, endpoint)
+    if connection is None:
+        return None
+    if entry is not None:
+        api_key, source = resolve_entry_credential(entry, environ)
+        credential_source = None
+    else:
+        api_key, source = readiness.api_key, readiness.api_key_source
+        credential_source = configured_provider_credential_source(provider_settings)
+    if credential_source is None:
+        credential_source = (
+            "none" if not source else "environment" if source.startswith("env:") else "stored"
+        )
+    try:
+        return ProviderDraftIdentity(
+            provider_key=provider_key,
+            connection_identity=connection,
+            credential_source=credential_source,
+            credential_revision=connection_credential_revision(api_key),
+            draft_generation=0,
+            custom_endpoint_id=(
+                f"{CUSTOM_ENDPOINT_ID_PREFIX}{entry.slug}" if entry else None
+            ),
+        )
+    except ValueError:
+        return None
+
+
+def console_send_connection(
+    settings: ConsoleSessionSettings,
+    *,
+    app_config: Mapping[str, object],
+    environ: Mapping[str, str] | None = None,
+) -> ProviderDraftIdentity | None:
+    """Return the connection a send with ``settings`` uses (TASK-33005.5).
+
+    Resolved exactly as :func:`build_console_settings_readiness` resolves it
+    before its shared evidence lookup, so a result settled for this identity
+    is the one readiness reads back. Blocking: reads config and credentials.
+
+    Args:
+        settings: The chat's (or a future chat's) effective settings.
+        app_config: The live application configuration snapshot.
+        environ: Environment mapping; ``None`` reads ``os.environ``.
+
+    Returns:
+        The connection identity, or ``None`` when no endpoint resolves.
+    """
+    from tldw_chatbook.Chat.custom_endpoint_registry import (
+        entry_for,
+        family_execution_key,
+    )
+
+    entry = entry_for(app_config, settings.provider)
+    provider_key = resolve_console_provider_identity(
+        _canonical_chat_provider_id(
+            family_execution_key(entry.family) if entry is not None else settings.provider
+        ),
+        handler_keys=CONSOLE_SETTINGS_EXECUTION_PROVIDER_KEYS,
+    ).readiness_key
+    base_url = _string_value(settings.base_url) or (entry.base_url if entry else None)
+    provider_settings, _invalid = _provider_settings_with_validity(
+        app_config, settings.provider if entry is not None else provider_key
+    )
+    readiness = get_provider_readiness(
+        provider_key, app_config, environ=environ, background_credentials=True
+    )
+    return _console_connection_identity(
+        provider_key, base_url, provider_settings, readiness, entry, environ
+    )
+
+
+def provider_left_at_shipped_default(
+    app_config: Mapping[str, object], provider_key: str
+) -> bool:
+    """Whether the user never set this provider up (TASK-33005.6 AC#3 ruling).
+
+    Every loaded profile carries the shipped template's ``[api_settings.*]``
+    tables, so having a table proves nothing (``any_provider_configured``
+    refuses template endpoints for the same reason); a table that still
+    equals the template's does. A ``custom-ep:`` registry entry is always the
+    user's own.
+
+    Args:
+        app_config: The live configuration snapshot.
+        provider_key: A canonical provider key or ``custom-ep:`` id.
+
+    Returns:
+        Whether its saved settings are exactly the shipped template's.
+    """
+    # Lazy: custom_endpoint_registry imports this module (a module-level
+    # import would cycle).
+    from tldw_chatbook.Chat.custom_endpoint_registry import CUSTOM_ENDPOINT_ID_PREFIX
+
+    if provider_key.startswith(CUSTOM_ENDPOINT_ID_PREFIX):
+        return False
+    try:
+        return provider_settings_for_key(
+            app_config.get("api_settings"), provider_key
+        ) == provider_settings_for_key(
+            DEFAULT_CONFIG_FROM_TOML.get("api_settings"), provider_key
+        )
+    except ProviderSettingsError:
+        return False
+
+
 def _custom_endpoint_missing_key_readiness(
     entry: "CustomEndpointEntry",
     provider_key: str,
@@ -2464,6 +2654,207 @@ def _endpoint_failure_blocker(
     if category in {"timeout", "connection_refused", "connection_error"}:
         return "endpoint_unreachable", "retry_connection"
     return "endpoint_unreachable", "review_provider_settings"
+
+
+# TASK-33005.3 (spec §5): the one readiness vocabulary. Every model surface --
+# status chip, rail, setup card, switcher rows, Chat settings, Settings' test
+# result -- reads its word from these maps; nothing else spells one.
+READY_NOT_TESTED = "Ready · not tested"
+#: "Not ready · <reason>" per blocker. Tests/Chat/test_readiness_words.py
+#: fails for a blocker without one; the longest fits the switcher's column.
+_NOT_READY_REASONS: Mapping[str, str] = MappingProxyType(
+    {
+        "provider_missing": "no provider",
+        "provider_unsupported": "unsupported",
+        "provider_configuration_invalid": "check settings",
+        "endpoint_invalid": "invalid URL",
+        "endpoint_not_saved": "endpoint unsaved",
+        "credential_missing": "no key",
+        "credential_rejected": "key rejected",
+        "model_missing": "no model",
+        "endpoint_unreachable": "unreachable",
+        "active_run": "run active",
+        "readiness_unknown": "check settings",
+    }
+)
+#: A known connection failure says what happened ("refused" gains the port).
+_FAILURE_REASONS: Mapping[str, str] = MappingProxyType(
+    {
+        "timeout": "timed out",
+        "connection_refused": "refused",
+        "unauthorized": "key rejected",
+        "forbidden": "key rejected",
+        "http_status": "server error",
+        "invalid_payload": "bad response",
+        "connection_error": "unreachable",
+    }
+)
+#: A Claude subscription has a login, not a key.
+_SUBSCRIPTION_REASONS: Mapping[str, str] = MappingProxyType(
+    {"pending": "checking login", "expired": "login expired", "missing": "no login"}
+)
+#: Each setup verdict reads as a blocker's "Not ready · <reason>", as Ready
+#: qualified by its "evidence", or (None) as Ready with no current evidence.
+_VERDICT_READINESS: Mapping[str, str | None] = MappingProxyType(
+    {
+        "incomplete": "provider_configuration_invalid",  # its issue refines it
+        "model_missing": "model_missing",
+        "connection_failed": "endpoint_unreachable",  # its category refines it
+        "testing": "evidence",
+        "not_tested": "evidence",
+        "model_listing_unavailable": "evidence",
+        "model_unconfirmed": "evidence",
+        "verified": "evidence",
+        "changed_since_test": None,
+    }
+)
+
+
+def readiness_words(readiness: ConsoleSettingsReadiness) -> str:
+    """Return the spec §5 readiness word for one Console readiness.
+
+    Args:
+        readiness: A built Console readiness (it carries the connection and
+            observation time of current evidence, TASK-33005.2).
+
+    Returns:
+        'Ready · not tested', 'Ready · reachable HH:MM', 'Ready · verified
+        HH:MM' or 'Not ready · <reason>'.
+    """
+    if readiness.operability == "ready_to_send":
+        return _ready_words(
+            readiness.connection,
+            readiness.endpoint,
+            readiness.credential,
+            readiness.generation,
+            readiness.observed_at,
+            readiness.generation_observed_at,
+        )
+    return _not_ready_words(
+        readiness.blocker or "readiness_unknown",
+        category=readiness.endpoint_category,
+        issue=readiness.configuration_issue,
+        subscription=readiness.subscription_status,
+        connection=readiness.connection,
+    )
+
+
+def verdict_readiness_words(
+    snapshot: ProviderReadinessSnapshot,
+    evidence: object = None,
+    *,
+    subscription_status: str | None = None,
+) -> str:
+    """Return the same word for a setup verdict (Settings' test result).
+
+    Args:
+        snapshot: The draft's readiness facets.
+        evidence: The ``ProviderTestEvidence`` behind ``snapshot`` (or a
+            just-settled ``ProviderProbeResult``): its time, connection and
+            key/generation facts.
+        subscription_status: The Claude subscription state, if any.
+
+    Returns:
+        One of the four words.
+    """
+    code = provider_readiness_verdict(snapshot).code
+    # AC#8: rank blockers as the Console does (_BLOCKER_PRECEDENCE) --
+    # configuration, then a missing model, then a failed test. The verdict
+    # puts a stale, running or failed test first, which hid them.
+    if snapshot.configuration == "incomplete":
+        code = "incomplete"
+    elif snapshot.model == "missing":
+        code = "model_missing"
+    reads = _VERDICT_READINESS[code]
+    connection = getattr(evidence, "identity", None)
+    if reads is None:
+        return READY_NOT_TESTED
+    if reads == "evidence":
+        return _ready_words(
+            connection,
+            snapshot.endpoint,
+            getattr(evidence, "credential", "not_required"),
+            getattr(evidence, "generation", "not_tested"),
+            getattr(evidence, "observed_at", None),
+            getattr(evidence, "generation_observed_at", None),
+        )
+    if reads == "provider_configuration_invalid":
+        reads = _CONFIGURATION_ISSUE_BLOCKER.get(snapshot.configuration_issue, reads)
+    return _not_ready_words(
+        reads,
+        category=snapshot.category,
+        issue=snapshot.configuration_issue,
+        subscription=subscription_status,
+        connection=connection,
+    )
+
+
+_LOCAL_PROVIDER_KEYS = URL_BASED_PROVIDER_KEYS | KEYLESS_PROVIDER_KEYS
+
+
+def _ready_words(
+    connection: ProviderDraftIdentity | None,
+    endpoint: str,
+    credential: str,
+    generation: str,
+    endpoint_at: datetime | None,
+    generation_at: datetime | None,
+) -> str:
+    """Qualify Ready by what was observed, and when (local HH:MM).
+
+    'verified': a successful paid test (its time), or a cloud key its
+    authenticated listing accepted (the listing's time). 'reachable': a
+    local, URL or custom endpoint answered its listing -- even with a key,
+    since a self-hosted server may ignore it. A public cloud listing
+    (OpenRouter) proves nothing: 'not tested'.
+    """
+    if connection is None:
+        return READY_NOT_TESTED
+    if generation == "succeeded" and generation_at is not None:
+        return f"Ready · verified {generation_at.astimezone():%H:%M}"
+    if endpoint_at is None:
+        return READY_NOT_TESTED
+    local = (
+        connection.custom_endpoint_id is not None
+        or connection.provider_key in _LOCAL_PROVIDER_KEYS
+    )
+    when = endpoint_at.astimezone().strftime("%H:%M")
+    accepted = credential == "listing_accepted" or (
+        # Qodo #2958: a paid test (of another model) upgraded the listing's
+        # acceptance; a public or failed listing accepted nothing.
+        credential == "authenticated"
+        and endpoint == "reachable"
+        and connection.provider_key not in PUBLIC_MODEL_LISTING_PROVIDER_KEYS
+    )
+    if accepted and not local:
+        return f"Ready · verified {when}"
+    if endpoint == "reachable" and local:
+        return f"Ready · reachable {when}"
+    return READY_NOT_TESTED
+
+
+def _not_ready_words(
+    blocker: str,
+    *,
+    category: str | None,
+    issue: str | None,
+    subscription: str | None,
+    connection: ProviderDraftIdentity | None,
+) -> str:
+    reason = _NOT_READY_REASONS.get(blocker, "check settings")
+    if blocker in {"endpoint_unreachable", "credential_rejected"} and category:
+        reason = _FAILURE_REASONS.get(category, reason)
+        if category == "connection_refused" and connection is not None:
+            try:  # Only the port: never the host, path or query.
+                port = urlparse(connection.connection_identity[1]).port
+            except ValueError:
+                port = None
+            reason += f" :{port}" if port else ""
+    elif blocker == "credential_missing" and subscription in _SUBSCRIPTION_REASONS:
+        reason = _SUBSCRIPTION_REASONS[subscription]
+    elif blocker == "endpoint_invalid" and issue == "endpoint_missing":
+        reason = "no URL"
+    return f"Not ready · {reason}"
 
 
 def _model_default_profile(
@@ -2870,6 +3261,8 @@ def _format_credential_summary_row(readiness: ConsoleSettingsReadiness) -> str:
         return "Credential: not required"
     if readiness.credential == "authenticated":
         return "Credential: authenticated"
+    if readiness.credential == "listing_accepted":
+        return "Credential: accepted by model listing"
     source = {
         "stored": "local config",
         "environment": "environment variable",

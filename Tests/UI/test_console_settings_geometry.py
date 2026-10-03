@@ -152,11 +152,11 @@ async def test_conversation_settings_size_matrix_has_bounded_fluid_geometry(
         readiness_text = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
+        # TASK-33005.3 (AC#11): the spec §5 words replace "Ready to send".
         if ready:
-            assert "Ready to send" in readiness_text
+            assert readiness_text.startswith("Ready · not tested\n")
         else:
-            assert "Not ready" in readiness_text
-            assert "Ready to send" not in readiness_text
+            assert readiness_text.startswith("Not ready · ")
 
 
 @pytest.mark.parametrize(

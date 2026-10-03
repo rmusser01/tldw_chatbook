@@ -1,6 +1,7 @@
 # ADR-083: Console edge rails and workspace-owned conversation Tree
 
 Status: Accepted
+Superseded in part by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-22
 Related Task: [TASK-20937](../tasks/task-20937%20-%20Make-Console-rails-edge-native-and-organize-conversations-by-workspace.md)
 Related Spec: [Console edge rails and workspace Tree design](../../Docs/superpowers/specs/2026-08-22-console-edge-rails-workspace-tree-design.md)

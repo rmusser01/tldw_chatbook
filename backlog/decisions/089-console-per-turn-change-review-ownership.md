@@ -1,6 +1,7 @@
 # ADR-089: Console per-turn change-review ownership
 
 Status: Accepted
+Amended by: [ADR-210](210-console-region-ownership.md) (accepted 2026-10-01)
 Date: 2026-08-25
 Related Task: [TASK-22305](../tasks/task-22305%20-%20Simplify-Console-change-review-around-per-turn-cards.md)
 Related Spec: [Console per-turn change review simplification](../../Docs/superpowers/specs/2026-08-25-console-turn-change-review-simplification-design.md)

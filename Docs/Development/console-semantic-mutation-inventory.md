@@ -24,9 +24,9 @@ that coordinator.
   generation provenance, legacy exchange capture, or trajectory diagnostics.
   These values do not change the provider-neutral message envelope.
 
-The structural test records 40 live SQL sink identities and 65 boundary call
-identities: 67 model-visible, 12 visibility/ownership-only, and 26
-presentation-only identities in total. These are route-layer identities, not 105
+The structural test records 41 live SQL sink identities and 66 boundary call
+identities: 67 model-visible, 14 visibility/ownership-only, and 26
+presentation-only identities in total. These are route-layer identities, not 107
 distinct user actions; a public action appears once at its boundary and again at
 the SQL sink it reaches.
 
@@ -56,6 +56,7 @@ user-facing ownership chain and must be reviewed when a route changes.
 | Regeneration variants in legacy DB API | model-visible plus visibility | `CharactersRAGDB.create_message_variant`, `select_message_variant` | new variant row plus selected/total flags |
 | Research completion handoff | model-visible | `insert_research_completion_message` | assistant `add_message` |
 | Message and subtree soft delete, including Sync tombstones | visibility/ownership-only | `ConsoleChatStore.delete_message`; classic/persona delete APIs; `CharactersRAGDB.delete_chat_message` | retained semantic bytes and semantic-revision lineage stay unchanged; only tombstone visibility/ownership state and graph epoch advance |
+| Console Delete Undo (subtree undelete) | visibility/ownership-only | `restore_deleted_subtree` → `ChatPersistenceService.restore_message_subtree` → `CharactersRAGDB.restore_message_subtree` | clears exactly the tombstones one subtree delete wrote, version-checked; semantic bytes were never touched, so only visibility and graph epoch change |
 | Usage, feedback/ranking, message UI metadata | presentation-only | `ConsoleChatStore.set_message_usage`, `ConsoleChatStore.set_message_feedback`, `ConsoleChatStore.set_message_metadata`; classic ranking; DB feedback helper | local/version-neutral metadata or restricted `update_message` call |
 | Reasoning/tool trajectory diagnostics | presentation-only | `ConsoleChatStore.write_trajectory_rows`; `ChatPersistenceService.write_trajectory_rows`; `LibraryActivityContribution.write`, `LibraryPreparationContribution.write` | `message_trajectory_metadata`; tool/reasoning payload is diagnostic and is not replayed into provider kwargs |
 | Legacy exchange capture and purge | presentation-only | `ConsoleChatStore.attach_message_exchanges`, terminal exchange-flush paths, `ConsoleChatStore.commit_full_capture_purge`; `ChatPersistenceService.append_message_exchanges`, `delete_full_exchanges_for_conversation` | `message_exchanges` only |
@@ -253,6 +254,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB._set_message_feedback_uncoordinated::sql:update:messages` — presentation-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.soft_delete_message::sql:update:messages` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.soft_delete_message_subtree::sql:update:messages` — visibility/ownership-only
+- `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.restore_message_subtree::sql:update:messages` — visibility/ownership-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.swap_message_attachment_with_scalar.swap_attachment::sql:update:message_attachments` — model-visible
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.swap_message_attachment_with_scalar.swap_attachment::sql:update:message_generation_metadata` — presentation-only
 - `tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.swap_message_attachment_with_scalar.swap_attachment::sql:update:messages` — model-visible
@@ -280,6 +282,7 @@ are derived indexes/logs, not canonical semantic owners.
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.create_message::call:db:add_message_with_semantic_sidecars` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_full_exchanges_for_conversation::call:db:delete_full_exchanges_for_conversation` — presentation-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree` — visibility/ownership-only
+- `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree` — visibility/ownership-only
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.fork_console_conversation_bundle::call:persistence:create_message` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.keep_message_attachment::call:db:swap_message_attachment_with_scalar` — model-visible
 - `tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.promote_console_conversation_bundle::call:persistence:create_message` — model-visible
