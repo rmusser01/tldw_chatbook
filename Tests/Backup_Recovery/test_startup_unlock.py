@@ -372,6 +372,31 @@ def test_unexpected_unlock_crash_prints_no_secret(tmp_path):
     _secrets_absent(result, verifier)
 
 
+async def test_opening_a_profile_where_the_terminal_cannot_suspend_reports_it():
+    # Review round 2 (R2-F3): a served (browser) child now reaches the
+    # recovery host. Its Backup & Restore "Open" profile button calls
+    # open_recovery_profile, which suspends the terminal -- the web driver
+    # cannot (SuspendNotSupported), and the uncaught error in a default
+    # exit_on_error worker ended the whole browser session. The headless
+    # test driver cannot suspend either, so it reproduces that.
+    from tldw_chatbook.Backup_Recovery.launcher import (
+        PROFILE_OPEN_NEEDS_TERMINAL,
+        UNLOCK_SERVED_REASON,
+        recovery_app,
+    )
+
+    app = recovery_app(UNLOCK_SERVED_REASON)
+    async with app.run_test(size=(100, 30)) as pilot:
+        await pilot.pause()
+        assert not app._driver.can_suspend
+        worker = app.open_recovery_profile("profile-sentinel")
+        await worker.wait()
+        await pilot.pause()
+        assert app.return_code is None and app.is_running
+        messages = [notice.message for notice in app._notifications]
+        assert PROFILE_OPEN_NEEDS_TERMINAL in messages, messages
+
+
 @pytest.mark.parametrize(
     "reason",
     [

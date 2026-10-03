@@ -59,6 +59,12 @@ UNLOCK_RESET_FAILED = (
     "Resetting the saved keys failed; config.toml was left as it was."
 )
 
+#: Opening a profile hands the terminal to it; a browser session has none.
+PROFILE_OPEN_NEEDS_TERMINAL = (
+    "Opening a profile needs chatbook running in a terminal; it can't be "
+    "done from a browser session."
+)
+
 #: Plain sentences for the recovery host instead of a raw reason code.
 _UNLOCK_RECOVERY_COPY = {
     "configuration_unlock_failed": (
@@ -373,15 +379,38 @@ def recovery_app(reason: str, *, restart_request=None):
 
         @work(group="recovery-profile-launch")
         async def open_recovery_profile(self, profile_id):
-            current = self.recovery_service.current()
+            # Mirrors TldwCli.open_recovery_profile (app_lifecycle.py), which
+            # this host cannot import. TASK-34100.4 review round 2: a served
+            # (browser) session reaches this host, and the web driver cannot
+            # suspend -- an uncaught SuspendNotSupported in this default
+            # exit_on_error worker ended the whole session.
+            from textual.app import SuspendNotSupported
+
+            service = self.recovery_service
+            current = service.current()
             if current is not None and current["state"] == "running":
                 self.notify(
                     "Another recovery operation is running.", severity="warning"
                 )
                 return
-            with self.suspend():
-                operation = self.recovery_service.start_open_profile(profile_id)
-                await settle(self.recovery_service.wait, operation)
+            failure = None
+            try:
+                with self.suspend():
+                    try:
+                        operation = service.start_open_profile(profile_id)
+                        await settle(service.wait, operation)
+                    except (OSError, RuntimeError, ValueError) as error:
+                        failure = error
+            except SuspendNotSupported:
+                self.notify(PROFILE_OPEN_NEEDS_TERMINAL, severity="error")
+                return
+            except (OSError, RuntimeError, ValueError) as error:
+                failure = error
+            if failure is not None:
+                self.notify(
+                    "Profile opening failed: " + service.issue_code(failure),
+                    severity="error",
+                )
 
         async def on_unmount(self):
             await settle(self.recovery_service.close)
