@@ -214,10 +214,11 @@ def _activity() -> ConsoleControllerActivity:
 def test_queue_presentation_cannot_offer_resume_while_dispatch_recovery_blocks() -> (
     None
 ):
-    """The shelf keeps its own queue vocabulary while a response recovery
-    blocks it. The recovery's actions live only on the #console-dispatch-
-    recovery card. TASK-33625.5 removed the shelf's copy of them, which
-    production never reached, so this pins the input production passes:
+    """The shelf keeps its own queue vocabulary while a response recovery blocks it.
+
+    The recovery's actions live only on the #console-dispatch-recovery card.
+    TASK-33625.5 removed the shelf's copy of them, which production never
+    reached, so this pins the input production passes:
     ``presentation_for``'s ``dispatch_recovery_blocked``.
     """
 

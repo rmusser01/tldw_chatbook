@@ -493,11 +493,13 @@ def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
 
 
 def test_queue_shelf_has_no_dispatch_recovery_mode() -> None:
-    """TASK-33625.5: response recovery is the #console-dispatch-recovery
-    card's job alone. The shelf's copy of it (Retry anyway / Retry response /
-    Unavailable) was unreachable in production, so it is gone. Pin that the
-    projection can neither take a recovery state nor hand the shelf recovery
-    actions. The shelf's own blocked state stays: see
+    """Pin that the queue shelf has no dispatch-recovery mode (TASK-33625.5).
+
+    Response recovery is the #console-dispatch-recovery card's job alone. The
+    shelf's copy of it (Retry anyway / Retry response / Unavailable) was
+    unreachable in production, so it is gone. Pin that the projection can
+    neither take a recovery state nor hand the shelf recovery actions. The
+    shelf's own blocked state stays: see
     test_queue_presentation_cannot_offer_resume_while_dispatch_recovery_blocks.
     """
 
