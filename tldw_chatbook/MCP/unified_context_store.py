@@ -48,6 +48,7 @@ class UnifiedMCPContextStore:
             return UnifiedMCPContext()
         payload = self._read_payload()
         if not isinstance(payload, dict):
+            mcp_sources.discard_json(self)
             return UnifiedMCPContext()
         return UnifiedMCPContext.from_dict(payload)
 
@@ -68,8 +69,7 @@ class UnifiedMCPContextStore:
     @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with mcp_sources.reader(self) as handle:
-                return json.load(handle)
+            return mcp_sources.read_json(self)[1]
         except FileNotFoundError:
             return {}
         except (OSError, TypeError, ValueError, json.JSONDecodeError):

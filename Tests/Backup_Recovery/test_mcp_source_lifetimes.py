@@ -275,9 +275,9 @@ def test_permission_preflight_pause_has_no_payload_or_backup_effects(
 
 def _private_child(request, kind):
     import os
-    from pathlib import Path
     import subprocess
     import sys
+    from pathlib import Path
 
     if os.environ.get("TASK10_MCP_CHILD") == kind:
         return False
@@ -288,6 +288,14 @@ def _private_child(request, kind):
             "pytest",
             request.node.nodeid,
             "-q",
+            "--basetemp="
+            + str(
+                Path(
+                    request.config.option.basetemp
+                    or request.getfixturevalue("tmp_path")
+                )
+                / ("child-" + kind)
+            ),
             "-o",
             "cache_dir=/private/tmp/task10-phase11-child-cache",
         ],
@@ -825,3 +833,404 @@ def test_installed_history_private_posture_demotion_refuses_before_read(
     monkeypatch.setattr(private_paths, "_atomic_posix_guards_available", lambda: False)
     with pytest.raises(bootstrap.RecoveryRequired, match="selection_changed"):
         source.read_recent()
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_guarded_json_reuses_parse_but_reads_current_bytes(
+    mcp_sources, monkeypatch, index
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+
+    source = mcp_sources[index]
+    storage.admit_startup()
+    payload = {"schema_version": 4, "profiles": [], "nested": {"items": ["old"]}}
+    if index == 3:
+        source.set_kill_switch(False)
+        payload = source.load()
+        source.save(payload)
+    else:
+        source.path.write_text(json.dumps(payload))
+    read = source.load if index == 3 else source._read_payload
+    original_parse = json.loads
+    original_reader = shared.reader
+    parses, reads = [], []
+
+    def parse(value, *args, **kwargs):
+        result = original_parse(value, *args, **kwargs)
+        if (
+            isinstance(result, dict)
+            and result.get("schema_version") == payload["schema_version"]
+        ):
+            parses.append(value)
+        return result
+
+    @contextmanager
+    def reader(current):
+        if current is source:
+            reads.append(current)
+        with original_reader(current) as handle:
+            yield handle
+
+    monkeypatch.setattr(json, "loads", parse)
+    monkeypatch.setattr(shared, "reader", reader)
+    first = read()
+    first["profiles"] = {"mutated": []}
+    second = read()
+    assert first != second
+    assert len(reads) == 2
+    assert len(parses) == 1
+    assert not storage._pending_acquisitions
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_guarded_json_same_metadata_bytes_and_nested_returns(mcp_sources, index):
+    import os
+
+    source = mcp_sources[index]
+    storage.admit_startup()
+    payload = source.load() if index == 3 else {"schema_version": 4, "profiles": []}
+    payload["cache_probe"] = {"nested": ["old"]}
+    source.path.write_text(json.dumps(payload))
+    read = source.load if index == 3 else source._read_payload
+    first = read()
+    first["cache_probe"]["nested"].append("caller")
+    assert read()["cache_probe"] == {"nested": ["old"]}
+    before = source.path.stat()
+    raw = source.path.read_bytes()
+    with source.path.open("r+b") as handle:
+        handle.write(raw.replace(b'"old"', b'"new"'))
+    os.utime(source.path, ns=(before.st_atime_ns, before.st_mtime_ns))
+    assert source.path.stat().st_ino == before.st_ino
+    assert read()["cache_probe"] == {"nested": ["new"]}
+
+
+@pytest.mark.parametrize("change", ["missing", "corrupt", "unreadable"])
+def test_warm_permission_parse_never_supplies_last_good_policy(mcp_sources, change):
+    from tldw_chatbook.MCP.permission_store import PermissionStoreSnapshotError
+
+    source = mcp_sources[3]
+    storage.admit_startup()
+    payload = source.load()
+    source.save(payload)
+    assert source.load()["kill_switch"] is False
+    source.read_snapshot_strict()
+    before = source.path.read_bytes()
+    try:
+        if change == "missing":
+            source.path.unlink()
+            assert source.read_snapshot_strict().generation.startswith("missing:")
+        elif change == "corrupt":
+            source.path.write_bytes(b'{"kill_switch":false,"kill_switch":true}')
+            with pytest.raises(PermissionStoreSnapshotError, match="duplicate_key"):
+                source.read_snapshot_strict()
+            assert source.path.read_bytes().startswith(b'{"kill_switch"')
+        else:
+            source.path.chmod(0)
+            with pytest.raises(OSError):
+                source.load()
+            with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
+                source.read_snapshot_strict()
+            assert source._load_for_raw_getter()["kill_switch"] is True
+        assert not source.path.with_suffix(".json.bak").exists()
+    finally:
+        if source.path.exists():
+            source.path.chmod(0o600)
+        source.path.write_bytes(before)
+    assert source.load()["kill_switch"] is False
+
+
+def test_guarded_permission_strict_inventory_bytes_and_policy_stay_distinct(
+    mcp_sources,
+):
+    import hashlib
+
+    from tldw_chatbook.MCP.permission_store import PermissionStoreSnapshotError
+
+    source = mcp_sources[3]
+    storage.admit_startup()
+    payload = source.load()
+    source.save(payload)
+    snapshot = source.read_snapshot_strict()
+    assert (
+        snapshot.generation
+        == "sha256:" + hashlib.sha256(source.path.read_bytes()).hexdigest()
+    )
+    payload["profiles"]["broken"] = {
+        "servers": {},
+        "profile_kind": "tool_pack_imported",
+    }
+    source.path.write_text(json.dumps(payload))
+    inventory = source.read_profile_inventory_snapshot()
+    assert "broken" in inventory.payload["profiles"]
+    with pytest.raises(PermissionStoreSnapshotError, match="invalid_shape"):
+        source.read_snapshot_strict()
+    assert inventory.generation != snapshot.generation
+    assert (
+        inventory.generation
+        == "sha256:" + hashlib.sha256(source.path.read_bytes()).hexdigest()
+    )
+
+
+def test_guarded_parse_pause_invalidates_and_oversize_keeps_legacy_policy(
+    mcp_sources, monkeypatch
+):
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"cache_probe": ["value"]}')
+    original = json.loads
+    calls = []
+
+    def parse(value, *args, **kwargs):
+        result = original(value, *args, **kwargs)
+        if isinstance(result, dict) and "cache_probe" in result:
+            calls.append(result)
+        return result
+
+    monkeypatch.setattr(json, "loads", parse)
+    source._read_payload()
+    source._read_payload()
+    assert len(calls) == 1
+    pause = storage._begin_local_pause()
+    try:
+        with pytest.raises(bootstrap.RecoveryRequired):
+            source._read_payload()
+    finally:
+        pause.resume()
+    source._read_payload()
+    assert len(calls) == 2
+    monkeypatch.setattr(shared, "_JSON_CACHE_BYTES", 1)
+    source._read_payload()
+    source._read_payload()
+    assert len(calls) == 4
+
+
+def test_guarded_parse_migration_does_not_publish_prewrite_bytes(mcp_sources):
+    from tldw_chatbook.MCP.local_store import LocalMCPStoreLoadError
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"schema_version":1,"profiles":[]}')
+    old = source.path.read_bytes()
+    source.load()
+    assert json.loads(source.path.read_bytes())["schema_version"] == 4
+    assert not any(
+        entry[0] == old
+        for hold in storage._holds.values()
+        for entry in hold.json_evidence.values()
+    )
+    source.path.write_text('{"schema_version":99,"profiles":[]}')
+    with pytest.raises(LocalMCPStoreLoadError):
+        source.load()
+    assert not any(
+        key[0]() is source
+        for hold in storage._holds.values()
+        for key in hold.json_evidence
+    )
+
+
+@pytest.mark.parametrize("closed_first", [False, True])
+def test_guarded_parse_unknown_read_close_never_publishes_or_retries(
+    mcp_sources, monkeypatch, request, closed_first
+):
+    if _private_child(request, f"json-read-close-{closed_first}"):
+        return
+    import os
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"cache_probe":true}')
+    source._read_payload()
+    original_reader, original_close = shared.reader, os.close
+    selected, attempts, recycled = [], [], []
+
+    @contextmanager
+    def reader(current):
+        with original_reader(current) as handle:
+            if current is source:
+                selected.append(handle.buffer.fileno())
+            yield handle
+
+    def close(fd):
+        if selected and fd == selected[-1]:
+            attempts.append(fd)
+            if closed_first:
+                original_close(fd)
+                recycled.append(os.open(os.devnull, os.O_RDONLY))
+                assert recycled[-1] == fd
+            raise OSError("unresolved read close")
+        return original_close(fd)
+
+    monkeypatch.setattr(shared, "reader", reader)
+    monkeypatch.setattr(os, "close", close)
+    with pytest.raises(bootstrap.RecoveryRequired):
+        source._read_payload()
+    assert len(attempts) == 1
+    uncertain = [
+        state
+        for state in raw._states.values()
+        if state.source is source and state.uncertain
+    ]
+    assert len(uncertain) == 1 and uncertain[0].descriptors
+    assert all(hold.native_context is not None for hold in uncertain[0].holds)
+    assert not any(
+        key[0]() is source for hold in uncertain[0].holds for key in hold.json_evidence
+    )
+    with pytest.raises(bootstrap.RecoveryRequired):
+        source._read_payload()
+    pause = storage._begin_local_pause()
+    try:
+        assert not pause.drain(time.monotonic() + 0.01)
+        assert len(attempts) == 1
+        if recycled:
+            os.fstat(recycled[0])  # No retry closed a recycled descriptor.
+    finally:
+        pause.resume()
+    # The private child exits with its failed native ownership intact.
+
+
+def test_guarded_parse_last_owner_retirement_and_selection_error_discard(
+    mcp_sources, monkeypatch, tmp_path
+):
+    source = mcp_sources[0]
+    source.path.write_text('{"cache_probe":true}')
+    original = json.loads
+    calls = []
+
+    def parse(value, *args, **kwargs):
+        result = original(value, *args, **kwargs)
+        if isinstance(result, dict) and "cache_probe" in result:
+            calls.append(result)
+        return result
+
+    monkeypatch.setattr(json, "loads", parse)
+    owner = storage.acquire_storage(source.path)
+    hold = storage._holds[owner._key]
+    startup = storage._startups.pop(owner._key, None)
+    if startup is not None:
+        startup.close()  # Positively retire only this fixture's startup owner.
+    try:
+        source._read_payload()
+        source._read_payload()
+        assert len(calls) == 1
+        selected = source.path
+        source.path = tmp_path / "different.json"
+        try:
+            with pytest.raises(bootstrap.RecoveryRequired, match="selection_changed"):
+                source._read_payload()
+        finally:
+            source.path = selected
+        source._read_payload()
+        assert len(calls) == 2
+    finally:
+        owner.close()
+    assert hold.native_context is None and not hold.thread.is_alive()
+    source._read_payload()
+    source._read_payload()
+    assert len(calls) == 4  # No surviving owner means no reusable publication.
+
+
+def test_guarded_parse_fork_cannot_use_inherited_evidence(mcp_sources):
+    import os
+
+    if not hasattr(os, "fork"):
+        pytest.skip("POSIX fork control")
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"cache_probe":true}')
+    source._read_payload()
+    child = os.fork()
+    if child == 0:
+        status = 1
+        try:
+            assert not storage._monitor_subscribers
+            with pytest.raises(bootstrap.RecoveryRequired):
+                source._read_payload()
+            status = 0
+        finally:
+            os._exit(status)
+    _, status = os.waitpid(child, 0)
+    assert os.waitstatus_to_exitcode(status) == 0
+    assert source._read_payload()["cache_probe"] is True
+
+
+@pytest.mark.parametrize("index", range(4))
+def test_guarded_json_replacement_after_read_refuses_detached_bytes(
+    mcp_sources, monkeypatch, index
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+
+    source = mcp_sources[index]
+    storage.admit_startup()
+    payload = source.load() if index == 3 else {"schema_version": 4, "profiles": []}
+    payload["cache_probe"] = "old"
+    source.path.write_text(json.dumps(payload))
+    read = source.load if index == 3 else source._read_payload
+    assert read()["cache_probe"] == "old"
+    original_reader = shared.reader
+
+    @contextmanager
+    def reader(current):
+        with original_reader(current) as handle:
+            yield handle
+            if current is source:
+                replacement = source.path.with_name("replacement.json")
+                payload["cache_probe"] = "new"
+                replacement.write_text(json.dumps(payload))
+                replacement.replace(source.path)
+
+    monkeypatch.setattr(shared, "reader", reader)
+    with pytest.raises(bootstrap.RecoveryRequired, match="raw_entry_identity_changed"):
+        read()
+    assert not any(
+        key[0]() is source
+        for hold in storage._holds.values()
+        for key in hold.json_evidence
+    )
+
+
+def test_guarded_parse_config_generation_change_requires_fresh_parse(
+    mcp_sources, monkeypatch
+):
+    from tldw_chatbook import config
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"cache_probe":true}')
+    original = json.loads
+    parses = []
+
+    def parse(value, *args, **kwargs):
+        result = original(value, *args, **kwargs)
+        if isinstance(result, dict) and "cache_probe" in result:
+            parses.append(result)
+        return result
+
+    monkeypatch.setattr(json, "loads", parse)
+    source._read_payload()
+    source._read_payload()
+    assert len(parses) == 1
+    monkeypatch.setattr(config, "_CONFIG_GENERATION", config._CONFIG_GENERATION + 1)
+    source._read_payload()
+    assert len(parses) == 2
+
+
+def test_guarded_json_target_shape_fallback_never_publishes(mcp_sources):
+    source = mcp_sources[1]
+    storage.admit_startup()
+    source.path.write_text("42")
+    assert source.load() == []
+    assert not any(
+        key[0]() is source
+        for hold in storage._holds.values()
+        for key in hold.json_evidence
+    )

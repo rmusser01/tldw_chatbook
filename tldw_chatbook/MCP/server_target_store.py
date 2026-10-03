@@ -67,8 +67,9 @@ class ConfiguredServerTargetStore:
     def load(self) -> list[ConfiguredServerTarget]:
         payload = self._read_payload()
         if not isinstance(payload, list):
-            payload = payload.get("targets") if isinstance(payload, Mapping) else []
+            payload = payload.get("targets") if isinstance(payload, Mapping) else None
         if not isinstance(payload, list):
+            mcp_sources.discard_json(self)
             return []
         return [
             ConfiguredServerTarget.from_dict(item)
@@ -362,8 +363,7 @@ class ConfiguredServerTargetStore:
     @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with mcp_sources.reader(self) as handle:
-                return json.load(handle)
+            return mcp_sources.read_json(self)[1]
         except FileNotFoundError:
             return []
         except (OSError, TypeError, ValueError, json.JSONDecodeError):

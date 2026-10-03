@@ -703,49 +703,59 @@ async def monitor_app(app):
     abandon that handoff. A refused attempt waits for its intent to end before
     retrying, preserving user work and avoiding repeated pause/resume cycles.
     """
+    from . import storage_admission as storage
     from .participants import _retire_current_thread_caches
 
-    refused = False
-    while True:
-        await asyncio.sleep(MAINTENANCE_PROBE_INTERVAL_SECONDS)
-        try:
-            requested = await _poll_local_pause_requested()
-        except (OSError, ValueError, RuntimeError):
-            app._backup_maintenance_error = "admission_state_unavailable"
-            continue
-        if not requested:
-            refused = False
-            continue
-        if refused:
-            continue
-        runtime = RuntimeMaintenance(app)
-        app._backup_runtime_maintenance = runtime
-        app._backup_maintenance_error = None
-        try:
-            deadline = time.monotonic() + 30
-            await runtime.settle_producers(deadline)
-            runtime.retire_local_caches()
-            while not runtime.pause.drain(time.monotonic()):
-                if time.monotonic() >= deadline:
-                    raise RecoveryRequired("runtime_native_resources_not_settled")
-                await asyncio.sleep(0.01)
-                _retire_current_thread_caches(runtime.pause)
-            runtime.pause.retire_startup(runtime)
-        except (OSError, ValueError, RuntimeError) as error:
-            # Surface actionable local refusals without propagating arbitrary
-            # owner exception text into logs or the backup UI.
-            app._backup_maintenance_error = (
-                "needs_user_save_discard"
-                if type(error) is RecoveryRequired
-                and error.args == ("needs_user_save_discard",)
-                else "runtime_work_not_settled"
-            )
-            refused = True
-        finally:
-            # The same task must retain local-pause authority throughout native
-            # reacquisition; moving resume into a separate task invalidates it.
+    loop = asyncio.get_running_loop()
+    subscription = storage._MonitorSubscription()
+    sequence = subscription.snapshot()
+    due = loop.time()
+    try:
+        refused = False
+        while True:
+            await subscription.wait(sequence, due)
+            sequence = subscription.snapshot()
+            due = loop.time() + MAINTENANCE_PROBE_INTERVAL_SECONDS
             try:
-                await _resume_monitor(runtime)
+                requested = await _poll_local_pause_requested()
+            except (OSError, ValueError, RuntimeError):
+                app._backup_maintenance_error = "admission_state_unavailable"
+                continue
+            if not requested:
+                refused = False
+                continue
+            if refused:
+                continue
+            runtime = RuntimeMaintenance(app)
+            app._backup_runtime_maintenance = runtime
+            app._backup_maintenance_error = None
+            try:
+                deadline = time.monotonic() + 30
+                await runtime.settle_producers(deadline)
+                runtime.retire_local_caches()
+                while not runtime.pause.drain(time.monotonic()):
+                    if time.monotonic() >= deadline:
+                        raise RecoveryRequired("runtime_native_resources_not_settled")
+                    await asyncio.sleep(0.01)
+                    _retire_current_thread_caches(runtime.pause)
+                runtime.pause.retire_startup(runtime)
+            except (OSError, ValueError, RuntimeError) as error:
+                # Surface actionable local refusals without propagating arbitrary
+                # owner exception text into logs or the backup UI.
+                app._backup_maintenance_error = (
+                    "needs_user_save_discard"
+                    if type(error) is RecoveryRequired
+                    and error.args == ("needs_user_save_discard",)
+                    else "runtime_work_not_settled"
+                )
+                refused = True
             finally:
-                if runtime.pause is None and not runtime.closed:
-                    app._backup_runtime_maintenance = None
+                # The same task must retain local-pause authority throughout native
+                # reacquisition; moving resume into a separate task invalidates it.
+                try:
+                    await _resume_monitor(runtime)
+                finally:
+                    if runtime.pause is None and not runtime.closed:
+                        app._backup_runtime_maintenance = None
+    finally:
+        subscription.close()

@@ -794,16 +794,9 @@ class MCPPermissionStore:
             return _fresh_payload()
 
         try:
-            with mcp_sources.reader(self) as handle:
-                raw_text = handle.read()
-            # task-32805.5 + TASK-32806.3: reject a duplicate `global_default`
-            # or a non-finite constant (a tamper vector on a security file) so an
-            # ambiguous policy is treated as corrupt and reset below; an OSError,
-            # by contrast, is an UNCERTAIN persistence failure (permission bit,
-            # full disk, mount blip) that must NOT reset policy -- it propagates
-            # (the documented fail-closed path, rendered as gate_error/deny).
-            payload = json.loads(
-                raw_text,
+            _, payload = mcp_sources.read_json(
+                self,
+                policy="permission_legacy",
                 object_pairs_hook=_reject_duplicate_keys,
                 parse_constant=_reject_json_constant,
             )
@@ -848,11 +841,13 @@ class MCPPermissionStore:
                 exact, schema-1 permission payload.
         """
         try:
-            if mcp_sources.binding(self)[2]:
-                with mcp_sources.reader(self) as handle:
-                    raw_bytes = handle.buffer.read()
-            else:
-                raw_bytes = self.path.read_bytes()
+            raw_bytes, payload = mcp_sources.read_json(
+                self,
+                policy="permission_strict",
+                exact_bytes=True,
+                object_pairs_hook=_reject_duplicate_keys,
+                parse_constant=_reject_json_constant,
+            )
         except FileNotFoundError:
             fresh = _fresh_payload()
             frozen = _freeze_snapshot(fresh)
@@ -866,13 +861,6 @@ class MCPPermissionStore:
             )
         except OSError as exc:
             raise PermissionStoreSnapshotError("io_error") from exc
-
-        try:
-            payload = json.loads(
-                raw_bytes.decode("utf-8"),
-                object_pairs_hook=_reject_duplicate_keys,
-                parse_constant=_reject_json_constant,
-            )
         except PermissionStoreSnapshotError:
             raise
         except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError) as exc:
@@ -911,13 +899,10 @@ class MCPPermissionStore:
                 raise
 
         try:
-            if mcp_sources.binding(self)[2]:
-                with mcp_sources.reader(self) as handle:
-                    raw_bytes = handle.buffer.read()
-            else:
-                raw_bytes = self.path.read_bytes()
-            payload = json.loads(
-                raw_bytes.decode("utf-8"),
+            raw_bytes, payload = mcp_sources.read_json(
+                self,
+                policy="permission_inventory",
+                exact_bytes=True,
                 object_pairs_hook=_reject_duplicate_keys,
                 parse_constant=_reject_json_constant,
             )
@@ -952,14 +937,9 @@ class MCPPermissionStore:
         create, normalize on disk, or otherwise alter a policy file.
         """
         try:
-            with mcp_sources.reader(self) as handle:
-                raw_text = handle.read()
-            # task-32805.5: even the best-effort inspection view must not
-            # present the last-wins reading of a duplicate-keyed policy file;
-            # reject duplicates/non-finite constants (they fall to the corrupt
-            # branch below), while OSError still fail-closes per TASK-32806.3.
-            payload = json.loads(
-                raw_text,
+            _, payload = mcp_sources.read_json(
+                self,
+                policy="permission_raw",
                 object_pairs_hook=_reject_duplicate_keys,
                 parse_constant=_reject_json_constant,
             )
@@ -982,6 +962,7 @@ class MCPPermissionStore:
             not isinstance(payload, dict)
             or payload.get("schema_version") != SCHEMA_VERSION
         ):
+            mcp_sources.discard_json(self)
             return _fresh_payload()
         return _normalize_payload_shape(payload)
 

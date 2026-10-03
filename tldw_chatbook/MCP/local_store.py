@@ -1625,8 +1625,7 @@ class LocalMCPStore:
     @mcp_sources.guarded
     def _read_payload(self) -> Any:
         try:
-            with mcp_sources.reader(self) as handle:
-                return json.load(handle)
+            return mcp_sources.read_json(self)[1]
         except FileNotFoundError:
             return {}
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:

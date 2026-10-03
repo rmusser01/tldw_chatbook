@@ -170,28 +170,27 @@ async def test_requested_pause_keeps_runtime_coordination_on_monitor_task(monkey
 async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
     """TASK-33560, owner decision 2026-09-29: the idle probe runs at 1 Hz.
 
-    The monitor's sleeps are recorded from inside the probe (patching
-    ``asyncio.sleep`` would also slow this test's own waits).
+    The monitor's scheduled deadlines are recorded without changing the
+    event loop's own waits.
 
     Args:
-        monkeypatch: Replaces the monitor's ``asyncio.sleep`` with a recorder
-            and the native pause probe with a stub that reports no pause.
+        monkeypatch: Records the monitor's wait deadlines and replaces the native
+            pause probe with a stub that reports no pause.
     """
     loop = asyncio.get_running_loop()
     probed = asyncio.Event()
     delays = []
-    real_sleep = asyncio.sleep
 
-    async def recording_sleep(delay, *args, **kwargs):
-        delays.append(delay)
-        return await real_sleep(0)
+    async def recording_wait(subscription, sequence, due):
+        delays.append(due - subscription.loop.time())
+        await asyncio.sleep(0)
 
     def probe():
-        if len(delays) >= 3:
+        if len(delays) >= 4:
             loop.call_soon_threadsafe(probed.set)
         return False
 
-    monkeypatch.setattr(maintenance.asyncio, "sleep", recording_sleep)
+    monkeypatch.setattr(storage._MonitorSubscription, "wait", recording_wait)
     monkeypatch.setattr(storage, "_local_pause_requested", probe)
     monitoring = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
     try:
@@ -201,7 +200,8 @@ async def test_monitor_probes_once_a_second_not_ten_times(monkeypatch):
         await asyncio.gather(monitoring, return_exceptions=True)
 
     assert maintenance.MAINTENANCE_PROBE_INTERVAL_SECONDS == 1.0
-    assert delays[:3] == [1.0, 1.0, 1.0]
+    assert delays[0] <= 0  # Initial native observation is immediate.
+    assert delays[1:4] == pytest.approx([1.0, 1.0, 1.0], abs=0.1)
 
 
 @pytest.mark.asyncio
@@ -236,3 +236,113 @@ async def test_the_unpatched_monitor_probes_about_once_a_second(monkeypatch):
     assert len(started) >= 3, f"only {len(started)} probes in 30 s"
     gaps = [later - earlier for earlier, later in zip(started, started[1:])]
     assert min(gaps) >= 0.5, f"probes {gaps} s apart: faster than once a second"
+
+
+@pytest.mark.asyncio
+async def test_monitor_initial_probe_is_immediate(monkeypatch):
+    loop = asyncio.get_running_loop()
+    probed = asyncio.Event()
+    monkeypatch.setattr(
+        storage,
+        "_local_pause_requested",
+        lambda: loop.call_soon_threadsafe(probed.set) or False,
+    )
+    task = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        await asyncio.wait_for(probed.wait(), 0.3)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_monitor_local_pause_transition_wakes_without_transaction_churn(
+    monkeypatch,
+):
+    loop = asyncio.get_running_loop()
+    probed = asyncio.Event()
+    calls = []
+
+    def probe():
+        calls.append(time.monotonic())
+        loop.call_soon_threadsafe(probed.set)
+        return False
+
+    monkeypatch.setattr(storage, "_local_pause_requested", probe)
+    task = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        await asyncio.wait_for(probed.wait(), 2)
+        probed.clear()
+        # An ordinary unqualified bookkeeping token is not a lifecycle wake.
+        storage.StorageLease(None).close()
+        await asyncio.sleep(0.05)
+        assert len(calls) == 1
+        pause = storage._begin_local_pause()
+        try:
+            await asyncio.wait_for(probed.wait(), 0.3)
+        finally:
+            pause.resume()
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert not storage._monitor_subscribers
+
+
+@pytest.mark.asyncio
+async def test_monitor_deadline_counts_time_spent_in_previous_probe(monkeypatch):
+    loop = asyncio.get_running_loop()
+    twice = asyncio.Event()
+    calls = []
+
+    def probe():
+        calls.append(time.monotonic())
+        if len(calls) == 1:
+            time.sleep(0.6)
+        else:
+            loop.call_soon_threadsafe(twice.set)
+        return False
+
+    monkeypatch.setattr(storage, "_local_pause_requested", probe)
+    task = asyncio.create_task(maintenance.monitor_app(SimpleNamespace()))
+    try:
+        await asyncio.wait_for(twice.wait(), 4)
+        assert 0.8 <= calls[1] - calls[0] < 1.4
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_monitor_subscription_retains_snapshot_wait_race_and_cleans_callbacks():
+    subscription = storage._MonitorSubscription()
+    try:
+        sequence = subscription.snapshot()
+        pause = storage._begin_local_pause()
+        pause.resume()
+        await asyncio.wait_for(
+            subscription.wait(sequence, subscription.loop.time() + 10), 0.3
+        )
+        subscription.close()
+        subscription.event.clear()
+        await asyncio.sleep(0)  # Queued callbacks cannot revive a retired subscriber.
+        assert not subscription.event.is_set()
+        assert subscription not in storage._monitor_subscribers
+    finally:
+        subscription.close()
+
+
+def test_lifecycle_pulse_finishes_while_coordinator_mutex_is_held():
+    finished = threading.Event()
+
+    def pulse():
+        storage._monitor_changed()
+        finished.set()
+
+    worker = threading.Thread(target=pulse)
+    try:
+        with storage._lock:
+            worker.start()
+            assert finished.wait(0.3), "native-owner wake depends on coordinator mutex"
+    finally:
+        worker.join(2)
+    assert not worker.is_alive()

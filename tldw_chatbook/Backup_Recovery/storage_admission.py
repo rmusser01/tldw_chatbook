@@ -44,6 +44,61 @@ _raw_operations: set[object] = set()
 _pause: "_LocalPause | None" = None
 _changed = threading.Condition(_lock)
 _operation_local = threading.local()
+_monitor_subscribers = set()
+_monitor_sequence = 0
+_monitor_lock = threading.RLock()
+
+
+class _MonitorSubscription:
+    """Lifecycle wake requests only; native probing remains the monitor's job."""
+
+    def __init__(self):
+        self.loop = asyncio.get_running_loop()
+        self.event = asyncio.Event()
+        self.active = True
+        self.observed = None
+        with _monitor_lock:
+            _monitor_subscribers.add(self)
+
+    def snapshot(self):
+        with _monitor_lock:
+            self.observed = _monitor_sequence
+            return self.observed
+
+    def wake(self, sequence):
+        if self.active and (self.observed is None or sequence > self.observed):
+            self.event.set()
+
+    async def wait(self, sequence, due):
+        with _monitor_lock:
+            self.event.clear()
+            if sequence != _monitor_sequence:
+                return
+        remaining = due - self.loop.time()
+        if remaining > 0:
+            try:
+                await asyncio.wait_for(self.event.wait(), remaining)
+            except TimeoutError:
+                pass
+
+    def close(self):
+        with _monitor_lock:
+            self.active = False
+            _monitor_subscribers.discard(self)
+
+
+def _monitor_changed():
+    """Pulse relevant lifecycle transitions, never ordinary borrower churn."""
+    global _monitor_sequence
+    with _monitor_lock:
+        _monitor_sequence += 1
+        for subscriber in tuple(_monitor_subscribers):
+            try:
+                subscriber.loop.call_soon_threadsafe(
+                    subscriber.wake, _monitor_sequence
+                )
+            except RuntimeError:  # An already closed loop cannot own a monitor.
+                subscriber.close()
 
 
 def _task_identity():
@@ -364,6 +419,7 @@ class _LocalPause:
             self._startup_thread = None
             self._startup_error = None
             del _startups[key]
+            _monitor_changed()
         lease.close()
 
     async def reacquire_startup(self) -> None:
@@ -406,6 +462,7 @@ class _LocalPause:
             if lease is None or lease._key != key or _retiring_holds:
                 raise bootstrap.RecoveryRequired("startup_reacquisition_failed")
             self._startup_retired = False
+            _monitor_changed()
         if cancellation is not None:
             raise cancellation
 
@@ -417,6 +474,7 @@ class _LocalPause:
                 raise bootstrap.RecoveryRequired("startup_reacquisition_required")
             _pause = None
             _changed.notify_all()
+            _monitor_changed()
 
 
 def _begin_local_pause() -> _LocalPause:
@@ -429,10 +487,14 @@ def _begin_local_pause() -> _LocalPause:
         pause.thread = threading.current_thread()
         pause.task = _task_identity()
         _pause = pause
+        for hold in _holds.values():
+            hold.json_evidence.clear()
+            hold.json_generation += 1
         for attempt in _pending_acquisitions:
             if attempt.operation is None:
                 attempt.cancel.set()
         _changed.notify_all()
+        _monitor_changed()
         return pause
 
 
@@ -531,6 +593,8 @@ class _Hold:
         self.resources = set()
         self.native_context = None
         self.registry_evidence = None
+        self.json_evidence = OrderedDict()
+        self.json_generation = 0
         self.thread = threading.Thread(
             target=self._run,
             args=(authority,),
@@ -546,6 +610,7 @@ class _Hold:
             self.native_context = authority._admit(self.names, False, None, self.stop)
             self.native_context.__enter__()
             self.ready.set()
+            _monitor_changed()
             self.stop.wait()
             # No accepted borrower remains. A failed close retains both this
             # Hold's custody and its native lease; drain must keep seeing it.
@@ -553,9 +618,11 @@ class _Hold:
                 resource.close()
             self.native_context.__exit__(None, None, None)
             self.native_context = None
+            _monitor_changed()
         except BaseException as error:
             self.error = error
             self.ready.set()
+            _monitor_changed()
 
     @contextmanager
     def borrow_frame(self):
@@ -576,6 +643,7 @@ class _Hold:
                 with _lock:
                     self.error = error
                     _changed.notify_all()
+                    _monitor_changed()
                 raise
             with _lock:
                 self.resources.remove(frame)
@@ -605,6 +673,7 @@ class _Hold:
         except BaseException as error:
             with _lock:
                 self.error = error
+                _monitor_changed()
             raise
         with _lock:
             self.resources.remove(chain)
@@ -696,6 +765,7 @@ class StorageLease:
                 hold.stop.set()
                 del _holds[key]
                 _retiring_holds.add(hold)
+                _monitor_changed()
                 retired = hold
         if retired is not None:
             retired.thread.join()
@@ -704,6 +774,7 @@ class StorageLease:
                     retired.error, AdmissionCancelled
                 ):
                     _retiring_holds.discard(retired)
+                    _monitor_changed()
                 _changed.notify_all()
 
     def __enter__(self) -> "StorageLease":
@@ -1519,6 +1590,7 @@ def _acquire_storage(
         if hold is None:
             hold = _Hold(authority, names, key)
             _holds[key] = hold
+            _monitor_changed()
         hold.count += 1
         token = StorageLease(key)
         token._execution_selection = execution_selection
@@ -1619,6 +1691,7 @@ def _admit_startup(attempt: _Acquisition) -> None:
         with _lock:
             attempt.check()
             selected = _startups.setdefault(key, lease)
+            _monitor_changed()
     except BaseException:
         lease.close()
         raise
@@ -1638,6 +1711,12 @@ def _after_fork() -> None:
     global _lock, _holds, _retiring_holds, _startups, _forked_with_owners
     global _pending_acquisitions, _live_leases, _operations, _raw_operations, _pause
     global _changed, _operation_local
+    global _monitor_subscribers, _monitor_sequence, _monitor_lock
+    for subscriber in _monitor_subscribers:
+        subscriber.active = False
+    _monitor_subscribers = set()
+    _monitor_sequence = 0
+    _monitor_lock = threading.RLock()
     _forked_with_owners = bool(
         _holds
         or _retiring_holds

@@ -1,5 +1,6 @@
 """Exact MCP local persistence sources; no transport or execution authority."""
 
+import json
 import secrets
 import stat
 import sys
@@ -9,6 +10,7 @@ from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
+from types import MappingProxyType
 
 from tldw_chatbook.Utils.platform_files import os
 
@@ -18,6 +20,8 @@ from . import storage_admission as storage
 
 ROUTE = "mcp_store"
 _BINDINGS = weakref.WeakKeyDictionary()
+_JSON_CACHE_BYTES = 1024 * 1024
+_JSON_CACHE_ENTRIES = 16
 _SOURCES = (
     ("local_store", "LocalMCPStore", "mcp.local", "local_mcp_store.json"),
     (
@@ -194,6 +198,7 @@ def preflight(state):
     state.mcp_effects = False
     state.mcp_publications = {}
     state.mcp_payload_updates = []
+    state.mcp_json_updates = {}
 
 
 def check_destination(state, path):
@@ -224,6 +229,163 @@ def complete(state):
     """Publish caller stamps after positive native close, under the source lock."""
     for payload, stamp in state.mcp_payload_updates:
         payload["updated_at"] = stamp
+    if state.mcp_effects:
+        _discard_json(state)
+        return
+    # The raw scope is retired here. Do not revive it or call raw._check.
+    for key, (policy, raw_bytes, frozen) in state.mcp_json_updates.items():
+        try:
+            current = _json_context(state, policy)
+        except (OSError, ValueError, RuntimeError):
+            continue  # Optional evidence cannot replace the caller's result.
+        if current is None or current[0] != key:
+            continue
+        with storage._lock:
+            if not _json_holds_current(state, current[1]):
+                continue
+            cache = current[1][0].json_evidence
+            cache[key] = (raw_bytes, frozen)
+            cache.move_to_end(key)
+            while len(cache) > _JSON_CACHE_ENTRIES:
+                cache.popitem(last=False)
+
+
+def _json_holds_current(state, holds):
+    return (
+        state.pid == os.getpid()
+        and not state.uncertain
+        and not state.mcp_effects
+        and storage._pause is None
+        and all(
+            storage._holds.get(hold.key) is hold and storage._hold_serving(hold)
+            for hold in holds
+        )
+    )
+
+
+def _json_context(state, policy):
+    """Current selection outside the mutex; surviving Hold identity inside it."""
+    if os.name == "nt" or state.participant is None or not state.pinned:
+        return None
+    source = state.source
+    selected = binding(source)
+    if selected is None or not selected[2] or selected[0] == "mcp.history":
+        return None
+    execution = storage._execution_selection_for(state.selected)
+    holds = tuple(dict.fromkeys(state.holds))
+    if not holds or None in holds:
+        return None
+    with storage._lock:
+        if not _json_holds_current(state, holds):
+            return None
+        groups = tuple(
+            (
+                hold,
+                hold.json_generation,
+                hold.names,
+                hold.authority._observed_groups.get(hold.names),
+            )
+            for hold in holds
+        )
+        if any(not group[3] for group in groups):
+            return None
+        key = (
+            weakref.ref(source),
+            _BINDINGS.get(source),
+            _BINDINGS[source].config._CONFIG_GENERATION,
+            policy,
+            execution,
+            bootstrap._admission_epoch,
+            groups,
+        )
+        return key, holds
+
+
+def _discard_json(state):
+    state.mcp_json_updates.clear()
+    _discard_source_json(state.source, state.holds)
+
+
+def _discard_source_json(source, holds):
+    with storage._lock:
+        for hold in holds:
+            if hold is not None:
+                for key in tuple(hold.json_evidence):
+                    if key[0]() is source:
+                        del hold.json_evidence[key]
+
+
+def discard_json(source):
+    """A caller's failed shape validation must not publish parsed evidence."""
+    _discard_json(_operation(source)[1])
+
+
+def _freeze_json(value):
+    if isinstance(value, dict):
+        return MappingProxyType(
+            {key: _freeze_json(item) for key, item in value.items()}
+        )
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    if type(value) in (str, int, float, bool, type(None)):
+        return value
+    raise TypeError("json_cache_ineligible")
+
+
+def _thaw_json(value):
+    if isinstance(value, MappingProxyType):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+def read_json(source, *, policy="json", exact_bytes=False, **parser_options):
+    """Read every current byte; reuse only a positively retired immutable parse.
+
+    The byte limit controls eligibility, not the stores' existing read/error policy.
+    Validation and fallback defaults remain at each caller.
+    """
+    _, state = _operation(source)
+    parser = json.loads
+    policy = (policy, exact_bytes, parser, tuple(sorted(parser_options.items())))
+    try:
+        if exact_bytes and state.participant is None:
+            raw_bytes = source.path.read_bytes()
+            text = raw_bytes.decode("utf-8")
+        else:
+            with reader(source) as handle:
+                if state.participant is not None:
+                    raw_bytes = handle.buffer.read()
+                    text = raw_bytes.decode("utf-8")
+                    if not exact_bytes:
+                        text = text.replace("\r\n", "\n").replace("\r", "\n")
+                else:
+                    text = handle.read()
+                    raw_bytes = text.encode("utf-8")
+        # reader's positive close precedes cache lookup and staging.
+        _operation(source)
+        check_destination(state, state.selected)
+        context = _json_context(state, policy)
+        eligible = context is not None and len(raw_bytes) <= _JSON_CACHE_BYTES
+        if eligible:
+            key, holds = context
+            with storage._lock:
+                entry = holds[0].json_evidence.get(key)
+            if entry is not None and entry[0] == raw_bytes:
+                return raw_bytes, _thaw_json(entry[1])
+        payload = parser(text, **parser_options)
+        if eligible:
+            try:
+                frozen = _freeze_json(payload)
+            except (RecursionError, TypeError):
+                pass  # Preserve a successfully parsed, cache-ineligible payload.
+            else:
+                state.mcp_json_updates[key] = (policy, raw_bytes, frozen)
+        return raw_bytes, payload
+    except BaseException:
+        _discard_json(state)
+        raise
 
 
 def drain_ready(source):
@@ -261,6 +423,11 @@ def guarded(function):
                 result = function(source, *args, **kwargs)
             return result
         except BaseException:
+            if state is not None:
+                _discard_json(state)
+            else:
+                with storage._lock:
+                    _discard_source_json(source, tuple(storage._holds.values()))
             if state is not None and (state.mcp_effects or state.uncertain):
                 source._mcp_persistence_error = "mcp_persistence_incomplete"
             raise
