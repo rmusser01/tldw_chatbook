@@ -604,7 +604,12 @@ class ChatbookManifest:
     @classmethod
     def from_dict(cls, data: dict) -> "ChatbookManifest":
         """Create ChatbookManifest from dictionary."""
-        version = ChatbookVersion(data["version"])
+        # The server uses semantic V1 versions; 1.1 adds optional metadata
+        # while retaining the same core content layout.
+        version_value = data["version"]
+        if version_value in {"1.0.0", "1.1.0"}:
+            version_value = ChatbookVersion.V1.value
+        version = ChatbookVersion(version_value)
         canvas_archive = None
         if version is ChatbookVersion.V3:
             if "canvas" not in data:
