@@ -145,6 +145,54 @@ def test_a_sealed_hook_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
     assert len(reads) > count and not sealed.ready, "a sealed hook was still approved"
 
 
+def test_a_retargeted_config_path_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: a config selection moved in-process forces a full read.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and retargets the config.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    other = hook_file.parent / "other-profile.toml"
+    other.write_text("")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(other))
+    count = len(reads)
+    moved = owner.visit_snapshot()
+    assert len(reads) > count, "a retargeted config was served the old profile's hooks"
+    assert moved is not approved
+
+
+def test_an_unsafe_store_directory_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: the store directory's posture is part of the reuse stamp.
+
+    A full read refuses a group-writable profile directory; a warm visit must
+    not keep showing the approved snapshot read before it changed.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    directory = approved.store_path.parent
+    mode = directory.stat().st_mode & 0o777
+    directory.chmod(mode | 0o020)
+    try:
+        count = len(reads)
+        unsafe = owner.visit_snapshot()
+    finally:
+        directory.chmod(mode)
+    assert len(reads) > count, "an unsafe store directory was served from the reuse"
+    assert unsafe is not approved
+
+
 def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     owner = _owner()
     assert not owner.snapshot().ready

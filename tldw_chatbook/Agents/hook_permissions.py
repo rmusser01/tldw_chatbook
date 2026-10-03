@@ -443,17 +443,25 @@ class HookPermissions:
             store_path: The hook permission store.
 
         Returns:
-            The config selection and generation, both files' identity and
-            change times (``None`` for a missing file), and the in-memory
-            sealing, refresh and closed state the snapshot also reflects.
+            The config selection (the effective config path as well as the
+            loaded source) and generation, both files' identity and change
+            times (``None`` for a missing file), the posture of every
+            component of both parent directories (the full read refuses an
+            unsafe one), and the in-memory sealing, refresh and closed state
+            the snapshot also reflects.
         """
+        from tldw_chatbook.Backup_Recovery.storage_admission import _chain, _posture
+
         with self._cache_lock:
             memory = (frozenset(self._sealed), frozenset(self._refresh_pending))
         return (
+            str(config.get_cli_config_path()),
             config._CONFIG_CACHE_SOURCE,
             config._CONFIG_GENERATION,
             _file_stamp(config_path),
             _file_stamp(store_path),
+            tuple(_posture(part) for part in _chain(config_path.parent)),
+            tuple(_posture(part) for part in _chain(store_path.parent)),
             memory,
             self._closed.is_set(),
         )

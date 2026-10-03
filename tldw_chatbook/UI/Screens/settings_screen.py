@@ -4620,6 +4620,12 @@ class SettingsScreen(BaseAppScreen):
     def on_hooks_settings_panel_requested(
         self, event: "HooksSettingsPanel.Requested"
     ) -> None:
+        """Run the Hooks panel's requested action.
+
+        Args:
+            event: The panel's request; ``action`` is one of ``load``,
+                ``edited``, ``save``, ``revert``, ``review`` or ``advanced``.
+        """
         event.stop()
         if event.action == "load":
             self.run_worker(
