@@ -697,3 +697,165 @@ def test_subtree_delete_descends_by_parent_link_without_statistics():
         for detail in child_steps:
             assert detail.startswith("SEARCH child USING INDEX"), plan
             assert detail.endswith("(parent_message_id=?)"), plan
+
+
+# --- TASK-33628.6 review: a first-message edit fork is not flat data ----------
+#
+# Editing and resending a conversation's FIRST message forks a new root-level
+# USER row (the fork takes the first message's parent: none), and its reply
+# hangs under it by a real parent link. In a legacy flat conversation the
+# store chained that fork after the flat rows, so the transcript showed it as
+# later messages of the flat chain and Delete on an earlier flat row counted
+# it -- and, once Delete followed the in-memory chain, tombstoned it.
+
+#: Flat rows, then an edit-and-resend of ``f0`` saved after branching shipped.
+_FLAT_THEN_FORK = [
+    *_FLAT,
+    ("e0", "user", None),
+    ("e1", "assistant", "e0"),
+    ("e2", "user", "e1"),
+    ("e3", "assistant", "e2"),
+]
+_FLAT_IDS = ["f0", "f1", "f2", "f3"]
+_FORK_IDS = ["e0", "e1", "e2", "e3"]
+
+
+def test_first_message_edit_fork_reloads_as_its_own_root_branch():
+    """The fork is a sibling of the first message, not a later flat row."""
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT_THEN_FORK)
+    store, session_id, native = _open_store(db, conversation_id)
+
+    # The saved cursor sits in the fork, so the fork alone is the transcript.
+    assert [m for m, _role in _visible(store, session_id)] == _FORK_IDS
+    siblings, index, count = store.siblings_at(native["e0"])
+    assert [sibling.persisted_message_id for sibling in siblings] == ["f0", "e0"]
+    assert (index, count) == (1, 2)
+    # Swiping to the other root branch shows the flat chain, fork excluded.
+    store.set_active_leaf(session_id, native["f3"])
+    assert [m for m, _role in _visible(store, session_id)] == _FLAT_IDS
+    assert store.subtree_message_ids(native["f0"]) == tuple(
+        native[message_id] for message_id in _FLAT_IDS
+    )
+
+
+@pytest.mark.parametrize("shown", ["flat", "fork"])
+def test_flat_delete_leaves_a_first_message_edit_fork_live(shown):
+    """Prompt, receipt, transcript and the durable delete all skip the fork."""
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_receipt_copy,
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+
+    ids = _FLAT_IDS + _FORK_IDS
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT_THEN_FORK)
+    store, session_id, native = _open_store(db, conversation_id)
+    if shown == "flat":
+        store.set_active_leaf(session_id, native["f3"])
+    visible_before = [m for m, _role in _visible(store, session_id)]
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 3
+    assert scope.prompt.startswith("Delete this message and 2 later messages")
+    assert console_delete_receipt_copy(deleted.count) == (
+        "Deleted 3 messages from transcript."
+    )
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == [
+        "f1",
+        "f2",
+        "f3",
+    ]
+    assert _deleted(db, ids) == [0, 1, 1, 1, 0, 0, 0, 0]
+    expected_view = ["f0"] if shown == "flat" else visible_before
+    assert [m for m, _role in _visible(store, session_id)] == expected_view
+    # Reopen keeps the fork and every reply under it.
+    reopened, reopened_session, reopened_native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", *_FORK_IDS}
+    reopened.set_active_leaf(reopened_session, reopened_native["e3"])
+    assert [m for m, _role in _visible(reopened, reopened_session)] == _FORK_IDS
+
+
+@pytest.mark.parametrize(
+    ("rows", "shown"),
+    [
+        # A reply regenerated mid-run hangs under a flat USER row that an
+        # ASSISTANT flat row still follows: that row is flat data, not a fork.
+        pytest.param(
+            [*_FLAT, ("r3", "assistant", "f2")],
+            ["f0", "f1", "f2", "r3"],
+            id="regenerated-mid-run-reply",
+        ),
+        # Two unanswered flat turns; the last was edited and resent, so its
+        # fork hangs under the turn before it -- a USER child, not a reply.
+        pytest.param(
+            [
+                ("f0", "user", None),
+                ("f1", "assistant", None),
+                ("f2", "user", None),
+                ("f3", "user", None),
+                ("g3", "user", "f2"),
+                ("h3", "assistant", "g3"),
+            ],
+            ["f0", "f1", "f2", "g3", "h3"],
+            id="edited-unanswered-turn",
+        ),
+    ],
+)
+def test_flat_rows_with_later_children_still_chain(rows, shown):
+    """Only a root edit fork leaves the flat chain; flat rows stay chained."""
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, rows)
+    store, session_id, _native = _open_store(db, conversation_id)
+
+    assert [m for m, _role in _visible(store, session_id)] == shown
+    assert len(store._children_by_parent[session_id][None]) == 1
+
+
+def test_flat_delete_and_undo_past_the_sqlite_variable_limit():
+    """A delete wider than SQLite's bound-variable limit commits and undoes whole.
+
+    The flat delete seeds the DB descent with the store's whole subtree, so it
+    can reach any number of rows. Every id-list statement on the delete and
+    Undo paths must stay under the connection's variable limit, or the delete
+    rolls back (or Undo cannot find what it committed).
+    """
+    import sqlite3
+
+    from tldw_chatbook.Chat.console_message_delete import (
+        delete_subtree_for_undo,
+        restore_deleted_subtree,
+    )
+
+    rows = [
+        (f"v{index:02d}", "user" if index % 2 == 0 else "assistant", None)
+        for index in range(40)
+    ]
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, rows)
+    store, session_id, native = _open_store(db, conversation_id)
+    before = _visible(store, session_id)
+    conn = db.get_connection()
+
+    def deleted_count() -> int:
+        return conn.execute(
+            "SELECT COUNT(*) FROM messages WHERE conversation_id = ? AND deleted = 1",
+            (conversation_id,),
+        ).fetchone()[0]
+
+    default_limit = conn.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+    conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 16)
+    try:
+        deleted, _held = delete_subtree_for_undo(store, native["v01"])
+        assert deleted.count == len(deleted.tombstones) == 39
+        assert deleted_count() == 39
+        restore_deleted_subtree(store, deleted)
+        assert deleted_count() == 0
+    finally:
+        conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, default_limit)
+    assert _visible(store, session_id) == before
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _visible(reopened, reopened_session) == before

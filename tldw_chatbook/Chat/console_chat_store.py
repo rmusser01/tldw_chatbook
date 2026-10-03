@@ -146,6 +146,7 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     snapshot_from_session_settings,
 )
+from tldw_chatbook.Chat.console_legacy_flat_roots import legacy_flat_chain
 from tldw_chatbook.Chat.console_library_activity_buffer import (
     ConsoleLibraryActivityBuffer,
     LibraryActivityFlushResult,
@@ -21909,101 +21910,42 @@ class ConsoleChatStore:
         self._resolve_context_summary_on_resume(session_id, persisted_to_native)
 
     def _chain_legacy_flat_roots(self, session_id: str) -> None:
-        """Chain multiple root-level threads into one linear spine (C1 repair).
+        """Chain legacy flat root-level rows into one linear spine (C1 repair).
 
-        Pre-feature Console persistence wrote EVERY message with
-        ``parent_message_id=NULL`` (the base ``_persist_new_message`` hardcoded
-        ``None``), so an existing conversation ``[U1, A1, U2, A2]`` is stored as
-        four separate roots -- all siblings under ``None``, none with children.
-        On resume the active-leaf fallback (``_most_recent_leaf_native``) then
-        walks only the LAST root, collapsing the transcript to its final message
-        and rendering a phantom ``n/n`` sibling counter on the survivor.
-
-        Historically a GENUINE Console branch was ALWAYS a set of siblings
-        under a shared *non-None* parent (regenerate / create-sibling parent
-        the new node at the anchor's parent), NEVER two separate root
-        threads -- a conversation's real root is its single first message.
-        So more than one root-level thread meant legacy flat data (fully
-        flat, or a flat prefix followed by post-feature branched messages),
-        and it was always correct to chain the roots into a single linear
-        spine.
-
-        Phase B's ``edit_and_resend_message`` broke that invariant on
-        purpose: editing-and-resending the conversation's very FIRST user
-        message forks a NEW root-level USER sibling (``create_sibling``
-        parents the fork at the anchor's own parent, which is ``None`` for a
-        root message) -- a genuine branch that legitimately has more than one
-        root thread. A genuine root-level fork's siblings are ALWAYS all USER
-        (an ASSISTANT node's native parent is never ``None`` -- it always
-        replies to a user turn, even the very first one), so a role-MIXED root
-        set (both USER and ASSISTANT at the root) can ONLY be legacy flat data
-        and is chained. Role-homogeneity is thus the distinguishing signal: a
-        single-role (all-USER) root set is treated as a genuine Phase-B branch
-        and left alone (chaining it would silently splice the newer branch onto
-        the older as a fake parent-child link, corrupting the tree so a
-        swipe/resume shows the wrong content).
-
-        task-572 strengthens the fingerprint for the all-USER root set: a
-        DEGENERATE legacy conversation whose 2+ user turns each got NO
-        assistant reply (reachable in the flat era via repeated
-        failed/blocked sends) also loads as all-USER roots -- but its roots
-        are ALL CHILDLESS, whereas a genuine first-message edit-&-resend
-        fork always hangs at least one reply subtree under a root (the
-        anchor's old tail, and/or the resent branch's own reply). So an
-        all-USER root set is chained when every root is childless, and left
-        alone when any root has a subtree.
-
-        RESIDUAL EDGE (not airtight, narrower than the pre-task-572 gap): a
-        genuine first-message fork whose BOTH branches ended up childless --
-        the anchor never got a reply AND the resent branch's reply never
-        persisted (killed mid-stream before the first flushed chunk) -- is
-        indistinguishable from degenerate legacy and now chains. Non-data-
-        loss (both user rows stay visible, linearly), and strictly rarer
-        than the all-USER-legacy shape this fixes; the two shapes are
-        provably indistinguishable from the persisted tree alone, so no
-        local heuristic can be perfect.
+        :func:`~tldw_chatbook.Chat.console_legacy_flat_roots.legacy_flat_chain`
+        picks which roots are legacy flat rows (its module docstring has the
+        fingerprints and their residual edges); every other root -- a genuine
+        root-level edit fork -- stays independently navigable via
+        ``siblings_at``/``set_active_leaf``.
 
         Roots are chained in their existing insertion order, which is the DB's
         timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
         by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
         insertion order is the ordering signal -- exactly the accepted fallback
-        for equal/absent timestamps). Each root ``r_i`` (i >= 1) is re-parented
-        onto ``r_{i-1}`` and moved out of the ``None`` bucket into
+        for equal/absent timestamps). Each chained root ``r_i`` (i >= 1) is
+        re-parented onto ``r_{i-1}`` and moved out of the ``None`` bucket into
         ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
         root (e.g. a post-feature message whose real parent is a flat row) is
-        left intact. After chaining there is exactly one root (``r_0``) and the
-        active-leaf ancestry walk traverses the full spine plus any subtrees.
+        left intact. After chaining the only roots are ``r_0`` and any kept
+        fork, and the active-leaf ancestry walk traverses the full spine plus
+        any subtrees.
 
-        A single-root (genuine) tree is left untouched -- the chaining branch
-        never triggers. This is an IN-MEMORY reconstruction only; durable
-        ``parent_message_id`` rows are never rewritten (the active-leaf pointer
-        repair on resume is the durable fix).
+        This is an IN-MEMORY reconstruction only; durable ``parent_message_id``
+        rows are never rewritten (the active-leaf pointer repair on resume is
+        the durable fix).
         """
         children = self._children_by_parent.get(session_id)
         if children is None:
             return
         roots = children.get(None, [])
-        if len(roots) <= 1:
-            return
         nodes = self._nodes_by_session.get(session_id, {})
-        root_has_assistant = any(
-            nodes[root_id].role is ConsoleMessageRole.ASSISTANT
-            for root_id in roots
-            if root_id in nodes
-        )
-        all_roots_childless = all(not children.get(root_id) for root_id in roots)
-        if not root_has_assistant and not all_roots_childless:
-            # All-USER roots with at least one reply subtree: a genuine
-            # Phase-B root-level fork (an ASSISTANT node's parent is never
-            # None, so any root assistant row is the legacy signature; and a
-            # real fork always carries a subtree). Leave each root
-            # independently navigable via `siblings_at`/`set_active_leaf`.
+        chain = legacy_flat_chain(roots, children, nodes)
+        if len(chain) <= 1:
             return
-        # Keep only the first root under None; chain the rest onto their
-        # predecessor, preserving each root's own existing subtree.
-        children[None] = [roots[0]]
-        previous = roots[0]
-        for root in roots[1:]:
+        chained = set(chain[1:])
+        children[None] = [root for root in roots if root not in chained]
+        previous = chain[0]
+        for root in chain[1:]:
             self._native_parent_by_message[root] = previous
             children.setdefault(previous, []).append(root)
             previous = root

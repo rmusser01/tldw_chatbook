@@ -131,6 +131,10 @@ DEFAULT_DISCOVERY_OWNER = "general_chat"
 _CONVERSATION_IDENTITY_TEXT_MAX_BYTES = 256
 _CONVERSATION_ARCHIVE_STATE_BATCH_SIZE = 500
 _SQLITE_POSITIVE_INTEGER_MAX = (1 << 63) - 1
+#: Most ids one ``IN (?, ...)`` list binds; a lower live connection limit wins.
+_ID_LIST_BATCH_CAP = 500
+#: SQLite's compile-time variable limit before 3.32, if the live one is unreadable.
+_SQLITE_DEFAULT_VARIABLE_LIMIT = 999
 _UNSET = object()
 _VOICE_TRACE_IMPORT_GUARD_FUNCTION = "console_voice_trace_import_authorized"
 
@@ -16175,16 +16179,20 @@ UPDATE db_schema_version
         if not pairs:
             return []
         now = self._get_current_utc_timestamp_iso()
-        placeholders = ",".join("?" for _ in pairs)
         with self.transaction(immediate=True) as conn:
-            current = {
-                row["id"]: row
-                for row in conn.execute(
-                    "SELECT id, conversation_id, version, deleted FROM messages "
-                    f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
-                    tuple(message_id for message_id, _version in pairs),
-                ).fetchall()
-            }
+            current: dict[str, sqlite3.Row] = {}
+            for batch in self._bounded_id_batches(
+                conn, list(dict.fromkeys(message_id for message_id, _version in pairs))
+            ):
+                placeholders = ",".join("?" for _ in batch)
+                current.update(
+                    (row["id"], row)
+                    for row in conn.execute(
+                        "SELECT id, conversation_id, version, deleted FROM messages "
+                        f"WHERE id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
             for message_id, version in pairs:
                 row = current.get(message_id)
                 if row is None or not row["deleted"] or row["version"] != version:
@@ -16258,6 +16266,36 @@ UPDATE db_schema_version
             payload["thinking_blocks_json"] = canonical_thinking
         return canonical_payload_hash(payload)
 
+    @staticmethod
+    def _bounded_id_batches(
+        conn: sqlite3.Connection | sqlite3.Cursor, ids: Sequence[str]
+    ) -> Iterator[Sequence[str]]:
+        """Yield ``ids`` in slices one ``IN (?, ...)`` list can bind.
+
+        A subtree delete reaches as many rows as the conversation holds, but
+        one statement may bind only ``SQLITE_LIMIT_VARIABLE_NUMBER``
+        variables; past it SQLite refuses the statement and the whole delete
+        rolls back (TASK-33628.6 review). Callers run every batch inside one
+        transaction, so the batches still read and write one snapshot.
+
+        Args:
+            conn: The connection, or the ``transaction()`` cursor, the
+                statements will run on; its connection's live limit bounds
+                the batch.
+            ids: The ids to bind, one variable each.
+
+        Yields:
+            Consecutive slices of at most ``min(500, limit)`` ids.
+        """
+        connection = getattr(conn, "connection", conn)
+        try:
+            limit = connection.getlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER)
+        except (AttributeError, sqlite3.Error):
+            limit = _SQLITE_DEFAULT_VARIABLE_LIMIT
+        size = max(1, min(_ID_LIST_BATCH_CAP, limit))
+        for start in range(0, len(ids), size):
+            yield ids[start : start + size]
+
     def _capture_chat_delete_base_hashes(
         self, conn: sqlite3.Connection, message_ids: Sequence[str]
     ) -> dict[str, tuple[int, str]]:
@@ -16274,17 +16312,23 @@ UPDATE db_schema_version
             # writers against their genuinely older schemas. Those schemas
             # predate the content-free Sync-v2 delete proof and cannot emit it.
             return {}
-        placeholders = ",".join("?" for _ in message_ids)
-        rows = conn.execute(
-            f"""
-            SELECT id, role, content, provider_continuation_json,
-                   thinking_blocks_json, assistant_generation_state, version
-              FROM messages
-             WHERE deleted = 0 AND id IN ({placeholders})
-            """,
-            tuple(message_ids),
-        ).fetchall()
-        if len(rows) != len(set(message_ids)):
+        unique_ids = list(dict.fromkeys(message_ids))
+        rows: list[sqlite3.Row] = []
+        # The caller's transaction spans every batch, so one snapshot answers.
+        for batch in self._bounded_id_batches(conn, unique_ids):
+            placeholders = ",".join("?" for _ in batch)
+            rows.extend(
+                conn.execute(
+                    f"""
+                    SELECT id, role, content, provider_continuation_json,
+                           thinking_blocks_json, assistant_generation_state, version
+                      FROM messages
+                     WHERE deleted = 0 AND id IN ({placeholders})
+                    """,  # nosec B608 - placeholders only
+                    tuple(batch),
+                ).fetchall()
+            )
+        if len(rows) != len(unique_ids):
             raise CharactersRAGDBError("Chat delete proof owner changed.")
         return {
             row["id"]: (
@@ -16325,16 +16369,20 @@ UPDATE db_schema_version
         Returns:
             Committed tombstone identity, conversation, and version mappings.
         """
-        ids = [message_id for message_id in message_ids if message_id]
+        ids = list(dict.fromkeys(value for value in message_ids if value))
         if not ids:
             return []
-        placeholders = ",".join("?" for _ in ids)
+        rows: list[sqlite3.Row] = []
         with self.transaction() as conn:
-            rows = conn.execute(
-                f"SELECT id, conversation_id, version FROM messages "
-                f"WHERE deleted = 1 AND id IN ({placeholders})",
-                tuple(ids),
-            ).fetchall()
+            for batch in self._bounded_id_batches(conn, ids):
+                placeholders = ",".join("?" for _ in batch)
+                rows.extend(
+                    conn.execute(
+                        f"SELECT id, conversation_id, version FROM messages "
+                        f"WHERE deleted = 1 AND id IN ({placeholders})",  # nosec B608 - placeholders only
+                        tuple(batch),
+                    ).fetchall()
+                )
         return [
             {
                 "message_id": row["id"],
