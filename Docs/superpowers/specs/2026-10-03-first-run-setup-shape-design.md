@@ -1,6 +1,6 @@
 # First-run setup shape: design
 
-- **Status:** Draft for owner review, **revision 2**, 2026-10-03. Revision 1 was reviewed by two independent critics, one on HCI and one on engineering. Every point they raised is answered in §17 (Review history), either by a change or by a stated reason for keeping the revision-1 position. **Not approved.** No wizard code changes under TASK-34100.17 until the owner records approval (§15). The follow-up tasks in §10 are filed only after approval.
+- **Status:** **Approved by the owner on 2026-10-03** (§15). This is **revision 3**: revision 2 with D9 amended by the owner's ruling on Q3, which makes keychain storage optional rather than the default. Revision 1 was reviewed by two independent critics, one on HCI and one on engineering. Every point they raised is answered in §17 (Review history), either by a change or by a stated reason for keeping the revision-1 position, and §17 also lists what revision 3 changed. §12's ADR changes are applied (new ADR-217, plus dated amendments to five ADRs). The follow-up tasks in §10 are filed as TASK-34100.18–.34. No wizard code changes under TASK-34100.17 itself.
 - **Owner:** the project owner (@rmusser01).
 - **Task:** [TASK-34100.17](../../../backlog/tasks/task-34100.17%20-%20Owner-approved-design-spec-for-the-setup-flow-Quick-track-tldw-server-re-run-dashboard-Say-hello.md), under the burn-down programme [TASK-34100](../../../backlog/tasks/task-34100%20-%20First-run-setup-wizard-burn-down-of-the-2026-10-02-UX-review.md).
 - **Evidence:** the 2026-10-02 senior design / HCI review, [`Docs/superpowers/qa/first-run-wizard-ux-review-2026-10-02/README.md`](../qa/first-run-wizard-ux-review-2026-10-02/README.md). This spec cites it as "report §N", its structural fixes as SF1–SF10, its enhancements as E1–E12, and its register issues by id in brackets (for example [coverage-06]).
@@ -13,7 +13,7 @@
 
 ## Summary for the owner
 
-Setup today is one fixed corridor. This spec gives it a shape that matches what people came to do. It asks you to approve eleven decisions and to rule on the ten questions in §16.
+Setup today is one fixed corridor. This spec gives it a shape that matches what people came to do. On 2026-10-03 the owner approved the eleven decisions below and ruled on the ten questions in §16: every recommendation was approved except Q3, so D9 is amended to make the system keychain an option, not the default (§15).
 
 | # | Decision | In one line |
 |---|---|---|
@@ -25,11 +25,15 @@ Setup today is one fixed corridor. This spec gives it a shape that matches what 
 | D6 | What's next (E9) | Up to three relevant next steps (`→`), plus "More (N)". The Console arrival line replaces toasts. Pressing Speak or Dictate with nothing set up opens a setup sheet right there; the sheet never takes an API key. |
 | D7 | Re-run (E5) | A re-run of a working setup opens **"Review your setup"**: the verdict with Say hello, then one row per area. Enter changes just that area and comes back. **Done** returns where you started. One predicate decides dashboard or corridor: *is a usable chat provider configured?* Console's readiness links keep going to the control that fixes them (TASK-34100.10 AC#8; Q9). |
 | D8 | Documents first | A third Welcome choice, **"Start with my documents or notes — set up AI later"**. It finishes setup at once, opens Library Import and records that AI setup was deferred, so the next "set up AI" opens Quick at Connect, not the dashboard. |
-| D9 | Keychain-first keys (E8) | New keys go to the **system keychain** by default, shown as one sentence, "Saved in macOS Keychain · Change where…". **An environment key is never stored**: when one exists, using it is the default. Resolution runs after first paint and uses a provenance overlay, so no writer can copy a keychain key into config.toml. A failed keychain save never silently falls back to plain text. Existing keys move only when you ask. |
+| D9 | Key storage, keychain optional (E8; amended by Q3) | **New keys are saved where they are today, in config.toml.** One line under the key field says so honestly and names encryption without asking for it: "Saved in config.toml (plain text; encrypt any time)  [ Use macOS Keychain… ]". **The system keychain is an option, never the default**, offered only where a secure keychain is detected. **An environment key is never stored**: when one exists, using it is the default. A key the user puts in the keychain resolves after first paint through a provenance overlay, so no writer can copy it into config.toml, and a failed keychain save never falls back to plain text silently. Keys move to or from the keychain only when you ask. |
 | D10 | Plain-text setup (E12) | `tldw-cli setup --plain` runs on one setup core outside `UI/` that never imports Textual. It has one prompt per decision, keys from a hidden prompt or an environment variable, never from argv. **v1:** Welcome, Connect, Model, key storage, the verdict, and a plain review of those areas. No test message and no server step until F13b. |
 | D11 | Non-interactive setup (E6) | **Defer** (changed from revision 1), as the report's verifiers advised. TASK-34100.16 documents the copy-config route. Reopen on the first user request for scripted setup, or the first support case caused by a copied config carrying keys. |
 
-You are also asked to confirm the report's seven "Rejected, on purpose" items (D12). §12 drafts one new ADR and five ADR amendments or confirmations, and none is edited until you approve.
+The owner also confirmed the report's seven "Rejected, on purpose" items (D12). §12's ADR changes are applied, adjusted for the Q3 ruling: one new ADR (ADR-217) and five amendments or confirmations.
+
+**What changed in revision 3** (the owner's ruling of 2026-10-03; the section list is in §17):
+- **D9 is amended.** New provider keys stay in config.toml by default, as today. At each key field the user may keep the key in the system keychain instead, offered only where a secure keychain is detected and probed only after the user chooses it. Encryption is named on the key line and offered from Ready, Keys and Settings, never asked for at the key field. Keys move to or from the keychain only on request.
+- **What follows from it.** Ready's "Encrypt saved keys with a password…" now appears for most cloud users, the Keys step offers moves in both directions, Q4's rationale no longer leans on a keychain default, and server-token storage stays as Settings does it today.
 
 **What changed in revision 2** (the full list is in §17):
 - **Honesty.** Ready gains a fourth verdict state, a separate test line, quota and rate-limit failures, and a model-aware reply cap (D4, D5).
@@ -66,10 +70,10 @@ Two further gaps belong here because they change who can use setup at all:
 ### 0.2 Goals
 
 - **G1 — Fewest decisions to a reply.** Quick asks only what a first chat needs. It ends on a verdict computed by Console's own preflight, with an optional real reply.
-- **G2 — Every step earns its place.** Every Full step changes something the runtime reads, and writes nothing if left untouched. **One accepted exception:** the Full track's Keys step renders "Nothing to change here" when no key is stored in config.toml. It stays on the track so that the total never changes mid-run (rule S1), and it writes nothing.
+- **G2 — Every step earns its place.** Every Full step changes something the runtime reads, and writes nothing if left untouched. **One accepted exception:** the Full track's Keys step renders "Nothing to change here" when no key is stored in config.toml or the keychain. It stays on the track so that the total never changes mid-run (rule S1), and it writes nothing.
 - **G3 — Local-vs-server status is always visible.** PRODUCT.md asks users to "understand what is local, server-backed…" (`PRODUCT.md:17`). Ready's tldw server row always says which, and the Provider row always says where messages go.
 - **G4 — Re-running setup is safe and fast.** Change one thing in a few keys, from wherever you are, and go back there.
-- **G5 — Keys are safe without daily friction.** The default store is the OS keychain where one exists. An environment key is never copied anywhere.
+- **G5 — Keys are kept where the user chooses, and the screen says where.** A new key is saved as today, in config.toml, and the key field says whether that is plain text. Encryption is named there and offered on Ready, Keys and Settings. Where a keychain works, keeping the key out of the file without a password at every launch is one action away. An environment key is never copied anywhere.
 - **G6 — Setup is usable without the TUI** by screen-reader users and over SSH, on the same setup core (D10). Scripted setup is deferred (D11).
 - **G7 — Keep what works.** Every report §5.5 "Preserve" item survives (§7).
 
@@ -89,13 +93,13 @@ Two further gaps belong here because they change who can use setup at all:
 | .1 step extraction | Steps in their own modules, `wizard_worker()` helper, busy line | Requires F0 (§4.7) right after it: a step-host protocol, a pure setup session and pure Provider/Model state, so that the dashboard, sheets and plain mode can host steps |
 | .2 first chat works | Catalog repair, **shared readiness verdict with the capacity blocker** (AC#2), real key checks, env-aware Get started card | Ready's four verdict states (D4). The verdict must have an app-free entry for plain mode (D10) and must account for the active runtime source (D3) |
 | .3 Moonshot | Continuation persistence | Say hello exercises the saved-chat path that .3 fixes (D5) |
-| .4 encryption lifecycle | One unlock path, refuse second enable, Settings Encryption card, state-aware Protect | Protect leaves Quick (D1); Ready's "Encrypt saved keys…" option; keychain-first (D9) |
+| .4 encryption lifecycle | One unlock path, refuse second enable, Settings Encryption card, state-aware Protect | Protect leaves Quick (D1); Ready's "Encrypt saved keys…" option; the key line names encryption, and Keys and Settings offer moves to and from the keychain (D9) |
 | .5 handoff | False toast (AC#8), no unavailable tools (AC#2), minimal plain-chat prompt (AC#6), error categories (AC#4), first-send trace failure (AC#7), single arrival line (AC#11) | Arrival line content (D6). Say hello reuses .5's categories and depends on AC#4, #7 and #8 (D5) |
-| .6 provider step | Catalog-driven form, "Ready on this machine", filter, key-source choice when an env key exists (AC#21) | Display name "Connect"; the key storage sentence and disclosure (D9). **AC#21 is amended on approval** so that the env choice and the storage choice are one control |
+| .6 provider step | Catalog-driven form, "Ready on this machine", filter, key-source choice when an env key exists (AC#21) | Display name "Connect"; the key storage line and its optional keychain choice (D9). **AC#21 was amended on approval (2026-10-03)** so that the env choice and the storage choice are one control |
 | .7 model step | Curated picker; skip keeps the key | "Save and finish with defaults" on Model (D2) |
 | .8 voice step | Untouched Voice writes nothing; "No voice for now"; inline OpenAI key (AC#3) | Voice moves to Full as "Spoken replies" (D1, D2). Hosted as a Console sheet, it never takes a key (D6) |
 | .9 honest status | Outcome record, tracker, legend (AC#5), Exit dialog list (AC#3), **"Ready to chat?" row** (AC#10) | Ready composition, exits and What's next (D4, D6). The legend appears on Ready and the dashboard (§3.6) |
-| .10 setup session | Entry contract `open_setup_wizard(origin, resume, start_step)`, re-run prefill, "Review your setup" header (AC#1), Console links (AC#8), one finish path (AC#12), re-run exits (AC#14), E10 queue | The dashboard body and single-step Change (D7); documents-first finish (D8). **AC#1 is narrowed on approval** to the entry contract, so that .10 does not build a header that F11 replaces |
+| .10 setup session | Entry contract `open_setup_wizard(origin, resume, start_step)`, re-run prefill, "Review your setup" header (AC#1), Console links (AC#8), one finish path (AC#12), re-run exits (AC#14), E10 queue | The dashboard body and single-step Change (D7); documents-first finish (D8). **AC#1 was narrowed on approval (2026-10-03)** to the entry contract, so that .10 does not build a header that F11 replaces |
 | .11 input policy | Highlight browses; Enter/Space/click selects | The dashboard, What's next and storage lists follow it |
 | .12 terminal frame | Short tier at 80x24 (AC#1), Back hint and Alt+Left (AC#9), glyph checkboxes, contrast | Ready and dashboard row budgets assume it (§3.6, §3.7) |
 | .13 full-track steps | Search, Tools, Notes removal, Speech engine choice, Appearance comfort and ASCII marks (AC#12), Welcome copy (AC#15), Reduce motion on Welcome (AC#16) | Full order (D2). Welcome copy is restated here and supersedes .13 AC#15's time line (D1). The Welcome mockups include .13 AC#16's Reduce motion row (§3.1) |
@@ -107,14 +111,14 @@ Two further gaps belong here because they change who can use setup at all:
 - the wizard is the **boot offer** on a fresh profile (`FRSS:861-869`);
 - the card is the path for everyone who arrives in Console without a working provider: after Skip, after documents-first, or after setup was deferred.
 
-Both read the same shared verdict (TASK-34100.2 AC#2). Neither takes a key inside Console: D6's sheet uses task-33008's round trip, so this spec's sheet relies on task-33008's Settings return. §16 Q10 asks the owner to confirm this split.
+Both read the same shared verdict (TASK-34100.2 AC#2). Neither takes a key inside Console: D6's sheet uses task-33008's round trip, so this spec's sheet relies on task-33008's Settings return. The owner confirmed this split (§16 Q10).
 
 **One backlog conflict to resolve.** TASK-34100.10's coordination note says "Narrow task-28019 to its media-first path", while TASK-34100.17 says "Narrow it to its modal-sequencing AC (#3)". Both cannot hold.
 - This spec follows TASK-34100.17 AC#3 (D8). task-28019 is narrowed to its modal-sequencing AC#3, and its media-first ACs #1–#2 move into the documents-first follow-up (F7, §10).
 - TASK-34100.10's note is corrected to match.
 - Because TASK-34100.10 AC#18 (E10) delivers exactly that modal sequencing, the narrowed task-28019 closes when .10 lands.
 
-The edits are made on approval (§6), not now.
+The edits were made on approval, on 2026-10-03 (§6).
 
 ### 0.5 Personas
 
@@ -122,11 +126,11 @@ The report's three personas, plus two that the shape decisions serve directly.
 
 | Persona | Situation | What the shape must give them |
 |---|---|---|
-| **Sam** | First-time user with an OpenAI key, possibly a new account with no credit; fuzzy on jargon | Four steps; a verified "Ready to chat"; a reply before leaving setup if they want one; an honest message when the account can't pay; a key that is safe without a password at every launch |
+| **Sam** | First-time user with an OpenAI key, possibly a new account with no credit; fuzzy on jargon | Four steps; a verified "Ready to chat"; a reply before leaving setup if they want one; an honest message when the account can't pay; a plain statement of where the key is kept, with encryption and the keychain each one action away |
 | **Jo** | First-time user who wants private local AI; may have nothing running | No cloud-key detours. A local test reply that runs on its own only when it costs nothing and disturbs nothing. "Your messages are answered on this computer" said plainly |
 | **Riley** | Power user: env keys, local servers, several machines, re-runs to change one thing | Env keys never copied; a dashboard instead of a corridor; Finish with defaults from Model; palette jumps; `--plain`; TASK-34100.16's documented route for the next machine |
 | **Dee** (new) | Came for documents and notes; may never use an AI provider | One choice on Welcome that goes straight to Library and writes nothing else, and a later "set up AI" that starts at Connect |
-| **Ash** (new) | Uses a screen reader, or works over SSH without a keychain | `tldw-cli setup --plain`, discoverable from `--help` and before the TUI starts; a plain-text key fallback that is named honestly |
+| **Ash** (new) | Uses a screen reader, or works over SSH without a keychain | `tldw-cli setup --plain`, discoverable from `--help` and before the TUI starts; config.toml storage named honestly, and no keychain offered where none works |
 
 ### 0.6 Rules
 
@@ -161,7 +165,7 @@ Screen-level detail is in §3, and the engineering seams each decision needs are
 **Decision.**
 - The Quick track is four steps: `welcome`, `provider` (titled **Connect**), `model` (**Model**) and `summary` (titled **Ready**). Step ids stay as they are, because drafts are keyed by them (`FRSS:991-1002`). Only the display titles change, through TASK-34100.15's registry (§3.0).
 - **Voice leaves Quick** and moves to Full as "Spoken replies" (D2). On Quick, Ready offers it as the next step **"Hear replies aloud…"** (D6).
-- **Protect leaves Quick.** Ready shows the option **"Encrypt saved keys with a password…"** only when this run stored a provider key as plain text in config.toml. With D9 shipped, that happens only when the user chose plain text, or when no keychain exists.
+- **Protect leaves Quick.** Ready shows the option **"Encrypt saved keys with a password…"** only when this run stored a provider key as plain text in config.toml. That is the default for a typed key (D9), so most cloud users see it. It is absent when the key came from the environment, when the user chose the keychain, when encryption is already on, and for keyless local engines.
 - `active_step_ids(TRACK_QUICK, …)` returns the four ids for every value of `key_entered`. Today `FRSS:1271-1286` returns six. An unknown track fails closed (§4.4); it no longer falls back to Full.
 
 **This supersedes TASK-21148 AC#5.** That AC reads: "Protect appears in the quick track from the start (marked skipped when keyless); the step total never changes mid-flight." It has two halves:
@@ -173,13 +177,13 @@ This spec keeps the guarantee and retires the mechanism. The guarantee now holds
 **Why.**
 - **The evidence.** Jo's local path and Riley's env-key path both meet an empty Protect step that ticks ✓ (report §1 Jo Path A; §2(a) stage 11). Sam's Protect step is where the P0 lock-out happens [protect-summary-04]: the step chosen for peace of mind is the one that bites. Voice adds a detour inside a "2-minute" track and, today, a write on Next [voice-speech-01].
 - **Relevance at the point of need.** Voice matters the first time a user presses Speak, not as a setup detour (E9). D6 puts it there.
-- **Protection without a step.** With D9, Sam's key goes to the keychain by default. That meets the main reason Protect was on Quick, "make my key safe", at the key field and without a password.
+- **Protection without a step.** The key field says where the key is kept, says that it can be encrypted, and offers the keychain in one press (D9). Ready then offers encryption whenever this run stored a plain-text key. That meets the main reason Protect was on Quick, "make my key safe", where the key is typed and again at the end, without a step that keyless, local and env-key users find empty.
 - **Stability without padding.** Rule S1 is stronger than TASK-21148's: it also covers the Full track and every future conditional idea.
 
 **Rejected alternatives.**
 - *Keep six steps, but make Voice and Protect truly skippable* (TASK-34100.8 and .4 alone). The steps become honest but not relevant: two Nexts on every Quick run, and a Quick label that still has to name "voice, protection".
 - *Five steps, keeping a conditional Protect.* This brings back the mid-flight count change that TASK-21148 fixed.
-- *Fold encryption into Connect as a checkbox under the key field.* This grows the busiest form in the wizard for every user. The report's verifier preferred the Ready option ("the verifier's lower-risk alternative", report SF10). D9's storage choice is a single sentence for the same reason (§3.2).
+- *Fold encryption into Connect as a checkbox under the key field.* This grows the busiest form in the wizard for every user. The report's verifier preferred the Ready option ("the verifier's lower-risk alternative", report SF10). D9's storage line is a single line for the same reason (§3.2).
 - *Three steps (Connect folds Model in).* The provider list and the model list both need the full step height at 80x24 (TASK-34100.6 AC#15, .7 AC#4).
 
 **Welcome copy.** This is restated here and supersedes TASK-34100.13 AC#15's time line, because Quick no longer has optional downloads.
@@ -237,7 +241,7 @@ The two PocketTTS integration tests move to the Full track, where Spoken replies
 | 11 | Ready | — | — | End | this spec |
 
 - **The count stays 11** (today 11, `FRSS:969-981`). Notes leaves (TASK-34100.13 AC#7) and tldw server joins. Voice moves from position 4 to 7, Speech becomes Dictation at 8, and RAG becomes Search at 5.
-- **Step 10 is titled "Keys", not "Protect keys".** With D9, the step mostly reviews where each key lives (keychain, environment, plain text, encrypted), and often has nothing to protect. A page titled "Protect keys" that reads "Nothing to change here" contradicts itself. One name serves the step, the Ready row, the dashboard row and the palette (rule S5). TASK-34100.15 AC#3's example list changes to match (§6).
+- **Step 10 is titled "Keys", not "Protect keys".** With D9, the step reviews where each key lives (config.toml as plain text or encrypted, the keychain, the environment) and offers the moves that apply, in either direction. For local and env-key users it has nothing to protect. A page titled "Protect keys" that reads "Nothing to change here", or that offers to move a key out of the keychain, contradicts itself. One name serves the step, the Ready row, the dashboard row and the palette (rule S5). TASK-34100.15 AC#3's example list changes to match (§6).
 - **Finish with defaults, offered from Model.** Report §4.3 and E5 offer the exit from Model, so Riley does not pay an extra step.
   - On Full, Model's nav row reads `[ ← Back ]  [ Save and finish with defaults ]  [ Save & continue → ]`. The middle button saves the model, like Save & continue, then goes straight to Ready.
   - Steps 4–10 carry `[ Finish with defaults ]`, which goes to Ready without writing the current step.
@@ -296,7 +300,7 @@ The two PocketTTS integration tests move to the Full track, where Spoken replies
    - **Rollback.** Today a failed bind leaves the new URL and token on disk, because the config write comes first. ADR-033 promises only that in-memory observers stay on the old binding (`backlog/decisions/033-application-session-state-ownership.md:57-63`). The coordinator therefore records the prior `[tldw_api]` values before writing. If the bind fails, it restores them and deletes any keyring token it stored in this attempt. Then "nothing is half-applied" is true on disk as well as in memory.
    - **One client.** The shared probe uses the same HTTP client settings as the bound runtime client (TLS verification, CA bundle, proxy, egress policy). A "certificate not trusted" result therefore always agrees with what the bound client would do.
    - **The Exit dialog lists it.** A bind made during a walkthrough appears in TASK-34100.9 AC#3's Exit dialog ("Saved so far: … tldw server (lab.example.org:8000)"), because it changes the runtime.
-   - **Sync disclosure.** Settings' activation prepares a Sync v2 profile with `profile_mode="local_first_sync"` and `display_name=platform.node()` (`SS:26599-26620`). That runs `run_v2_dry_run` against the server (`Sync_Interop/sync_scope_service.py:349-410`), so at least the computer's name reaches the server. The step says so **before** the choice. F3's first task records exactly what preparation sends and stores; the copy names it, and owner question Q5 decides whether setup may do it at all.
+   - **Sync disclosure.** Settings' activation prepares a Sync v2 profile with `profile_mode="local_first_sync"` and `display_name=platform.node()` (`SS:26599-26620`). That runs `run_v2_dry_run` against the server (`Sync_Interop/sync_scope_service.py:349-410`), so at least the computer's name reaches the server. The step says so **before** the choice. F3's first task records exactly what preparation sends and stores; the copy names it. The owner ruled that setup keeps parity with Settings and prepares sync, disclosed before the choice (Q5).
    - **The probe.** `ServerSwitchModal._run_connection_test` (`server_switch_modal.py:211-256`) GETs `/docs` for reachability, then POSTs `/api/v1/sync/send` with the token. It reports "Reachable (HTTP n)" for any server that answers, so it cannot say "not a tldw server". The probe moves to one shared, app-free owner with these outcomes:
 
      | Outcome | Copy |
@@ -311,7 +315,7 @@ The two PocketTTS integration tests move to the Full track, where Spoken replies
 
      - "Not a tldw server" is decided from the identity the server's own health and docs-info endpoints report. These are the same discovery calls `ActiveServerCapabilityService` makes after binding (`runtime_policy/server_capabilities.py:66-75`), run against the candidate URL before commit.
      - The auth check must not change server state. Today's POST to a sync endpoint with an empty body (`server_switch_modal.py:229-252`) is kept only if the follow-up confirms that tldw_server offers no authenticated read endpoint (risk K9).
-   - **Storage.** The token goes to the OS keyring through the existing server credential store, as Settings does today. Once D9 ships, a secure keyring means the token is **not** also written to config.toml. Until then, setup matches Settings.
+   - **Storage.** The token is stored exactly as Settings stores it today: in config.toml with the address (`SS:26529-26537`), and also in the OS keyring through the existing server credential store when that store accepts it (`SS:26584-26597`). Setup matches Settings. **This spec does not change where server tokens live.** Revision 2 dropped the config.toml copy once a secure keychain existed, but that rested on a keychain-first D9, which the owner did not approve (Q3); any change to server-token storage needs its own owner decision.
 
 5. **Settings' button leaves the collapsed section.** "Switch Source / Server" moves out of "Advanced / Diagnostics" (`SS:17648-17681`) into the main body of Settings ▸ Overview, as a tldw server row. The row reads "tldw server: none — Library and notes stay on this computer  [ Connect a tldw server… ]", or "tldw server: lab.example.org:8000 — connected  [ Switch source… ]". The button moves rather than being duplicated, so it has one home, and it keeps its id `settings-switch-runtime-source`.
 
@@ -328,7 +332,7 @@ The two PocketTTS integration tests move to the Full track, where Spoken replies
 - *Label the row "Runtime"* (revision 1). Rejected for the reason above.
 
 **Preserve.**
-- Secrets never reach disk unless saved: the token goes to the keyring, a failed bind restores the old values, and the template placeholder is never shown as a token.
+- Secrets never reach disk unless saved: the token is written only by the coordinator's Save, where Settings writes it; a failed bind restores the old values and removes a token stored in that attempt; and the template placeholder is never shown as a token.
 - Connection errors stay specific, and now include "not a tldw server".
 
 ### D4 — The Ready screen
@@ -470,14 +474,14 @@ Both are measured in the §3.6 mockups.
 - **Persistence.**
   - The turn goes to a **saved** conversation, because Moonshot's failure [gap-02] appears only in saved chats.
   - It is titled "Setup test · <provider> · <model>". A later test against the same provider and model reuses that conversation. The probe sends no history, so reuse adds no cost and no context.
-  - The auto-run local test also writes this conversation without a press. That is data, not config, so rule 2 is not broken, but §16 Q2 asks the owner to confirm it.
+  - The auto-run local test also writes this conversation without a press. That is data, not config, so rule 2 is not broken, and the owner confirmed it (§16 Q2(d)).
 - **Display.**
   - The reply streams into the test line with the model id and latency, truncated to two rows. The full text is in the conversation.
   - **Replies and provider error text are rendered as plain text.** Rich markup is escaped, and terminal control sequences (ANSI CSI, OSC and other C0/C1 controls) are stripped before display. This holds in the TUI and in plain mode (CLAUDE.md: sanitize content). A reply cannot restyle the screen or reach the terminal raw.
 - **Start chatting opens a new chat.** It goes through the normal first-chat handoff (`FRSW:9327`, PendingHandoffStore under ADR-033), into a new conversation.
   - **The test exchange is not carried into that conversation's context.** As a first turn, "Say hi in five words." would sit in the context of Sam's first real conversation and can make later replies terse. The conversation's title would also read "Setup test".
   - **The proof still reaches Console:** the arrival line quotes the test reply and names the conversation in History (D6).
-  - **This narrows TASK-34100.17 AC#7's "carried into Console as the first turn".** §16 Q2 asks the owner to confirm it. The alternative, keeping the turn but excluding it from context, needs a per-message context-exclusion seam that Console does not have.
+  - **This narrows TASK-34100.17 AC#7's "carried into Console as the first turn".** The owner approved the narrowing (§16 Q2(c)). The alternative, keeping the turn but excluding it from context, needs a per-message context-exclusion seam that Console does not have.
 - **Exits while a test is running.** Every exit, including Start chatting, stops the test through Console's own stop, without any notice. The conversation keeps the stopped turn, as Console keeps any stopped turn. Attaching a view to an in-flight viewless turn is avoided on purpose.
 - **Skip test.** While a test runs, [ Skip test ] (Esc) stops it through Console's own stop. Offline users never need it on cloud providers, because nothing runs unless they press.
 - **On failure.** The verdict follows D4's states, and the test line gives the detail, using TASK-34100.5 AC#4's categories plus four more:
@@ -615,14 +619,14 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
   - "no provider configured" opens setup at Connect and returns to the chat;
   - every other reason links to the control that fixes it: the model switcher for a blocked model, Settings ▸ Providers & Models with task-33008's return for a rejected key, and Settings' tldw server row for an unreachable server.
 
-  This narrows TASK-34100.17 AC#8 ("Console readiness deep links landing on the matching row"). §16 Q9 asks the owner to confirm it. The reason: the closest control is one hop, while a dashboard row is two hops with the same result.
+  This narrows TASK-34100.17 AC#8 ("Console readiness deep links landing on the matching row"). The owner approved it (§16 Q9). The reason: the closest control is one hop, while a dashboard row is two hops with the same result.
 - **Entry label.** Both setup buttons follow one rule:
   - today's "Run Setup Wizard" in Settings ▸ Diagnostics (`SS:23301-23305`);
   - the Settings ▸ Overview entry that TASK-34100.15 AC#4 adds.
 
   They read **Review setup** when a usable chat provider exists, **Resume setup** while a draft exists, and **Run setup** otherwise. "Review setup" is a third verb next to TASK-34100.15's "Run setup" and "Resume setup", and it goes into the same glossary.
 
-**Consistency with TASK-34100.10.** .10 AC#1 opens a re-run on a "Review your setup" header with a short summary of current state and the track choice, in front of the prefilled corridor. This spec replaces that screen with the dashboard. So **.10 AC#1 is narrowed on approval**, before .10 starts (it is To Do): .10 keeps the entry contract, the prefill, "(current)" marks and Cancel-returns-to-origin, and drops the header body that F11 would replace. The entry contract, the origin-return rule and the one-wizard guard are .10's and are reused unchanged.
+**Consistency with TASK-34100.10.** .10 AC#1 opens a re-run on a "Review your setup" header with a short summary of current state and the track choice, in front of the prefilled corridor. This spec replaces that screen with the dashboard. So **.10 AC#1 was narrowed on approval (2026-10-03)**, before .10 started: .10 keeps the entry contract, the prefill, "(current)" marks and Cancel-returns-to-origin, and drops the header body that F11 would replace. The entry contract, the origin-return rule and the one-wizard guard are .10's and are reused unchanged.
 
 **Why.** A re-run usually means "change one thing" (report §2(b)). A prefilled 11-step corridor still costs Riley about 75 keystrokes. From the palette, "change the default model" takes about five actions: open the palette, type "model", Enter, pick, Save.
 
@@ -673,44 +677,56 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
 - Model-list consent is asked once: the finish path records it, and it is never asked as a modal.
 - Restore a backup stays reachable from Welcome.
 
-### D9 — Keychain-first key storage (E8)
+### D9 — Key storage: config.toml by default, the system keychain on request (E8)
+
+**Owner ruling (Q3, 2026-10-03).** Keychain storage must be optional, not the default. Revision 2's keychain-first default is withdrawn, and this section is D9 as amended. Everything revision 2 specified for keys held in the keychain (resolution after first paint, the provenance overlay and writer guard, the four resolution states, and no silent fallback when a keychain save fails) still applies to keys the user puts there.
 
 **Decision.**
 
-- **The threat model, stated once and used in the copy.** The OS keychain protects a key from being copied, synced, backed up or shared along with config.toml. That covers dotfile repositories, backup archives, a config sent to a colleague, and a config.toml carried to another machine. It does **not** protect against software running as you: such software can usually ask the keychain too, and Secret Service has no per-application access control. Plain text in config.toml is readable by anything running as you, and by every backup or synced copy of the file. The copy never claims more than this.
-- **Where the choice appears.** At every key field that stores a provider key:
+- **The default is unchanged.** A new provider key is saved where it is saved today: in config.toml. It is plain text unless the user has turned on password encryption, in which case the config writer encrypts it automatically (`config.py:7036-7062`).
+  - **Encryption stays one profile-wide choice with one owner,** TASK-34100.4's lifecycle. It is offered by Ready's "Encrypt saved keys with a password…" (D1, D6), by the Full track's Keys step, and by Settings ▸ Privacy & Security's Encryption card. It is named at the key field, never asked for there.
+- **The system keychain is an option, per key.** At every key field, where a secure keychain is detected, the user can choose to keep that key in the keychain instead. Nothing is moved, probed or prompted for a user who never chooses it.
+- **The threat model, stated once and used in the copy.** The OS keychain protects a key from being copied, synced, backed up or shared along with config.toml. That covers dotfile repositories, backup archives, a config sent to a colleague, and a config.toml carried to another machine. It does **not** protect against software running as you: such software can usually ask the keychain too, and Secret Service has no per-application access control. Plain text in config.toml is readable by anything running as you, and by every backup or synced copy of the file. Password encryption protects the copies, at the cost of a password every time chatbook starts. The copy never claims more than this.
+- **Where the line appears.** At every key field that stores a provider key:
   - Connect (TASK-34100.6);
   - Settings ▸ Providers & Models (ADR-012's owner);
   - Spoken replies' inline OpenAI key, which TASK-34100.8 AC#3 builds on Connect's path. It is shown only where the host allows secret entry (D6).
-- **It is one sentence, not a form row** (§3.2): "Saved in macOS Keychain when you continue.  [ Change where… ]". **Change where…** discloses a short radio list with the options and their consequences. This keeps Quick at three decisions (track, provider with key, model). It is also why D1 rejected an encryption checkbox: neither grows the busiest form.
-- **The options, in order:**
-  1. **The system keychain, named by platform:** "macOS Keychain", "Windows Credential Manager", "GNOME Keyring" or "KWallet" (both reached through Secret Service). Recommended, and the default when the canary probe below succeeds. On macOS the disclosed text adds: "macOS may ask whether python3 can use your keychain. Choose Always Allow. It can ask again after Python is updated."
-  2. **Encrypted in config.toml:** "asks for a password every time chatbook starts". When encryption is already on, this is the only config.toml option, because the writer encrypts sensitive values automatically (`config.py:7036-7062`).
-  3. **Plain text in config.toml:** "readable by programs running as you, and by any backup or synced copy of the file".
-- **An environment key is never stored.** When an environment variable for this provider exists, TASK-34100.6 AC#21's choice is the control, and it is amended on approval to this shape:
+- **One line, not a form row** (§3.2). Under the key field:
+  - with encryption off: "Saved in config.toml (plain text; encrypt any time)  [ Use macOS Keychain… ]";
+  - with encryption on: "Saved in config.toml, encrypted with your password  [ Use macOS Keychain… ]".
+
+  The line says where the key goes, says honestly whether that is plain text, and lets the user know that encryption exists without asking for anything. It adds no decision to Quick, which keeps three: track, provider with key, and model. The button appears only where a keychain is detected (below). Pressing it **chooses the keychain** and discloses the two places with their consequences, so the way back is on screen (§3.2). It is also why D1 rejects an encryption checkbox: neither grows the busiest form.
+- **The two places, as the disclosure states them.** Neither is labelled "recommended": the copy states each consequence, and the user chooses.
+  1. **config.toml** (the default): "plain text — readable by programs running as you, and by any backup or synced copy of the file. You can encrypt it any time." With encryption on: "encrypted with your password, which chatbook asks for each time it starts".
+  2. **The system keychain, named by platform:** "macOS Keychain", "Windows Credential Manager", "GNOME Keyring" or "KWallet" (both reached through Secret Service): "not in any file". On macOS it adds: "macOS may ask whether python3 can use your keychain: choose Always Allow. It can ask again after Python updates."
+- **An environment key is never stored.** When an environment variable for this provider exists, TASK-34100.6 AC#21's choice is the control, and it was amended on approval (2026-10-03) to this shape:
   - **● Use OPENAI_API_KEY from your environment** — the default. The key is not stored, and the line adds: "chatbook reads it each time it starts, so it must be set in the shell that starts chatbook."
-  - **○ Store a different key for this app** — reveals the key field. The storage sentence appears only after the user types or pastes a different key, and stores that key, never the environment's.
+  - **○ Store a different key for this app** — reveals the key field. The storage line appears only after the user types or pastes a different key, and stores that key, never the environment's.
 
   A test asserts that an environment value never reaches the keychain, config.toml, a draft or a log, whatever the user selects (§8.1).
-- **Is there a usable keychain? A canary probe, not a name check.**
-  - In a worker, with a timeout, the credential owner writes, reads back and deletes a canary item in its namespace. Detecting a backend by module name is not enough: on macOS over SSH the login keychain is locked, and writes fail with `errSecInteractionNotAllowed` although the backend name looks secure.
-  - Only the existing secure allowlist is tried: macOS, Windows, Secret Service, libsecret and KWallet. The fail, null, plaintext and file backends never count (`runtime_policy/server_credentials.py:39-46`).
-  - **A chainer backend with several secure children** makes today's `_resolve_secure_keyring_backend` return None (`server_credentials.py:427-446`). That would quietly mean "no keychain". F12 extends the resolver to pick the highest-priority secure child. Until then, the disabled option says "Several keychains are installed and chatbook couldn't choose one."
-- **No keychain.** This covers headless Linux, SSH, a locked or unresponsive Secret Service, and a probe that timed out.
-  - The keychain option is shown disabled, with its reason: "No system keychain on this computer (common over SSH)", or "The system keychain didn't respond", or "The keychain is locked".
-  - The default becomes plain text in config.toml, and the sentence says so: "Saved as plain text in config.toml when you continue." The environment default above still applies first.
-- **Save order at Connect, and failure.**
+- **Is there a usable keychain? Detection to offer it, a canary when it is chosen.**
+  - **Detection decides whether the button appears.** When a key field is shown, a worker lazily imports `keyring` and checks for a backend on the existing secure allowlist: macOS, Windows, Secret Service, libsecret and KWallet. The fail, null, plaintext and file backends never count (`runtime_policy/server_credentials.py:39-46`). Detection reads and writes no item, so it raises no access prompt. Until it answers, the line shows no button.
+  - **A chainer backend with several secure children** makes today's `_resolve_secure_keyring_backend` return None (`server_credentials.py:427-446`). F12a extends the resolver to pick the highest-priority secure child. Until then such a computer reads as having no usable keychain, with the reason below.
+  - **The canary runs when the user chooses the keychain, never before.** In a worker, with a timeout, the credential owner writes, reads back and deletes a canary item in its namespace. Detection alone is not enough: on macOS over SSH the login keychain is locked, and writes fail with `errSecInteractionNotAllowed` although the backend looks secure. While it runs, the disclosure's heading reads "Checking macOS Keychain…".
+- **No keychain.** This covers headless Linux, SSH sessions where no secure backend is found, and the chainer case.
+  - No keychain button is shown. In its place one dim line gives the reason: "No system keychain on this computer (common over SSH)", or "Several keychains are installed and chatbook couldn't choose one".
+  - The key is saved in config.toml, as it would be anyway. The environment default above still applies first.
+- **Once chosen, the keychain is honoured or the step stays put.** After the user chooses the keychain for a key, that key goes to the keychain or nowhere until the user chooses again. A failed canary and a failed save behave alike:
+  - the step stays put and says what happened: "chatbook couldn't use macOS Keychain (access was denied). Nothing was saved.";
+  - it offers [ Try again ] and [ Keep in config.toml instead ], with focus on Try again.
+
+  **A keychain failure never writes the key to config.toml.** Plain text is used only when the user picks it, never as a side effect of an error.
+- **Save order at Connect, when the keychain was chosen.**
   1. Write the key to the keychain.
   2. Read it back and compare.
   3. Write config: `credential_source = "keychain"` and no `api_key`, in one config write.
   4. If step 3 fails, delete the keychain item and stay on the step with the cause.
-
-  **A failed or denied keychain write never falls back silently.** The step stays put, says "chatbook couldn't save the key in macOS Keychain (access was denied). Choose another place to keep it.", and discloses the options with focus on them. Plain text is used only when the user picks it.
-- **Long credentials on Windows.** Windows Credential Manager holds at most 2,560 bytes per credential (`server_credentials.py:21-23`). Setup accepts credentials up to 8,192 characters (`FRSS:53`, `_MAX_CREDENTIAL_CHARS`). Long JSON credentials are therefore split with the server-credential store's existing part scheme (`_KEYRING_INDEX_PART_CHARACTERS`, `server_credentials.py:24`). Where parts can't be used, the keychain option is disabled for that credential, with the reason.
-- **How keys resolve: a provenance overlay, after first paint.**
+- **Long credentials on Windows.** Windows Credential Manager holds at most 2,560 bytes per credential (`server_credentials.py:21-23`). Setup accepts credentials up to 8,192 characters (`FRSS:53`, `_MAX_CREDENTIAL_CHARS`). Long JSON credentials are therefore split with the server-credential store's existing part scheme (`_KEYRING_INDEX_PART_CHARACTERS`, `server_credentials.py:24`). Where parts can't be used, the keychain button is not offered for that credential, and the reason line says why.
+- **How keychain-held keys resolve: a provenance overlay, after first paint.**
+  - **Only when one exists.** None of this runs for a profile with no keychain-held key. The resolver worker, the `keyring` import at launch and the overlay entries exist only when some provider has `credential_source = "keychain"`. A profile that never chose the keychain loads, resolves and sends exactly as today.
   - **The persisted marker.** A new persisted `credential_source = "keychain"` joins `none`, `stored` and `environment`. **Both** allowlists gain it: `_PERSISTED_CREDENTIAL_SOURCES` (`Chat/provider_readiness.py:235`) and the setup state's `_CREDENTIAL_SOURCES` (`FRSS:56`). Without that, `configured_provider_credential_source` returns None and readiness drops into legacy mode (`provider_readiness.py:607`). The key itself never appears in config.toml.
   - **No keychain access at config load, and none on the UI loop.** `load_settings` runs synchronously in `TldwCli.__init__`. The config is re-published after every write under `_config_write_lock` (`_publish_runtime_config_unlocked`, `config.py:7455`) and on every `force_reload`. A keychain fetch there could block under the write lock on an access prompt.
-  - **Resolution runs in a post-first-paint worker.** The worker lazy-imports `keyring`, and only when some provider has `credential_source = "keychain"`. `keyring` is in neither the boot-import nor the UI-ready census today, and it stays out of both (ADR-097).
+  - **Resolution runs in a post-first-paint worker.** The worker lazy-imports `keyring`. `keyring` is in neither the boot-import nor the UI-ready census today, and it stays out of both (ADR-097).
   - **One overlay, one choke point.** The resolved values go into a **credential overlay** that records each value's provenance. Every reader sees one value through it: the spend path (`config.py:1728` `_normalize_legacy_provider_api_key`), `get_api_key` (`config.py:9948`), `resolve_provider_credential` (`provider_readiness.py:610`) and the readiness checks. This is the ADR-012 2026-09-19 lesson ("readiness and spend disagree") applied before it happens. The publish path applies the overlay synchronously from its cache and never fetches.
   - **Four states per provider:**
     - **resolving:** readiness reads "Checking the keychain…", never "key missing";
@@ -728,32 +744,42 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
 - **Precedence** keeps its shape: an explicit stored credential (keychain, or stored in config.toml) outranks the environment variable, which outranks legacy `[API]` (ADR-012's 2026-09-19 amendment). Because an environment key is never stored, this only matters when the user deliberately stores a *different* key.
 - **Namespace: a stable scope id, not a path hash.**
   - Keys live under the service `tldw_chatbook.provider_credentials.<credential_scope_id>`. Its username is the provider's canonical key (`normalize_provider_config_key`, `config.py:1580`).
-  - `credential_scope_id` is a random id written once to config, in `[credentials] scope_id`.
+  - `credential_scope_id` is a random id, written to config in `[credentials] scope_id` the first time a key is saved to the keychain. A profile whose user never chose the keychain has no scope id and no items.
   - A hash of the config path, as revision 1 proposed, breaks on symlinks, case changes and moves, and on ADR-126's isolated restore, which creates new credential scopes (ADR-126 decision 9). A persisted id survives all four, and ADR-126's adapter can remap it.
   - Two `TLDW_CONFIG_PATH` profiles never share a key, because each has its own id. Server tokens keep their existing namespace.
-- **Ready and the dashboard name where each key lives:** "key in macOS Keychain", "key from OPENAI_API_KEY (not stored)", "key in config.toml (plain text)" and "key in config.toml (encrypted)". This is TASK-34100.15 AC#5's key-source suffix, extended with the keychain.
-- **Migration: never automatic.**
-  - **Plain-text keys already in config.toml** stay where they are. The Keys row says where each lives with ✓, not a warning mark: plain text in an owner-only file is a legitimate choice, and "!" is reserved for states that stop or degrade something (TASK-25818's restraint). Highlighting the row offers the move. The Keys step (full and single step) and Settings ▸ Privacy & Security (TASK-34100.4's Encryption card) offer **Move to system keychain**. A move writes to the keychain, reads it back and compares, then removes the key from config.toml and sets `credential_source = "keychain"` in one config write. If any step fails, nothing is removed. On success it says: "Moved. Older backups or synced copies of config.toml may still contain the key. If that matters, create a new key at OpenAI and replace this one."
-  - **Encrypted keys (`enc:`)** move the same way within an unlocked session, since the values are already decrypted in memory. When the last `enc:` value has moved, the Keys step offers "Nothing is encrypted with your password any more. Turn password encryption off?". That goes through TASK-34100.4's lifecycle owner (`disable_config_encryption`, `config.py:9745`).
+- **Ready and the dashboard name where each key lives:** "key in config.toml (plain text)", "key in config.toml (encrypted)", "key in macOS Keychain" and "key from OPENAI_API_KEY (not stored)". This is TASK-34100.15 AC#5's key-source suffix, extended with the keychain and the plain-text/encrypted qualifier.
+- **Moving keys: only on request, in both directions.**
+  - **Nothing moves by itself.** Keys already in config.toml stay there, and a key the user put in the keychain stays there. The Keys row says where each lives with ✓, not a warning mark: plain text in an owner-only file is a legitimate choice, and "!" is reserved for states that stop or degrade something (TASK-25818's restraint).
+  - **Where moves are offered.** The Keys step (full and single step) and Settings ▸ Privacy & Security (TASK-34100.4's Encryption card) offer only the moves that apply: **Move to macOS Keychain** for a key in config.toml, where a keychain is detected, and **Move to config.toml** for a key in the keychain. Highlighting the Keys row on the dashboard explains them; it never presses them.
+  - **To the keychain.** Write the key to the keychain, read it back and compare, then remove it from config.toml and set `credential_source = "keychain"` in one config write. If any step fails, nothing is removed. On success it says: "Moved. Older backups or synced copies of config.toml may still contain the key. If that matters, create a new key at OpenAI and replace this one."
+  - **To config.toml.** Write the key to config.toml with `credential_source = "stored"` in one config write (the writer encrypts it when encryption is on), read it back and compare, then delete the keychain item. If the config write fails, nothing changes. If the delete fails, the key is used from config.toml and the leftover item is listed as orphaned (below). On success it says where the key is now: "Moved to config.toml (plain text). You can encrypt it any time."
+  - **Encrypted keys (`enc:`)** move to the keychain the same way within an unlocked session, since the values are already decrypted in memory. When the last `enc:` value has moved, the Keys step offers "Nothing is encrypted with your password any more. Turn password encryption off?". That goes through TASK-34100.4's lifecycle owner (`disable_config_encryption`, `config.py:9745`).
   - **Environment-variable users** are untouched.
 - **Older builds (config downgrade).** An older build doesn't know `credential_source = "keychain"`. It treats the provider as having no stored key: it uses the environment variable if one is set, and otherwise reports the key missing. It never sends a wrong key. If the user then saves that provider in the older build, the marker is replaced and the keychain item is orphaned. The newer build's Keys step lists orphaned items in its namespace ("A key for OpenAI is in the keychain but not used"), with [ Use it ] and [ Remove it ]. Nothing is deleted automatically.
-- **Backups (ADR-126).** Keychain provider keys are Chatbook-owned keyring values. The credential owner therefore registers a typed adapter: they are excluded from portable export by default (ADR-126 decision 5) and captured in local rollback archives (decision 8), and isolated restore remaps the scope id (decision 9). A config.toml carried to another machine says `credential_source = "keychain"` but brings no key, so readiness reads "Key not found in this computer's keychain", with [ Fix key ]. TASK-34100.16's "Setting up another machine" section says so.
-- **"Remember on this device" is not shipped.** Storing the master password in the keychain makes encryption equivalent to keychain storage, with the password's extra failure modes added. Where a keychain exists, keychain-first already gives "no plain text, no daily password". Where none exists, there is nothing to remember the password in. The "type it again" recall check is not shipped either: TASK-34100.4's "[R]eset saved keys" makes a forgotten password recoverable, and the setup dialog already confirms the password once.
+- **Backups (ADR-126).** Provider keys the user chose to keep in the keychain are Chatbook-owned keyring values. The credential owner therefore registers a typed adapter: they are excluded from portable export by default (ADR-126 decision 5) and captured in local rollback archives (decision 8), and isolated restore remaps the scope id (decision 9). A config.toml carried to another machine says `credential_source = "keychain"` but brings no key, so readiness reads "Key not found in this computer's keychain", with [ Fix key ]. TASK-34100.16's "Setting up another machine" section says so, and also says that a config.toml carries any plain-text keys with it.
+- **"Remember on this device" is not shipped** (Q4). Storing the master password in the keychain would give encrypted keys without a password at every launch. Keeping the key itself in the keychain already gives that, with fewer failure modes, and it is one action at the key field or in Keys. Where no keychain works, there is nowhere to remember the password. The "type it again" recall check is not shipped either: TASK-34100.4's "[R]eset saved keys" makes a forgotten password recoverable, and the setup dialog already confirms the password once.
 
-**Why.** Most users want "my key isn't in a plain-text file" without a password at every launch, and the password path is the most fragile area in the review (SF6). `keyring` is already a core dependency (CLAUDE.md "Key Dependencies") and already holds server tokens and MCP bindings.
+**Why.**
+- **The owner's ruling.** Keychain storage is optional (Q3). Anyone who never asks keeps today's behaviour exactly, and chatbook never touches their keychain.
+- **An honest default.** The line says "plain text" where the key is typed, and says that encryption exists, without asking. Ready offers encryption whenever a run stored a plain-text key. So the default is a stated choice, not a hidden one.
+- **A way out of the daily password.** Users who want "my key isn't in a plain-text file" without typing a password at every launch get it with one action where a keychain works. The password path is the most fragile area in the review (SF6). `keyring` is already a core dependency (CLAUDE.md "Key Dependencies") and already holds server tokens and MCP bindings.
 
 **Rejected alternatives.**
+- *The keychain as the default for new keys* (revision 2). Rejected by the owner (Q3): it must be optional.
+- *Offer "Encrypted in config.toml" as a third choice at the key field* (revision 2). Encryption is profile-wide and has its own lifecycle owner (TASK-34100.4). Turning it on from a key field mixes two decisions on the busiest form. The line names it instead, and Ready, Keys and Settings offer it.
+- *Probe the keychain with a canary for every user* (revision 2). It writes to the keychain, and can raise an access prompt, for people who never asked for it. Detection reads nothing; the canary waits for the choice.
 - *Encrypted by default.* A password at every launch is the lock-out path of [protect-summary-01/02].
-- *Automatic migration of existing keys.* It writes what the user didn't touch (rule 2), and a half-finished move would split the key across two stores.
+- *Automatic migration of existing keys,* in either direction. It writes what the user didn't touch (rule 2), and a half-finished move would split the key across two stores.
 - *A keychain lookup in each reader at send time.* Every reader would need to learn it, and they would disagree. The overlay gives one choke point.
 - *Resolve once at config load, and cache for the process lifetime* (revision 1). It blocks under the config write lock on a keychain prompt, caches a timeout as "missing", and misses a key rotated in another instance.
-- *Keychain the default even when an environment key exists* (revision 1). It implies copying an exported value into storage, which breaks "env keys are named and never stored" (report §5.5).
-- *Keychain only, with no plain-text fallback.* It strands SSH and headless users (Ash) with no supported store.
-- *Silently fall back to plain text when the keychain write fails.* Plain text is a choice the user makes, never a side effect of an error.
+- *Copy an environment key into any store* (revision 1's keychain default implied it). It breaks "env keys are named and never stored" (report §5.5).
+- *Keychain only, with no config.toml option.* It strands SSH and headless users (Ash) with no supported store.
+- *Fall back to config.toml when a chosen keychain fails.* Plain text is a choice the user makes, never a side effect of an error.
 
 **Preserve.**
-- Secrets never reach disk unless saved: keychain writes happen only on Save, drafts still refuse secret-named fields, and no writer can persist an overlay value.
+- Secrets never reach disk unless saved: a typed key is saved only on Save, as today; keychain writes happen only on Save after the user chose the keychain; drafts still refuse secret-named fields; and no writer can persist an overlay value.
 - Environment keys are named and never stored.
+- Key storage is unchanged for everyone who doesn't choose the keychain.
 
 ### D10 — Plain-text setup: `tldw-cli setup --plain` (E12)
 
@@ -789,7 +815,7 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
   - A key is never echoed, logged or written to a draft.
 - **Scope of v1:**
   - Welcome: all three choices. Choosing Full prints the steps v1 can't run, and where to change them.
-  - Connect: detection first, then the filterable list; the key; the storage choice once D9 ships, with the environment default.
+  - Connect: detection first, then the filterable list; the key; once F12a ships, where to keep it, with config.toml as the default and the system keychain offered only where one is detected (D9), and the environment default first.
   - Model: the curated list, plus "type part of a model ID".
   - Ready: the verdict, the Provider, tldw server and Keys lines, and the Data and Config paths.
   - **Plain review:** on a profile where a usable chat provider exists, `tldw-cli setup --plain` prints the areas, numbered, with their values, and asks "Change which area? Type its number, or press Enter when done." In v1, Provider, Model and Keys can be changed. The other areas print their value and "Not changeable in plain mode yet (F13b)".
@@ -809,7 +835,7 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
 
 - **Concurrency.** Writes go through the config owner's atomic path. `Utils/instance_lock.py` is "detection only — a second instance gets a warning toast, never a lock-out (the owner runs concurrent instances deliberately)" (`instance_lock.py:3-4`), and it is keyed on the user data directory. So plain setup **warns and asks**, and never refuses: "chatbook may be running with this profile. It could overwrite what you change here. Continue? [y/N]".
 
-**Transcripts:** §3.10 (Quick, Anthropic, keychain) and §3.11 (plain review).
+**Transcripts:** §3.10 (Quick, Anthropic, the keychain chosen) and §3.11 (plain review).
 
 **Why.** Textual exposes no accessibility tree. A line-oriented flow on the same setup core is the cheapest way to make setup usable with a screen reader and over SSH.
 
@@ -847,23 +873,23 @@ TASK-34100.5 AC#6 (the minimal plain-chat prompt) is no longer a dependency for 
 - **Keys only from the environment or stdin,** and never from argv.
 - **Paired with import.** "Export these settings (no keys)" ships with an import that Welcome's "Moving from another computer?" recognises.
 
-**Rejected alternative.** *Build it now, last* (revision 1). Rejected for the reasons above, so §16 Q6 asks the owner to confirm the deferral.
+**Rejected alternative.** *Build it now, last* (revision 1). Rejected for the reasons above; the owner approved the deferral (§16 Q6).
 
 **Preserve.** Restore a backup is unaffected.
 
 ### D12 — The report's "Rejected, on purpose" list: confirm or overturn
 
-The owner is asked to confirm each item. The recommendation for all seven is **confirm**. Nothing in D1–D11, as revised, brings one back.
+The owner confirmed all seven on 2026-10-03 (Q8), as recommended. Nothing in D1–D11, as revised and amended, brings one back.
 
 | # | Item (report §4.3) | Recommendation | Why | Owner ruling |
 |---|---|---|---|---|
-| 1 | A five-way "How will you use chatbook?" router on Welcome | Confirm | It taxes the local-first majority on the first screen. Connect's "Ready on this machine" group detects the same things (TASK-34100.6 AC#29). D8's documents-first choice is one extra row, not a router. | pending |
-| 2 | A master tool switch in setup | Confirm | It invites a reflexive "all off" that silently removes web search and Watchlists. TASK-34100.13 AC#2 states the real posture instead. | pending |
-| 3 | An embedding-model picker | Confirm | Changing the model clones profiles and rebuilds the index. TASK-34100.13 AC#1 shows it read-only. | pending |
-| 4 | A multi-tick provider checklist | Confirm | Env-keyed providers are recorded automatically (TASK-34100.6 AC#6). "Add another provider" is one action on the dashboard and in the palette (D7), not a checklist. | pending |
-| 5 | Base-URL overrides on every keyed provider | Confirm | Few users run gateways, and the form would grow for everyone. Settings keeps the override (TASK-34100.6 AC#21). | pending |
-| 6 | An "Undo this session" ledger before Voice writes only deltas | Confirm, and keep it rejected after the deltas ship | Restoring a snapshot races Settings and Console writers, and it cannot undo encryption or downloads. The Exit dialog's list of saved areas (TASK-34100.9 AC#3) plus D7's single-step changes cover the need. Reopen only on user reports of needing to undo a whole run. | pending |
-| 7 | An inline "disable TLS verification" toggle | Confirm | It nudges first-time users toward `ssl_verify = false`. A certificate failure is classified and links to Settings ▸ Network (ADR-079; TASK-34100.6 AC#7; D3's probe). | pending |
+| 1 | A five-way "How will you use chatbook?" router on Welcome | Confirm | It taxes the local-first majority on the first screen. Connect's "Ready on this machine" group detects the same things (TASK-34100.6 AC#29). D8's documents-first choice is one extra row, not a router. | **Confirmed** (2026-10-03, Q8) |
+| 2 | A master tool switch in setup | Confirm | It invites a reflexive "all off" that silently removes web search and Watchlists. TASK-34100.13 AC#2 states the real posture instead. | **Confirmed** (2026-10-03, Q8) |
+| 3 | An embedding-model picker | Confirm | Changing the model clones profiles and rebuilds the index. TASK-34100.13 AC#1 shows it read-only. | **Confirmed** (2026-10-03, Q8) |
+| 4 | A multi-tick provider checklist | Confirm | Env-keyed providers are recorded automatically (TASK-34100.6 AC#6). "Add another provider" is one action on the dashboard and in the palette (D7), not a checklist. | **Confirmed** (2026-10-03, Q8) |
+| 5 | Base-URL overrides on every keyed provider | Confirm | Few users run gateways, and the form would grow for everyone. Settings keeps the override (TASK-34100.6 AC#21). | **Confirmed** (2026-10-03, Q8) |
+| 6 | An "Undo this session" ledger before Voice writes only deltas | Confirm, and keep it rejected after the deltas ship | Restoring a snapshot races Settings and Console writers, and it cannot undo encryption or downloads. The Exit dialog's list of saved areas (TASK-34100.9 AC#3) plus D7's single-step changes cover the need. Reopen only on user reports of needing to undo a whole run. | **Confirmed** (2026-10-03, Q8) |
+| 7 | An inline "disable TLS verification" toggle | Confirm | It nudges first-time users toward `ssl_verify = false`. A certificate failure is classified and links to Settings ▸ Network (ADR-079; TASK-34100.6 AC#7; D3's probe). | **Confirmed** (2026-10-03, Q8) |
 
 ---
 
@@ -874,9 +900,9 @@ Key counts assume TASK-34100.6/.7/.11 have shipped: Enter selects, the detected 
 ### 2.1 Sam — cloud, OpenAI key, Quick
 
 1. **Welcome:** Enter (Quick is the default).
-2. **Connect:** type `open` to filter, Enter on OpenAI, paste the key, Enter. The key is checked: "✓ Key works — OpenAI returned 137 models". The sentence under the key already reads "Saved in macOS Keychain when you continue." Next.
+2. **Connect:** type `open` to filter, Enter on OpenAI, paste the key, Enter. The key is checked: "✓ Key works — OpenAI returned 137 models". The line under the key reads "Saved in config.toml (plain text; encrypt any time)", with [ Use macOS Keychain… ] beside it. Sam leaves it as it is and presses Next. (One press on Use macOS Keychain… would have kept the key out of the file instead.)
 3. **Model:** the curated recommendation is pre-selected. Enter.
-4. **Ready:** "✓ Ready to chat — OpenAI · gpt-4.1-mini (1M context)". Focus is on Start chatting, and the hint says "Tab: test message first". Sam presses Tab, reads "Costs under $0.01 (a few tokens)", and presses Say hello: "Test reply in 0.8 s". Start chatting opens a new chat, and the arrival line quotes the test reply and names the test conversation in History.
+4. **Ready:** "✓ Ready to chat — OpenAI · gpt-4.1-mini (1M context)". The Provider row says "key in config.toml (plain text)", and What's next starts with "Encrypt saved keys with a password…", which Sam can take now or never. Focus is on Start chatting, and the hint says "Tab: test message first". Sam presses Tab, reads "Costs under $0.01 (a few tokens)", and presses Say hello: "Test reply in 0.8 s". Start chatting opens a new chat, and the arrival line quotes the test reply and names the test conversation in History.
 
 If something goes wrong at the test:
 - **The account has no credit:** Ready reads "✗ Can't chat yet — OpenAI accepted the key but refused the message", with the billing line and [ Try again ].
@@ -911,9 +937,9 @@ Welcome: Down, Down (the tracker now reads "Then: Library ▸ Import"), Enter. L
 
 ### 2.5 Ash — screen reader or SSH
 
-Ash runs `tldw-cli setup --plain` (transcript in §3.10). `tldw-cli --help` lists it, and so does a line printed before the TUI starts. Over SSH with no keychain:
-- the storage prompt offers "1. Plain text in config.toml" as the default;
-- when `ANTHROPIC_API_KEY` is set, "Use ANTHROPIC_API_KEY from your environment (not stored)" is the default instead.
+Ash runs `tldw-cli setup --plain` (transcript in §3.10, where Ash's desktop has GNOME Keyring and Ash chooses it). `tldw-cli --help` lists it, and so does a line printed before the TUI starts. Over SSH with no keychain:
+- there is no storage prompt. The key is saved in config.toml as plain text, and one line says so and why no keychain was offered;
+- when `ANTHROPIC_API_KEY` is set, "Use ANTHROPIC_API_KEY from your environment (not stored)" is the default, and nothing is stored.
 
 The run exits 0 when the verdict is ✓.
 
@@ -1079,30 +1105,35 @@ Moving from another computer?  [ Restore a backup ]
 
 ### 3.2 Connect: where the key is kept (D9)
 
-Only the storage line is new; the rest of Connect is TASK-34100.6's. With a working keychain, after a key check:
+Only the storage line is new; the rest of Connect is TASK-34100.6's. The default, after a key check, on a computer where a keychain is detected:
 
 <!-- mockup connect-key-storage 80x4 -->
 ```text
 OpenAI — API key
  [ ••••••••••••••••••••••••••••••••••••••abcd ]  [ Show ]  [ Check key ]
  ✓ Key works — OpenAI returned 137 models. Pick one on the next step.
- Saved in macOS Keychain when you continue.  [ Change where… ]
+ Saved in config.toml (plain text; encrypt any time)  [ Use macOS Keychain… ]
 ```
 
-After **Change where…** (a short radio group; the highlight selects):
+With password encryption already on, the same line reads:
 
-<!-- mockup connect-key-storage-disclosed 80x11 -->
+<!-- mockup connect-key-storage-encrypted 80x1 -->
+```text
+ Saved in config.toml, encrypted with your password  [ Use macOS Keychain… ]
+```
+
+After **Use macOS Keychain…**. The press chooses the keychain, and the two places are disclosed with their consequences, so the way back is one key away (a short radio group; the highlight selects):
+
+<!-- mockup connect-key-storage-disclosed 80x8 -->
 ```text
 OpenAI — API key
  [ ••••••••••••••••••••••••••••••••••••••abcd ]  [ Show ]  [ Check key ]
  ✓ Key works — OpenAI returned 137 models. Pick one on the next step.
  Keep this key in:
-  ● macOS Keychain (recommended) — not in any file. macOS may ask whether
-    python3 can use your keychain: choose Always Allow. It can ask again
-    after Python is updated.
-  ○ Encrypted in config.toml — asks for a password every time chatbook starts
-  ○ Plain text in config.toml — readable by programs running as you, and by
-    any backup or synced copy of the file
+  ○ config.toml — plain text, readable by programs running as you and by any
+    backup or synced copy of the file. You can encrypt it any time.
+  ● macOS Keychain — not in any file. macOS may ask whether python3 can use
+    your keychain: choose Always Allow. It can ask again after Python updates.
 ```
 
 When `OPENAI_API_KEY` is set (TASK-34100.6 AC#21, amended). The key field and the storage line appear only after "Store a different key for this app":
@@ -1116,32 +1147,29 @@ OpenAI — API key
  ○ Store a different key for this app
 ```
 
-Without a usable keychain:
+Where no keychain is detected, the button is replaced by its reason:
 
-<!-- mockup connect-no-keychain 80x5 -->
+<!-- mockup connect-no-keychain 80x4 -->
 ```text
 OpenAI — API key
  [ ••••••••••••••••••••••••••••••••••••••abcd ]  [ Show ]  [ Check key ]
- Saved as plain text in config.toml when you continue.  [ Change where… ]
- No system keychain on this computer (common over SSH).
+ Saved in config.toml (plain text; encrypt any time)
+ No system keychain on this computer (common over SSH), so none is offered.
 ```
 
-When the keychain refuses the write. The step stays put and nothing is saved:
+When the user chose the keychain and it failed, at the canary or at the save. The step stays put, and nothing is saved anywhere:
 
-<!-- mockup connect-keychain-save-failed 80x9 -->
+<!-- mockup connect-keychain-failed 80x5 -->
 ```text
 OpenAI — API key
  [ ••••••••••••••••••••••••••••••••••••••abcd ]  [ Show ]  [ Check key ]
- ✗ chatbook couldn't save the key in macOS Keychain (access was denied).
-   Choose another place to keep it:
-  ○ macOS Keychain — try again
-  ● Encrypted in config.toml — asks for a password every time chatbook starts
-  ○ Plain text in config.toml — readable by programs running as you, and by
-    any backup or synced copy of the file
+ ✗ chatbook couldn't use macOS Keychain (access was denied). Nothing was
+   saved.  [ Try again ]  [ Keep in config.toml instead ]
 ```
 
-- **Choosing Encrypted in config.toml** for the first time opens TASK-34100.4's password dialog when the step is saved, not when the option is highlighted.
-- **Before D9 ships,** the storage line is absent, and keys go where they go today. Ready's "Encrypt saved keys…" option covers encryption on Quick.
+- **Encryption is not chosen here.** The line names it. Turning it on goes through TASK-34100.4's password dialog, from Ready's "Encrypt saved keys with a password…" (Quick), the Keys step (Full), or Settings ▸ Privacy & Security.
+- **[ Keep in config.toml instead ]** returns the line to its default form; the key is then saved like any other config.toml key when the step is saved.
+- **Before F12a ships,** the line is absent and keys are saved as today. Ready's "Encrypt saved keys…" option covers encryption on Quick.
 
 ### 3.3 Model: Save and finish with defaults (Full only)
 
@@ -1189,11 +1217,11 @@ Enter choose · Ctrl+N next · ← Back, Ctrl+B or Alt+← · Esc exit setup
 | Element | Copy and behaviour |
 |---|---|
 | Title | tldw server (optional) |
-| Body | chatbook works fully on this computer. If you run a tldw server, chatbook can also connect to it. Connecting also prepares sync: chatbook sends the server this computer's name (<hostname>) and sets up sync for it there. **F3's first task confirms exactly what preparation sends, and this sentence names it. It is shown before the choice, not after a test.** If the owner rules against sync preparation in setup (Q5), the sentence goes. |
+| Body | chatbook works fully on this computer. If you run a tldw server, chatbook can also connect to it. Connecting also prepares sync: chatbook sends the server this computer's name (<hostname>) and sets up sync for it there. **F3's first task confirms exactly what preparation sends, and this sentence names it. It is shown before the choice, not after a test.** The owner kept sync preparation in setup, matching Settings (Q5). |
 | Choice 1 (default) | Not now — this computer only. Writes nothing. Next reads "Continue →". |
 | Choice 2 | Connect to a tldw server. Reveals Server address and API token. |
 | Server address | Placeholder `https://your-server:8000`. Prefilled only from a **bound** server (`RuntimePolicyContext`), never from the template's `127.0.0.1:8000`. Validated as a server root with no path, as the modal does today (`server_switch_modal.py:167-193`). |
-| API token | Masked, with [ Show ]. Never prefilled with the template placeholder. A saved token shows as "saved in macOS Keychain", with [ Replace ] / [ Clear ] (the wizard spec's Keep/Replace/Clear for secrets). |
+| API token | Masked, with [ Show ]. Never prefilled with the template placeholder. A saved token shows as "token saved", with [ Replace ] / [ Clear ] (the wizard spec's Keep/Replace/Clear for secrets). It is stored where Settings stores it today (D3.4). |
 | Test connection | Runs D3's shared probe, with the bound client's TLS settings, and shows D3's copy. While it runs: "Checking lab.example.org:8000…". |
 | Save & continue | Commits through the shared coordinator.<br>• **A definitive failure refuses the save:** token rejected, not a tldw server, or blocked by policy. The cause shows under the field, as TASK-34100.6 AC#13 does for keys.<br>• **An unreachable or untested server gets one inline line, not a modal:** "lab.example.org:8000 wasn't confirmed as a tldw server.  [ Save anyway ]  [ Keep editing ]", with "Keep editing" focused. So "set it up now, start it later" still works.<br>• **On a commit failure** the coordinator restores the prior `[tldw_api]` values and removes any token it stored. The step stays put with the cause, and nothing is half-applied, on disk or in memory (D3).<br>• A successful bind is listed in the Exit dialog (TASK-34100.9 AC#3). |
 | Re-run | With a server bound, choice 2 is pre-selected, with the address and "token saved". Choosing "Not now" switches back through the same coordinator. |
@@ -1202,18 +1230,19 @@ At 120x40 the layout is the same, with wider fields, and the success line fits o
 
 ### 3.5 Keys (Full, step 10)
 
-The state-aware content comes from TASK-34100.4 AC#7/#8. With D9, the step first lists where each key lives, then offers only the actions that apply:
+The state-aware content comes from TASK-34100.4 AC#7/#8. With D9, the step first lists where each key lives, then offers only the actions that apply. The first action in each row is the default, it writes nothing, and focus starts on it. With several keys, the step shows one row per key.
 
 | State | Body | Actions |
 |---|---|---|
-| Every key in the keychain or the environment | Your keys aren't stored in config.toml: OpenAI is in macOS Keychain; Anthropic comes from ANTHROPIC_API_KEY. Nothing to change here. | (none; tracker "–"; G2's accepted exception) |
-| A plain-text key, keychain available | OpenAI's key is plain text in config.toml. Programs running as you, and any backup or synced copy of the file, can read it. | [ Move to macOS Keychain ]  [ Encrypt with a password… ]  [ Keep as plain text ] |
-| A plain-text key, no keychain | (same body) | [ Encrypt with a password… ]  [ Keep as plain text ] |
-| Already encrypted | Your saved keys are encrypted with your password. | [ Move to macOS Keychain ]  [ Change password… ] |
-| Orphaned keychain items (D9, older build) | A key for OpenAI is in the keychain but not used. | [ Use it ]  [ Remove it ]  [ Leave it ] |
-| No key stored | Nothing to change — no API key is saved in config.toml. | (none; tracker "–") |
+| A plain-text key, keychain detected | OpenAI's key is plain text in config.toml. Programs running as you, and any backup or synced copy of the file, can read it. | [ Keep as plain text ]  [ Encrypt with a password… ]  [ Move to macOS Keychain ] |
+| A plain-text key, no keychain | (same body) | [ Keep as plain text ]  [ Encrypt with a password… ] |
+| Already encrypted | Your saved keys are encrypted with your password, which chatbook asks for each time it starts. | [ Keep as is ]  [ Change password… ]  [ Move to macOS Keychain ] (where a keychain is detected) |
+| A key the user put in the keychain | OpenAI's key is in macOS Keychain, not in any file. | [ Keep as is ]  [ Move to config.toml ] |
+| Orphaned keychain items (D9, older build) | A key for OpenAI is in the keychain but not used. | [ Leave it ]  [ Use it ]  [ Remove it ] |
+| Only environment keys, or no key stored | Your keys aren't stored by chatbook: Anthropic comes from ANTHROPIC_API_KEY. Nothing to change here. (With no key at all: "Nothing to change — no API key is saved.") | (none; tracker "–"; G2's accepted exception) |
 
-After a move, the step shows: "Moved. Older backups or synced copies of config.toml may still contain the key. If that matters, create a new key at OpenAI and replace this one."
+- **After a move to the keychain:** "Moved. Older backups or synced copies of config.toml may still contain the key. If that matters, create a new key at OpenAI and replace this one."
+- **After a move to config.toml:** "Moved to config.toml (plain text). You can encrypt it any time." With encryption on, it reads "(encrypted)" and drops the second sentence.
 
 ### 3.6 Ready
 
@@ -1225,17 +1254,17 @@ Ready                                  Step 4 of 4 · ✓ Welcome ✓ Connect �
 ✓ Ready to chat — OpenAI · gpt-4.1-mini (1M context)
   Test it  [ Say hi in five words.                     ]  [ Say hello ]
   Sends one short message to OpenAI. Costs under $0.01 (a few tokens).
-✓ Provider     OpenAI — your messages go to OpenAI · key in macOS Keychain
+✓ Provider     OpenAI — messages go to OpenAI · key in config.toml (plain text)
 ✓ Model        gpt-4.1-mini — new chats start with it
 ✓ tldw server  none — Library and notes stay on this computer
 Data:   ~/.local/share/tldw_cli/default_user                     [ Copy ]
 Config: ~/.config/tldw_cli/config.toml                           [ Copy ]
 
 What's next — optional, any time
+ → Encrypt saved keys with a password…
  → Hear replies aloud…
  → Connect a tldw server… (if you run one)
- → Sync a notes folder…
- ▸ More (6)
+ ▸ More (7)
 [ ] Refresh OpenAI's model list when chatbook starts
 [ ] Get to know you after setup — a short questionnaire, no AI needed
 
@@ -1256,17 +1285,17 @@ Ready                                  Step 4 of 4 · ✓ Welcome ✓ Connect �
   The key isn't checked yet: OpenRouter lists models for any key.
   Test it  [ Say hi in five words.                     ]  [ Say hello ]
   Sends one short message to OpenRouter. Costs under $0.01 (a few tokens).
-✓ Provider     OpenRouter — messages go to OpenRouter · key in macOS Keychain
+✓ Provider     OpenRouter — messages go there · key in config.toml (plain text)
 ✓ Model        anthropic/claude-sonnet-5-5 — new chats start with it
 ✓ tldw server  none — Library and notes stay on this computer
 Data:   ~/.local/share/tldw_cli/default_user                     [ Copy ]
 Config: ~/.config/tldw_cli/config.toml                           [ Copy ]
 
 What's next — optional, any time
+ → Encrypt saved keys with a password…
  → Hear replies aloud…
  → Connect a tldw server… (if you run one)
- → Sync a notes folder…
- ▸ More (6)
+ ▸ More (7)
 [ ] Refresh OpenRouter's model list when chatbook starts
 [ ] Get to know you after setup — a short questionnaire, no AI needed
 
@@ -1344,7 +1373,7 @@ Ready                                  Step 4 of 4 · ✓ Welcome ✓ Connect ! 
 ✗ Can't chat yet — gpt-5.6-terra's context size is unknown, so every
   message would be blocked before it is sent.
   [ Choose another model ]  [ Set context size… ]
-✓ Provider     OpenAI — your messages go to OpenAI · key in macOS Keychain
+✓ Provider     OpenAI — messages go to OpenAI · key in config.toml (plain text)
 ! Model        gpt-5.6-terra — saved, but it can't be used yet (see above)
 ✓ tldw server  none — Library and notes stay on this computer
 ✓ saved · – skipped · ! needs attention · ✗ failed
@@ -1352,10 +1381,10 @@ Data:   ~/.local/share/tldw_cli/default_user                     [ Copy ]
 Config: ~/.config/tldw_cli/config.toml                           [ Copy ]
 
 What's next — optional, any time
+ → Encrypt saved keys with a password…
  → Hear replies aloud…
  → Connect a tldw server… (if you run one)
- → Sync a notes folder…
- ▸ More (6)
+ ▸ More (7)
 [ ] Refresh OpenAI's model list when chatbook starts
 [ ] Get to know you after setup — a short questionnaire, no AI needed
 
@@ -1374,7 +1403,7 @@ Ready                                  Step 4 of 4 · ✓ Welcome ! Connect ✓ 
 ✗ Can't chat yet — OpenRouter rejected the key.
   The test message failed: OpenRouter said "API key expired." (HTTP 401).
   Nothing else was sent.  [ Fix key ]
-! Provider     OpenRouter — key in macOS Keychain, rejected by OpenRouter
+! Provider     OpenRouter rejected the key · key in config.toml (plain text)
 ✓ Model        anthropic/claude-sonnet-5-5 — new chats start with it
 ✓ tldw server  none — Library and notes stay on this computer
 ✓ saved · – skipped · ! needs attention · ✗ failed
@@ -1382,10 +1411,10 @@ Data:   ~/.local/share/tldw_cli/default_user                     [ Copy ]
 Config: ~/.config/tldw_cli/config.toml                           [ Copy ]
 
 What's next — optional, any time
+ → Encrypt saved keys with a password…
  → Hear replies aloud…
  → Connect a tldw server… (if you run one)
- → Sync a notes folder…
- ▸ More (6)
+ ▸ More (7)
 [ ] Refresh OpenRouter's model list when chatbook starts
 [ ] Get to know you after setup — a short questionnaire, no AI needed
 
@@ -1396,7 +1425,7 @@ What's next — optional, any time
 Enter fix the key · Tab next action · ← Back, Ctrl+B or Alt+←
 ```
 
-**Full track at 80x24.** All nine read-back rows (✗ and ! rows sort first), the legend, and What's next collapsed to one row:
+**Full track at 80x24.** All nine read-back rows (✗ and ! rows sort first), the legend, and What's next collapsed to one row. This user chose the keychain for Anthropic's key, and OpenAI's key comes from the environment, so no plain-text key was stored and the encryption item is not shown:
 
 <!-- mockup ready-full-track 80x24 -->
 ```text
@@ -1453,13 +1482,13 @@ Ready                                                                           
 
 ✓ Provider        Anthropic — your messages go to Anthropic · key in macOS Keychain · also OpenAI (from OPENAI_API_KEY)
 ✓ Model           claude-sonnet-5-5 — new Console chats start with it (Alt+M, or Ctrl+P then "model", switches)
-✓ tldw server     lab.example.org:8000 — connected · Library and notes sync with it · token in macOS Keychain
+✓ tldw server     lab.example.org:8000 — connected · Library and notes sync with it · token saved
 – Search          your Library is searched only when you ask (all-MiniLM-L6-v2)
 ✓ Tools           2 of 8 on: Read file, Search in files · web search and Watchlists also available (they ask first)
 ✓ Spoken replies  OpenAI · tts-1-hd · shimmer (uses your OpenAI key)
 – Dictation       not set up · press Dictate in Console when you want it
 ✓ Appearance      Nord · dark · startup animation short · reduce motion off
-✓ Keys            Anthropic: macOS Keychain · OpenAI: OPENAI_API_KEY (not stored) · tldw server token: macOS Keychain
+✓ Keys            Anthropic: macOS Keychain · OpenAI: OPENAI_API_KEY (not stored) · server token: config.toml + Keychain
 ✓ saved · – skipped · ! needs attention · ✗ failed
 
 Data:   ~/.local/share/tldw_cli/default_user                                                   [ Copy ]
@@ -1489,6 +1518,7 @@ Enter start chatting · Tab: send a test message first · ← Back, Ctrl+B or Al
 
 **Copy rules for Ready.**
 - The verdict names the provider and model by display name (TASK-34100.9 AC#6), and the context in K or M tokens.
+- The Provider row always names where the key lives, with its qualifier: "(plain text)" or "(encrypted)" for config.toml (D9). When the row would not fit the width, "messages go to <provider>" shortens to "messages go there"; the key's place is never the part that is cut.
 - The Say hello prompt is an editable one-line field, prefilled with "Say hi in five words.". Enter in the field and the [ Say hello ] button both send it. The consent line under it is recomputed whenever the prompt changes, and is never hidden while the button is visible.
 - "– Left at their defaults: …" appears only after Finish with defaults, and names the skipped steps in order.
 - What's next shows only relevant items (D6). When none is relevant, the list holds only its "More (N)" row, under the heading "What's next — everything is set up; more options:".
@@ -1505,7 +1535,7 @@ Change one area, or press Done. Nothing changes until you press Save in one.
 ✓ Ready to chat — OpenAI · gpt-4.1-mini (1M context)
   Test it  [ Say hi in five words.                     ]  [ Say hello ]
   Sends one short message to OpenAI. Costs under $0.01 (a few tokens).
- ✓ Provider        OpenAI — messages go to OpenAI · key in config.toml
+ ✓ Provider        OpenAI — messages go there · key in config.toml (plain text)
    + Add another provider…
  ✓ Model           gpt-4.1-mini — new chats start with it
  ✓ tldw server     none — Library and notes stay on this computer
@@ -1515,7 +1545,7 @@ Change one area, or press Done. Nothing changes until you press Save in one.
  – Dictation       not set up
  ✓ Appearance      Nord · dark · startup animation short
 ›✓ Keys            OpenAI: plain text in config.toml
-   Keys — chatbook can move OpenAI's key to macOS Keychain. Enter opens Keys.
+   Keys — Enter opens Keys: encrypt OpenAI's key, or move it to macOS Keychain.
 ✓ saved · – skipped · ! needs attention · ✗ failed
 Data:   ~/.local/share/tldw_cli/default_user                     [ Copy ]
 Config: ~/.config/tldw_cli/config.toml                           [ Copy ]
@@ -1550,7 +1580,7 @@ Nothing changes until you press Save in one.
 ›✓ Keys            OpenAI: plain text in config.toml · Anthropic: ANTHROPIC_API_KEY (not stored)
 
    Keys — OpenAI's key is plain text in config.toml: programs running as you, and any backup or synced copy of the
-   file, can read it. chatbook can move it to macOS Keychain. Enter opens Keys.
+   file, can read it. Enter opens Keys, where you can encrypt it or move it to macOS Keychain.
 
 ✓ saved · – skipped · ! needs attention · ✗ failed
 
@@ -1579,7 +1609,7 @@ Config: ~/.config/tldw_cli/config.toml                                          
 | Intro | Change one area, or press Done. Nothing changes until you press Save in one. |
 | Verdict region | Ready's, with Say hello and its cost line (D5). After a Provider or Model change it is recomputed, and the highlight returns to the changed row. |
 | Row value when not set up | not set up |
-| Detail line (highlighted row, marked ›) | For a "!" row, its reason. Otherwise, what Change would do ("Keys — chatbook can move OpenAI's key to macOS Keychain. Enter opens Keys.") |
+| Detail line (highlighted row, marked ›) | For a "!" row, its reason. Otherwise, what Change would do ("Keys — Enter opens Keys: encrypt OpenAI's key, or move it to macOS Keychain."). It explains the choices and never recommends one |
 | Receipt after a Save | Saved: <area> → <new value> (in place of the intro line, until the next highlight move) |
 | Receipt after a Cancel | Nothing changed. |
 | Exits | [ Done ] (primary) · [ Run the full walkthrough ] |
@@ -1635,7 +1665,7 @@ Enter choose · Tab next action · Esc cancel (nothing is saved)
 
 The line is a dim system row at the top of the new conversation. It is not a toast, it is never sent to the model, and it is not repeated on later launches. The last sentence appears only after a test.
 
-### 3.10 Plain-text setup transcript (Quick, Anthropic, Secret Service)
+### 3.10 Plain-text setup transcript (Quick, Anthropic, the keychain chosen)
 
 <!-- mockup plain-cli 80x60 -->
 ```text
@@ -1665,11 +1695,11 @@ API key (typing is hidden; Enter alone skips this provider):
 Received a key ending 7Qx2 (108 characters).
 Checking the key with Anthropic...
 OK: Anthropic accepted this key (13 models listed).
-Keep this key in:
-  1. System keychain (GNOME Keyring) (recommended)
-  2. Encrypted in config.toml (a password every time chatbook starts)
-  3. Plain text in config.toml (readable by programs running as you)
-Choice [1]: 1
+Where should chatbook keep this key?
+  1. config.toml, as plain text (you can encrypt it any time)
+  2. The system keychain (GNOME Keyring), not in any file
+Choice [1]: 2
+Checking the system keychain... OK.
 Saved: Anthropic key in the system keychain.
 
 Step 3 of 4: Model
@@ -1695,6 +1725,8 @@ $ echo $?
 ```
 
 - Lines are at most 80 columns, and nothing is redrawn in place.
+- **Where no keychain is detected,** the storage prompt is not shown. The step prints "Saved: Anthropic key in config.toml, as plain text (you can encrypt it any time)." and then "No system keychain was found on this computer, so none was offered."
+- **If the chosen keychain fails,** plain mode prints "FAILED: chatbook couldn't use the system keychain (it is locked). Nothing was saved." and asks again, with "1. Try the keychain again" and "2. Keep it in config.toml instead". It never saves to config.toml by itself (D9).
 - With `--glyphs`, "OK:" becomes "✓" and "FAILED:" becomes "✗".
 - With `NO_COLOR` or `TERM=dumb`, the output is identical, because it carries no colour to begin with.
 - Replies and provider errors that plain mode prints (for example a key check's failure) are stripped of control sequences (D5).
@@ -1765,8 +1797,9 @@ DOCS  = (welcome)        # finishes on Open Library; never writes a draft
 | Welcome | nothing (the track choice is a draft value); Reduce motion only when ticked, as its own delta | — |
 | DOCS finish | `[first_run] setup_completed`, `ai_setup_deferred`, and the model-list consent default | provider, `chat_defaults`, draft |
 | A step's Save (any mode) | that step's own keys, as a delta | any other step's keys |
-| tldw server Save | through the coordinator: the `[tldw_api]` URL; the token to the keychain (to config.toml only where no keychain exists, as Settings does); the runtime binding. On a failed bind, the prior values are restored | `WIZARD_OWNED_SECTIONS` (`FRSS:1251-1266`) does not gain `tldw_api`, because the coordinator owns that write, not the wizard |
-| Connect Save with a keychain choice | the keychain item first, then `credential_source = "keychain"` (no `api_key`), and `[credentials] scope_id` on first use | the key in config.toml; an environment key anywhere |
+| tldw server Save | through the coordinator: the `[tldw_api]` URL; the token where Settings writes it today (config.toml, and the OS keyring when that store accepts it); the runtime binding. On a failed bind, the prior values are restored and a token stored in that attempt is removed | `WIZARD_OWNED_SECTIONS` (`FRSS:1251-1266`) does not gain `tldw_api`, because the coordinator owns that write, not the wizard |
+| Connect Save (the default) | the key in config.toml, as today (encrypted by the writer when encryption is on) | anything in the keychain; an environment key anywhere |
+| Connect Save, when the user chose the keychain | the keychain item first, then `credential_source = "keychain"` (no `api_key`), and `[credentials] scope_id` on first use | the key in config.toml, including after a keychain failure; an environment key anywhere |
 | Ready | through the finish path: the consent answer, "Get to know you", `last_track`, and clearing `ai_setup_deferred` once a usable provider exists. Say hello writes a conversation (Console's store), never config | — |
 | Dashboard | nothing itself | — |
 | Plain mode | as the steps' Saves, through the same commit builders | the runtime binding (deferred to F13b) |
@@ -1792,8 +1825,8 @@ Deferred with D11. The design notes for reopening it are in D11. Revision 1's fo
 ### 4.6 Keychain namespace (D9)
 
 - **Service and username.** The service is `tldw_chatbook.provider_credentials.<credential_scope_id>`. The username is the provider's canonical key (`normalize_provider_config_key`, `config.py:1580`).
-- **The scope id.** `credential_scope_id` is a random id, written once to `[credentials] scope_id` the first time a key is saved to the keychain. ADR-126's adapter remaps it on isolated restore. It never derives from a path, so it survives symlinks, case changes and moves.
-- **What config records.** Config records `credential_source = "keychain"` and no `api_key`. Server tokens keep their existing server-credential namespace.
+- **The scope id.** `credential_scope_id` is a random id, written once to `[credentials] scope_id` the first time the user saves a key to the keychain. A profile that never chose the keychain has no scope id and no items. ADR-126's adapter remaps it on isolated restore. It never derives from a path, so it survives symlinks, case changes and moves.
+- **What config records.** For a key in the keychain, config records `credential_source = "keychain"` and no `api_key`. Keys in config.toml are recorded as today. Server tokens keep their existing server-credential namespace and their existing storage (D3.4).
 - **Long values on Windows.** Values over the Windows blob limit use the server-credential store's part scheme (D9).
 
 ### 4.7 Seams the shape needs
@@ -1831,7 +1864,7 @@ The engineering review found that the shape rests on seams that don't exist yet.
    If the spike shows that any of these must touch an over-budget module, the slice stops and reports. It does not raise a ratchet.
 6. **A runtime-source coordinator and a shared probe (F3).** The coordinator lives in a new module. It saves, binds and prepares sync in Settings' order, with rollback on a failed bind. The probe is app-free, and uses the runtime client's TLS settings.
 7. **A credential store and overlay (F12a).** These are:
-   - the keychain credential owner, with a canary probe and an injectable secure-backend predicate for tests (today's detector checks module names, so it would reject an in-memory test backend);
+   - the keychain credential owner, with backend detection that touches no item, a canary run only when the user chooses the keychain, and an injectable secure-backend predicate for tests (today's detector checks module names, so it would reject an in-memory test backend);
    - the provenance overlay;
    - the post-first-paint resolver;
    - the writer guard in `save_settings_to_cli_config`.
@@ -1857,7 +1890,7 @@ The engineering review found that the shape rests on seams that don't exist yet.
 - **Motion.** The Say hello wait shows elapsed seconds as text, not a spinner, and honours Reduce motion. Reduce motion is offered on Welcome, before any animation plays (TASK-34100.13 AC#16).
 - **Sizes.** Every screen in §3 fits 80x24 with TASK-34100.12's short tier: Quick and Full Ready, the dashboard, the tldw server step and the single-step sheet. CI checks 80x24, 100x30, 120x40 and 200x60 (TASK-34100.12 AC#16), each in glyph mode and ASCII mode.
 - **Screen readers and SSH.** `tldw-cli setup --plain` (D10) is the supported path: line-oriented, no redraws, and words before glyphs. It is found from `--help` and from a line printed before the TUI starts. v1's gap (areas not changeable in plain mode) is stated in D10, and F13b closes it.
-- **Cognitive load.** Quick has three decisions: track, provider with key, and model. The key's storage place is a sentence, not a fourth decision, unless the user asks to change it. Ready docks at most three exits on first run. Choice labels lead with their keyword, so truncation never hides it (TASK-34100.12 AC#1).
+- **Cognitive load.** Quick has three decisions: track, provider with key, and model. The key's storage place is one line with a default, not a fourth decision; choosing the keychain is optional, and encryption is only named there. Ready docks at most three exits on first run. Choice labels lead with their keyword, so truncation never hides it (TASK-34100.12 AC#1).
 
 ---
 
@@ -1872,7 +1905,7 @@ The engineering review found that the shape rests on seams that don't exist yet.
 | Protect on Quick | always (TASK-21148) | a Ready option when a plain-text key was stored in this run | F5 |
 | Re-run | Welcome, `rerun=True` (`app_command_providers.py:982`, `app.py:4167`, `SS:31206`) | Review your setup, chosen by the usable-provider predicate | F11, after TASK-34100.10 and F0 |
 | Server | Settings only, collapsed (`SS:17648-17681`) | Ready row + next step + Full step + Settings main body | F1–F4, F6 |
-| Keys | config.toml, plain or encrypted | keychain-first for new keys; env keys never stored; existing keys untouched until moved | F12a, F12b |
+| Keys | config.toml, plain or encrypted | config.toml stays the default and the key line says whether it is plain text; the system keychain is an option at each key field where one is detected; env keys never stored; keys move to or from the keychain only on request | F12a, F12b |
 | CLI | `recovery` only (`cli.py:30-33`) | `setup`, `--plain` | F13, F13b |
 
 - **Users with a completed setup** see no change until they re-run setup (the dashboard), or press Speak or Dictate with nothing set up (the sheet).
@@ -1890,11 +1923,11 @@ The engineering review found that the shape rests on seams that don't exist yet.
   - a new "Setting up from the command line" section covers D10.
 
   The page's "Verified against" header (`:3`) and its italic stamps go, per CLAUDE.md (owned by TASK-34100.15 AC#7).
-- **Backlog edits made on approval, before the affected siblings start (all are To Do):**
+- **Backlog edits made on approval, before the affected siblings start (all were To Do). Applied on 2026-10-03:**
   - task-28019 is narrowed to its AC#3, and TASK-34100.10's coordination note is corrected (§0.4);
   - **TASK-34100.10 AC#1** is narrowed to the entry contract, prefill, "(current)" marks and Cancel-to-origin, so .10 does not build a header body that F11 replaces (D7);
   - **TASK-34100.10 AC#14**'s "New note" becomes "Write a note" (D4);
-  - **TASK-34100.6 AC#21** is amended so that the environment-key choice and the storage choice are one control, with the environment as the default (D9);
+  - **TASK-34100.6 AC#21** is amended so that the environment-key choice and the storage choice are one control, with the environment as the default, and a different typed key stored like any other key: config.toml by default, the keychain only on request (D9);
   - **TASK-34100.15 AC#3**'s example tracker labels change "Protect keys" to "Keys", and add "tldw server" (§3.0);
   - TASK-21148 gets a note that AC#5's mechanism is superseded by rule S1;
   - TASK-34100.13 AC#15 points its time line at D1's copy.
@@ -1913,7 +1946,7 @@ The engineering review found that the shape rests on seams that don't exist yet.
 | D6 What's next, arrival, sheets | the Console sheet never accepts a key | n/a | the list is computed from config | n/a | n/a | the Voice step's strengths (the same step state) |
 | D7 Dashboard | only a step's Save writes | never re-asked | every row force-reloaded | n/a | Done returns to the origin | resume and preview safety; the one-wizard guard |
 | D8 Documents first | writes nothing but completion, the deferral flag and the consent default | recorded by the finish path, never a modal | n/a | kept on the same screen | the card shows when Dee opens Console | Skip stays one gesture |
-| D9 Keychain-first | the keychain write happens only on Save; no writer persists an overlay value; drafts refuse secret fields | n/a | the Keys row comes from the resolved source | n/a | n/a | env keys never stored; ADR-029 private files |
+| D9 Key storage (keychain optional) | a typed key is saved only on Save, as today; the keychain write happens only on Save after the user chose it, and a keychain failure never writes config.toml; no writer persists an overlay value; drafts refuse secret fields | n/a | the Keys row comes from the resolved source | n/a | n/a | env keys never stored; ADR-029 private files; storage unchanged for anyone who never chooses the keychain |
 | D10 Plain CLI | getpass or env only; never argv; never echoed; refuses a terminal that can't hide input | asked once, default No | Ready lines re-read from disk | the recovery hint is printed | n/a | robust basics (paths with spaces, bounded waits) |
 | D11 Deferred | n/a | n/a | n/a | unaffected | n/a | none |
 
@@ -1966,7 +1999,10 @@ Every test below is **RED-verified**: it fails on the pre-change code, then pass
   - every exit stops a running test without a notice;
   - replies with ANSI/OSC sequences and Rich markup render as plain text.
 - **Keychain.** Run the credential owner against keyring's fail backend (unavailable), a locked fake (interaction not allowed) and an in-memory backend, which the injectable secure-backend predicate admits. Check that:
-  - the save order holds: a config-write failure deletes the item, and a keychain failure never writes plain text;
+  - **with no choice made, nothing changes:** a typed key is saved to config.toml exactly as today (encrypted when encryption is on), no keychain item is read or written, and the keychain button appears only when detection finds a secure backend;
+  - the canary runs only after the user chooses the keychain;
+  - the save order holds: a config-write failure deletes the item, and a keychain failure, at the canary or the save, never writes the key to config.toml;
+  - a move in either direction leaves exactly one live copy, and a failed step leaves the key where it was (a failed delete after a move to config.toml leaves an orphan, never two live sources);
   - the four resolution states appear, and a timeout is never cached;
   - TTL refresh works across **two processes** (a key rotated in one is used by the other at its next send);
   - a 401 invalidates the entry;
@@ -1991,7 +2027,7 @@ No module-size or ADR-097 ratchet rises. The engineering review measured the sta
 | `Chat/console_chat_controller.py` (`:97`) | 31,653 / 29,367 | **over by 2,286 (red on dev)** | F9's seams go in new modules. F9 must not grow it |
 | `Chat/console_chat_store.py` (`:98`) | 22,491 / 22,344 | **over by 147 (red on dev)** | as above |
 | Boot CSS (`MAX_BOOT_PARSED_CSS_BYTES`, `Tests/Performance/test_boot_css_byte_budget.py:117`) | 607,951 / 608,090 bytes | about 140 bytes | Setup CSS loads per screen, never into the boot sheets (§4.7) |
-| Boot-import and UI-ready censuses (`Tests/Performance/boot_budget_snapshots/`) | `keyring` absent from both | — | `keyring` is imported after first paint, and only when a keychain credential exists (D9) |
+| Boot-import and UI-ready censuses (`Tests/Performance/boot_budget_snapshots/`) | `keyring` absent from both | — | `keyring` is imported only after first paint: at launch only when a keychain-held credential exists, and otherwise only by the detection worker when a key field is shown (D9) |
 
 The two Console rows are already red on dev. This spec does not fix them, but it must not make them worse, so F9a's spike reports and stops if any seam needs to touch them.
 
@@ -2020,12 +2056,14 @@ Every slice is verified live on a fresh isolated profile, with `TLDW_CONFIG_PATH
 | Dee | Library Import in 3 keys; no modal; config diff only in `[first_run]` and `[model_catalog]`; a later "Run setup" opens Quick at Connect |
 | Riley re-run | palette → change model in ≤ 6 actions (a palette search counts as one); config diff only `chat_defaults.model` (+ provider model); the env key is never written anywhere |
 | Real tldw_server | step success; then 401 with a wrong token, a wrong port (not tldw), the server stopped (unreachable), and a forced bind failure (config.toml restored); Settings shows the same binding |
-| macOS Keychain, local session | key stored; relaunch through both entry points; readiness ✓; config.toml has no key; the "python3 wants to use…" prompt answered both ways, including "Deny" (the step stays put, no plain text) |
-| macOS over SSH (locked login keychain) | the canary fails; keychain option disabled with its reason; plain-text or env default |
+| macOS, no storage choice made | the key is in config.toml exactly as before this change (plain text, then encrypted after "Encrypt saved keys…"); nothing in the keychain; no access prompt at any point |
+| macOS Keychain chosen, local session | key stored; relaunch through both entry points; readiness ✓; config.toml has no key; the "python3 wants to use…" prompt answered both ways, including "Deny" (the step stays put, nothing saved anywhere) |
+| macOS over SSH (locked login keychain) | choosing the keychain runs the canary, which fails with its reason; nothing is saved until the user tries again or keeps the key in config.toml |
 | Windows (Credential Manager) | key stored and resolved; a long JSON credential split into parts, or refused with its reason |
 | Desktop Linux, GNOME Keyring unlocked and locked | stored and resolved when unlocked; "Waiting for … — answer its prompt" when locked, and Check again works without a restart |
-| Headless Linux (container, no Secret Service) | keychain option disabled with its reason; plain-text fallback; plain mode exits 0 |
+| Headless Linux (container, no Secret Service) | no keychain offered, with its reason; the key saved in config.toml; plain mode exits 0 |
 | Two chatbook instances, key rotated in one | the other uses the new key at its next send |
+| Move a key to the keychain and back (macOS, Windows, GNOME Keyring) | each move leaves exactly one live copy; the config.toml diff touches only that provider's key and `credential_source` |
 | VoiceOver on macOS Terminal, NVDA on Windows Terminal or Orca on GNOME Terminal, with `--plain` | every prompt read in order; the key prompt silent; "Received a key ending …" read; exit code 0 |
 | One session with a person who uses a screen reader daily | completes plain Quick unaided; their notes are recorded in the slice's Implementation Notes |
 
@@ -2048,38 +2086,38 @@ Evidence goes in each follow-up's Implementation Notes, never in the User Guide.
   - F7;
   - F9b: "Setup can send a test message";
   - F11;
-  - F12a: "New API keys are stored in your system keychain";
+  - F12a: "API keys can be kept in your system keychain";
   - F13.
 
 ---
 
-## 10. Phased implementation: proposed follow-up tasks
+## 10. Phased implementation: follow-up tasks
 
-These are filed under TASK-34100 **only after approval**. Their IDs are assigned against `origin/dev` at filing time (lessons-backlog-hygiene). Every task carries the programme's ACs:
+Filed on 2026-10-03, after approval, as subtasks of TASK-34100 numbered in the order of work below, so that every task depends only on lower ids. The ids were checked against every remote ref and worktree before filing (lessons-backlog-hygiene). Every task carries the programme's ACs:
 - live verification on a fresh isolated profile through the real app, with real providers and a real llama.cpp server, never mock servers, and the evidence in Implementation Notes;
 - new behaviour covered by RED-verified tests (they fail on the pre-change code), with no module-size or ADR-097 ratchet raised;
-- the matching `Docs/User_Guide/` page updated, with no "Verified against" stamps.
+- the matching `Docs/User_Guide/` page updated where behaviour changed, with no "Verified against" stamps.
 
-| # | Slice | Decision | Size | Depends on | Notes |
-|---|---|---|---|---|---|
-| F1 | Settings ▸ Overview: move "Switch Source / Server" into the main body as a tldw server row | D3.5 | S | — | Cheapest; independent |
-| F3 | One runtime-source coordinator, with rollback on a failed bind, and a shared app-free candidate probe (unreachable / 401 / not tldw / TLS / policy) using the bound client's TLS settings. Used by `ServerSwitchModal` and Settings. First task: record exactly what Sync v2 preparation sends | D3.4 | M | — | New module. Settings' behaviour is unchanged except for clearer probe copy and the rollback |
-| F0 | Enablers: the setup core in `tldw_chatbook/Setup/` (tracks, `SetupSession` reducer, pure Provider/Model state, commit builders, `has_usable_chat_provider`); the `SetupStepHost` protocol with capabilities; the exit-route registry moved out of `app.py`; the setup palette provider module; the import-purity test | §4.7 (1–4) | L | .1 | No user-visible change. Unblocks F2, F7, F8, F11, F13 |
-| F2 | Summary/Ready: an always-present tldw server row from `RuntimePolicyContext` | D3.1 | S | .1 | Lands on the extracted Summary, so no FRSW growth |
-| F4 | Ready next step "Connect a tldw server… (if you run one)" | D3.2 | S | F2, F3 | |
-| F8 | Ready layout: the four-state verdict region, one-row nav with ≤ 3 exits, What's next with `→` and its short-tier collapse, the legend, Data and Config, Esc inert, short exit labels | D4, D6.1 | M | .9 AC#10, .12, F0 | Comes **before** F5, so Quick never loses its encryption offer. Rewrites the five-actions live-contract test |
-| F5 | Quick = 4 steps; Voice → Full; Protect off Quick; Ready's "Encrypt saved keys…" and "Hear replies aloud…"; draft migrator v2 (in memory, persisted at the next checkpoint); `last_track`; rewrite the six-step pins; Welcome copy and the Reduce motion row | D1 | M | .1, .4, .8, .9, F0, F8 | Supersedes TASK-21148 AC#5 (note added) |
-| F7 | Documents-first Welcome choice through the single finish path; `ai_setup_deferred` and the `deferred_ai` mode | D8 | M | .10 (finish path, consent default), F0 | Takes task-28019 AC#1–#2; task-28019 keeps only AC#3 |
-| F11 | Single-step host, the Review your setup dashboard with the verdict region, the entry predicate, Add another provider, palette commands, row deep links, entry labels | D7 | L | .10, .9, .15, F0, F8 | Replaces the header body that .10 AC#1 no longer builds |
-| F6 | Full = 11 with the tldw server step; Save and finish with defaults on Model; Finish with defaults on 4–10; final order; the "Keys" title | D2, D3.3 | L | F3, F0, .13, .15 | |
-| F9a | Console probe-turn seams, as a spike first: the `SETUP_PROBE` origin, the turn-scoped probe profile, the viewless streaming observer, the prepare-only estimate. All in new modules | D5 | M | .2, .5 AC#4/#7/#8 | Stops and reports if a seam needs an over-budget Console module |
-| F9b | Say hello UI on Ready and the dashboard: consent line, model-aware cap, the auto-run allowlist, the failure table, plain-text rendering, a new chat on Start chatting | D5 | L | F9a, F8, F11, .3 | |
-| F10 | Arrival line content; Speak and Dictate setup sheets in Console, with host capabilities | D6.2–3 | M | .5 AC#11, .8, .13, F11 | First task records today's Speak and Dictate behaviour |
-| F12a | Keychain credential store: canary probe, scope id, provenance overlay, post-first-paint resolution with four states, writer guard, save order, Connect and Settings storage line, environment default (.6 AC#21 amended) | D9 | L | .4, .6, ADR-012/029 amendments approved | The server token goes keychain-only when the keychain is secure (ADR-033 note) |
-| F12b | Move to keychain (from plain and `enc:`), orphan handling, ADR-126 backup adapter and scope-id remap, the Windows part scheme | D9 | M | F12a | |
-| F13 | `tldw-cli setup` and `--plain` v1: Welcome, Connect, Model, key storage, the app-free verdict, plain review of Provider/Model/Keys, `quit`, getpass hardening, discoverability | D10 | L | F0, F5; F12a optional | No Say hello, no server step |
-| F13b | Plain renderers for tldw server (save now, bind at next launch through the coordinator) and the other Full steps | D10 | M | F13, F3, F6 | Filed together with F13, so v1's accessibility gap has an owner |
-| — | Non-interactive setup and settings export | D11 | — | — | **Not filed** (deferred). Reopen condition in D11 |
+| # | Task | Slice | Decision | Size | Depends on | Notes |
+|---|---|---|---|---|---|---|
+| F1 | TASK-34100.18 | Settings ▸ Overview: move "Switch Source / Server" into the main body as a tldw server row | D3.5 | S | — | Cheapest; independent |
+| F3 | TASK-34100.19 | One runtime-source coordinator, with rollback on a failed bind, and a shared app-free candidate probe (unreachable / 401 / not tldw / TLS / policy) using the bound client's TLS settings. Used by `ServerSwitchModal` and Settings. First task: record exactly what Sync v2 preparation sends | D3.4 | M | — | New module. Settings' behaviour is unchanged except for clearer probe copy and the rollback. Server-token storage is unchanged (D3.4) |
+| F0 | TASK-34100.20 | Enablers: the setup core in `tldw_chatbook/Setup/` (tracks, `SetupSession` reducer, pure Provider/Model state, commit builders, `has_usable_chat_provider`); the `SetupStepHost` protocol with capabilities; the exit-route registry moved out of `app.py`; the setup palette provider module; the import-purity test | §4.7 (1–4) | L | .1 | No user-visible change. Unblocks F2, F7, F8, F11, F13 |
+| F2 | TASK-34100.21 | Summary/Ready: an always-present tldw server row from `RuntimePolicyContext` | D3.1 | S | .1 | Lands on the extracted Summary, so no FRSW growth |
+| F4 | TASK-34100.22 | Ready next step "Connect a tldw server… (if you run one)" | D3.2 | S | F2, F3 | |
+| F8 | TASK-34100.23 | Ready layout: the verdict region, one-row nav with ≤ 3 exits, What's next with `→` and its short-tier collapse, the legend, Data and Config, Esc inert, short exit labels | D4, D6.1 | M | .2, .9 AC#10, .12, F0 | Comes **before** F5, so Quick never loses its encryption offer. Rewrites the five-actions live-contract test |
+| F5 | TASK-34100.24 | Quick = 4 steps; Voice → Full; Protect off Quick; Ready's "Encrypt saved keys…" and "Hear replies aloud…"; draft migrator v2 (in memory, persisted at the next checkpoint); `last_track`; rewrite the six-step pins; Welcome copy and the Reduce motion row | D1 | M | .1, .4, .8, .9, F0, F8 | Supersedes TASK-21148 AC#5 (note added on approval) |
+| F7 | TASK-34100.25 | Documents-first Welcome choice through the single finish path; `ai_setup_deferred` and the `deferred_ai` mode | D8 | M | .10 (finish path, consent default), F0 | Takes task-28019 AC#1–#2; task-28019 keeps only AC#3 |
+| F11 | TASK-34100.26 | Single-step host, the Review your setup dashboard with the verdict region, the entry predicate, Add another provider, palette commands, row deep links, entry labels | D7 | L | .10, .9, .15, F0, F8 | Replaces the header body that .10 AC#1 no longer builds |
+| F6 | TASK-34100.27 | Full = 11 with the tldw server step; Save and finish with defaults on Model; Finish with defaults on 4–10; final order; the "Keys" title | D2, D3.3 | L | F3, F0, .13, .15 | |
+| F9a | TASK-34100.28 | Console probe-turn seams, as a spike first: the `SETUP_PROBE` origin, the turn-scoped probe profile, the viewless streaming observer, the prepare-only estimate. All in new modules | D5 | M | .2, .5 AC#4/#7/#8 | Stops and reports if a seam needs an over-budget Console module |
+| F9b | TASK-34100.29 | Say hello UI on Ready and the dashboard: consent line, model-aware cap, the auto-run allowlist, the failure table, plain-text rendering, a new chat on Start chatting | D5 | L | F9a, F8, F11, .3 | |
+| F10 | TASK-34100.30 | Arrival line content; Speak and Dictate setup sheets in Console, with host capabilities | D6.2–3 | M | .5 AC#11, .8, .13, F11, F9b | First task records today's Speak and Dictate behaviour. F9b is a dependency because the arrival line quotes the test reply |
+| F12a | TASK-34100.31 | Optional keychain storage for provider keys: the storage line (config.toml by default, plain text named, encryption named), backend detection, a canary on choice, scope id, provenance overlay, post-first-paint resolution with four states, writer guard, save order with no silent fallback, environment default (.6 AC#21 amended) | D9 | L | .4, .6 (ADR-012/029 amendments applied 2026-10-03) | config.toml stays the default (owner ruling Q3). Server-token storage is unchanged |
+| F12b | TASK-34100.32 | Moves on request in both directions (to the keychain from plain and `enc:`, and back to config.toml), orphan handling, ADR-126 backup adapter and scope-id remap, the Windows part scheme | D9 | M | F12a | |
+| F13 | TASK-34100.33 | `tldw-cli setup` and `--plain` v1: Welcome, Connect, Model, key storage, the app-free verdict, plain review of Provider/Model/Keys, `quit`, getpass hardening, discoverability | D10 | L | F0, F5; F12a optional | No Say hello, no server step |
+| F13b | TASK-34100.34 | Plain renderers for tldw server (save now, bind at next launch through the coordinator) and the other Full steps | D10 | M | F13, F3, F6 | Filed together with F13, so v1's accessibility gap has an owner |
+| — | — | Non-interactive setup and settings export | D11 | — | — | **Not filed** (deferred). Reopen condition in D11 |
 
 **Order of work.**
 1. **F1, F3.** Independent; Wave A.
@@ -2090,7 +2128,7 @@ These are filed under TASK-34100 **only after approval**. Their IDs are assigned
 6. **F7, F11, F6.**
 7. **F9a (spike), then F9b.**
 8. **F10.**
-9. **F12a, then F12b.** F12a can run in parallel from step 4 onward, once its ADR amendments are approved.
+9. **F12a, then F12b.** F12a can run in parallel from step 4 onward; its ADR amendments were applied on 2026-10-03.
 10. **F13, then F13b.**
 
 Each slice can merge on its own once F0 exists, provided it states its CSS bytes and module-size deltas.
@@ -2103,12 +2141,12 @@ Each slice can merge on its own once F0 exists, provided it states its CSS bytes
 |---|---|---|
 | K1 | Say hello costs more than users expect (reasoning models, expensive models) | The cost line is computed from the probe request and leads with money; the cap is model-aware; cloud never auto-runs; dispatched tokens are asserted against the estimate |
 | K2 | Running a Console turn from the wizard couples setup to Console internals | The viewless runtime exists. F9a is a spike in new modules, through the public submit path and a new origin; it never uses controller internals |
-| K3 | Keychain backends prompt, hang or are locked (the macOS access prompt, a locked Secret Service, SSH) | A canary probe in a worker; four resolution states; timeouts never cached; Check again; never on the UI loop or under the config write lock |
+| K3 | Keychain backends prompt, hang or are locked (the macOS access prompt, a locked Secret Service, SSH) | Only users who chose the keychain ever meet one: detection touches no item, and the canary runs only on that choice, in a worker. Four resolution states; timeouts never cached; Check again; never on the UI loop or under the config write lock |
 | K4 | A key ends up in two stores, or in none | A fixed save order with compensation; a move removes nothing until the read-back matches; the census tests |
 | K5 | A new credential source reopens "readiness and spend disagree" | One overlay; the reader census; both allowlists gain "keychain" in one slice |
 | K6 | Reversing TASK-21148 brings back mid-flight count changes | INV-1 as a state-machine property over `SetupSession`; rule S2 |
 | K7 | Test churn from the six-step and five-exit pins hides real regressions | Rewrites are RED-verified; pins are rewritten, not deleted |
-| K8 | Setup's tldw server step prepares Sync v2 as a side effect | Disclosed before the choice; F3 records what is sent; owner ruling Q5 |
+| K8 | Setup's tldw server step prepares Sync v2 as a side effect | Disclosed before the choice; F3 records what is sent; the owner approved parity with Settings (Q5) |
 | K9 | The shared probe misreads a reverse proxy as "not a tldw server", or the auth check changes server state | Identity from health and docs-info only; live verification behind a proxy; "Save anyway" for unreachable or untested servers; the POST probe is replaced if a read endpoint exists |
 | K10 | Plain mode drifts from the TUI | One setup core and reducer; one INV-1 property; golden transcripts; one commit path |
 | K11 | A writer copies a keychain key into config.toml | The provenance overlay; the writer guard; the writer census and a load → save property test |
@@ -2120,22 +2158,31 @@ Each slice can merge on its own once F0 exists, provided it states its CSS bytes
 | K17 | Setup CSS breaks the boot CSS budget (about 140 bytes of headroom) | Per-screen sheets only (§4.7) |
 | K18 | An older build meets `credential_source = "keychain"` | It reads "no stored key" and fails closed; orphaned items are offered for use or removal (D9) |
 | K19 | The local auto-run evicts a loaded model or bills through a proxy | The positive allowlist; no generic endpoints; no keyed endpoints; only when nothing needs loading; first run only |
+| K20 | config.toml stays the default store (owner ruling Q3), so most typed keys remain readable from config.toml and every copy of it | Accepted by the owner. The key line says "plain text" where the key is typed and names encryption; Ready offers "Encrypt saved keys with a password…" whenever a run stored a plain-text key; Keys and Settings offer encryption and the keychain; TASK-34100.16's second-machine section warns that a copied config.toml carries its keys; D11's reopen condition watches for support cases from copied configs |
 
 ---
 
-## 12. Proposed ADR changes (drafts; not applied)
+## 12. ADR changes (applied 2026-10-03)
 
-ADR numbers collide in this repository. There are three files numbered 029, three numbered 033 and two numbered 097. So every reference below names the file, and a new ADR's number is assigned at filing and re-verified at merge (`backlog/docs/lessons-backlog-hygiene.md:762-786`). The files concerned are:
+ADR numbers collide in this repository. There are three files numbered 029, three numbered 033 and two numbered 097. So every reference below names the file.
+
+- **The new ADR is ADR-217.** The number was assigned on 2026-10-03 after a sweep of every remote ref, every local branch, every worktree's `backlog/decisions/` and every open PR's changed files: the highest number claimed anywhere was 212, and 217 leaves headroom. It is still re-verified at merge (`backlog/docs/lessons-backlog-hygiene.md:762-786`).
+- **The amendments are dated sections** appended to each ADR, with the Status line noting them. No earlier text was rewritten.
+- **The texts below are what was applied**, which is the revision-2 draft adjusted for the owner's Q3 ruling. The adjustments: ADR-217 item 7 and the ADR-012 and ADR-029 amendments make the keychain optional, and the ADR-033 amendment drops revision 2's keychain-only server token.
+
+The files concerned are:
+- `217-first-run-setup-shape-and-surfaces.md` (new);
 - `012-provider-credential-settings-boundary.md`;
 - `029-local-private-data-boundary.md`;
 - `033-application-session-state-ownership.md`;
 - `076-library-lifecycle-progressive-disclosure.md`;
-- `097-boot-budget-ratchets.md`;
 - `126-complete-local-backup-and-recovery.md`.
 
-### 12.1 New: ADR-NNN — First-run setup shape and surfaces
+`097-boot-budget-ratchets.md` is not amended: D9 keeps `keyring` out of the boot-import and UI-ready censuses, so the ratchet stands as written.
 
-> **Status:** Proposed (TASK-34100.17). **Date:** <approval date>.
+### 12.1 New: ADR-217 — First-run setup shape and surfaces
+
+> **Status:** Accepted 2026-10-03 (TASK-34100.17; the owner's approval is recorded in §15).
 >
 > **Decision.** One setup owner serves four surfaces: the first-run corridor, the re-run dashboard ("Review your setup"), single-step sheets, and `tldw-cli setup --plain`. The owner is the setup core in `tldw_chatbook/Setup/` (tracks, the `SetupSession` reducer, the step states and the commit builders), hosted through the `SetupStepHost` protocol. Single-step sheets serve dashboard Change, palette commands, Ready next steps and Console Speak/Dictate. Every surface uses the same track definitions, step states, commit builders and readiness verdict, and the same `has_usable_chat_provider` predicate to choose its first screen.
 >
@@ -2145,28 +2192,30 @@ ADR numbers collide in this repository. There are three files numbered 029, thre
 > 4. **The verdict.** Ready's verdict is computed through Console's shared readiness verdict, never a wizard copy, combined with this run's test outcome, with one mark per region. First run docks at most three exits and keeps both Library exits visible.
 > 5. **The test message.** The optional test is a Console probe turn: Console's admission and dispatch, a turn-scoped profile with no tools, retrieval, history or persona, and a saved conversation. It runs automatically only on first run, for allowlisted local engines on loopback, with no key and nothing to load. For every other provider it runs only on an explicit press, with the computed cost on screen. Start chatting opens a new conversation.
 > 6. **Re-runs.** A setup entry with a usable chat provider opens the dashboard. Only a step's own Save writes. Done returns to the origin. Console readiness links go to the control that fixes each reason.
-> 7. **Secrets.** Keys are never read from argv by any setup surface. An environment key is never stored. A keychain-sourced key is never written to config.toml by any writer.
+> 7. **Secrets.** Keys are never read from argv by any setup surface. An environment key is never stored. A new provider key is stored where it is today, in config.toml, unless the user chooses the system keychain for it; the keychain is never the default (owner ruling, 2026-10-03). A keychain-held key is never written to config.toml by any writer, and a keychain failure never writes it there.
 > 8. **Not offered.** Setup does not offer a Welcome router, a master tool switch, an embedding-model picker, a multi-tick provider list, per-provider base-URL overrides, an undo-this-session ledger, or an inline TLS-verification toggle. Non-interactive setup is deferred until users ask.
 >
 > **Consequences.** The wizard spec's "re-run and first-run are one code path" (2026-07-28 §1) is replaced by "one setup core, several surfaces". ADR-076's "the only startup/setup owner" now refers to this owner and all its surfaces.
 
-### 12.2 `012-provider-credential-settings-boundary.md` — amendment: the keychain as a credential store
+### 12.2 `012-provider-credential-settings-boundary.md` — amendment: the keychain as an optional credential store
 
-> **Amendment <date> (TASK-34100.17, D9).** The Consequences sentence "This ADR does not introduce encrypted credential storage, keyring migration…" is narrowed.
+> **Amendment 2026-10-03 (TASK-34100.17, D9 as amended by the owner's Q3 ruling).** The Consequences sentence "This ADR does not introduce encrypted credential storage, keyring migration…" is narrowed.
 >
-> - **Where keys may live.** Provider API keys may be stored in the OS keychain through one credential-store owner. Such a key is recorded as `credential_source = "keychain"`, with no `api_key` in config.toml, under a persisted `credential_scope_id`.
-> - **One choice, the environment first.** Settings ▸ Providers & Models and setup offer the same storage choice (keychain, encrypted config, plain config). Where an environment variable exists, using it unstored is the default. The keychain is the default where a canary probe succeeds.
+> - **The default is unchanged.** A new provider key is stored as today, under `api_settings.<provider>` in config.toml, and the config writer encrypts it when password encryption is on.
+> - **The keychain is an option, never the default.** Where a secure OS keychain is detected, Settings ▸ Providers & Models and setup offer, at each key field, keeping that key in the keychain instead, through one credential-store owner. Such a key is recorded as `credential_source = "keychain"`, with no `api_key` in config.toml, under a persisted `credential_scope_id`.
+> - **The environment first.** Where an environment variable exists, using it unstored is the default. Storage applies only to a different key the user types.
 > - **Precedence keeps its shape.** A stored credential (keychain or config) outranks the environment variable, which outranks legacy `[API]`.
 > - **Resolution.** Keychain values are resolved after first paint, off the UI loop, into one provenance overlay that every reader uses, so spend and readiness read one value. No writer persists an overlay value.
-> - **Moves.** Existing keys move only on an explicit user action.
+> - **No silent fallback.** When the user chose the keychain and it fails, the key is not written to config.toml unless the user then chooses that.
+> - **Moves.** Keys move to or from the keychain only on an explicit user action.
 > - **Unchanged.** Console still never accepts or displays a key (the model-configuration redesign's owner ruling, task-33008 AC#4).
 
-### 12.3 `029-local-private-data-boundary.md` — amendment: the OS keychain inside the private-data boundary
+### 12.3 `029-local-private-data-boundary.md` — amendment: the OS keychain as an opt-in location inside the private-data boundary
 
-> **Amendment <date> (TASK-34100.17, D9).** The rejected alternative "Replace config TOML with keyring/encrypted storage" is revisited, for provider keys only.
+> **Amendment 2026-10-03 (TASK-34100.17, D9 as amended by the owner's Q3 ruling).** The rejected alternative "Replace config TOML with keyring/encrypted storage" stays rejected: config.toml, an owner-only file, remains the default location for provider keys. What changes is narrower.
 >
-> - **Permitted location.** The OS keychain becomes a permitted location for provider credentials.
-> - **Which keychains count.** Only secure backends that pass a write/read/delete canary count, from the `runtime_policy/server_credentials.py` allowlist: macOS, Windows, Secret Service, libsecret and KWallet. Fail, null, plaintext and file backends never count. Where no secure backend exists, keys fall back to the owner-only config.toml, as the user's explicit choice.
+> - **Permitted location.** The OS keychain becomes a permitted location for provider credentials, per key and only by the user's choice.
+> - **Which keychains count.** Only secure backends from the `runtime_policy/server_credentials.py` allowlist are offered: macOS, Windows, Secret Service, libsecret and KWallet. A choice is confirmed by a write/read/delete canary before anything is saved. Fail, null, plaintext and file backends never count.
 > - **Reads.** Keychain reads run off the UI loop and outside the config write lock, with a timeout and a short TTL. A timeout is never cached.
 > - **Never copied out.** A keychain value is never logged, never written to a draft or diagnostic, and never written back to config.toml by any writer.
 > - **Threat model.** The keychain protects against copying, syncing, backing up and sharing config.toml. It does not protect against software running as the user.
@@ -2174,20 +2223,20 @@ ADR numbers collide in this repository. There are three files numbered 029, thre
 
 ### 12.4 `076-library-lifecycle-progressive-disclosure.md` — amendment: more setup surfaces, one owner
 
-> **Amendment <date> (TASK-34100.17).**
+> **Amendment 2026-10-03 (TASK-34100.17).**
 >
-> - **One owner.** "The existing application first-run wizard remains the only startup/setup owner" now means the setup owner of ADR-NNN. That owner presents a first-run corridor, a re-run dashboard, single-step sheets and a plain-text CLI, all on one setup core. None of them is a second onboarding wizard.
+> - **One owner.** "The existing application first-run wizard remains the only startup/setup owner" now means the setup owner of ADR-217. That owner presents a first-run corridor, a re-run dashboard, single-step sheets and a plain-text CLI, all on one setup core. None of them is a second onboarding wizard.
 > - **Library unchanged.** Library still reads only the startup admission fact, and never writes or reinterprets setup completion. The documents-first exit lands on Library Import through the existing exit route, and Library's starter lifecycle is unchanged.
 
 ### 12.5 `033-application-session-state-ownership.md` — confirm, with one clarifying amendment
 
 > **Confirmed.** `RuntimePolicyContext` stays the sole authority for the active runtime source.
 >
-> **Amendment <date> (TASK-34100.17, D3).**
+> **Amendment 2026-10-03 (TASK-34100.17, D3).**
 >
 > - **One coordinator.** "Settings saves the changed URL and token … and passes it to one app-level coordinator" applies to every setup surface that binds: Settings, the setup tldw server step, and Ready's "Connect a tldw server…". They call the same coordinator, and none of them writes `[tldw_api]` or the binding itself.
 > - **Rollback.** The coordinator restores the prior `[tldw_api]` values, and removes any token it stored, when the bind fails. "A failed commit leaves every observer on the old binding" therefore holds on disk as well.
-> - **The token.** With a secure OS keychain, the server token is stored only there, with no config.toml copy. Without one, the existing config.toml fallback stands.
+> - **The token.** Server-token storage is unchanged: the coordinator stores the token where Settings stores it today. (Revision 2's draft stored it only in a secure keychain; that was withdrawn with the owner's Q3 ruling that keychain storage is optional.)
 > - **Plain mode.** `tldw-cli setup --plain` has no app, so it saves a server for activation at the next launch through the same coordinator (F13b). It never binds by itself.
 > - **Sync.** Binding a server prepares the Sync v2 profile on every surface alike, disclosed before the choice (owner ruling Q5).
 
@@ -2195,7 +2244,7 @@ ADR numbers collide in this repository. There are three files numbered 029, thre
 
 > **Confirmed.** Restore stays reachable from first-run setup (Decision 1: "exposed through canonical F9 Settings, first-run setup, and a dependency-light pre-bootstrap recovery launcher"). It stays on Welcome, and plain mode names the recovery command.
 >
-> **Amendment <date> (TASK-34100.17, D9).** Provider keys held in the OS keychain are Chatbook-owned keyring values under Decisions 5 and 8: excluded from portable export by default, and captured in local rollback archives through a typed owner adapter. Under Decision 9, isolated restore remaps the persisted `credential_scope_id`, so a restored profile never reads or overwrites another profile's keys.
+> **Amendment 2026-10-03 (TASK-34100.17, D9).** Provider keys a user chose to keep in the OS keychain are Chatbook-owned keyring values under Decisions 5 and 8: excluded from portable export by default, and captured in local rollback archives through a typed owner adapter. Under Decision 9, isolated restore remaps the persisted `credential_scope_id`, so a restored profile never reads or overwrites another profile's keys.
 
 ---
 
@@ -2276,17 +2325,17 @@ ADR numbers collide in this repository. There are three files numbered 029, thre
 | #4 Spec exists; claims cited | this file; §13 |
 | #5 Full list and order; not-now defaults; Finish with defaults | D2; §3.3 |
 | #6 Ready screen | D4; §3.6 |
-| #7 Say hello | D5. "Carried into Console as the first turn" is narrowed to "quoted by the arrival line, kept in History" (Q2) |
-| #8 Re-run dashboard | D7; §3.7. "Console readiness deep links landing on the matching row" is narrowed to TASK-34100.10 AC#8's routing (Q9) |
-| #9 Keychain-first | D9; §3.2; §4.6 |
+| #7 Say hello | D5. "Carried into Console as the first turn" is narrowed to "quoted by the arrival line, kept in History", and "runs by default for local providers" to first-run, allowlisted local engines with nothing to load (Q2, approved) |
+| #8 Re-run dashboard | D7; §3.7. "Console readiness deep links landing on the matching row" is narrowed to TASK-34100.10 AC#8's routing (Q9, approved) |
+| #9 Key storage | D9; §3.2; §3.5; §4.6. The owner's Q3 ruling replaces "keychain-first" with "config.toml by default, the system keychain on request": the keychain is not "(recommended)", and encryption is named at the key field and chosen through TASK-34100.4's lifecycle rather than as a per-key option |
 | #10 What's next, arrival line, sheets | D6; §3.8–3.9 |
 | #11 Plain-text setup | D10; §3.10–3.11 |
 | #12 Non-interactive setup | D11: deferred, with its reopen condition |
 | #13 Preserve | §7 |
-| #14 ADR changes | §12 |
-| #15 Rejected-on-purpose rulings | D12 (owner rulings pending) |
-| #16 Owner approval recorded | §15 (pending) |
-| #17 Follow-up tasks | §10 (to file after approval) |
+| #14 ADR changes | §12 (applied 2026-10-03: ADR-217 and five amendments) |
+| #15 Rejected-on-purpose rulings | D12 (all seven confirmed, 2026-10-03) |
+| #16 Owner approval recorded | §15 (2026-10-03) |
+| #17 Follow-up tasks | §10 (filed: TASK-34100.18–.34) |
 
 ---
 
@@ -2294,32 +2343,36 @@ ADR numbers collide in this repository. There are three files numbered 029, thre
 
 | Field | Value |
 |---|---|
-| Spec revision approved | — (pending; this is revision 2) |
-| Date | — |
-| Owner rulings on Q1–Q10 | — |
-| Owner rulings on D12 items 1–7 | — |
-| ADR drafts approved (§12) | — |
+| Date | 2026-10-03 |
+| The owner's ruling, verbatim | "yes to all of them except 3, it shoudl be optional" ("shoudl" [sic]: "should") |
+| What it means | Q1, Q2 (a)–(d), Q4, Q5, Q6, Q7, Q8, Q9 and Q10 are approved exactly as recommended. Q3 is **not** approved as written: keychain storage must be optional, not the default |
+| Spec revision approved | Revision 2, with D9 amended by the Q3 ruling. The amended text is **revision 3**, this file |
+| Decisions | D1–D8 and D10–D12 approved as written (D11 is the approved deferral, Q6). **D9 approved as amended by Q3:** new keys stay in config.toml by default (plain text, or encrypted when the user turns encryption on through TASK-34100.4's controls); the system keychain is offered at each key field only where a secure keychain is detected; environment keys are never stored; there is no automatic migration, and keys move to or from the keychain only on request; everything D9 specifies for keychain-held keys still applies to keys the user puts there |
+| Owner rulings on D12 items 1–7 | All seven confirmed (Q8) |
+| ADR changes (§12) | Approved and applied on 2026-10-03, adjusted for Q3: new ADR-217; dated amendments to `012-provider-credential-settings-boundary.md`, `029-local-private-data-boundary.md`, `033-application-session-state-ownership.md`, `076-library-lifecycle-progressive-disclosure.md` and `126-complete-local-backup-and-recovery.md` |
+| Backlog edits (§6) | Applied on 2026-10-03 |
+| Follow-up tasks (§10) | Filed on 2026-10-03 as TASK-34100.18–.34 |
 
-Implementation does not start, and the §10 tasks are not filed, until this table is filled in and TASK-34100.17's notes record the same.
+TASK-34100.17's Implementation Notes record the same. Implementation proceeds only through the §10 tasks; no wizard code changes under TASK-34100.17 itself.
 
 ---
 
-## 16. Open questions for the owner
+## 16. Questions for the owner, and their outcomes
 
-Each question has a recommendation, and only owner-level calls are listed.
+Each question had a recommendation, and only owner-level calls were listed. The owner ruled on all ten on 2026-10-03 (§15).
 
-| # | Question | Recommendation |
-|---|---|---|
-| Q1 | Approve the 4-step Quick track (D1), superseding TASK-21148 AC#5 while keeping its stable-total guarantee as rule S1? | **Approve.** |
-| Q2 | Approve the Say hello policy (D5)?<br>(a) It auto-runs only on first run, for allowlisted local engines on loopback, with no key and nothing to load.<br>(b) Cloud and every other provider run only on an explicit press, with a money-first cost line and no extra dialog.<br>(c) Start chatting opens a **new** conversation. The test stays in History, and the arrival line quotes it. This narrows AC#7's "carried into Console as the first turn".<br>(d) The local auto-run writes a "Setup test" conversation without a press. | **Approve all four.** For (c), the alternative is to keep the test as the first turn but exclude it from context. That needs a per-message context-exclusion seam in Console's over-budget store, and still titles the user's first chat "Setup test". For (d), the alternative is to auto-run without saving, which loses the Moonshot persistence check [gap-02] on exactly the path that auto-runs. |
-| Q3 | Make the system keychain the default store for new provider keys (D9), with an environment key always used unstored when present, an honest plain-text fallback where no keychain works, and no automatic migration of existing keys? | **Approve.** It removes the daily-password trade-off for most users without touching anyone's existing setup. |
-| Q4 | Leave "Remember on this device" (and the recall check) out of the master-password path? | **Leave out.** The keychain-first default covers the need, and TASK-34100.4's reset makes a forgotten password recoverable. |
-| Q5 | Should binding a tldw server from setup also prepare the Sync v2 profile, as Settings does today (D3)? It sends at least this computer's name to the server. | **Yes, keep parity**, disclosed before the choice. Different behaviour in setup and Settings would split the runtime-source owner. If you'd rather setup didn't, the coordinator gains a "prepare sync" flag, and the step's sentence goes. |
-| Q6 | Defer non-interactive setup and the settings export (D11), reversing revision 1's "build it last"? | **Defer.** The report's verifiers advised it, the copy-config route works, and the CLI can't host the bind or the test. Reopen on the first user request for scripted setup, or the first support case from a copied config carrying keys. |
-| Q7 | Plain-text setup v1 scope (D10): Welcome, Connect, Model, key storage, the verdict and plain review of those areas; no test message; tldw server and the other Full steps in F13b, filed together with F13? | **Approve.** It gets screen-reader and SSH users to a working configuration first, and filing F13b with F13 gives the remaining gap an owner. |
-| Q8 | Confirm the seven "Rejected, on purpose" items (D12)? | **Confirm all seven.** |
-| Q9 | Console readiness links (D7): keep TASK-34100.10 AC#8's routing (only "no provider configured" opens setup; other reasons go to their own control) rather than landing on a dashboard row, narrowing TASK-34100.17 AC#8? | **Keep .10 AC#8.** The fixing control is one hop away, and a dashboard row is two hops with the same result. The dashboard keeps row deep links for setup's own entries (palette, Settings). |
-| Q10 | Front doors: the setup wizard stays the **boot offer** on a fresh profile, and task-33008's Get started card is the in-Console path for anyone who skipped, deferred AI or arrives without a working provider. Both read the shared verdict, and neither takes a key in Console. Confirm this split? | **Confirm.** The two serve different moments. Merging them would either put a corridor in Console or take the boot offer away from newcomers. |
+| # | Question | Recommendation | Outcome (2026-10-03) |
+|---|---|---|---|
+| Q1 | Approve the 4-step Quick track (D1), superseding TASK-21148 AC#5 while keeping its stable-total guarantee as rule S1? | **Approve.** | **Approved.** |
+| Q2 | Approve the Say hello policy (D5)?<br>(a) It auto-runs only on first run, for allowlisted local engines on loopback, with no key and nothing to load.<br>(b) Cloud and every other provider run only on an explicit press, with a money-first cost line and no extra dialog.<br>(c) Start chatting opens a **new** conversation. The test stays in History, and the arrival line quotes it. This narrows AC#7's "carried into Console as the first turn".<br>(d) The local auto-run writes a "Setup test" conversation without a press. | **Approve all four.** For (c), the alternative is to keep the test as the first turn but exclude it from context. That needs a per-message context-exclusion seam in Console's over-budget store, and still titles the user's first chat "Setup test". For (d), the alternative is to auto-run without saving, which loses the Moonshot persistence check [gap-02] on exactly the path that auto-runs. | **Approved, all four.** |
+| Q3 | Make the system keychain the default store for new provider keys (D9), with an environment key always used unstored when present, an honest plain-text fallback where no keychain works, and no automatic migration of existing keys? | **Approve.** It removes the daily-password trade-off for most users without touching anyone's existing setup. | **Not approved as written: "it should be optional."** New keys keep today's default storage, config.toml, which the user may protect with password encryption (TASK-34100.4). The keychain is offered at each key field only where a working secure keychain exists, with honest copy where it doesn't. Environment keys are still never stored. No automatic migration; moves to or from the keychain happen only on request. D9 is amended accordingly (revision 3) |
+| Q4 | Leave "Remember on this device" (and the recall check) out of the master-password path? | **Leave out.** Remembering the password in the keychain would give encrypted keys with no password at launch, which keeping the key itself in the keychain already gives, with fewer failure modes. Where no keychain works, there is nowhere to remember the password. TASK-34100.4's reset makes a forgotten password recoverable. *(Rationale restated in revision 3: revision 2 leaned on the keychain-first default, which Q3 withdrew. The conclusion holds without it, because the keychain stays available as D9's option.)* | **Approved: left out.** |
+| Q5 | Should binding a tldw server from setup also prepare the Sync v2 profile, as Settings does today (D3)? It sends at least this computer's name to the server. | **Yes, keep parity**, disclosed before the choice. Different behaviour in setup and Settings would split the runtime-source owner. If you'd rather setup didn't, the coordinator gains a "prepare sync" flag, and the step's sentence goes. | **Approved: keep parity, disclosed before the choice.** |
+| Q6 | Defer non-interactive setup and the settings export (D11), reversing revision 1's "build it last"? | **Defer.** The report's verifiers advised it, the copy-config route works, and the CLI can't host the bind or the test. Reopen on the first user request for scripted setup, or the first support case from a copied config carrying keys. | **Approved: deferred.** |
+| Q7 | Plain-text setup v1 scope (D10): Welcome, Connect, Model, key storage, the verdict and plain review of those areas; no test message; tldw server and the other Full steps in F13b, filed together with F13? | **Approve.** It gets screen-reader and SSH users to a working configuration first, and filing F13b with F13 gives the remaining gap an owner. | **Approved.** F13 and F13b are filed together (TASK-34100.33, .34) |
+| Q8 | Confirm the seven "Rejected, on purpose" items (D12)? | **Confirm all seven.** | **Confirmed, all seven.** |
+| Q9 | Console readiness links (D7): keep TASK-34100.10 AC#8's routing (only "no provider configured" opens setup; other reasons go to their own control) rather than landing on a dashboard row, narrowing TASK-34100.17 AC#8? | **Keep .10 AC#8.** The fixing control is one hop away, and a dashboard row is two hops with the same result. The dashboard keeps row deep links for setup's own entries (palette, Settings). | **Approved: .10 AC#8 kept.** |
+| Q10 | Front doors: the setup wizard stays the **boot offer** on a fresh profile, and task-33008's Get started card is the in-Console path for anyone who skipped, deferred AI or arrives without a working provider. Both read the shared verdict, and neither takes a key in Console. Confirm this split? | **Confirm.** The two serve different moments. Merging them would either put a corridor in Console or take the boot offer away from newcomers. | **Confirmed.** |
 
 ---
 
@@ -2399,3 +2452,26 @@ Two independent critiques of revision 1 were received the same day: one HCI revi
 - the TASK-34100.10 AC#14 exits, four on re-run, rather than three (D4).
 
 **Section numbering.** §3.11 (the non-interactive run) is replaced by the plain review transcript, and §4.5 is withdrawn with D11.
+
+### Revision 2 → revision 3 (owner ruling, 2026-10-03)
+
+The owner approved revision 2 on 2026-10-03 with one exception: "yes to all of them except 3, it shoudl be optional" (§15). Q3 asked to make the system keychain the default store for new provider keys, and the owner ruled it must be optional. Revision 3 applies that ruling and records the approval. Nothing else in the design changed.
+
+| Section | Change |
+|---|---|
+| Status, Summary for the owner | Approved status; the D9 row rewritten; "What changed in revision 3" added |
+| §0.2 G2, G5; §0.4 (.4 and .6 rows); §0.5 Sam, Ash | G5 restated as "kept where the user chooses, and the screen says where"; the Keys step's empty state also covers keychain keys |
+| D1 | Ready's "Encrypt saved keys with a password…" now shows for most cloud users, because a typed key is plain text by default; "Protection without a step" no longer relies on a keychain default |
+| D2 | The Keys step offers moves in both directions |
+| D3.4, D3 Preserve; §3.4; §4.3 | Server-token storage stays as Settings does it today. Revision 2's keychain-only token rested on the keychain-first D9, so it was withdrawn rather than carried over |
+| D9 | Rewritten: config.toml by default with a one-line, honest storage line that names encryption; the keychain offered per key where detected; detection touches no item and the canary runs only on choice; once chosen, the keychain is honoured or the step stays put; moves in both directions only on request; the "Remember on this device" rationale restated; new rejected alternatives (keychain default, encryption as a per-key choice, a canary for every user) |
+| D10; §2.1, §2.5; §3.10 | Plain mode offers the keychain as choice 2, after config.toml; no storage prompt where none is detected; the transcript shows Ash choosing the keychain |
+| §3.2 | Mockups redrawn: the default line, the encrypted variant, the disclosure after "Use macOS Keychain…" (two places, not three), no-keychain, and a keychain failure with Try again / Keep in config.toml instead. Each was re-measured against its stated size |
+| §3.5 | Keys states rewritten: "Keep as plain text" first and focused; a row for keychain-held keys with "Move to config.toml" |
+| §3.6, §3.7 | Ready Provider rows read "key in config.toml (plain text)", What's next leads with "Encrypt saved keys with a password…" where a plain-text key was stored, and a copy rule keeps the key's place when a row is shortened. The dashboard's Keys detail line explains both choices without recommending one. Every changed mockup was re-measured |
+| §4.3, §4.6, §4.7, §5, §6, §7 | Default writes stated; no scope id or items for a profile that never chose the keychain; detection vs canary; cognitive-load and migration rows updated |
+| §8.1, §8.2, §8.4 | Tests that nothing changes when no choice is made, that the canary waits for the choice, and that moves leave one live copy; the `keyring` import rule; live rows for the default path and for moves |
+| §9, §10 | Release note for F12a; follow-ups filed as TASK-34100.18–.34 with a Task column; F8 also depends on TASK-34100.2, and F10 on F9b |
+| §11 | K3 narrowed to users who chose the keychain; K20 added (config.toml stays the default) |
+| §12 | Applied as ADR-217 and five dated amendments; ADR-217 item 7 and the 012, 029 and 033 amendments adjusted for the ruling |
+| §14, §15, §16 | AC#9 mapping notes the ruling; the approval record filled in; an Outcome column for every question; Q4's rationale restated without the keychain default |
