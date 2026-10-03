@@ -13070,7 +13070,10 @@ class ConsoleChatController:
             )
             if (
                 live_session is not None
-                and not (continuation.prepared and continuation.prepared.preserve_composer)
+                and continuation.origin is not ConsoleSubmissionOrigin.AGENT_CHAT_START
+                and not (
+                    continuation.prepared and continuation.prepared.preserve_composer
+                )
                 and live_session.draft == continuation.clean_draft
             ):
                 live_session.draft = ""

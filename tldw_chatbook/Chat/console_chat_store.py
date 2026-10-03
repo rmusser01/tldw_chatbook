@@ -9822,6 +9822,8 @@ class ConsoleChatStore:
         if session is None or pending is None:
             return
         self._agent_handoff_writes.pop(session_id, None)
+        if pending["revision"] == revision:
+            session.draft = ""
         session.agent_handoff_state = "consumed"
         session.agent_handoff_revision = revision + 1
         # Typing after the accepted receipt belongs to the ordinary composer.

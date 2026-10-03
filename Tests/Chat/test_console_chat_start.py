@@ -1380,6 +1380,9 @@ async def test_visible_pending_handoff_persists_every_composer_edit(
             run_state_for=lambda _id: SimpleNamespace(status=ConsoleRunStatus.IDLE),
         ),
         _console_draft_spend_refresh=SimpleNamespace(route_edit=lambda **kwargs: None),
+        _console_runtime=lambda: SimpleNamespace(
+            has_custodied_turns=lambda session_id: False
+        ),
     )
     ChatScreen._on_console_composer_draft_changed(screen, SimpleNamespace(value=text))
     assert await store.drain_agent_handoff(target.id)

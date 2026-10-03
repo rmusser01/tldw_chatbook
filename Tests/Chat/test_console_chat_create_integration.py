@@ -1159,3 +1159,74 @@ def test_child_draft_observes_its_parent_turn_stop(child_new_chat_rig, before_pr
             outcome = controller.execute_agent_chat_create(prepared)
             assert not outcome["ok"] and outcome["kind"] == "approval_required"
     assert not controller._chat_creation_records
+
+
+def test_primary_remembered_bridge_still_confirms_each_child_request(
+    child_new_chat_rig,
+):
+    """A shared bridge memo must never inherit primary approval into a child."""
+    from tldw_chatbook.Agents.run_context import use_run_id, use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    _, new_chat = build_chat_create_tool_closures(
+        confirm=lambda prepared: controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        ),
+        execute=controller.execute_agent_chat_create,
+        prepare=controller.prepare_agent_chat_create,
+        session_id=source.id,
+        run_id="parent-message",
+    )
+    source.draft = "primary composer sentinel"
+    with use_run_id(actor.parent_run_id):
+        primary = new_chat({"title": "Primary", "opening_prompt": "primary draft"})
+        assert primary.ok, primary.error
+        remembered = new_chat(
+            {
+                "title": "Remembered",
+                "opening_prompt": "another",
+                "source_agent_kind": "subagent",
+            }
+        )
+        assert remembered.ok, remembered.error
+    assert len(cards) == 1
+    assert controller._chat_create_session_grants[source.id]
+    with use_run_actor(actor):
+        first = new_chat(
+            {
+                "title": "Child one",
+                "opening_prompt": "child one",
+                "source_agent_kind": "primary",
+            }
+        )
+        assert first.ok, first.error
+        second = new_chat({"title": "Child two", "opening_prompt": "child two"})
+        assert second.ok, second.error
+    assert len(cards) == 3
+    assert len({card["request_id"] for card in cards}) == 3
+    assert [card["agent_kind"] for card in cards] == ["primary", "subagent", "subagent"]
+    for card in cards[1:]:
+        assert card["run_id"] == actor.run_id
+        assert card["parent_run_id"] == actor.parent_run_id
+    for result, prompt in ((first, "child one"), (second, "child two")):
+        outcome = json.loads(result.content)
+        assert outcome["launch_status"] == "draft"
+        assert not db.get_messages_for_conversation(outcome["conversation_id"])
+        handoff = json.loads(
+            db.get_conversation_by_id(outcome["conversation_id"])["metadata"]
+        )["console_agent_handoff"]
+        assert handoff["draft"] == prompt and handoff["source_run_id"] == actor.run_id
+    assert source.draft == "primary composer sentinel"
+    assert controller.store.active_session_id == source.id
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )

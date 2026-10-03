@@ -44,6 +44,8 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+pytestmark = pytest.mark.bootstrap_profile
+
 from Tests.UI.background_signals import (
     await_background_task,
     wait_for_background_signal,
@@ -646,6 +648,9 @@ async def test_character_handoff_uses_current_canonical_defaults_not_stale_sessi
 ):
     card = _roleplay_card(name="Alba")
     screen = _character_screen(monkeypatch, card)
+    screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
+        "canonical-stale-model"
+    )
     store = screen._ensure_console_chat_store()
     stale = screen._session._default_console_session_settings()
     original = store.ensure_session(
