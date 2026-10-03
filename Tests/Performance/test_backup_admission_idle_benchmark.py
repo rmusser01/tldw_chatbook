@@ -27,6 +27,31 @@ def harness():
 
 
 def receipt(side, pair, opens):
+    task = {"identity": 1, "known": True, "running": True}
+    producers = {
+        "screen_identity": 2,
+        "runtime_identity": 3,
+        "maintenance_error_clear": True,
+        "monitor": dict(task),
+        "trace": dict(task),
+        "credential_timer": {
+            "identity": 4,
+            "known": True,
+            "active": True,
+            "interval": 0.25,
+            "repeat": None,
+            "task": dict(task),
+        },
+        "scheduler": {
+            "identity": 5,
+            "known": True,
+            "running": True,
+            "cancelled": False,
+            "finished": False,
+            "error_clear": True,
+            "task": dict(task),
+        },
+    }
     return {
         "side": side,
         "pair": pair,
@@ -49,6 +74,11 @@ def receipt(side, pair, opens):
         "ui_ready": True,
         "settled": True,
         "timers_live": True,
+        "producer_checks": {
+            "before": copy.deepcopy(producers),
+            "cutoff": copy.deepcopy(producers),
+        },
+        "uncovered_process_events": {},
         "retired": True,
         "supervisor_retired": True,
         "exit_code": 0,
@@ -133,6 +163,9 @@ def test_paired_comparison_uses_rates_and_retains_adverse_pairs():
         "bad_scope_close",
         "nan",
         "missing_ownership",
+        "cutoff_state_missing",
+        "cutoff_paused",
+        "uncovered_launch",
     ],
 )
 def test_incomplete_or_incompatible_receipts_cannot_qualify(damage):
@@ -191,6 +224,12 @@ def test_incomplete_or_incompatible_receipts_cannot_qualify(damage):
         run["elapsed_ns"] = float("nan")
     elif damage == "missing_ownership":
         run["outstanding_ownership"] = {}
+    elif damage == "cutoff_state_missing":
+        del run["producer_checks"]
+    elif damage == "cutoff_paused":
+        run["producer_checks"]["cutoff"]["credential_timer"]["active"] = False
+    elif damage == "uncovered_launch":
+        run["uncovered_process_events"] = {"os.fork": 1}
     assert harness().compare(runs)["qualified"] is False
 
 
@@ -614,7 +653,7 @@ def test_child_projection_accounts_for_cold_events_at_exact_window_cutoffs(
         )
 
 
-@pytest.mark.parametrize("known", [True, False])
+@pytest.mark.parametrize("known", [True, False, "same_argv_outside_helper"])
 def test_launch_observer_only_wraps_exact_known_helper_argv(
     tmp_path, monkeypatch, known
 ):
@@ -635,8 +674,8 @@ def test_launch_observer_only_wraps_exact_known_helper_argv(
         "assert sys.flags.isolated and sys.flags.no_site and len(sys.argv)==1\n"
         "assert Path(sys.argv[0]).resolve()==Path(__file__).resolve()\n"
         "assert os.getppid()==int(os.environ['_TLDW_PRIVATE_SQLITE_PARENT_PID'])\n"
-        "assert 'Tests.network_guard' in sys.modules\n"
-        "fd=os.open(os.devnull,os.O_RDONLY);os.close(fd)\n"
+        + ("assert 'Tests.network_guard' in sys.modules\n" if known is True else "")
+        + "fd=os.open(os.devnull,os.O_RDONLY);os.close(fd)\n"
     )
     monkeypatch.setattr(
         private_sqlite_process,
@@ -649,18 +688,35 @@ def test_launch_observer_only_wraps_exact_known_helper_argv(
     census.phase = "window"
     command = (
         [sys.executable, "-I", "-S", str(entry)]
-        if known
+        if known is not False
         else [sys.executable, "-I", "-S", "-c", "pass"]
     )
     started = module.time.monotonic_ns()
-    with ExitStack() as stack:
-        census.instrument(stack, source)
-        child = subprocess.Popen(
+    from tldw_chatbook.DB.private_sqlite_process import HelperLease
+
+    def original_start(cls):
+        return subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             env=environment,
+        )
+
+    monkeypatch.setattr(HelperLease, "start", classmethod(original_start))
+    with ExitStack() as stack:
+        census.install_audit()
+        census.instrument(stack, source)
+        child = (
+            HelperLease.start()
+            if known is True
+            else subprocess.Popen(
+                command,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=environment,
+            )
         )
         output, error = child.communicate(timeout=30)
     measured = {
@@ -670,11 +726,14 @@ def test_launch_observer_only_wraps_exact_known_helper_argv(
     }
     result = census.project_children(measured)
     assert child.returncode == 0 and output == error == b""
-    assert result["child_network_coverage"] == ("joined" if known else "unresolved")
-    if known:
+    assert result["child_network_coverage"] == (
+        "joined" if known is True else "unresolved"
+    )
+    if known is True:
         # Keep observer bootstrap costs as well as the entry's intentional open.
         assert measured["window"]["os_opens"] >= 1
         assert measured["parent_window"]["os_opens"] == 0
+        assert result["uncovered_process_events"] == {}
 
 
 @pytest.mark.parametrize("parent", ["actual", "wrong", "missing"])
@@ -733,3 +792,200 @@ def test_observer_runs_unchanged_entry_parent_predicate(tmp_path, parent):
     assert result.returncode == (0 if parent == "actual" else 1)
     assert marker.exists() == (parent == "actual")
     assert json.loads(receipt.read_text())["entry_stable"] is True
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        None,
+        "monitor",
+        "trace",
+        "scheduler",
+        "scheduler_error",
+        "timer_stop",
+        "timer_pause",
+        "timer_replace",
+        "maintenance_error",
+    ],
+)
+def test_live_window_rechecks_actual_producer_state_at_cutoff(monkeypatch, change):
+    from types import SimpleNamespace
+
+    from textual.timer import Timer
+    from textual.worker import Worker, WorkerState
+
+    module = harness()
+
+    class Node:
+        def post_message(self, message):
+            pass
+
+    async def run():
+        gate = asyncio.Event()
+        monitor = asyncio.create_task(gate.wait())
+        trace = asyncio.create_task(gate.wait())
+        timer = Timer(Node(), 0.25)
+        timer._task = asyncio.create_task(gate.wait())
+        scheduler = Worker(Node(), lambda: None)
+        scheduler._task = asyncio.create_task(gate.wait())
+        scheduler.state = WorkerState.RUNNING
+        app = SimpleNamespace(
+            _backup_maintenance_monitor_task=monitor,
+            _backup_maintenance_error=None,
+            scheduler_worker=scheduler,
+            screen=SimpleNamespace(
+                _console_credential_poll_timer=timer,
+                _console_runtime_ref=SimpleNamespace(
+                    _legacy_trace_maintenance_task=trace
+                ),
+            ),
+        )
+        original_sleep = asyncio.sleep
+
+        async def awaited_window(seconds):
+            assert seconds == 60.0
+            if change in ("monitor", "trace"):
+                task = monitor if change == "monitor" else trace
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            elif change == "scheduler":
+                scheduler.state = WorkerState.SUCCESS
+            elif change == "scheduler_error":
+                scheduler._error = RuntimeError("private error")
+                scheduler.state = WorkerState.ERROR
+            elif change == "timer_stop":
+                timer.stop()
+            elif change == "timer_pause":
+                timer.pause()
+            elif change == "timer_replace":
+                app.screen._console_credential_poll_timer = Timer(Node(), 0.25)
+            elif change == "maintenance_error":
+                app._backup_maintenance_error = "admission_state_unavailable"
+            await original_sleep(0)
+
+        monkeypatch.setattr(module.asyncio, "sleep", awaited_window)
+        tasks = [monitor, trace, timer._task, scheduler._task]
+        try:
+            result = await module.live_window(module.Census(), app)
+            assert result["timers_live"] == (change is None)
+            assert set(result["producer_checks"]) == {"before", "cutoff"}
+            assert (
+                result["producer_checks"]["before"]
+                == result["producer_checks"]["cutoff"]
+            ) == (change is None)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        "missing",
+        "installed_bytes",
+        "wheel_bytes",
+        "wheel_missing",
+        "post_join",
+        "stat_only",
+    ],
+)
+def test_installed_sql_assets_require_current_source_wheel_bytes_and_stat(
+    tmp_path, change
+):
+    import zipfile
+
+    module = harness()
+    source, installed = tmp_path / "source", tmp_path / "installed"
+    for root in (source, installed):
+        package = root / "tldw_chatbook"
+        package.mkdir(parents=True)
+        (package / "__init__.py").write_text("same")
+        (package / "schema75.sql").write_text("SELECT 1;")
+    wheel = tmp_path / "native.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("tldw_chatbook/__init__.py", "same")
+        if change != "wheel_missing":
+            archive.writestr(
+                "tldw_chatbook/schema75.sql",
+                "SELECT 2;" if change == "wheel_bytes" else "SELECT 1;",
+            )
+    asset = installed / "tldw_chatbook/schema75.sql"
+    if change in ("post_join", "stat_only"):
+        before = module.installed_join(source, installed, wheel)["installed_files"]
+        if change == "post_join":
+            asset.write_text("SELECT 2;")
+        else:
+            info = asset.stat()
+            os.utime(asset, ns=(info.st_atime_ns, info.st_mtime_ns + 1_000_000))
+        assert module.package_files(installed) != before
+    else:
+        if change == "missing":
+            asset.unlink()
+        elif change == "installed_bytes":
+            asset.write_text("SELECT 2;")
+        with pytest.raises((KeyError, ValueError)):
+            module.installed_join(source, installed, wheel)
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["os.fork", "os.posix_spawn", "os.system", "os.exec", "_winapi.CreateProcess"],
+)
+def test_parent_refuses_unsupported_creation_event_without_changing_audit_callthrough(
+    event,
+):
+    module = harness()
+    census = module.Census()
+    census.install_audit()
+    sys.audit(event, "metadata-only-control")
+    result = census.project_children({})
+    assert result["child_network_coverage"] == "unresolved"
+    assert result["uncovered_process_events"] == {event: 1}
+
+
+@pytest.mark.parametrize(
+    "event",
+    ["os.fork", "os.posix_spawn", "os.system", "os.exec", "_winapi.CreateProcess"],
+)
+def test_known_helper_refuses_unsupported_creation_event_and_keeps_entry_callthrough(
+    tmp_path, event
+):
+    module = harness()
+    source = tmp_path / "source"
+    (source / "Tests").mkdir(parents=True)
+    (source / "Tests/network_guard.py").write_bytes(
+        (Path(__file__).parents[1] / "network_guard.py").read_bytes()
+    )
+    entry = source / "tldw_chatbook/DB/private_sqlite_helper_entry.py"
+    entry.parent.mkdir(parents=True)
+    marker = tmp_path / "continued"
+    entry.write_text(
+        f"import sys\nfrom pathlib import Path\nsys.audit({event!r}, 'metadata-only-control')\nPath({str(marker)!r}).write_text('continued')\n"
+    )
+    receipt = tmp_path / "helper.json"
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(Path(module.__file__)),
+            "--helper-observer",
+            "--source",
+            str(source),
+            "--entry",
+            str(entry),
+            "--entry-sha256",
+            hashlib.sha256(entry.read_bytes()).hexdigest(),
+            "--receipt",
+            str(receipt),
+        ],
+        capture_output=True,
+        timeout=30,
+        check=False,
+    )
+    data = json.loads(receipt.read_text())
+    assert result.returncode == 0 and marker.read_text() == "continued"
+    assert data["uncovered_descendants"] is True

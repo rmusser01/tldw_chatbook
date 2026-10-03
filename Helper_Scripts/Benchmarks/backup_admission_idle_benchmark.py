@@ -40,6 +40,20 @@ WINDOW_SECONDS = 60.0
 SETTLEMENT = "ui-ready-plus-live-probe-and-five-seconds"
 ORDER = (("baseline", "final"), ("final", "baseline"), ("baseline", "final"))
 _AUDIT_CENSUS = None
+PROCESS_EVENTS = frozenset(
+    (
+        "subprocess.Popen",
+        "os.fork",
+        "os.forkpty",
+        "os.posix_spawn",
+        "os.system",
+        "os.exec",
+        "os.spawn",
+        "pty.spawn",
+        "_winapi.CreateProcess",
+        "_posixsubprocess.fork_exec",
+    )
+)
 
 
 class Census:
@@ -78,6 +92,21 @@ class Census:
         self.active_scopes = self.active_probes = self.completed_probes = 0
         self.children = []
         self.child_receipts = []
+        self.uncovered_process_events = {}
+        self.launch_observation = threading.local()
+
+    def audit(self, event, args):
+        """Count opens and refuse process routes outside the one observed launch."""
+        if event == "open" and args[1] is None:
+            self.bump("os_opens")
+        elif event in PROCESS_EVENTS and not getattr(
+            self.launch_observation, "known", False
+        ):
+            with self.lock:
+                if self.phase is not None:
+                    self.uncovered_process_events[event] = (
+                        self.uncovered_process_events.get(event, 0) + 1
+                    )
 
     def bump(self, key):
         """Count attempts without changing the wrapped native operation."""
@@ -91,8 +120,7 @@ class Census:
         if _AUDIT_CENSUS is None:
 
             def audit(event, args):
-                if event == "open" and args[1] is None:
-                    _AUDIT_CENSUS.bump("os_opens")
+                _AUDIT_CENSUS.audit(event, args)
 
             sys.addaudithook(audit)
         _AUDIT_CENSUS = self
@@ -172,7 +200,12 @@ class Census:
 
         def start(cls, *args, **kwargs):
             self.bump("helper_starts")
-            return original_start(*args, **kwargs)
+            previous = getattr(self.launch_observation, "helper", False)
+            self.launch_observation.helper = True
+            try:
+                return original_start(*args, **kwargs)
+            finally:
+                self.launch_observation.helper = previous
 
         stack.enter_context(patch.object(HelperLease, "start", classmethod(start)))
 
@@ -187,12 +220,17 @@ class Census:
             self.bump("child_starts")
             command = args[0] if args else kwargs.get("args")
             observation = None
-            if source is not None and command == [
-                sys.executable,
-                "-I",
-                "-S",
-                str(helper_entry),
-            ]:
+            if (
+                source is not None
+                and getattr(self.launch_observation, "helper", False)
+                and command
+                == [
+                    sys.executable,
+                    "-I",
+                    "-S",
+                    str(helper_entry),
+                ]
+            ):
                 receipt = (
                     Path(os.environ["TLDW_TEST_CONFIG_ROOT"])
                     / f"idle-helper-{uuid4().hex}.json"
@@ -224,7 +262,11 @@ class Census:
                         (source / "Tests/network_guard.py").read_bytes()
                     ).hexdigest(),
                 }
-            original_spawn(child, *args, **kwargs)
+            self.launch_observation.known = observation is not None
+            try:
+                original_spawn(child, *args, **kwargs)
+            finally:
+                self.launch_observation.known = False
             with self.lock:
                 self.children.append(child)
                 self.child_receipts.append((child, observation))
@@ -271,7 +313,7 @@ class Census:
     def project_children(self, measured):
         """Join bounded known-helper events to the real monotonic phase cutoffs."""
         measured["parent_window"] = dict(measured.get("window", self.counts["window"]))
-        coverage, receipts, network = True, [], 0
+        coverage, receipts, network = not self.uncovered_process_events, [], 0
         for child, observation in self.child_receipts:
             if (
                 observation is None
@@ -353,10 +395,11 @@ class Census:
             "child_network_coverage": "joined"
             if coverage and self.children
             else "no-descendants"
-            if not self.children
+            if not self.children and coverage
             else "unresolved",
             "child_receipts": receipts,
             "child_network_attempts": network,
+            "uncovered_process_events": dict(self.uncovered_process_events),
         }
 
 
@@ -388,7 +431,7 @@ def helper_observer(source, entry, expected_digest, receipt_path):
     def audit(name, args):
         if name == "open" and args[1] is None:
             event("os_opens")
-        elif name == "subprocess.Popen":
+        elif name in PROCESS_EVENTS:
             result["uncovered_descendants"] = True
 
     try:
@@ -483,9 +526,11 @@ def private_environment(profile):
 
 
 def package_files(root):
-    """Hash production Python bytes/stat identities without following links."""
+    """Hash production Python/SQL bytes/stat identities without following links."""
     result = {}
-    for path in sorted((root / "tldw_chatbook").rglob("*.py")):
+    for path in sorted((root / "tldw_chatbook").rglob("*")):
+        if path.suffix not in (".py", ".sql"):
+            continue
         if path.is_symlink():
             raise ValueError("linked_production_module")
         info = path.stat()
@@ -524,17 +569,96 @@ def installed_join(source, installed, wheel):
     }
 
 
-async def live_window(census):
+def producer_state(app):
+    """Read actual supported Task/Timer/Worker state; never drive a producer."""
+    from textual.timer import Timer
+    from textual.worker import Worker
+
+    def task_state(task):
+        known = isinstance(task, asyncio.Task)
+        return {
+            "identity": id(task) if task is not None else None,
+            "known": known,
+            "running": known
+            and not task.done()
+            and not task.cancelled()
+            and task.cancelling() == 0,
+        }
+
+    screen = getattr(app, "screen", None)
+    runtime = getattr(screen, "_console_runtime_ref", None)
+    timer = getattr(screen, "_console_credential_poll_timer", None)
+    worker = getattr(app, "scheduler_worker", None)
+    active = getattr(timer, "_active", None)
+    known_timer = isinstance(timer, Timer) and isinstance(active, asyncio.Event)
+    known_worker = isinstance(worker, Worker)
+    return {
+        "screen_identity": id(screen) if screen is not None else None,
+        "runtime_identity": id(runtime) if runtime is not None else None,
+        "maintenance_error_clear": hasattr(app, "_backup_maintenance_error")
+        and app._backup_maintenance_error is None,
+        "monitor": task_state(getattr(app, "_backup_maintenance_monitor_task", None)),
+        "trace": task_state(getattr(runtime, "_legacy_trace_maintenance_task", None)),
+        "credential_timer": {
+            "identity": id(timer) if timer is not None else None,
+            "known": known_timer,
+            "active": known_timer and active.is_set(),
+            "interval": timer._interval if known_timer else None,
+            "repeat": timer._repeat if known_timer else None,
+            "task": task_state(getattr(timer, "_task", None)),
+        },
+        "scheduler": {
+            "identity": id(worker) if worker is not None else None,
+            "known": known_worker,
+            "running": known_worker and worker.is_running,
+            "cancelled": not known_worker or worker.is_cancelled,
+            "finished": not known_worker or worker.is_finished,
+            "error_clear": known_worker and worker.error is None,
+            "task": task_state(getattr(worker, "_task", None)),
+        },
+    }
+
+
+def producers_live(state):
+    """Unknown, paused, cancelling, failed or stopped producers cannot qualify."""
+    timer, worker = state["credential_timer"], state["scheduler"]
+    return bool(
+        state["screen_identity"] is not None
+        and state["runtime_identity"] is not None
+        and state["maintenance_error_clear"] is True
+        and all(
+            state[name]["known"] is True and state[name]["running"] is True
+            for name in ("monitor", "trace")
+        )
+        and timer["known"] is True
+        and timer["active"] is True
+        and timer["task"]["known"] is True
+        and timer["task"]["running"] is True
+        and worker["known"] is True
+        and worker["running"] is True
+        and worker["cancelled"] is False
+        and worker["finished"] is False
+        and worker["error_clear"] is True
+        and worker["task"]["known"] is True
+        and worker["task"]["running"] is True
+    )
+
+
+async def live_window(census, app=None):
     """One monotonic real 60-second wait, no pilot stimulus or timer changes."""
+    before = producer_state(app) if app is not None else None
+    if before is not None and not producers_live(before):
+        raise RuntimeError("normal_idle_producers_unavailable")
     with census.lock:
         census.phase = "window"
         started = time.monotonic_ns()
     await asyncio.sleep(WINDOW_SECONDS)
     with census.lock:
+        cutoff_state = producer_state(app) if app is not None else None
         elapsed = time.monotonic_ns() - started
         unresolved = census.cutoff()
         window = dict(census.counts["window"])
-    return {
+    result = {
         "elapsed_ns": elapsed,
         "window_started_ns": started,
         "cutoff_ns": started + elapsed,
@@ -542,6 +666,12 @@ async def live_window(census):
         "window": window,
         "unresolved_at_cutoff": unresolved,
     }
+    if before is not None:
+        result.update(
+            producer_checks={"before": before, "cutoff": cutoff_state},
+            timers_live=before == cutoff_state and producers_live(cutoff_state),
+        )
+    return result
 
 
 async def idle(census):
@@ -558,26 +688,8 @@ async def idle(census):
             while not census.completed_probes or census.active_probes:
                 await asyncio.sleep(0.005)
             await asyncio.sleep(5)
-        monitor = app._backup_maintenance_monitor_task
-        screen = app.screen
-        runtime = getattr(screen, "_console_runtime_ref", None)
-        trace = getattr(runtime, "_legacy_trace_maintenance_task", None)
-        scheduler = getattr(app, "scheduler_worker", None)
-        timers_live = bool(
-            monitor
-            and not monitor.done()
-            and getattr(screen, "_console_credential_poll_timer", None)
-            and trace
-            and not trace.done()
-            and scheduler
-            and not scheduler.is_finished
-        )
-        if not timers_live or app._backup_maintenance_error:
-            raise RuntimeError("normal_idle_producers_unavailable")
-        measured = await live_window(census)
-        measured.update(
-            ui_ready=True, settled=True, timers_live=timers_live, settlement=SETTLEMENT
-        )
+        measured = await live_window(census, app)
+        measured.update(ui_ready=True, settled=True, settlement=SETTLEMENT)
     return measured
 
 
@@ -680,6 +792,8 @@ def child(source, installed=None, wheel=None, seed=False):
             or result["network_attempts"]
             or result["foreign_source_modules"]
             or any(result["unresolved_after_cleanup"].values())
+            or (not seed and result.get("timers_live") is not True)
+            or result["child_network_coverage"] == "unresolved"
         ):
             result["exit_code"] = 1
     return result
@@ -786,6 +900,16 @@ def compare(runs):
                 or run["child_network_coverage"] not in ("no-descendants", "joined")
             ):
                 raise ValueError("unresolved_work")
+            checks = run["producer_checks"]
+            if (
+                set(checks) != {"before", "cutoff"}
+                or checks["before"] != checks["cutoff"]
+                or not producers_live(checks["cutoff"])
+                or run["uncovered_process_events"]
+            ):
+                raise ValueError(
+                    "changed_or_unknown_normal_producers_or_process_coverage"
+                )
             counts = run["window"]
             for key in Census().counts["window"]:
                 if type(counts[key]) is not int or counts[key] < 0:
