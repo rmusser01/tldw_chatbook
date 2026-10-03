@@ -178,9 +178,10 @@ class CanvasCardMetadata:
             raise ValueError("Canvas card origin is invalid")
         if type(self.reopenable) is not bool:
             raise ValueError("Canvas card reopenable flag is invalid")
-        if self.error_code is not None and _CANVAS_ERROR_RE.fullmatch(
-            self.error_code
-        ) is None:
+        if (
+            self.error_code is not None
+            and _CANVAS_ERROR_RE.fullmatch(self.error_code) is None
+        ):
             raise ValueError("Canvas card error code is invalid")
         if self.reopenable and (
             self.revision_id is None or self.status in {"discarded", "failed"}
@@ -196,9 +197,16 @@ class CharacterEmoteEventMetadata:
     at_char: int
 
     def __post_init__(self) -> None:
-        if not isinstance(self.state, str) or _EMOTE_STATE_RE.fullmatch(self.state) is None:
+        if (
+            not isinstance(self.state, str)
+            or _EMOTE_STATE_RE.fullmatch(self.state) is None
+        ):
             raise ValueError("state must be a normalized character emote slug")
-        if isinstance(self.at_char, bool) or not isinstance(self.at_char, int) or self.at_char < 0:
+        if (
+            isinstance(self.at_char, bool)
+            or not isinstance(self.at_char, int)
+            or self.at_char < 0
+        ):
             raise ValueError("at_char must be a nonnegative integer")
 
 
@@ -342,13 +350,14 @@ class MessageMetadata:
             )
         if self.origin not in MESSAGE_ORIGINS:
             raise ValueError(
-                "origin must be one of "
-                f"{sorted(MESSAGE_ORIGINS)}; got {self.origin!r}"
+                f"origin must be one of {sorted(MESSAGE_ORIGINS)}; got {self.origin!r}"
             )
         if (
             not isinstance(self.canvas_cards, tuple)
             or len(self.canvas_cards) > 32
-            or not all(isinstance(card, CanvasCardMetadata) for card in self.canvas_cards)
+            or not all(
+                isinstance(card, CanvasCardMetadata) for card in self.canvas_cards
+            )
         ):
             raise ValueError("canvas_cards must contain at most 32 Canvas cards")
         if (
@@ -360,7 +369,10 @@ class MessageMetadata:
                 f"{sorted(TEMPLATE_KINDS)}; got {self.template_kind!r}"
             )
         if self.template_kind:
-            if not isinstance(self.template_source, str) or not self.template_source.strip():
+            if (
+                not isinstance(self.template_source, str)
+                or not self.template_source.strip()
+            ):
                 raise ValueError(
                     "template_source must be a nonblank string when template_kind is set"
                 )
@@ -372,7 +384,9 @@ class MessageMetadata:
                     self.terminal_receipt_id
                 )
             except ValueError as exc:
-                raise ValueError("terminal receipt id must be a canonical UUID") from exc
+                raise ValueError(
+                    "terminal receipt id must be a canonical UUID"
+                ) from exc
 
     @property
     def is_empty(self) -> bool:
@@ -455,9 +469,7 @@ class MessageMetadata:
                 provider=_as_text(data.get("provider")),
                 model=_as_text(data.get("model")),
                 interrupted=_as_bool(data.get("interrupted")),
-                transcript_status=_as_transcript_status(
-                    data.get("transcript_status")
-                ),
+                transcript_status=_as_transcript_status(data.get("transcript_status")),
                 template_kind=template_kind,
                 template_source=template_source,
                 origin=_as_origin(data.get("origin")),

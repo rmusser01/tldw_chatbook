@@ -98,7 +98,9 @@ def _add_linear_chain(
     return ids
 
 
-def _build_branched_fixture(db: CharactersRAGDB, conversation_id: str) -> dict[str, str]:
+def _build_branched_fixture(
+    db: CharactersRAGDB, conversation_id: str
+) -> dict[str, str]:
     """Two roots; root one carries siblings, an image, and a deep branch.
 
     root1                      root2
@@ -346,9 +348,7 @@ def test_new_build_matches_legacy_for_desc_pagination_and_depth_cap(db):
         {"order_by_timestamp": "DESC", "depth_cap": 4, "root_limit": 1},
     ):
         new_tree = service.get_conversation_tree(conversation_id, **kwargs)
-        legacy_tree = _legacy_get_conversation_tree(
-            service, conversation_id, **kwargs
-        )
+        legacy_tree = _legacy_get_conversation_tree(service, conversation_id, **kwargs)
         assert new_tree == legacy_tree, f"diverged for {kwargs}"
 
     # The depth-capped shape itself (not just parity): nodes at the cap are
@@ -397,9 +397,8 @@ def _message_selects(statements: list[str]) -> list[str]:
     return [
         statement
         for statement in statements
-        if "FROM messages" in statement and statement.lstrip().upper().startswith(
-            "SELECT"
-        )
+        if "FROM messages" in statement
+        and statement.lstrip().upper().startswith("SELECT")
     ]
 
 

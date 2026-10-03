@@ -141,9 +141,7 @@ def _thinking(text: str = "DISPLAYABLE-THINKING-CANARY") -> ThinkingEnvelope:
 
 
 def _too_many_exchange_blocks() -> dict[str, object]:
-    block = json.loads(dump_thinking_blocks_json(_thinking()) or "null")[
-        "blocks"
-    ][0]
+    block = json.loads(dump_thinking_blocks_json(_thinking()) or "null")["blocks"][0]
     blocks = []
     for ordinal in range(MAX_THINKING_BLOCKS + 1):
         item = dict(block)
@@ -222,7 +220,9 @@ def test_selected_json_exports_structured_thinking_policy_and_shared_warning() -
     assert "Proprietary thinking obfuscated - not available" not in json.dumps(payload)
 
 
-def test_selected_json_without_evidence_exports_auto_without_sensitive_warning() -> None:
+def test_selected_json_without_evidence_exports_auto_without_sensitive_warning() -> (
+    None
+):
     payload = _export_payload(
         [{"role": "assistant", "content": "Visible answer"}], policy=None
     )
@@ -337,9 +337,7 @@ def test_selected_json_unknown_bounded_policy_falls_back_with_content_free_warni
 
         assert conversation_id is not None
         assert (
-            database.get_conversation_by_id(conversation_id)[
-                "thinking_history_policy"
-            ]
+            database.get_conversation_by_id(conversation_id)["thinking_history_policy"]
             == "auto"
         )
         assert warnings == [UNKNOWN_POLICY_WARNING]
@@ -381,9 +379,7 @@ def test_selected_json_empty_policy_falls_back_with_unknown_policy_warning(
 
         assert conversation_id is not None
         assert (
-            database.get_conversation_by_id(conversation_id)[
-                "thinking_history_policy"
-            ]
+            database.get_conversation_by_id(conversation_id)["thinking_history_policy"]
             == "auto"
         )
         assert warnings == [UNKNOWN_POLICY_WARNING]
@@ -426,9 +422,7 @@ def test_selected_json_missing_or_null_policy_imports_as_silent_auto(
 
         assert conversation_id is not None
         assert (
-            database.get_conversation_by_id(conversation_id)[
-                "thinking_history_policy"
-            ]
+            database.get_conversation_by_id(conversation_id)["thinking_history_policy"]
             == "auto"
         )
         assert warnings == []
@@ -504,7 +498,11 @@ def test_selected_json_rejects_invalid_thinking_before_database_mutation(
             "conversation_name": "Invalid thinking",
             "thinking_history_policy": "auto",
             "history": [
-                {"role": role, "content": "Visible content", "thinking_blocks": thinking}
+                {
+                    "role": role,
+                    "content": "Visible content",
+                    "thinking_blocks": thinking,
+                }
             ],
         }
 
