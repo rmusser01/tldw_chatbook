@@ -829,3 +829,17 @@ identities; native was not replayed for this race correction. No full sweep.
 Fresh published-head Qodo/all four gates/current dev still precede normal merge.
 QA question_close_admission_review_followup records all source and fixture
 identities, valid/invalid red receipts, exact baseline comparison and limitations.
+
+
+Latest-dev cloud-fixture rebase (PR2927, 2026-10-03 UTC)
+
+All35 Console patches rebase unchanged onto devacc45cdc. Its38 changed paths
+are cloud capture/replay fixtures, four LLM test modules and one task; every
+inherited path matches dev exactly, including the removed legacy capture helper.
+All238 qualified source pins retain exact bytes. No production, shared conftest,
+dependency, CI, budget or qualified-source change. Fresh full artifact preflight
+and zero-new Ruff35 pass. Earlier question194+ordinary3, exact37 Perf, mounted
+17-journey and native receipts retain their recorded code/head/fixture identities;
+no functional/native replay is claimed for this test-only rebase. QA
+cloud_fixture_dev_rebase records paths, exact range-diff and source proof.
+Fresh final-head CI/Qodo/current dev still precede normal protected merge.
