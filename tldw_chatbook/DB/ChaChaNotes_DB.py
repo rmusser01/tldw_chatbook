@@ -24466,9 +24466,6 @@ class TransactionContextManager:
                 raise
             self.is_outermost_transaction = True
             self.db._local.transaction_depth = 1
-            logger.debug(
-                f"Started outermost transaction on thread {threading.get_ident()}."
-            )
             self.cursor = self.conn.cursor()
             return self.cursor
 
@@ -24529,9 +24526,6 @@ class TransactionContextManager:
                             self.transaction_observer_token,
                             committed=True,
                         )
-                    logger.debug(
-                        f"Transaction (outermost) committed successfully on thread {threading.get_ident()}."
-                    )
                 except sqlite3.Error as commit_err:
                     logger.error(
                         f"Failed to commit transaction on thread {threading.get_ident()}: exception_type={type(commit_err).__name__}"
