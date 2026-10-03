@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 19:03'
+updated_date: '2026-10-03 20:41'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -265,6 +265,21 @@ Interfaces: incoming capture_rate_limits_for(provider_key), latest_rate_limit_he
 - [ ] Only after both approvals, CLI close AC3/Done and update the four owned canonical records, preserving all reviewed source hashes/deletion/full tree outside those records. Publish ONCE with EXACT observed4b2c318d521148e76f34a09a1d91e382b8510e84 lease and concise PR body; verify actual remote/GitHub/body after any lag without a second push. Require fresh new-head Qodo/no actionable threads and ALL FOUR jobs before another strict-base action. Normal protected --match-head-commit merge only after qualification/live protection; verify MERGED parents/tree/current concurrency then pause heartbeat/report.
 
 No full suite, live provider/key, physicalCtrlQ/relaunch, real voice provisioning/download/service/playback, Windows, aggregate-resource/package/index/installed/native-release/wider-audit certification, admin bypass, weakened gate, shared stash or foreign cleanup. Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction and rejected uncreated-unexecuted readiness adapter remains preserved; overlapping selections are never summed.
+
+## Required test-isolation and storage-census integration — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md
+Reason: preserve landed test-only isolation and stricter platform/first-GC census coverage within existing runtime/profile/guard boundaries. No root application change, new authority, schema, dependency or relaxed gate is planned.
+
+1. All FOUR exact e8deec jobs passed at the 20:33 UTC check; edited Qodo remains exact-head clear, all four threads resolved and complete pagination. Fresh strict up-to-date protection is enforced for administrators and requires updating the actual conflict to dev af138397408d596a1c72c1e8e9987ea95d497b94. Reopen TASK33664 AC3/In Progress before implementation; AC4 stays checked.
+2. Capture the 1,314 approved hashes/modes/blob addresses and full tree plus 13 exact incoming files. Preserve the complete testing-lesson additions on both sides; incoming test/config/census/workflow/task files remain byte-exact. Prove all application/native/CSS/runtime/schema/provider/admission/custody and prior Resend lazy-import source identities remain unchanged. Incoming TASK33643/33644/33665 retain shipped Done; TASK33802 and TASK34117 remain To Do.
+3. Rebase preserving both sides, then qualify the unchanged incoming real-profile guard module (temporary stand-in profiles, dir-fd, early UI bootstrap, factory path custody, late writers and xdist reporting) and new platform/log-path census controls. Run only bounded affected UI/profile/admission consumers; retain all positive, NON-GREEN, baseline, interrupted and unexecuted evidence. No source/marker/readiness/config/guard bypass or wider test sweep.
+4. Authenticate immutable source/full tree, application identity, lesson composition, fatal/style classification, task/whitespace artifacts, original assertions and every unchanged old ceiling. Obtain focused independent immutable source/functional/artifact review. The incoming GC census extends measured work and Linux gating; preserve it exactly, with no root ceiling/count/warmup/timeout/work adjustment.
+5. Only after ALL functional/artifact/review activity settles, run the five canonical storage (both variants), app-import, UI-ready and boot-CSS cases ONCE for the new immutable source, using the exact incoming guards and default pytest temporary depth, exact REPO_ROOT cwd/PYTHONPATH and complete task-owned outer HOME/TLDW/XDG through teardown. Read fresh printed/JSON/XML census counts, original warnings and new GC counts, and reauthenticate the source/full tree. Do not repeat the completed a06/03b budget runs. Obtain supplemental independent budget/hash/raw/XML approval.
+6. Close AC3/Done via CLI only after both approvals. Update only the four owned canonical Markdown records, preserving all approved source bytes/deletion/full tree outside those records. Publish ONCE with the EXACT observed e8deec610211b44c3d6392c5664d81b25844f250 lease and concise body; verify actual refs/GitHub/body after lag without second push. Fresh new-head Qodo/no actionable threads and ALL FOUR CI jobs precede any next strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency, then pause heartbeat/report completion.
+
+Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter, historical warning and optional/style/profile/resource/physical/wider limit remains preserved. No full suite, live providers/user keys, physical CtrlQ/relaunch, voice service/provision/download/playback, Windows, aggregate/package/index/installed/native-release/wider-audit certificate, admin bypass, weakened gate, shared stash or foreign cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
