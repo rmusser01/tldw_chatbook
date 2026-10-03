@@ -19,9 +19,7 @@ from Tests.Image_Generation.test_comfyui_workflow_assets import (
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-WORKFLOW_MEMBER = (
-    "tldw_chatbook/Image_Generation/workflows/" + WORKFLOW_FILENAME
-)
+WORKFLOW_MEMBER = "tldw_chatbook/Image_Generation/workflows/" + WORKFLOW_FILENAME
 SDIST_INCLUDE = "recursive-include tldw_chatbook/Image_Generation/workflows *.json"
 BUILD_ERROR = "H3 workflow distributions could not be built"
 SDIST_ERROR = "H3 workflow sdist inventory does not match the approved contract"
@@ -45,7 +43,9 @@ def _copy_build_inputs(destination: Path) -> None:
         "dist",
         "*.egg-info",
     )
-    shutil.copytree(REPO_ROOT / "tldw_chatbook", destination / "tldw_chatbook", ignore=ignored)
+    shutil.copytree(
+        REPO_ROOT / "tldw_chatbook", destination / "tldw_chatbook", ignore=ignored
+    )
     for name in (
         "pyproject.toml",
         "MANIFEST.in",
@@ -103,9 +103,7 @@ def _wheel_members(path: Path) -> set[str]:
 def _image_workflow_members(members: set[str]) -> set[str]:
     prefix = "tldw_chatbook/Image_Generation/workflows/"
     return {
-        name
-        for name in members
-        if name.startswith(prefix) and name.endswith(".json")
+        name for name in members if name.startswith(prefix) and name.endswith(".json")
     }
 
 

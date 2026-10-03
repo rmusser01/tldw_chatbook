@@ -50,7 +50,9 @@ def test_a_snippet_dataset_is_not_a_probe_set(db):
 def test_saving_with_an_existing_id_replaces_its_probes(db, probe_set):
     dataset_id = save_probe_set(db, "starter", probe_set)
     replacement = ProbeSet(probes=(Probe(turns=("Only one now",)),))
-    assert save_probe_set(db, "starter", replacement, dataset_id=dataset_id) == dataset_id
+    assert (
+        save_probe_set(db, "starter", replacement, dataset_id=dataset_id) == dataset_id
+    )
     assert load_probe_set(db, dataset_id) == replacement
 
 

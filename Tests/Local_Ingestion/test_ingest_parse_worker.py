@@ -611,9 +611,7 @@ def test_faster_whisper_batch_provenance_records_translation(
         "transcribe",
         lambda self, audio_path, **kwargs: {
             "text": "Translated transcript.",
-            "segments": [
-                {"start": 0.0, "end": 1.0, "text": "Translated transcript."}
-            ],
+            "segments": [{"start": 0.0, "end": 1.0, "text": "Translated transcript."}],
             "language": "fr",
             "duration": 1.0,
             "provider": "faster-whisper",

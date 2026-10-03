@@ -678,8 +678,7 @@ class LocalAudioProcessor:
                         ),
                         "timestamps": kwargs.get("timestamp_option", True),
                     }
-                    if provider
-                    in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
+                    if provider in {"faster-whisper", "parakeet-onnx", "transcribe-cpp"}
                     else {}
                 )
                 transcription_result = self._transcribe_audio(
@@ -1013,7 +1012,9 @@ class LocalAudioProcessor:
                         retry_of_attempt_id=kwargs.get("retry_of_attempt_id"),
                         retry_of_job_id=kwargs.get("retry_of_job_id"),
                         provider_id="faster-whisper",
-                        model_id=str(result.get("model") or kwargs.get("model") or "base"),
+                        model_id=str(
+                            result.get("model") or kwargs.get("model") or "base"
+                        ),
                         artifact_root=None,
                         artifact_dependencies=(),
                         precision=str(

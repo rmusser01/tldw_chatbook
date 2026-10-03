@@ -34,7 +34,10 @@ import textwrap
 import httpx
 import pytest
 
-from Tests.Model_Artifacts.acquisition_test_helpers import _trusted, _two_file_descriptor
+from Tests.Model_Artifacts.acquisition_test_helpers import (
+    _trusted,
+    _two_file_descriptor,
+)
 from Tests.Model_Artifacts.fixture_http import FixtureArtifactServer
 from Tests.Model_Artifacts.test_acquisition_types import DictCatalog, make_descriptor
 from tldw_chatbook.Model_Artifacts import ArtifactRef
@@ -100,7 +103,9 @@ def _loguru_to_caplog(caplog):
 
 
 @pytest.mark.asyncio
-async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_path, caplog):
+async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(
+    tmp_path, caplog
+):
     """A working credential clears preflight gating AND completes a real
     fetch/pre-verify/install/activate against the gated route -- proving the
     resolver is wired into BOTH the HEAD probe and the real fetch, not just
@@ -114,14 +119,18 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
     with caplog.at_level(logging.DEBUG):
         with FixtureArtifactServer() as srv:
             body = b"gated-payload-bytes-" * 400  # 8400 bytes
-            srv.serve("/m.onnx", body, require_token=TOKEN, etag='"v1"', support_range=True)
+            srv.serve(
+                "/m.onnx", body, require_token=TOKEN, etag='"v1"', support_range=True
+            )
             svc = ArtifactAcquisitionService(
                 core,
                 free_bytes_probe=lambda p: 10**12,
                 trusted_origins=_trusted(srv),
                 credential_resolver=resolver,
             )
-            desc = make_descriptor(ref=root, files_body=body, source_url=srv.url("/m.onnx"))
+            desc = make_descriptor(
+                ref=root, files_body=body, source_url=srv.url("/m.onnx")
+            )
             catalog = DictCatalog({root: desc})
 
             report = await svc.preflight(root, catalog)
@@ -139,7 +148,9 @@ async def test_gated_repo_with_resolver_provisions_and_never_leaks_token(tmp_pat
     assert set(resolver.resolved_for) == {"test/repo"}
 
     installed_refs = {
-        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+        item.descriptor.reference
+        for item in core.list_installed()
+        if item.descriptor is not None
     }
     assert root in installed_refs
     with core.acquire(root) as handle:
@@ -234,7 +245,9 @@ async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_err
             assert activated == root
 
     installed_refs = {
-        item.descriptor.reference for item in core.list_installed() if item.descriptor is not None
+        item.descriptor.reference
+        for item in core.list_installed()
+        if item.descriptor is not None
     }
     assert root in installed_refs
 
@@ -266,7 +279,9 @@ async def test_multi_file_source_map_urls_never_leak_into_state_manifests_or_err
     for path in root_dir.rglob("*"):
         if path.is_file():
             scanned += 1
-            assert MARKER.encode() not in path.read_bytes(), f"source-map URL leaked into {path}"
+            assert MARKER.encode() not in path.read_bytes(), (
+                f"source-map URL leaked into {path}"
+            )
     assert scanned > 0, "sanity: the artifact store must contain files to scan"
 
 
@@ -337,7 +352,10 @@ async def test_credential_withheld_from_cross_origin_mapped_file_but_both_downlo
     root = ArtifactRef("cross-origin-mapped-model", "r1", "int8")
     resolver = _StaticResolver(TOKEN)
 
-    with FixtureArtifactServer() as same_origin, FixtureArtifactServer() as cross_origin:
+    with (
+        FixtureArtifactServer() as same_origin,
+        FixtureArtifactServer() as cross_origin,
+    ):
         same_origin.serve("/a.bin", b"aaaa", require_token=TOKEN, etag='"va"')
         # Public: a real cross-origin CDN never receives this repository's
         # credential, so it must not require one either.
@@ -386,7 +404,9 @@ async def test_credential_withheld_from_cross_origin_mapped_file_but_both_downlo
 
 
 @pytest.mark.asyncio
-async def test_cross_origin_redirect_strips_authorization_but_body_still_downloads(tmp_path):
+async def test_cross_origin_redirect_strips_authorization_but_body_still_downloads(
+    tmp_path,
+):
     """An authenticated origin (A) 302-redirects to a DIFFERENT origin (B)
     -- modeled with two real ``FixtureArtifactServer`` instances on
     different ports, which ``fetch._same_origin`` treats as different
@@ -420,9 +440,9 @@ async def test_cross_origin_redirect_strips_authorization_but_body_still_downloa
         assert result.bytes_written == len(body)
 
         a_requests = origin_a.requests["/gated.bin"]
-        assert any(headers.get("Authorization") == f"Bearer {TOKEN}" for headers in a_requests), (
-            "the authenticated redirect origin must have SEEN the credential"
-        )
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}" for headers in a_requests
+        ), "the authenticated redirect origin must have SEEN the credential"
 
         b_requests = origin_b.requests["/final.bin"]
         assert b_requests, "the redirect target must have been reached at all"
@@ -432,7 +452,9 @@ async def test_cross_origin_redirect_strips_authorization_but_body_still_downloa
 
 
 @pytest.mark.asyncio
-async def test_cross_origin_redirect_strips_client_level_default_authorization(tmp_path):
+async def test_cross_origin_redirect_strips_client_level_default_authorization(
+    tmp_path,
+):
     """Same hand-off as the per-call-header test above, but the credential
     is attached as a CLIENT-LEVEL default header
     (``httpx.AsyncClient(headers={"Authorization": ...})``), which a caller
@@ -472,7 +494,9 @@ async def test_cross_origin_redirect_strips_client_level_default_authorization(t
         assert result.bytes_written == len(body)
 
         a_requests = origin_a.requests["/gated.bin"]
-        assert any(headers.get("Authorization") == f"Bearer {TOKEN}" for headers in a_requests), (
+        assert any(
+            headers.get("Authorization") == f"Bearer {TOKEN}" for headers in a_requests
+        ), (
             "the authenticated redirect origin must have SEEN the client-level credential"
         )
 
@@ -488,7 +512,9 @@ async def test_cross_origin_redirect_strips_client_level_default_authorization(t
 # ---------------------------------------------------------------------------
 
 
-def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch() -> None:
+def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch() -> (
+    None
+):
     """Neither ``Model_Artifacts.acquisition`` nor ``Model_Artifacts.fetch``
     may be imported, attempted, or newly loaded as a side effect of
     importing the STT runtime-dispatch surface (``contracts``,
@@ -595,7 +621,8 @@ def test_stt_and_transcription_worker_modules_never_import_acquisition_or_fetch(
             name
             for name in forbidden
             if any(
-                module == name or module.startswith(f"{name}.") for module in observed_modules
+                module == name or module.startswith(f"{name}.")
+                for module in observed_modules
             )
         }
         assert leaked == set(), f"{observed_key} leaked forbidden imports: {leaked}"
@@ -637,7 +664,9 @@ def test_env_config_resolver_falls_back_to_config_when_env_unset(monkeypatch) ->
     monkeypatch.delenv("HF_TOKEN", raising=False)
     monkeypatch.setattr(
         "tldw_chatbook.Model_Artifacts.acquisition.get_cli_setting",
-        lambda section, key, default=None: "from-config" if key == "huggingface_api_key" else default,
+        lambda section, key, default=None: (
+            "from-config" if key == "huggingface_api_key" else default
+        ),
     )
     resolver = EnvConfigCredentialResolver()
     assert resolver.resolve("any/repo") == "from-config"

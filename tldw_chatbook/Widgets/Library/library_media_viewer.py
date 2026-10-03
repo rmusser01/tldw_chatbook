@@ -294,9 +294,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             )
         if not self.viewer.media_id:
             yield Static(
-                empty_reader_copy(
-                    loading=self.loading, list_failed=self.list_failed
-                ),
+                empty_reader_copy(loading=self.loading, list_failed=self.list_failed),
                 id="library-media-reader-empty",
                 classes="destination-purpose",
                 markup=False,
@@ -356,12 +354,18 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         )
         if not self.editing:
             byline = next(
-                (line.removeprefix("Author: ") for line in self.viewer.metadata_lines
-                 if line.startswith("Author: ")),
+                (
+                    line.removeprefix("Author: ")
+                    for line in self.viewer.metadata_lines
+                    if line.startswith("Author: ")
+                ),
                 "",
             ) or next(
-                (line.removeprefix("URL: ") for line in self.viewer.metadata_lines
-                 if line.startswith("URL: ")),
+                (
+                    line.removeprefix("URL: ")
+                    for line in self.viewer.metadata_lines
+                    if line.startswith("URL: ")
+                ),
                 "",
             )
             # task-31277: an item with neither an author nor a URL spent a
@@ -391,18 +395,16 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 markup=False,
             )
             with Horizontal(classes="ds-toolbar"):
-                yield Button(
-                    "Delete", id="library-media-delete-confirm", compact=True
-                )
-                yield Button(
-                    "Cancel", id="library-media-delete-cancel", compact=True
-                )
+                yield Button("Delete", id="library-media-delete-confirm", compact=True)
+                yield Button("Cancel", id="library-media-delete-cancel", compact=True)
 
         yield from self._compose_active_body()
 
     def _compose_primary_toolbar(self) -> ComposeResult:
         """Render the always-reachable Reader actions."""
-        with Horizontal(classes="ds-toolbar", id="library-media-reader-primary-toolbar"):
+        with Horizontal(
+            classes="ds-toolbar", id="library-media-reader-primary-toolbar"
+        ):
             # Qodo on #2378: an Analysis tab with nothing to search has no
             # bar to mount -- say why Find is off instead of toggling silently.
             find_reason = analysis_find_unavailable_reason(
@@ -482,7 +484,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 if not self.external_detail:
                     yield Button("Edit metadata", id="library-media-edit", compact=True)
                 if self.viewer.original_source:
-                    yield Button("Open original", id="library-media-open-original", compact=True)
+                    yield Button(
+                        "Open original", id="library-media-open-original", compact=True
+                    )
                 if not self.external_detail:
                     yield Button("Open manager", id="library-media-open", compact=True)
                     # task-31980 (critique #6 P2): the one destructive action
@@ -555,9 +559,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # "Search content…" input duplicated Find and spent 3 rows on
             # every fresh item.
             if self.find_open or self.content_query:
-                matches = find_content_matches(
-                    self.viewer.content, self.content_query
-                )
+                matches = find_content_matches(self.viewer.content, self.content_query)
                 yield LibraryMediaContentSearchControls(
                     is_markdown=self.viewer.is_markdown,
                     query=self.content_query,
@@ -590,7 +592,11 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             if self.editing:
                 yield from self._compose_edit_form()
             else:
-                yield Static("\n".join(self.viewer.metadata_lines), id="library-media-viewer-meta", markup=False)
+                yield Static(
+                    "\n".join(self.viewer.metadata_lines),
+                    id="library-media-viewer-meta",
+                    markup=False,
+                )
                 # task-32068: why this item has no Rendered view -- asked
                 # and answered here, once, rather than banner-ed over every
                 # read of every plain item.
@@ -602,13 +608,15 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                         markup=False,
                     )
                 yield Static(
-                    "\n".join((
-                        f"Backend: {self.viewer.backend}",
-                        f"Canonical ID: {self.viewer.canonical_id}",
-                        f"Original source: {self.viewer.original_source or 'None recorded'}",
-                        f"Stored representation: {self.viewer.stored_representation}",
-                        f"Use in Console sends: {self.console_representation}",
-                    )),
+                    "\n".join(
+                        (
+                            f"Backend: {self.viewer.backend}",
+                            f"Canonical ID: {self.viewer.canonical_id}",
+                            f"Original source: {self.viewer.original_source or 'None recorded'}",
+                            f"Stored representation: {self.viewer.stored_representation}",
+                            f"Use in Console sends: {self.console_representation}",
+                        )
+                    ),
                     id="library-media-reader-provenance",
                     markup=False,
                 )
@@ -814,7 +822,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         widget_id = event.input.id or ""
         if not widget_id.startswith(self._SPEAKER_INPUT_PREFIX):
             return
-        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX):]
+        cluster_id = widget_id[len(self._SPEAKER_INPUT_PREFIX) :]
         name = normalize_speaker_name(event.value)
         event.input.value = ""
         media_id = self.speaker_rename_media_id
@@ -849,9 +857,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         content = ""
         rows: tuple[tuple[str, str], ...] = ()
         try:
-            outcome = rename_meeting_speaker(
-                self.media_db, media_id, cluster_id, name
-            )
+            outcome = rename_meeting_speaker(self.media_db, media_id, cluster_id, name)
             if outcome.ok:
                 row = self.media_db.get_media_by_id(media_id)
                 content = (row["content"] if row else "") or ""
@@ -862,7 +868,9 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
                 "Library media reader speaker rename failed: {}",
                 redact_user_paths(str(exc)),
             )
-            outcome = SpeakerRenameResult(False, f"unexpected error ({type(exc).__name__})")
+            outcome = SpeakerRenameResult(
+                False, f"unexpected error ({type(exc).__name__})"
+            )
         self.app.call_from_thread(
             self._apply_speaker_rename_outcome, media_id, outcome, content, rows
         )
@@ -923,9 +931,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             except (NoMatches, QueryError):
                 # Not composed yet -- compose() reads the attributes above.
                 return
-            copy = empty_reader_copy(
-                loading=loading, list_failed=self.list_failed
-            )
+            copy = empty_reader_copy(loading=loading, list_failed=self.list_failed)
             if str(empty.content) != copy:
                 empty.update(copy)
             return
@@ -1000,9 +1006,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             "#library-media-viewer-content", LibraryMediaContentBody
         ).sync_search(query, match_index)
 
-    def sync_match_index(
-        self, *, matches: tuple[int, ...], match_index: int
-    ) -> None:
+    def sync_match_index(self, *, matches: tuple[int, ...], match_index: int) -> None:
         """Synchronize match navigation without rebuilding viewer children.
 
         Args:
@@ -1035,9 +1039,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
         """
         self.content_mode = mode
         rendered_selected = mode == "rendered"
-        rendered_button = self.query_one(
-            "#library-media-content-mode-rendered", Button
-        )
+        rendered_button = self.query_one("#library-media-content-mode-rendered", Button)
         raw_button = self.query_one("#library-media-content-mode-raw", Button)
         rendered_button.label = (
             "Rendered (selected)" if rendered_selected else "Rendered"
@@ -1142,9 +1144,7 @@ class LibraryMediaViewer(PostRecomposeCallback, Vertical):
             # task-31269: like Read, the bar is collapsed until Find opens
             # it -- an always-mounted bar stole focus on every item load and
             # swallowed the walk keys (critique #4 P0).
-            blocked = (
-                ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
-            )
+            blocked = ANALYSIS_RENDERED_BLOCKED_BY_SEARCH if self.content_query else ""
             yield from self._compose_content_mode_toggle(
                 is_markdown=analysis_is_markdown,
                 mode=analysis_mode,

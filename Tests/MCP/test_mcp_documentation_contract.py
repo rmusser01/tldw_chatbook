@@ -476,8 +476,12 @@ def test_watchlists_documents_pin_external_receipts_and_console_content() -> Non
             "watchlists_get_briefing",
         ):
             assert name in normalized, (path, name)
-        assert "never article snippets, article bodies, briefing Markdown" in normalized or (
-            "Console-only" in normalized and "never registers or resolves" in normalized
+        assert (
+            "never article snippets, article bodies, briefing Markdown" in normalized
+            or (
+                "Console-only" in normalized
+                and "never registers or resolves" in normalized
+            )
         ), path
 
 
@@ -580,8 +584,14 @@ def test_user_guide_warning_names_private_watchlists_egress_and_trust_boundary()
     warning = _admonition_block(
         USER_GUIDE_DOCUMENT.read_text(encoding="utf-8"), "WARNING"
     )
-    assert "private Watchlists source, collection, briefing-receipt, and operation metadata" in warning
-    assert "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance" in warning
+    assert (
+        "private Watchlists source, collection, briefing-receipt, and operation metadata"
+        in warning
+    )
+    assert (
+        "does not expose Watchlists article snippets or bodies, or briefing Markdown/provenance"
+        in warning
+    )
     assert "external MCP client may send" in warning
     assert "off-device to a cloud model" in warning
     assert "trust both the client and the model provider" in warning

@@ -337,9 +337,7 @@ def test_snapshot_coerces_display_string_chunk_numbers(monkeypatch):
         submit_library_ingest_job=lambda **kwargs: submitted_jobs.append(kwargs)
     )
     screen._ingest_state.form = SimpleNamespace(
-        type_options={
-            "generic": {"chunk_size": "1000", "chunk_overlap": "150"}
-        },
+        type_options={"generic": {"chunk_size": "1000", "chunk_overlap": "150"}},
         analyze=False,
         chunk=True,
         chunk_size="1000",
@@ -414,7 +412,10 @@ async def test_unsupported_file_not_retryable(library_screen, tmp_path):
         job.job_id,
         error="Unsupported file type",
         permanent=False,
-        error_detail={"category": "unsupported_file_type", "message": "Unsupported file type"},
+        error_detail={
+            "category": "unsupported_file_type",
+            "message": "Unsupported file type",
+        },
     )
     job = registry.get_job(job.job_id)
 
@@ -517,19 +518,13 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_mixed_folder(
                 for job in app.library_ingest_jobs.jobs()
             }
             actual_done = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.DONE
+                1 for job in outcomes.values() if job.state is IngestJobState.DONE
             )
             actual_skipped = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.SKIPPED
+                1 for job in outcomes.values() if job.state is IngestJobState.SKIPPED
             )
             actual_failed = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.FAILED
+                1 for job in outcomes.values() if job.state is IngestJobState.FAILED
             )
 
             assert (
@@ -668,7 +663,9 @@ class _RecordingIngestTransport:
                 MediaIngestJobItem(
                     id=remote_id,
                     source=str(source),
-                    source_kind="url" if source in (request_data.urls or []) else "file",
+                    source_kind="url"
+                    if source in (request_data.urls or [])
+                    else "file",
                     status="queued",
                 )
             )
@@ -776,9 +773,7 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
     app = _IngestRunnerHarness(db)
     # The two preconditions ``_resolve_ingest_backend`` reads: the opt-in
     # (patched above) and a server-mode runtime.
-    app.runtime_policy = SimpleNamespace(
-        state=SimpleNamespace(active_source="server")
-    )
+    app.runtime_policy = SimpleNamespace(state=SimpleNamespace(active_source="server"))
     app.server_media_reading_service = ServerMediaReadingService(transport)
     app.REMOTE_INGEST_POLL_SECONDS = 0.01
     try:
@@ -812,14 +807,10 @@ async def test_forecast_counts_equal_the_real_receipt_for_a_server_submission(
                 1 for job in outcomes.values() if job.state is IngestJobState.DONE
             )
             actual_skipped = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.SKIPPED
+                1 for job in outcomes.values() if job.state is IngestJobState.SKIPPED
             )
             actual_failed = sum(
-                1
-                for job in outcomes.values()
-                if job.state is IngestJobState.FAILED
+                1 for job in outcomes.values() if job.state is IngestJobState.FAILED
             )
 
             assert (

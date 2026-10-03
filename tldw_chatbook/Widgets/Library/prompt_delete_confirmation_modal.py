@@ -33,7 +33,9 @@ class PromptDeleteItem:
         if type(self.artifact_type) is not str:
             raise TypeError("Prompt deletion item artifact types must be strings.")
         if self.artifact_type not in _ARTIFACT_TYPES:
-            raise ValueError("Prompt deletion item artifact type must be prompt or recipe.")
+            raise ValueError(
+                "Prompt deletion item artifact type must be prompt or recipe."
+            )
 
 
 @dataclass(frozen=True)
@@ -48,19 +50,29 @@ class PromptDeleteRequest:
     def __post_init__(self) -> None:
         """Reject incomplete or mutable presentation requests at the boundary."""
         if type(self.items) is not tuple:
-            raise TypeError("Prompt deletion confirmation items must be an immutable tuple.")
+            raise TypeError(
+                "Prompt deletion confirmation items must be an immutable tuple."
+            )
         if not self.items:
             raise ValueError("Prompt deletion confirmation requires at least one item.")
         if not all(isinstance(item, PromptDeleteItem) for item in self.items):
-            raise TypeError("Prompt deletion confirmation items must be PromptDeleteItem values.")
+            raise TypeError(
+                "Prompt deletion confirmation items must be PromptDeleteItem values."
+            )
         if self.fingerprint is not None and type(self.fingerprint) is not str:
-            raise TypeError("Prompt deletion confirmation fingerprints must be strings or None.")
+            raise TypeError(
+                "Prompt deletion confirmation fingerprints must be strings or None."
+            )
         if type(self.dirty) is not bool:
             raise TypeError("Prompt deletion confirmation dirty state must be a bool.")
         if type(self.preview_limit) is not int:
-            raise TypeError("Prompt deletion confirmation preview_limit must be an integer.")
+            raise TypeError(
+                "Prompt deletion confirmation preview_limit must be an integer."
+            )
         if self.preview_limit < 1:
-            raise ValueError("Prompt deletion confirmation preview_limit must be positive.")
+            raise ValueError(
+                "Prompt deletion confirmation preview_limit must be positive."
+            )
 
 
 @dataclass(frozen=True)
@@ -75,7 +87,9 @@ class PromptDeleteDecision:
         if type(self.confirmed) is not bool:
             raise TypeError("Prompt deletion decisions must have a bool confirmation.")
         if self.fingerprint is not None and type(self.fingerprint) is not str:
-            raise TypeError("Prompt deletion decision fingerprints must be strings or None.")
+            raise TypeError(
+                "Prompt deletion decision fingerprints must be strings or None."
+            )
 
 
 class PromptDeleteConfirmationModal(
@@ -166,10 +180,7 @@ class PromptDeleteConfirmationModal(
                 f'The saved {artifact_label} "{display_name}" will be discarded. '
                 f"{recovery_copy}"
             )
-        return (
-            f"This will discard {self._plural_count_copy()}. "
-            f"{recovery_copy}"
-        )
+        return f"This will discard {self._plural_count_copy()}. {recovery_copy}"
 
     def _preview_copy(self) -> str:
         names = [
@@ -183,14 +194,20 @@ class PromptDeleteConfirmationModal(
 
     def _plural_count_copy(self) -> str:
         counts = {
-            "prompt": sum(item.artifact_type == "prompt" for item in self.request.items),
-            "recipe": sum(item.artifact_type == "recipe" for item in self.request.items),
+            "prompt": sum(
+                item.artifact_type == "prompt" for item in self.request.items
+            ),
+            "recipe": sum(
+                item.artifact_type == "recipe" for item in self.request.items
+            ),
         }
         parts = []
         for artifact_type in ("prompt", "recipe"):
             count = counts[artifact_type]
             if count:
-                label = artifact_type.title() if count == 1 else artifact_type.title() + "s"
+                label = (
+                    artifact_type.title() if count == 1 else artifact_type.title() + "s"
+                )
                 parts.append(f"{count} {label}")
         return " and ".join(parts)
 
