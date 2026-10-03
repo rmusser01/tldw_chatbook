@@ -102,7 +102,15 @@ class _TranscriptHarness(App):
         yield transcript
 
 
+# The three mounted tests below keep the collection-time profile: composing a
+# real ConsoleTranscript reads `get_cli_setting("console", ...)` (turn file
+# cards) during compose, which goes through the config-participant admission
+# and fails closed with RecoveryRequired("raw_source_selection_changed") under
+# the per-test sandbox redirect (same signature and remedy as the suites
+# enrolled in Tests/conftest.py, TASK-32873/ADR-179). The unit tests in this
+# file stay on the per-test sandbox.
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_full_tool_output_is_reachable_from_the_mounted_transcript():
     """AC#1/#6: drive the real widget, and read what is actually on screen.
 
@@ -135,6 +143,7 @@ async def test_full_tool_output_is_reachable_from_the_mounted_transcript():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_pressing_o_expands_the_selected_marker():
     """AC#1 in full: 'by keyboard', through the binding and the button.
 
@@ -202,6 +211,7 @@ def test_a_marker_that_already_shows_everything_carries_no_duplicate():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_two_calls_in_one_turn_expand_independently():
     """AC#4: expansion is per row, not a single global toggle."""
     class _TwoCalls(App):
