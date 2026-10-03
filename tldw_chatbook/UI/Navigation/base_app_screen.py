@@ -1,10 +1,13 @@
 """Base screen class for all application screens."""
 
-from typing import TYPE_CHECKING, Optional, Dict, Any
+from typing import TYPE_CHECKING, Any, ClassVar, Dict, Optional
 from loguru import logger
 
+from textual.binding import Binding
 from textual.message import Message
 from textual.app import ComposeResult
+from textual.css.match import match
+from textual.css.parse import parse_selectors
 from textual.css.query import QueryError
 from textual.geometry import Region
 from textual.screen import Screen
@@ -63,6 +66,32 @@ class BaseAppScreen(Screen):
     VERTICAL_BREAKPOINTS = [
         (0, "shell-header-compact"),
         (_DESTINATION_HEADER_COMPACT_FLOOR_HEIGHT + 1, "shell-header-normal"),
+    ]
+
+    #: Roleplay frame B0 (the shared adaptive-pane-shell ADR): the opt-in Tab region. ``None`` -- every
+    #: route in B0 -- keeps Textual's stock app-wide Tab walk exactly. A
+    #: selector string (Roleplay sets ``"#screen-content, #screen-content *"``
+    #: in B3) confines Tab/Shift+Tab to it while focus is inside; from chrome
+    #: (nav bar, footer) the walk stays app-wide so the bar remains
+    #: traversable -- the Library task-32052 / Console TASK-2154.11 rule as one
+    #: shared seam.
+    TAB_REGION: ClassVar[str | None] = None
+
+    BINDINGS = [
+        # Replaces Screen's ("tab", "app.focus_next") and ("shift+tab",
+        # "app.focus_previous") through DOMNode._merge_bindings (a later class
+        # wins per key). Non-priority like Screen's: a priority Tab here would
+        # preempt every screen's own on_key Tab trap (lessons-textual).
+        # ChatScreen and LibraryScreen re-declare tab and keep theirs. Never
+        # gate region_focus_* off in check_action: once this replaces
+        # Screen's binding there is no fall-through, so False kills Tab.
+        Binding("tab", "region_focus_next", "Focus Next", show=False),
+        Binding("shift+tab", "region_focus_previous", "Focus Previous", show=False),
+        # Re-spread the rest of Screen.BINDINGS: App._show_generic_screen_help
+        # renders F1 from getattr(screen, "BINDINGS") on ten screens, and
+        # PersonasScreen and ChatScreen spread this list; without it the
+        # "Copy selected text" row would vanish from their help.
+        *(binding for binding in Screen.BINDINGS if binding.key not in ("tab", "shift+tab")),
     ]
 
     def __init__(self, app_instance: "TldwCli", screen_name: str, **kwargs):
@@ -230,6 +259,76 @@ class BaseAppScreen(Screen):
             if inside is not None:
                 return inside
         return next(iter(chain), None)
+
+    def arrival_focus_target(self) -> "Widget | None":
+        """Where Tab lands when this opted-in screen has nothing focused.
+
+        Consulted only by ``_move_region_focus`` while ``TAB_REGION`` is set
+        and nothing holds focus -- never at first paint in B0, where
+        ``App.AUTO_FOCUS`` still decides (the nav bar's mount settling
+        depends on it). Roleplay (B3) overrides it to return its items list.
+        An override returns a focusable widget inside ``TAB_REGION``, or
+        ``None`` to fall back to the region walk. A target outside the region
+        is ignored the same way: the default can return the nav bar when the
+        content holds nothing focusable yet.
+
+        Returns:
+            ``_first_focusable_in_content()`` by default.
+        """
+        return self._first_focusable_in_content()
+
+    def action_region_focus_next(self) -> None:
+        """Tab: confined to ``TAB_REGION`` when set, else Textual's own walk."""
+        self._move_region_focus(1)
+
+    def action_region_focus_previous(self) -> None:
+        """Shift+Tab: the reverse of ``action_region_focus_next``."""
+        self._move_region_focus(-1)
+
+    def _move_region_focus(self, direction: int) -> "Widget | None":
+        """Move focus one step, inside ``TAB_REGION`` while focus is in it.
+
+        Args:
+            direction: ``1`` for Tab, ``-1`` for Shift+Tab.
+
+        Returns:
+            The newly focused widget, or ``None``.
+        """
+        region = self.TAB_REGION
+        if region is None:
+            # Exactly what Screen's binding ran: App.action_focus_next is
+            # ``self.screen.focus_next()``, and this binding only fires while
+            # this screen is ``app.screen``. Kept as the App call so a future
+            # TldwCli override still applies on every non-opted route.
+            if direction > 0:
+                self.app.action_focus_next()
+            else:
+                self.app.action_focus_previous()
+            return self.focused
+        focused = self.focused
+        selector_set = parse_selectors(region)
+        if focused is None:
+            target = self.arrival_focus_target()
+            # Only a target inside the region: the default hook falls back to
+            # the screen's first focusable widget (often the nav bar) when the
+            # content holds nothing focusable yet.
+            if (
+                target is not None
+                and target.focusable
+                and match(selector_set, target)
+            ):
+                self.set_focus(target)
+                return self.focused
+            selector = region
+        elif match(selector_set, focused):
+            # The same predicate Screen._move_focus filters with, so "inside"
+            # and "walk" can never disagree.
+            selector = region
+        else:
+            selector = "*"
+        if direction > 0:
+            return self.focus_next(selector)
+        return self.focus_previous(selector)
 
     async def recompose(self) -> None:
         """Release any mouse capture again immediately before the actual
