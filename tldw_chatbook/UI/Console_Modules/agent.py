@@ -597,7 +597,8 @@ def console_turn_activity_text(
 #: "Generating…" (a warm model answers well inside this).
 _FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
 CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for the model to start answering"
-_FIRST_TOKEN_HINT = "a large local model can take a few minutes to load · Stop: Esc"
+#: The Stop key is composer_run_controls.STOP_RUN_KEY_LABEL (a test pins it).
+_FIRST_TOKEN_HINT = "a large local model can take a few minutes to load · Stop: Ctrl+G"
 
 
 def _live_usage_label(usage: Any) -> str:

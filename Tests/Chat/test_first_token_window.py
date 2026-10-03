@@ -129,4 +129,8 @@ def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() ->
     assert late.startswith("Waiting for the model to start answering")
     assert "42s" in late
     assert "can take a few minutes" in late
-    assert "Stop" in late
+    from tldw_chatbook.UI.Console_Modules.composer_run_controls import (
+        STOP_RUN_KEY_LABEL,
+    )
+
+    assert f"Stop: {STOP_RUN_KEY_LABEL}" in late
