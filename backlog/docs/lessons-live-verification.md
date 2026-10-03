@@ -3654,3 +3654,25 @@ Use `loopback_network` for a pytest probe, or the documented guard mode for a
 standalone probe against an owned numeric loopback address. Restore blocked mode
 in `finally` and assert that no blocked attempts were swallowed. Keep failed
 setup attempts out of the passing receipt.
+
+## A gap between tmux frames is not a blocked UI loop until the main thread says so (TASK-34100.1 review, 2026-10-03)
+
+**Incident.** A review of the first-run wizard reported mid-track Nexts that "froze" for
+0.6-1.6 s with no busy line, from `capture-pane` timelines showing no frame between the
+key press and the next step. Choosing Full was a real loop block: synchronous TLS and
+storage setup in the localhost scan, fixed by moving it to a thread. The mid-track cases
+were different. The app was relaunched under a wrapper that sampled the main thread's stack
+every 10 ms and logged busy-line, checkpoint and `show_step` marks
+(`setup-wizard-ux-qa/evidence/g1-r1x-prof/`). At load 60-65 on 14 cores, the main thread
+sat idle in the selector for 85-95% of those windows. The wait was a checkpoint write on a
+worker thread (0.1-1.35 s), and the busy line did show during it. What it could not cover
+was the incoming step's synchronous mount and CSS matching after `show_step`, plus tmux
+receiving the repaint in chunks (one Model step arrived over 2.08-2.15 s). The same Nexts
+headless took 0.15-0.4 s.
+
+**Practice.** Before attributing a no-frame window to blocking work, sample the main
+thread: a `runpy` wrapper that starts a sampler thread and then runs `tldw_chatbook.app`
+needs no repo change and no root, unlike `py-spy` on macOS. Record the load average with
+every timing. Also, in this app a focused `Input` draws a solid `┌─┐` border
+(`components/_forms.tcss`) and an unfocused one the tall `▊▔` border, so read focus from
+that glyph or `capture-pane -e`, not from "the border changed".
