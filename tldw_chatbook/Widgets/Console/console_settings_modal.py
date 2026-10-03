@@ -184,7 +184,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 MODAL_BODY_MIN_HEIGHT = 0
-MODAL_LABEL_WIDTH = 23
+MODAL_LABEL_WIDTH = 23  # $ds-size-23: the shared label column (CSS owns it)
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
@@ -2795,13 +2795,12 @@ class ConsoleSettingsModal(
             else "Selected view: Context and memory"
         )
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
-        self.query_one("#console-settings-save-default", Button).display = show_model
         self.query_one("#console-settings-make-default", Button).display = show_model
         self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
         self.query_one("#console-settings-cancel", Button).display = not show_model
-        self.query_one("#console-settings-save", Button).display = not recovery_active
-        readiness = self.query_one("#console-settings-new-chat-default-block", Static)
-        readiness.display = show_model and bool(str(readiness.renderable))
+        # Save as model default, Apply, the defaults line and the readiness
+        # block follow the view from the draft (TASK-33006.6 AC#2).
+        self._sync_default_readiness()
         self.call_after_refresh(self._sync_fold_hint)
         self.call_after_refresh(self._reveal_default_feedback)
 
@@ -2970,7 +2969,7 @@ class ConsoleSettingsModal(
             else ""
         )
         default_scope.update(scope_copy)
-        default_scope.display = bool(scope_copy)
+        default_scope.display = bool(scope_copy) and save_button.display
         reason = ""
         if self._context_operation_active():
             reason = "Available when the current context operation finishes."
@@ -3292,15 +3291,6 @@ class ConsoleSettingsModal(
             return
         compact = container.size.width < 100
         self.set_class(compact, "-conversation-settings-compact")
-        label_width = 16 if compact else MODAL_LABEL_WIDTH
-        for label in self.query(".console-settings-modal-label"):
-            label.remove_class(
-                *(name for name in label.classes if name.startswith("w-"))
-            )
-            label.set_styles(width=None)
-            label.add_class("w-16" if compact else "w-23")
-            label.styles.min_width = label_width
-            label.styles.max_width = label_width
         self.call_after_refresh(self._sync_fold_hint)
 
     @on(Button.Pressed, "#console-settings-view-model")
@@ -3422,13 +3412,8 @@ class ConsoleSettingsModal(
         )
 
     def _modal_label(self, text: str) -> Static:
-        label = Static(text, classes="console-settings-modal-label")
-        label.remove_class(*(name for name in label.classes if name.startswith("w-")))
-        label.set_styles(width=None)
-        label.add_class("w-23")
-        label.styles.min_width = MODAL_LABEL_WIDTH
-        label.styles.max_width = MODAL_LABEL_WIDTH
-        return label
+        # Width per view and tier is CSS (_console_panels.tcss, TASK-33006.6).
+        return Static(text, classes="console-settings-modal-label")
 
     def action_dismiss(self) -> None:
         """Route the dismiss action through the applicable close guard."""

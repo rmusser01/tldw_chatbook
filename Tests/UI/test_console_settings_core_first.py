@@ -486,3 +486,57 @@ async def test_modal_size_comes_from_the_width_and_height_tokens(size) -> None:
         container = modal.query_one("#console-settings-modal")
         assert (container.region.width, container.region.height) == (150, 22)
         assert not container.has_class("-conversation-settings-wide")
+
+
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_context_view_labels_leave_a_blank_cell_before_their_controls(
+    size,
+) -> None:
+    """TASK-33006.6 AC#1: every Context and memory label paints whole with at
+    least one blank cell before its control. 'Conversation max tokens' is
+    exactly as wide as the shared 23-cell label column, so it used to run
+    into its input."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(), focus_context=True)
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        labels = list(
+            modal.query("#console-settings-context-view .console-settings-modal-label")
+        )
+        assert len(labels) == 10
+        for label in labels:
+            siblings = list(label.parent.children)
+            control = siblings[siblings.index(label) + 1]
+            row = await _painted_line(pilot, app, control)
+            text = str(label.render())
+            before = row[label.region.x : control.region.x]
+            assert before.startswith(text), (text, row)
+            assert len(before) > len(text) and not before[len(text) :].strip(), (
+                text,
+                row,
+            )
+
+
+@pytest.mark.parametrize(
+    ("size", "model", "context"), (((211, 44), 23, 24), ((90, 40), 16, 16))
+)
+@pytest.mark.asyncio
+async def test_label_column_comes_from_css_per_view_and_tier(size, model, context) -> None:
+    """TASK-33006.6: the label column is CSS, not inline styles, so it can
+    follow the view: 23 cells in the Model view, 24 in the Context view,
+    and 16 in the compact tier in both."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings(model=None))  # a blocked chat opens Connection
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+
+        def widths() -> set[int]:
+            labels = modal.query(".console-settings-modal-label")
+            return {label.region.width for label in labels if label.region.area}
+
+        assert widths() == {model}
+        modal.query_one("#console-settings-view-context", Button).press()
+        for _ in range(4):
+            await pilot.pause()
+        assert widths() == {context}

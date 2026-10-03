@@ -554,7 +554,10 @@ defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
 **Save as model default** and **Default for new chats** write
 `config.toml`; **Apply to this chat** changes this chat alone and writes no
 configuration. The **Context and memory** view has a **Cancel** button in
-place of the default actions.
+place of the default actions. The line above the footer that names where a
+default goes ("Used by future conversations for Anthropic.") shows only
+beside **Save as model default**, so the **Context and memory** view never
+shows it.
 
 **Use saved defaults** is how a chat that already holds work picks up
 defaults you saved later (a chat nobody has used yet follows them on its

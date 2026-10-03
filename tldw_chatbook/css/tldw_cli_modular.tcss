@@ -8575,6 +8575,16 @@ ConsoleSettingsModal CollapsibleTitle {
 }
 
 
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
+
 ConsoleSettingsModal Button,
 ConsoleSettingsModal #console-settings-view-tabs,
 ConsoleSettingsModal #console-settings-default-recovery-actions {
