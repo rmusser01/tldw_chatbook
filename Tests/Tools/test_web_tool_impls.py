@@ -34,35 +34,62 @@ def test_module_never_imports_persistence():
     """
     import inspect
     import re
+
     src = inspect.getsource(web_tool_impls)
     # tempfile/mkstemp/mkdtemp joined the pattern with task-1359's binary
     # support: its amended AC ("zero on-disk persistence") rests on THIS
     # test, so the guard must actually cover temp-file writes.
-    assert re.search(r"Client_Media_DB|ChaChaNotes|Local_Ingestion|RAG_Indexing|sqlite3|tempfile|mkstemp|mkdtemp", src) is None
+    assert (
+        re.search(
+            r"Client_Media_DB|ChaChaNotes|Local_Ingestion|RAG_Indexing|sqlite3|tempfile|mkstemp|mkdtemp",
+            src,
+        )
+        is None
+    )
 
 
 def test_accepts_public_https(monkeypatch):
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))])
-    assert validate_outbound_url("https://example.com/page") == "https://example.com/page"
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 443))]
+    )
+    assert (
+        validate_outbound_url("https://example.com/page") == "https://example.com/page"
+    )
 
 
 def test_rejects_bad_schemes():
-    for url in ("file:///etc/passwd", "ftp://x/y", "gopher://x", "javascript:alert(1)", "data:text/html,hi"):
+    for url in (
+        "file:///etc/passwd",
+        "ftp://x/y",
+        "gopher://x",
+        "javascript:alert(1)",
+        "data:text/html,hi",
+    ):
         with pytest.raises(LocalToolError):
             validate_outbound_url(url)
 
 
 def test_rejects_loopback_and_private_literals():
-    for url in ("http://127.0.0.1/", "http://localhost/", "http://10.0.0.5/", "http://172.16.0.1/",
-                "http://192.168.1.1/", "http://169.254.169.254/latest/meta-data", "http://[::1]/",
-                "http://0.0.0.0/"):
+    for url in (
+        "http://127.0.0.1/",
+        "http://localhost/",
+        "http://10.0.0.5/",
+        "http://172.16.0.1/",
+        "http://192.168.1.1/",
+        "http://169.254.169.254/latest/meta-data",
+        "http://[::1]/",
+        "http://0.0.0.0/",
+    ):
         with pytest.raises(LocalToolError):
             validate_outbound_url(url)
 
 
 def test_rejects_private_dns_answer(monkeypatch):
     import socket
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.1.2.3", 80))])
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("10.1.2.3", 80))]
+    )
     with pytest.raises(LocalToolError, match="private|internal|not allowed"):
         validate_outbound_url("http://evil.internal.example.com/")
 
@@ -132,9 +159,7 @@ def fetch_env(monkeypatch):
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", (_PUBLIC_IP, 80))]
     )
-    monkeypatch.setattr(
-        web_tool_impls, "_transport", httpx.MockTransport(handler)
-    )
+    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(handler))
     clock = _FakeClock()
     monkeypatch.setattr(web_tool_impls, "time", clock)
     # robots.txt enforcement (task-2833) defaults to ON in shipped config,
@@ -158,7 +183,9 @@ def _text_page(body: bytes, status: int = 200) -> httpx.Response:
 
 
 def _html_page(html: str = _ARTICLE_HTML) -> httpx.Response:
-    return httpx.Response(200, content=html.encode(), headers={"content-type": "text/html"})
+    return httpx.Response(
+        200, content=html.encode(), headers={"content-type": "text/html"}
+    )
 
 
 def test_fetch_extracts_text(fetch_env):
@@ -250,6 +277,7 @@ def test_fetch_invalid_url(fetch_env):
 # SSRF bypass-class regressions + hardening
 # ---------------------------------------------------------------------------
 
+
 def test_rejects_cgnat_and_shared_space_literals():
     # 100.64.0.0/10 (RFC 6598 CGNAT/shared space — Tailscale tailnets, carrier
     # gear) is NOT covered by ipaddress.is_private on Python 3.12; the guard
@@ -263,7 +291,9 @@ def test_rejects_decimal_and_hex_ip_forms(monkeypatch):
     # libc getaddrinfo translates these odd literal forms to the canonical
     # IPv4 address (2130706433 == 0x7f000001 == 127.0.0.1); the guard must
     # see and refuse the translated answer.
-    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 80))])
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("127.0.0.1", 80))]
+    )
     for url in ("http://2130706433/", "http://0x7f000001/"):
         with pytest.raises(LocalToolError):
             validate_outbound_url(url)
@@ -428,7 +458,9 @@ def test_fetch_pdf_over_ceiling_refused(fetch_env, monkeypatch):
         web_fetch("http://example.com/huge.pdf")
 
 
-def test_fetch_pdf_too_large_message_reflects_configured_ceiling(fetch_env, monkeypatch):
+def test_fetch_pdf_too_large_message_reflects_configured_ceiling(
+    fetch_env, monkeypatch
+):
     """The [too-large] message must render the number FROM PDF_MAX_BYTES,
     not a hardcoded '20 MB' string — a caller that monkeypatches the
     constant to a non-default value must see THAT value quoted back, not
@@ -486,7 +518,9 @@ def test_fetch_pdf_damaged_bytes_error(fetch_env):
     # pymupdf is sometimes lenient with garbage after a valid header: it may
     # raise at open (-> pdf-error) or yield a zero-page doc (-> empty-content).
     # Either way the caller gets a structured refusal, never a crash.
-    fetch_env.routes["http://example.com/junk.pdf"] = _pdf_response(b"%PDF-1.7 garbage not a real pdf")
+    fetch_env.routes["http://example.com/junk.pdf"] = _pdf_response(
+        b"%PDF-1.7 garbage not a real pdf"
+    )
     with pytest.raises(LocalToolError, match=r"pdf-error|empty-content"):
         web_fetch("http://example.com/junk.pdf")
 
@@ -494,6 +528,7 @@ def test_fetch_pdf_damaged_bytes_error(fetch_env):
 @requires_pymupdf
 def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
     import builtins
+
     real_import = builtins.__import__
 
     def no_pymupdf(name, *a, **k):
@@ -507,7 +542,9 @@ def test_fetch_pdf_missing_dep_message(fetch_env, monkeypatch):
         web_fetch("http://example.com/doc.pdf")
 
 
-def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(fetch_env, monkeypatch):
+def test_pymupdf_available_spec_less_stub_returns_false_not_valueerror(
+    fetch_env, monkeypatch
+):
     """_pymupdf_available() must be TOTAL: importlib.util.find_spec raises a
     raw ValueError (not caught anywhere else in this module) when
     sys.modules holds a stub entry with __spec__ = None — e.g. a test or
@@ -568,6 +605,7 @@ def test_fetch_html_types_unaffected(fetch_env):
 # actually exercised across multiple response.iter_bytes() iterations)
 # ---------------------------------------------------------------------------
 
+
 @requires_pymupdf
 def test_fetch_pdf_dribbled_one_byte_at_a_time_still_sniffed(fetch_env):
     """Spec §1: 'The sniff buffers until at least 5 body bytes have
@@ -608,6 +646,7 @@ def test_fetch_short_body_under_pdf_magic_length_extracts_as_text(fetch_env):
 # suite compatibility, design doc Critical 1) -- every test below opts back
 # in explicitly via _enable_robots().
 
+
 def _enable_robots(monkeypatch, respect: bool = True) -> None:
     monkeypatch.setattr(
         web_tool_impls, "_webfetch_settings", lambda: {"respect_robots_txt": respect}
@@ -616,17 +655,25 @@ def _enable_robots(monkeypatch, respect: bool = True) -> None:
 
 def test_fetch_robots_disallowed_path_refused(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /private\n"
+    )
     fetch_env.routes["http://example.com/private/page"] = _text_page(b"secret")
     with pytest.raises(LocalToolError) as exc_info:
         web_fetch("http://example.com/private/page")
-    assert str(exc_info.value).startswith("[robots-disallowed] http://example.com/private/page")
-    assert "http://example.com/private/page" not in fetch_env.calls  # blocked before the hop
+    assert str(exc_info.value).startswith(
+        "[robots-disallowed] http://example.com/private/page"
+    )
+    assert (
+        "http://example.com/private/page" not in fetch_env.calls
+    )  # blocked before the hop
 
 
 def test_fetch_robots_allowed_path_proceeds(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /private\n"
+    )
     fetch_env.routes["http://example.com/public"] = _text_page(b"hello public")
     assert web_fetch("http://example.com/public") == "hello public"
 
@@ -684,7 +731,10 @@ def test_fetch_robots_truncated_body_fails_open(fetch_env, monkeypatch):
     robots.txt, if read in FULL, would disallow everything -- truncation
     must still fail the fetch open."""
     _enable_robots(monkeypatch)
-    huge = b"User-agent: *\nDisallow: /\n" + b"# padding\n" * web_tool_impls.ROBOTS_MAX_BYTES
+    huge = (
+        b"User-agent: *\nDisallow: /\n"
+        + b"# padding\n" * web_tool_impls.ROBOTS_MAX_BYTES
+    )
     assert len(huge) > web_tool_impls.ROBOTS_MAX_BYTES
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(huge)
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
@@ -693,26 +743,34 @@ def test_fetch_robots_truncated_body_fails_open(fetch_env, monkeypatch):
 
 def test_fetch_robots_cache_not_refetched_on_second_request(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
     fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
     fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
     web_fetch("http://example.com/a")
     assert fetch_env.calls.count("http://example.com/robots.txt") == 1
     fetch_env.clock.now += 2.0  # clear the per-domain rate-limit interval
     web_fetch("http://example.com/b")
-    assert fetch_env.calls.count("http://example.com/robots.txt") == 1  # cached, no re-fetch
+    assert (
+        fetch_env.calls.count("http://example.com/robots.txt") == 1
+    )  # cached, no re-fetch
 
 
 def test_fetch_robots_cache_ttl_expiry_refetches(fetch_env, monkeypatch):
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
     fetch_env.routes["http://example.com/a"] = _text_page(b"page a")
     fetch_env.routes["http://example.com/b"] = _text_page(b"page b")
     web_fetch("http://example.com/a")
     assert fetch_env.calls.count("http://example.com/robots.txt") == 1
     fetch_env.clock.now += web_tool_impls.ROBOTS_CACHE_TTL_SECONDS + 1
     web_fetch("http://example.com/b")
-    assert fetch_env.calls.count("http://example.com/robots.txt") == 2  # TTL expired, re-fetched
+    assert (
+        fetch_env.calls.count("http://example.com/robots.txt") == 2
+    )  # TTL expired, re-fetched
 
 
 def test_fetch_robots_negative_cache_holds_for_ttl(fetch_env, monkeypatch):
@@ -726,25 +784,35 @@ def test_fetch_robots_negative_cache_holds_for_ttl(fetch_env, monkeypatch):
     assert first_attempts == 1
     fetch_env.clock.now += 2.0  # well under ROBOTS_CACHE_TTL_SECONDS
     web_fetch("http://example.com/b")
-    assert fetch_env.calls.count("http://example.com/robots.txt") == first_attempts  # negative cache held
+    assert (
+        fetch_env.calls.count("http://example.com/robots.txt") == first_attempts
+    )  # negative cache held
 
 
-def test_fetch_robots_redirect_into_disallowed_path_refused_mid_chain(fetch_env, monkeypatch):
+def test_fetch_robots_redirect_into_disallowed_path_refused_mid_chain(
+    fetch_env, monkeypatch
+):
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /private\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /private\n"
+    )
     fetch_env.routes["http://example.com/start"] = httpx.Response(
         302, headers={"location": "http://example.com/private/page"}
     )
     with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
         web_fetch("http://example.com/start")
-    assert "http://example.com/private/page" not in fetch_env.calls  # blocked before the hop
+    assert (
+        "http://example.com/private/page" not in fetch_env.calls
+    )  # blocked before the hop
 
 
 def test_fetch_robots_toggle_off_makes_no_robots_fetch(fetch_env):
     # fetch_env's own fixture default is respect_robots_txt=False; this
     # test proves a PRESENT, disallowing robots.txt is never even fetched
     # while the toggle is off.
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /\n"
+    )
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
     assert web_fetch("http://example.com/page") == "hello"
     assert "http://example.com/robots.txt" not in fetch_env.calls
@@ -755,14 +823,18 @@ def test_fetch_robots_cache_hit_rechecks_and_refuses(fetch_env, monkeypatch):
     re-checks SSRF policy -- a cached body plus a newly-disallowing
     robots.txt must refuse, not silently hand back the cached text."""
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
     assert web_fetch("http://example.com/page") == "hello"
 
     # Robots policy changes; force the next call to see it by clearing only
     # the robots cache (the fetch/body cache stays warm and TTL-valid).
     web_tool_impls._robots_cache.clear()
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /\n"
+    )
     fetch_env.clock.now += 2.0  # clear the per-domain rate-limit interval
     with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
         web_fetch("http://example.com/page")
@@ -776,7 +848,9 @@ def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
     limiter as any other request -- two back-to-back rate-limited requests
     to a brand-new host (robots.txt, then the page) cost one sleep."""
     _enable_robots(monkeypatch)
-    fetch_env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nAllow: /\n")
+    fetch_env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nAllow: /\n"
+    )
     fetch_env.routes["http://example.com/page"] = _text_page(b"hello")
     web_fetch("http://example.com/page")
     assert fetch_env.clock.sleeps == [pytest.approx(1.0)]
@@ -785,6 +859,7 @@ def test_fetch_robots_txt_fetch_is_itself_rate_limited(fetch_env, monkeypatch):
 # ---------------------------------------------------------------------------
 # robots.txt enforcement -- fix round 1 (review findings)
 # ---------------------------------------------------------------------------
+
 
 def test_fetch_robots_txt_redirect_is_followed_and_enforced(fetch_env, monkeypatch):
     """Important 1: a redirecting robots.txt (e.g. HTTP canonicalization)
@@ -807,7 +882,9 @@ def test_fetch_robots_txt_redirect_is_followed_and_enforced(fetch_env, monkeypat
     assert "http://example.com/static/robots.txt" in fetch_env.calls
 
 
-def test_fetch_robots_txt_redirect_loop_exhausts_cap_and_fails_open(fetch_env, monkeypatch):
+def test_fetch_robots_txt_redirect_loop_exhausts_cap_and_fails_open(
+    fetch_env, monkeypatch
+):
     """A robots.txt redirect chain that never resolves must still fail open
     once the bounded hop cap is exhausted, not raise or hang."""
     _enable_robots(monkeypatch)
@@ -883,9 +960,7 @@ def fetch_env_default_settings(monkeypatch):
     monkeypatch.setattr(
         socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", (_PUBLIC_IP, 80))]
     )
-    monkeypatch.setattr(
-        web_tool_impls, "_transport", httpx.MockTransport(handler)
-    )
+    monkeypatch.setattr(web_tool_impls, "_transport", httpx.MockTransport(handler))
     clock = _FakeClock()
     monkeypatch.setattr(web_tool_impls, "time", clock)
     web_tool_impls._reset_state_for_tests()
@@ -893,13 +968,17 @@ def fetch_env_default_settings(monkeypatch):
     web_tool_impls._reset_state_for_tests()
 
 
-def test_webfetch_default_on_end_to_end_refuses_without_patching_seam(fetch_env_default_settings):
+def test_webfetch_default_on_end_to_end_refuses_without_patching_seam(
+    fetch_env_default_settings,
+):
     """Important 2d: composition test -- sandboxed default config (no
     monkeypatch of _webfetch_settings anywhere in this test) plus a
     disallowing robots route means web_fetch must refuse, proving the
     real default really is on end-to-end, not just at the unit level."""
     env = fetch_env_default_settings
-    env.routes["http://example.com/robots.txt"] = _text_page(b"User-agent: *\nDisallow: /\n")
+    env.routes["http://example.com/robots.txt"] = _text_page(
+        b"User-agent: *\nDisallow: /\n"
+    )
     env.routes["http://example.com/page"] = _text_page(b"hello")
     with pytest.raises(LocalToolError, match=r"\[robots-disallowed\]"):
         web_fetch("http://example.com/page")
@@ -1012,9 +1091,9 @@ def _zip_bytes_with_encrypted_flag(name: str, data: bytes) -> bytes:
     idx = raw.find(b"PK\x01\x02")  # central directory file header signature
     assert idx != -1, "central directory record not found"
     flag_offset = idx + 8  # general purpose bit flag field
-    flags = int.from_bytes(raw[flag_offset:flag_offset + 2], "little")
+    flags = int.from_bytes(raw[flag_offset : flag_offset + 2], "little")
     flags |= 0x1
-    raw[flag_offset:flag_offset + 2] = flags.to_bytes(2, "little")
+    raw[flag_offset : flag_offset + 2] = flags.to_bytes(2, "little")
     return bytes(raw)
 
 
@@ -1062,7 +1141,9 @@ def test_fetch_png_sniff_beats_mislabeled_html_content_type(fetch_env):
 def test_fetch_image_over_binary_ceiling_refused(fetch_env, monkeypatch):
     monkeypatch.setattr(web_tool_impls, "BINARY_MAX_BYTES", 100)
     body = b"\x89PNG\r\n\x1a\n" + b"x" * 500
-    fetch_env.routes["http://example.com/huge.png"] = _binary_response(body, "image/png")
+    fetch_env.routes["http://example.com/huge.png"] = _binary_response(
+        body, "image/png"
+    )
     with pytest.raises(LocalToolError, match=r"too-large.*image.*media ingestion"):
         web_fetch("http://example.com/huge.png")
 
@@ -1105,7 +1186,9 @@ def test_fetch_body_shorter_than_sniff_window_still_extracts_as_text(fetch_env):
 
 def test_fetch_zip_lists_members_with_sizes(fetch_env):
     body = _zip_bytes({"readme.txt": b"hello", "data/nested.bin": b"12345678"})
-    fetch_env.routes["http://example.com/archive.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/archive.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/archive.zip")
     assert result.startswith("[archive] ZIP,")
     assert "2 members" in result
@@ -1116,7 +1199,9 @@ def test_fetch_zip_lists_members_with_sizes(fetch_env):
 def test_fetch_zip_over_list_max_shows_more_marker(fetch_env):
     members = {f"file{i}.txt": b"x" for i in range(25)}
     body = _zip_bytes(members)
-    fetch_env.routes["http://example.com/many.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/many.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/many.zip")
     assert "25 members" in result
     assert "… and 5 more" in result
@@ -1128,13 +1213,17 @@ def test_fetch_zip_hostile_member_names_flagged_not_verbatim(fetch_env):
     """Traversal screen (design doc ruling 2, mirrors
     chatbook_importer._validated_archive_parts): every shape of hostile
     name is flagged and repr-escaped, never printed as a raw path."""
-    body = _zip_bytes({
-        "../../etc/passwd": b"x",
-        "/etc/shadow": b"x",
-        "evil\\name": b"x",
-        "C:/win/cmd.exe": b"x",
-    })
-    fetch_env.routes["http://example.com/hostile.zip"] = _binary_response(body, "application/zip")
+    body = _zip_bytes(
+        {
+            "../../etc/passwd": b"x",
+            "/etc/shadow": b"x",
+            "evil\\name": b"x",
+            "C:/win/cmd.exe": b"x",
+        }
+    )
+    fetch_env.routes["http://example.com/hostile.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/hostile.zip")
     assert result.count("[suspicious name]") == 4
     # repr()'d, not printed as a bare path -- quoted form present for each.
@@ -1158,10 +1247,16 @@ def test_member_display_name_flags_all_hostile_shapes():
     assert _member_display_name("readme.txt") == "readme.txt"
     assert _member_display_name("dir/nested.bin") == "dir/nested.bin"
     for hostile in (
-        "../../etc/passwd", "/etc/shadow", "evil\\name", "nul\x00byte", "C:/win/cmd.exe",
+        "../../etc/passwd",
+        "/etc/shadow",
+        "evil\\name",
+        "nul\x00byte",
+        "C:/win/cmd.exe",
     ):
         result = _member_display_name(hostile)
-        assert result == f"[suspicious name] {hostile!r}", f"not flagged correctly: {hostile!r}"
+        assert result == f"[suspicious name] {hostile!r}", (
+            f"not flagged correctly: {hostile!r}"
+        )
 
 
 def test_fetch_zip_encrypted_member_annotated_not_refused(fetch_env):
@@ -1170,7 +1265,9 @@ def test_fetch_zip_encrypted_member_annotated_not_refused(fetch_env):
     "(encrypted)" annotation, not an [archive-error] refusal (design doc
     ruling 2)."""
     body = _zip_bytes_with_encrypted_flag("secret.txt", b"shh")
-    fetch_env.routes["http://example.com/locked.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/locked.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/locked.zip")
     assert "[archive] ZIP" in result
     assert "secret.txt" in result
@@ -1179,7 +1276,9 @@ def test_fetch_zip_encrypted_member_annotated_not_refused(fetch_env):
 
 def test_fetch_zip_corrupt_bytes_refused(fetch_env):
     body = b"PK\x03\x04" + b"not a real zip structure at all, just garbage padding"
-    fetch_env.routes["http://example.com/broken.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/broken.zip"] = _binary_response(
+        body, "application/zip"
+    )
     with pytest.raises(LocalToolError, match=r"\[archive-error\]"):
         web_fetch("http://example.com/broken.zip")
 
@@ -1210,10 +1309,14 @@ def test_fetch_audio_accepts_nonstandard_subtype_variants(fetch_env):
     only (design doc ruling 2), so real-world variants like audio/mp3 and
     audio/x-wav must all resolve, not just the canonical audio/mpeg."""
     for ctype in ("audio/mp3", "audio/x-wav", "audio/mpeg"):
-        fetch_env.routes["http://example.com/clip"] = _binary_response(b"binarydata", ctype)
+        fetch_env.routes["http://example.com/clip"] = _binary_response(
+            b"binarydata", ctype
+        )
         web_tool_impls._reset_state_for_tests()
         result = web_fetch("http://example.com/clip")
-        assert result.startswith(f"[audio] {ctype},"), f"failed for content-type {ctype!r}"
+        assert result.startswith(f"[audio] {ctype},"), (
+            f"failed for content-type {ctype!r}"
+        )
 
 
 # --- regression pin: unsupported binary types unchanged -------------------
@@ -1226,7 +1329,9 @@ def test_fetch_unsupported_binary_type_still_refused(fetch_env):
     fetch_env.routes["http://example.com/app.exe"] = _binary_response(
         body, "application/x-msdownload"
     )
-    with pytest.raises(LocalToolError, match=r"\[empty-content\] unsupported content type"):
+    with pytest.raises(
+        LocalToolError, match=r"\[empty-content\] unsupported content type"
+    ):
         web_fetch("http://example.com/app.exe")
 
 
@@ -1240,12 +1345,16 @@ def test_fetch_zip_control_char_member_names_flagged_not_verbatim(fetch_env):
     rendered name. All must be repr-escaped [suspicious name] entries;
     none may reach the output raw."""
     forged = "ok.txt\n[archive] ZIP, 1 B, 0 members"
-    body = _zip_bytes({
-        forged: b"x",
-        "\x1b]0;evil\x07innocent.txt": b"x",
-        "photo‮gnp.exe": b"x",
-    })
-    fetch_env.routes["http://example.com/sneaky.zip"] = _binary_response(body, "application/zip")
+    body = _zip_bytes(
+        {
+            forged: b"x",
+            "\x1b]0;evil\x07innocent.txt": b"x",
+            "photo‮gnp.exe": b"x",
+        }
+    )
+    fetch_env.routes["http://example.com/sneaky.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/sneaky.zip")
     assert result.count("[suspicious name]") == 3
     assert "\x1b" not in result
@@ -1262,7 +1371,9 @@ def test_fetch_zip_printable_unicode_member_names_list_plainly(fetch_env):
     """isprintable() must not overreach: ordinary non-ASCII names are
     legitimate and list verbatim."""
     body = _zip_bytes({"naïve.txt": b"x", "日本語.txt": b"y"})
-    fetch_env.routes["http://example.com/unicode.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/unicode.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/unicode.zip")
     assert "[suspicious name]" not in result
     assert "naïve.txt —" in result
@@ -1296,7 +1407,9 @@ def test_fetch_zip_over_binary_ceiling_refused_as_too_large(fetch_env, monkeypat
     monkeypatch.setattr(web_tool_impls, "BINARY_MAX_BYTES", 64)
     body = _zip_bytes({f"file{i}.txt": b"payload" for i in range(10)})
     assert len(body) > 64
-    fetch_env.routes["http://example.com/big.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/big.zip"] = _binary_response(
+        body, "application/zip"
+    )
     with pytest.raises(LocalToolError, match=r"\[too-large\]"):
         web_fetch("http://example.com/big.zip")
 
@@ -1306,7 +1419,9 @@ def test_fetch_zip_normal_members_carry_no_encrypted_annotation_and_sizes(fetch_
     members, and pin one _format_size suffix so the size column is not
     entirely unasserted."""
     body = _zip_bytes({"readme.txt": b"hello"})
-    fetch_env.routes["http://example.com/plain.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/plain.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/plain.zip")
     assert "(encrypted)" not in result
     assert "readme.txt — 5 B" in result
@@ -1317,13 +1432,21 @@ def test_fetch_zip_nonbadzipfile_parse_errors_normalized(fetch_env, monkeypatch)
     hostile central directory raising beyond BadZipFile (struct/Overflow/
     Value errors) must still surface as [archive-error], with a FIXED
     message (never an attacker-influenced exception string)."""
-    body = _zip_bytes({"a.txt": b"x"})  # build BEFORE the patch: zipfile is one shared module
+    body = _zip_bytes(
+        {"a.txt": b"x"}
+    )  # build BEFORE the patch: zipfile is one shared module
 
     def explode(*args, **kwargs):
         raise ValueError("weird central directory field")
+
     monkeypatch.setattr(web_tool_impls.zipfile, "ZipFile", explode)
-    fetch_env.routes["http://example.com/weird.zip"] = _binary_response(body, "application/zip")
-    with pytest.raises(LocalToolError, match=r"\[archive-error\] could not read ZIP \(malformed metadata\)"):
+    fetch_env.routes["http://example.com/weird.zip"] = _binary_response(
+        body, "application/zip"
+    )
+    with pytest.raises(
+        LocalToolError,
+        match=r"\[archive-error\] could not read ZIP \(malformed metadata\)",
+    ):
         web_fetch("http://example.com/weird.zip")
 
 
@@ -1334,10 +1457,14 @@ def test_fetch_zip_long_member_names_display_capped(fetch_env):
     eat the '… and N more' marker off the END)."""
     long_name = "a" * 5000 + ".txt"
     body = _zip_bytes({long_name: b"x", "short.txt": b"y"})
-    fetch_env.routes["http://example.com/long.zip"] = _binary_response(body, "application/zip")
+    fetch_env.routes["http://example.com/long.zip"] = _binary_response(
+        body, "application/zip"
+    )
     result = web_fetch("http://example.com/long.zip")
     for line in result.split("\n"):
-        assert len(line) <= web_tool_impls.ARCHIVE_MEMBER_NAME_MAX + 40, f"unbounded line: {len(line)} chars"
+        assert len(line) <= web_tool_impls.ARCHIVE_MEMBER_NAME_MAX + 40, (
+            f"unbounded line: {len(line)} chars"
+        )
     assert "… [name truncated]" in result
     assert "short.txt — 1 B" in result
 
@@ -1375,7 +1502,11 @@ def test_fetch_small_max_bytes_still_fills_sniff_window_for_mislabeled_pdf(fetch
 def _search_payload(n=2):
     return {
         "results": [
-            {"title": f"R{i}", "url": f"https://example.com/{i}", "content": f"body {i}"}
+            {
+                "title": f"R{i}",
+                "url": f"https://example.com/{i}",
+                "content": f"body {i}",
+            }
             for i in range(1, n + 1)
         ]
     }
@@ -1434,11 +1565,13 @@ def test_search_backend_exception_not_cached(fetch_env, monkeypatch):
 
 def test_search_error_envelope_and_malformed_not_cached(fetch_env, monkeypatch):
     """Backend and malformed failures must not pin for the cache TTL."""
-    payloads = iter([
-        {"error": "quota exceeded"},        # (iii) envelope error
-        "not a dict at all",                # (ii) non-dict
-        _search_payload(),                  # recovery
-    ])
+    payloads = iter(
+        [
+            {"error": "quota exceeded"},  # (iii) envelope error
+            "not a dict at all",  # (ii) non-dict
+            _search_payload(),  # recovery
+        ]
+    )
     calls = []
     _patch_search(monkeypatch, lambda **kw: (calls.append(kw), next(payloads))[1])
     with pytest.raises(LocalToolError, match=r"\[search-failed\].*quota exceeded"):
@@ -1521,10 +1654,11 @@ def test_search_cache_logs_never_carry_query_text(fetch_env, monkeypatch, capsys
     # binds pytest's global capture at import) -- a sink is the only real
     # observer. The house pattern (~15 files) is a list-appending sink.
     from loguru import logger as _logger
+
     records: list[str] = []
     sink_id = _logger.add(lambda m: records.append(str(m)), level="DEBUG")
     try:
-        web_tool_impls.web_search(secret)          # miss + store
+        web_tool_impls.web_search(secret)  # miss + store
         web_tool_impls.web_search(secret)  # hit
         with pytest.raises(LocalToolError):
             web_tool_impls.web_search(secret + " v2")  # failure path
@@ -1623,7 +1757,11 @@ class _BlockingOnceClock:
 @pytest.mark.parametrize(
     "lock_attr, put_fn_name, put_args",
     [
-        ("_fetch_cache_lock", "_cache_put", (("http://lock-test.example/", 100), "cached text")),
+        (
+            "_fetch_cache_lock",
+            "_cache_put",
+            (("http://lock-test.example/", 100), "cached text"),
+        ),
         ("_robots_cache_lock", "_robots_cache_put", ("http://lock-test.example", None)),
     ],
     ids=["fetch_cache", "robots_cache"],
@@ -1711,8 +1849,7 @@ def test_robots_allows_for_scrape_uses_own_truthful_user_agent(fetch_env):
     the file's own token is conventionally written without one, same as
     real-world "User-agent: Googlebot" groups.)"""
     fetch_env.routes["http://example.com/robots.txt"] = _text_page(
-        b"User-agent: tldw-chatbook-deep-search\nDisallow: /\n"
-        b"User-agent: *\nAllow: /\n"
+        b"User-agent: tldw-chatbook-deep-search\nDisallow: /\nUser-agent: *\nAllow: /\n"
     )
     assert robots_allows_for_scrape("http://example.com/page") is False
 
@@ -1737,4 +1874,6 @@ def test_robots_allows_for_scrape_shares_cache_with_web_fetch(fetch_env, monkeyp
     assert fetch_env.calls.count("http://example.com/robots.txt") == 1
 
     assert robots_allows_for_scrape("http://example.com/other-page") is True
-    assert fetch_env.calls.count("http://example.com/robots.txt") == 1  # cached, no re-fetch
+    assert (
+        fetch_env.calls.count("http://example.com/robots.txt") == 1
+    )  # cached, no re-fetch

@@ -301,10 +301,13 @@ def _request_exclusions(
     (the local pinned worker's denylist contribution is ``()``, keeping
     its behavior byte-identical).
     """
-    return tuple(
-        SensitiveExclusion(item["kind"], item["value"])
-        for item in request.arguments[field]
-    ) + _remote_home_denylist_exclusions()
+    return (
+        tuple(
+            SensitiveExclusion(item["kind"], item["value"])
+            for item in request.arguments[field]
+        )
+        + _remote_home_denylist_exclusions()
+    )
 
 
 def _request_mutation_path(
@@ -348,9 +351,7 @@ def _patch_request(request: _PinnedOperationRequest, root: PinnedWorkspaceRoot) 
         )
     exclusions = _request_exclusions(request, "sensitive_exclusions")
     if not all(
-        _relative_target_is_safe(
-            relative, Path("."), exclusions, is_directory=False
-        )
+        _relative_target_is_safe(relative, Path("."), exclusions, is_directory=False)
         for relative in parsed_paths
     ):
         raise WorkspaceToolDispatchError(
