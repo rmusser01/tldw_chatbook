@@ -84,13 +84,14 @@ W003 (census ratchet, TASK-33621.13)
     worker's contextvar, so ``get_current_worker()`` alone answers "worker"
     on its pump), and ``request_hook_review`` logs an ERROR when awaited off
     one; the runtime proof is
-    ``Tests/UI/test_console_hook_review_send_freeze.py``. Known limitation:
-    the hand-rolled shape is recognized only when ONE
-    function creates the future, pushes and awaits it. A helper that creates
-    and pushes and hands the future back (returned, or stored on ``self``)
-    for its caller to await is the same deadlock, and W003 does not see it;
-    a strict xfail in ``Tests/Scripts/test_check_textual_worker_contract.py``
-    pins that miss, so following the future across functions is noticed.
+    ``Tests/UI/test_console_hook_review_send_freeze.py``. The wait may be
+    split across two functions (TASK-33621.33): a helper that creates the
+    future and pushes with ``callback=``, then RETURNS the future, is a site
+    wherever it is awaited -- ``await helper()``, ``fut = helper(); await
+    fut``, ``await helper().wait()`` -- and so is a helper that STORES it on
+    ``self`` for a method of the same object (its class, a base, a
+    subclass) to await. Not followed: a future created by the caller and
+    completed by a push in a helper it calls.
 
     The roots are message handlers (``@on``, ``on_*``/``_on_*``, ``key_*``),
     actions (``action_*``) and watchers (``watch_*``), none of which Textual
@@ -114,18 +115,31 @@ W003 (census ratchet, TASK-33621.13)
     a string-keyed dict entry, or an assignment whose value refers to a
     waiting callable (``partial`` and a one-call ``lambda`` unwrapped) makes
     its keyword/key/target name an alias for one; an ``await`` of an alias
-    waits too. ``self.x()`` resolves as dispatch does, on every class
+    waits too. A POSITIONAL argument binds the parameter at its position,
+    exactly as the keyword form binds it by name: ``HooksController(_pick)``
+    is ``HooksController(request_review=_pick)`` once the callee resolves (a
+    class to its package ``__init__``, a function, a ``self``/``super()``
+    method, ``obj.f`` by name). A waiting callable whose positional
+    parameter W003 cannot name -- the callee is outside the package, or
+    takes ``*args`` -- is reported as its own census row, ``<function> ->
+    <callee>#<n> => <site>``, rather than dropped (TASK-33621.33).
+    ``self.x()`` resolves as dispatch does, on every class
     ``self`` can be: the enclosing class AND each of its in-package
     subclasses, each through its own package base classes and what they
     assign to ``self.x``. So a base-class template method reaches a
     subclass's override, and a mixin reaches the class that mixes it in and
     that class's other mixins -- but never an unrelated class's ``x``. A name
-    defined twice in one scope is its LAST definition, as Python binds it; a
-    bare ``x()`` resolves to a nested or module-level ``x`` in scope
-    first. A bare name written in a CLASS BODY (``choose = _pick``, not a
-    lambda's body) reads that class's own namespace before the module's, as
+    defined twice in one scope is its LAST definition, as Python binds it:
+    the earlier one is dead code, never a root and never reached by name. A
+    bare ``x()`` resolves lexically first -- a nested def or local alias of
+    an enclosing function (through a class defined inside one, too), then a
+    module-level ``x``. A bare name written in a CLASS BODY (``choose =
+    _pick``, not a lambda's body) reads that class's own namespace -- never
+    its bases' -- before the enclosing function's and the module's, as
     Python does, so it can name one of that class's methods; anywhere else a
-    bare name never reaches a method. ``obj.x()`` is resolved by NAME against
+    bare name never reaches a method, nor any ATTRIBUTE binding (a
+    class-body name, ``self.x = ...``, ``obj.x = ...``) anywhere.
+    ``obj.x()`` is resolved by NAME against
     every definition, methods included, and an imported ``x()`` against every
     module-level function: two unrelated functions sharing a
     name are one to it. That over-approximation
@@ -571,6 +585,7 @@ class _Function:
         module: "_Module",
         cls: str | None,
         parent: "_Function | None",
+        scope: "_Function | None" = None,
     ) -> None:
         # The name only, never the node: holding every module's AST alive
         # until the graph is solved made the cyclic GC rescan them all and
@@ -580,7 +595,12 @@ class _Function:
         self.lineno = node.lineno
         self.module = module
         self.cls = cls
+        # The def this one is nested in (it binds the name there) ...
         self.parent = parent
+        # ... and the function whose locals a free name here reads next:
+        # the parent, or -- for a method of a class defined inside a
+        # function -- that enclosing function, past the class scope.
+        self.scope_parent = parent if parent is not None else scope
         self.nested: dict[str, _Function] = {}
         # `local = <callable>` inside this function: scoped, never global.
         self.local_aliases: dict[str, list[_Ref]] = {}
@@ -589,6 +609,11 @@ class _Function:
         self.is_root = not self.is_worker and (
             "on" in decorators or node.name.startswith(HANDLER_PREFIXES)
         )
+        # What a positional argument binds: `params[position + offset]`.
+        args = node.args
+        self.params = [arg.arg for arg in (*args.posonlyargs, *args.args)]
+        self.has_varargs = args.vararg is not None
+        self.is_static = "staticmethod" in decorators
         # `push_screen_wait(...)` / `push_screen(..., wait_for_dismiss=True)`.
         self.wait_pushes = 0
         # `push_screen(..., callback=...)`, and the futures/events this
@@ -596,10 +621,16 @@ class _Function:
         self.callback_pushes = 0
         self.futures: set[str] = set()
         self.awaited_futures: set[str] = set()
+        # The futures it hands back: `return fut` (TASK-33621.33).
+        self.returned_futures: set[str] = set()
+        # `pending = helper(...)`: awaiting `pending` awaits `helper(...)`.
+        self.call_results: dict[str, list[_Ref]] = {}
         self.awaited: list[_Ref] = []
         self.scheduled: list[tuple[_Ref, str]] = []
         # Solved by _WaitGraph.
+        self.live = True
         self.targets: list[_Target] = []
+        self.handoffs: list[_Function] = []
         self.waiting = False
         self.sites: frozenset[str] = frozenset()
 
@@ -617,11 +648,24 @@ class _Function:
         #2922's ``request_hook_review``): Textual queues ``done`` on the
         requester pump through ``call_next``, and from a handler that pump is
         the one blocked on the await -- it can never run the callback.
+
+        RETURNING that future instead is the same wait one call later: the
+        caller's ``await helper()`` (and Textual's own ``invoke``, which
+        awaits whatever a handler returns) blocks on it, so the helper is a
+        site that waits wherever it is awaited (TASK-33621.33).
         """
-        hand_rolled = (
-            self.callback_pushes if self.futures & self.awaited_futures else 0
-        )
+        settled_by_caller = self.awaited_futures | self.returned_futures
+        hand_rolled = self.callback_pushes if self.futures & settled_by_caller else 0
         return self.wait_pushes + hand_rolled
+
+    @property
+    def self_futures(self) -> set[str]:
+        """The ``self`` attributes this function stores a NEW future or event
+        in while pushing with ``callback=``: a caller that awaits one of
+        them waits on this function's push."""
+        if not self.callback_pushes:
+            return set()
+        return {name[5:] for name in self.futures if name.startswith("self.")}
 
 
 #: What a reference can resolve to: one definition; every top-level
@@ -642,14 +686,30 @@ class _Module:
         self.functions: dict[str, _Function] = {}  # module-level defs
         self.classes: dict[str, dict[str, _Function]] = {}
         self.bases: dict[str, list[str]] = {}
-        # (alias name, value reference, class context, function context)
-        self.aliases: list[tuple[str, _Ref, str | None, _Function | None]] = []
+        # Each class body's enclosing function, when the class is defined
+        # inside one: a free name in the body reads that function's locals
+        # after the class's own namespace. Keyed by class name, like
+        # `classes`, so two classes of one name in a module share an entry.
+        self.class_scopes: dict[str, _Function | None] = {}
+        # (alias name, value reference, class context, function context,
+        # is an ATTRIBUTE binding). An attribute -- a class-body name,
+        # `self.x = ...`, `obj.x = ...` -- is reachable only through an
+        # attribute (`obj.x()`), never through a bare name.
+        self.aliases: list[
+            tuple[str, _Ref, str | None, _Function | None, bool]
+        ] = []
         # (class, attribute) -> (value reference, binding function): a
         # `self.attr = <callable>` in that class's methods, or `attr =
         # <callable>` in its body. Resolves that class's own `self.attr()`.
         self.class_aliases: dict[
             tuple[str, str], list[tuple[_Ref, _Function | None]]
         ] = {}
+        # `callee(..., <callable>, ...)`: (callee, position, value reference,
+        # class context, function context) -- bound to the callee's
+        # parameter once every module is known.
+        self.handoffs: list[
+            tuple[_Ref, int, _Ref, str | None, _Function | None]
+        ] = []
 
 
 def _call_name(call: ast.Call) -> str | None:
@@ -705,13 +765,24 @@ def _record_call(sink: _Function, call: ast.Call) -> None:
 def _record_await(sink: _Function, node: ast.Await) -> None:
     """The awaited call, and any coroutine built inline as its argument
     (``await asyncio.wait_for(self.pick(), 5)`` still runs ``pick`` here --
-    except ``run_worker(self.pick())``, whose argument runs in a worker)."""
+    except ``run_worker(self.pick())``, whose argument runs in a worker).
+    ``await helper().wait()`` waits on what ``helper`` hands back, so it
+    awaits ``helper`` too."""
     future = _future_name(node.value)
     if future is not None:
         sink.awaited_futures.add(future)
     if not isinstance(node.value, ast.Call):
         return
     func = node.value.func
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr == "wait"
+        and not node.value.args
+        and isinstance(func.value, ast.Call)
+    ):
+        ref = _ref(func.value.func)
+        if ref is not None:
+            sink.awaited.append(ref)
     inline = (
         ()
         if (getattr(func, "attr", None) or getattr(func, "id", None)) == "run_worker"
@@ -724,21 +795,73 @@ def _record_await(sink: _Function, node: ast.Await) -> None:
                 sink.awaited.append(ref)
 
 
+def _callee(func: ast.AST) -> _Ref | None:
+    """What a call's positional arguments are handed to: ``("self", x)``,
+    ``("name", x)``, ``("attr", x)``, or ``("super", x)`` for
+    ``super().x(...)`` -- resolved through the class's bases, not by name."""
+    if isinstance(func, ast.Name):
+        return ("name", func.id)
+    if not isinstance(func, ast.Attribute):
+        return None
+    owner = func.value
+    if isinstance(owner, ast.Name) and owner.id == "self":
+        return ("self", func.attr)
+    if (
+        isinstance(owner, ast.Call)
+        and isinstance(owner.func, ast.Name)
+        and owner.func.id == "super"
+    ):
+        return ("super", func.attr)
+    return ("attr", func.attr)
+
+
+#: Callees whose positional callables W003 already models (a worker, a pump
+#: scheduler, a push's result callback, ``partial``'s target) or rules out
+#: (``call_from_thread`` runs its callable in the calling worker's context):
+#: not a parameter handoff.
+_HANDOFF_MODELLED = PUMP_SCHEDULERS | {
+    "run_worker",
+    "call_from_thread",
+    "push_screen",
+    "push_screen_wait",
+    "partial",
+}
+
+
+def _record_handoffs(
+    module: "_Module", call: ast.Call, cls: str | None, fn: _Function | None
+) -> None:
+    """Each callable passed POSITIONALLY: it binds the callee's parameter at
+    that position, exactly as the keyword form binds it by name (PR #2945:
+    ``HooksController(_pick)`` hid the push its keyword twin reports)."""
+    if not call.args:
+        return
+    callee = _callee(call.func)
+    if callee is None or callee[1] in _HANDOFF_MODELLED:
+        return
+    for position, arg in enumerate(call.args):
+        if isinstance(arg, ast.Starred):
+            return  # every later position is unknown
+        ref = _ref(arg)
+        if ref is not None:
+            module.handoffs.append((callee, position, ref, cls, fn))
+
+
 def _alias_pairs(node: ast.AST) -> list[tuple[str, ast.AST, str]]:
     """Names a callable is handed on under: keyword, dict key, assignment.
 
     Returns ``(name, value, form)``, ``form`` being ``"name"`` for an
     assignment to a bare name (a LOCAL alias inside a function, a class
-    attribute in a class body), ``"self"`` for ``self.name = ...``, and
-    ``"other"`` for a keyword, a dict key or ``obj.name = ...`` -- which can
-    cross into another function's parameter or attribute, so they go into
-    the package-wide table.
+    attribute in a class body), ``"self"`` for ``self.name = ...``,
+    ``"param"`` for a keyword or a dict key (which can become another
+    function's parameter), and ``"attr"`` for ``obj.name = ...``. All but a
+    function's locals go into the package-wide table.
     """
     if isinstance(node, ast.Call):
-        return [(kw.arg, kw.value, "other") for kw in node.keywords if kw.arg]
+        return [(kw.arg, kw.value, "param") for kw in node.keywords if kw.arg]
     if isinstance(node, ast.Dict):
         return [
-            (key.value, value, "other")
+            (key.value, value, "param")
             for key, value in zip(node.keys, node.values)
             if isinstance(key, ast.Constant) and isinstance(key.value, str)
         ]
@@ -750,7 +873,7 @@ def _alias_pairs(node: ast.AST) -> list[tuple[str, ast.AST, str]]:
                 pairs.append((target.id, node.value, "name"))
             elif isinstance(target, ast.Attribute):
                 own = isinstance(target.value, ast.Name) and target.value.id == "self"
-                pairs.append((target.attr, node.value, "self" if own else "other"))
+                pairs.append((target.attr, node.value, "self" if own else "attr"))
         return pairs
     return []
 
@@ -793,25 +916,32 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
     ``Store``) are skipped for the same reason.
 
     Each stack entry carries the enclosing class, the enclosing function
-    (the alias context), and the "sink" that owns pushes and awaits -- which
+    (the alias context), the "sink" that owns pushes and awaits -- which
     is ``None`` inside a ``lambda``: its body runs later, not in the
-    enclosing function's await chain.
+    enclosing function's await chain -- and the function enclosing the
+    current class body, if any (``fn`` resets at a ``class`` statement, but
+    a free name in that class still reads the enclosing function's locals).
     """
     module = _Module(rel)
     functions: list[_Function] = []
     AST = ast.AST
-    stack: list[tuple[ast.AST, str | None, _Function | None, _Function | None]] = [
-        (tree, None, None, None)
-    ]
+    stack: list[
+        tuple[
+            ast.AST, str | None, _Function | None, _Function | None, _Function | None
+        ]
+    ] = [(tree, None, None, None, None)]
     while stack:
-        node, cls, fn, sink = stack.pop()
+        node, cls, fn, sink, outer = stack.pop()
         kind = type(node)
         if kind is ast.ClassDef:
             module.classes.setdefault(node.name, {})
             module.bases.setdefault(node.name, []).extend(_base_names(node))
+            if fn is not None:
+                outer = fn
+            module.class_scopes[node.name] = outer
             cls, fn, sink = node.name, None, None
         elif kind is ast.FunctionDef or kind is ast.AsyncFunctionDef:
-            new = _Function(node, module, cls if fn is None else None, fn)
+            new = _Function(node, module, cls if fn is None else None, fn, outer)
             functions.append(new)
             if fn is not None:
                 _bind(fn.nested, new)
@@ -823,22 +953,32 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
         elif kind is ast.Lambda:
             sink = None
         else:
+            if kind is ast.Call:
+                _record_handoffs(module, node, cls, fn)
             if sink is not None:
                 if kind is ast.Call:
                     _record_call(sink, node)
                 elif kind is ast.Await:
                     _record_await(sink, node)
-                elif (
-                    (kind is ast.Assign or kind is ast.AnnAssign)
-                    and isinstance(node.value, ast.Call)
-                    and _call_name(node.value) in _FUTURE_FACTORIES
+                elif kind is ast.Return:
+                    future = node.value is not None and _future_name(node.value)
+                    if future:
+                        sink.returned_futures.add(future)
+                elif (kind is ast.Assign or kind is ast.AnnAssign) and isinstance(
+                    node.value, ast.Call
                 ):
+                    made = _call_name(node.value) in _FUTURE_FACTORIES
+                    result = None if made else _ref(node.value.func)
                     for target in (
                         node.targets if kind is ast.Assign else [node.target]
                     ):
                         future = _future_name(target)
-                        if future is not None:
+                        if future is None:
+                            continue
+                        if made:
                             sink.futures.add(future)
+                        elif result is not None:
+                            sink.call_results.setdefault(future, []).append(result)
             if isinstance(node, _ALIAS_SOURCES):
                 local = fn is not None and kind is not ast.Call and kind is not ast.Dict
                 for alias, value, form in _alias_pairs(node):
@@ -848,14 +988,15 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
                     if local and form == "name":
                         fn.local_aliases.setdefault(alias, []).append(ref)
                         continue
+                    class_body = form == "name" and fn is None and cls is not None
                     if cls is not None and (
-                        (form == "self" and fn is not None)
-                        or (form == "name" and fn is None)
+                        (form == "self" and fn is not None) or class_body
                     ):
                         module.class_aliases.setdefault((cls, alias), []).append(
                             (ref, fn)
                         )
-                    module.aliases.append((alias, ref, cls, fn))
+                    attribute = class_body or form == "self" or form == "attr"
+                    module.aliases.append((alias, ref, cls, fn, attribute))
         # A push built inline as `run_worker(...)`'s argument -- the fix this
         # check recommends -- runs in the worker, not in this function.
         in_worker = kind is ast.Call and _call_name(node) == "run_worker"
@@ -867,9 +1008,9 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
             if value.__class__ is list:
                 for item in value:
                     if isinstance(item, AST):
-                        stack.append((item, cls, fn, child_sink))
+                        stack.append((item, cls, fn, child_sink, outer))
             elif isinstance(value, AST):
-                stack.append((value, cls, fn, child_sink))
+                stack.append((value, cls, fn, child_sink, outer))
     return module, functions
 
 
@@ -891,23 +1032,30 @@ class _WaitGraph:
       callable) wait because ``BuddyManagementModal`` has a waiting
       ``_review``, and so censused the Console's Send dispatchers through a
       collision (TASK-33621.13 review).
-    * a bare ``x()`` -- a nested def, a local alias, a module-level def in
-      scope, else every module-level function and alias named ``x`` (an
-      import, a module global or a parameter). Never a method from a
-      function body, a lambda body or module level: there only an attribute
-      reaches one, and falling back to methods too made an imported helper
-      wait through an unrelated class's same-named method (PR #2944 review).
-      The exception is a bare name written in a CLASS BODY, which Python
-      looks up in that class's own namespace first -- its method, else its
-      class-body assignment, never a base class's -- and only then the
-      module: ``choose = _pick`` there names the class's ``_pick``;
-    * ``obj.x()`` -- every top-level def (methods included) and alias named
-      ``x``: the real defect's chain ran through ``controller._select_
+    * a bare ``x()`` -- a nested def or a local alias of this function or a
+      lexically enclosing one (a method of a class defined inside a function
+      reads that function, past the class scope), a module-level def in
+      scope, else every module-level function and non-attribute alias named
+      ``x`` (an import, a module global or a parameter). Never a method from
+      a function body, a lambda body or module level: there only an
+      attribute reaches one, and falling back to methods too made an
+      imported helper wait through an unrelated class's same-named method
+      (PR #2944 review). Never an ATTRIBUTE binding either -- a class-body
+      ``choose = _pick``, ``self.choose = ...``, ``obj.choose = ...`` -- for
+      the same reason (PR #2944 round 6). The exception is a bare name
+      written in a CLASS BODY, which Python looks up in that class's own
+      namespace first -- its method, else its class-body assignment, never a
+      base class's -- then in the function enclosing the class, if any, and
+      only then the module: ``choose = _pick`` there names the class's
+      ``_pick``;
+    * ``obj.x()`` -- every live top-level def (methods included) and alias
+      named ``x``: the real defect's chain ran through ``controller._select_
       project_instruction_binding``, a name shared with a non-waiting method
       of the Console runtime, and ``obj``'s type is not statically known.
 
-    A NAME waits when ANY definition of it waits. An ALIAS waits only when
-    EVERY place it is bound hands on a waiting callable: with "any" there
+    A NAME waits when ANY live definition of it waits. An ALIAS waits only
+    when EVERY place it is bound -- by keyword, dict key, assignment or
+    positional argument -- hands on a waiting callable: with "any" there
     too, one ``callback=<waiting>`` keyword made every ``await callback()`` in
     the package wait, and the first cut of this check reported 517 roots,
     nearly all of them that cascade.
@@ -929,9 +1077,20 @@ class _WaitGraph:
             # Solved state lives on the functions; a graph built again from
             # the same collection must not inherit the last one's answer.
             fn.targets, fn.waiting, fn.sites = [], False, frozenset()
+            fn.handoffs = []
+            # Only the LAST definition of a name in its scope is ever bound;
+            # an earlier one is dead code -- never a root, never reached by
+            # name (PR #2945 review).
+            if fn.parent is not None:
+                scope = fn.parent.nested
+            elif fn.cls is not None:
+                scope = fn.module.classes[fn.cls]
+            else:
+                scope = fn.module.functions
+            fn.live = scope.get(fn.name) is fn
         self.defs_by_name: dict[str, list[_Function]] = {}
         for fn in self.functions:
-            if fn.parent is None:
+            if fn.parent is None and fn.live:
                 self.defs_by_name.setdefault(fn.name, []).append(fn)
         self.classes_by_name: dict[str, list[tuple[_Module, str]]] = {}
         for module in self.modules:
@@ -953,12 +1112,31 @@ class _WaitGraph:
         # binding (one target list each) reaches a push; a class-bound
         # attribute when ANY of its bindings does -- one class's own
         # assignments are few and deliberate, unlike a package-wide keyword.
+        # A BARE name reads only the non-attribute bindings (keywords, dict
+        # keys, module globals, positional parameters): no bare name can
+        # ever be some class's attribute (PR #2944 round-6 review).
         self.alias_targets: dict[str, list[list[_Target]]] = {}
+        self.bare_alias_targets: dict[str, list[list[_Target]]] = {}
+        # Positional handoffs W003 could not bind to a parameter, reported
+        # (when the callable waits) by `unresolved()`.
+        self._unresolved: list[tuple[str, str, int, list[_Target]]] = []
         for module in self.modules:
-            for alias, ref, cls, fn in module.aliases:
-                self.alias_targets.setdefault(alias, []).append(
-                    self._targets(ref, module, cls, fn)
+            for alias, ref, cls, fn, attribute in module.aliases:
+                self._add_alias(alias, self._targets(ref, module, cls, fn), attribute)
+            for callee, position, ref, cls, fn in module.handoffs:
+                params = self._handoff_params(callee, position, module, cls, fn)
+                targets = self._targets(ref, module, cls, fn)
+                if params:
+                    for param in params:
+                        if param != ref[1]:
+                            self._add_alias(param, targets, False)
+                    continue
+                holder = (
+                    fn.key
+                    if fn is not None
+                    else f"{module.rel}::{f'{cls}.' if cls else ''}<body>"
                 )
+                self._unresolved.append((holder, callee[1], position, targets))
         self.bound_targets: dict[str, list[_Target]] = {}
         for module in self.modules:
             for (cls, attr), bindings in module.class_aliases.items():
@@ -967,28 +1145,164 @@ class _WaitGraph:
                     for ref, binder in bindings
                     for target in self._targets(ref, module, cls, binder)
                 ]
+        # A future stored on `self` by a function that pushes with
+        # `callback=`: (module, class, attribute) -> those functions.
+        publishers: dict[tuple[str, str, str], list[_Function]] = {}
         for fn in self.functions:
-            if fn.is_worker or not fn.awaited:
+            stored = fn.self_futures
+            cls = self._class_of(fn) if stored else None
+            for attr in stored if cls is not None else ():
+                publishers.setdefault((fn.module.rel, cls, attr), []).append(fn)
+        for fn in self.functions:
+            if fn.is_worker:
                 continue
             cls = self._class_of(fn)
-            fn.targets = [
-                target
-                for ref in fn.awaited
-                for target in self._targets(ref, fn.module, cls, fn)
+            # `pending = helper(); await pending` awaits `helper()`.
+            awaited = fn.awaited + [
+                ref
+                for name in fn.awaited_futures - fn.futures
+                for ref in fn.call_results.get(name, ())
             ]
+            if awaited:
+                fn.targets = [
+                    target
+                    for ref in awaited
+                    for target in self._targets(ref, fn.module, cls, fn)
+                ]
+            if publishers and cls is not None:
+                fn.handoffs = self._self_future_publishers(fn, cls, publishers)
         self.waiting_def_names: set[str] = set()
         # The module-level functions among them: what a bare name can reach.
         self.waiting_func_names: set[str] = set()
         self.waiting_aliases: set[str] = set()
+        self.waiting_bare_aliases: set[str] = set()
         self.waiting_bound: set[str] = set()
         self.site_pushes: dict[str, int] = {}
         self.callback_only_sites: set[str] = set()
         self._def_sites: dict[str, frozenset[str]] = {}
         self._func_sites: dict[str, frozenset[str]] = {}
         self._alias_sites: dict[str, frozenset[str]] = {}
+        self._bare_alias_sites: dict[str, frozenset[str]] = {}
         self._bound_sites: dict[str, frozenset[str]] = {}
         self._solve()
         self._solve_sites()
+
+    def _add_alias(self, alias: str, targets: list[_Target], attribute: bool) -> None:
+        self.alias_targets.setdefault(alias, []).append(targets)
+        if not attribute:
+            self.bare_alias_targets.setdefault(alias, []).append(targets)
+
+    def _self_future_publishers(
+        self,
+        fn: _Function,
+        cls: str,
+        publishers: dict[tuple[str, str, str], list[_Function]],
+    ) -> list[_Function]:
+        """The functions that store, on ``self``, a future ``fn`` awaits but
+        did not create, while pushing with ``callback=`` -- on any class
+        ``self`` can be (``cls``, its bases, its subclasses and theirs), as
+        ``self.x()`` resolves. Awaiting it is the hand-rolled wait split
+        across two methods (TASK-33621.33)."""
+        foreign = {
+            name[5:]
+            for name in fn.awaited_futures - fn.futures
+            if name.startswith("self.")
+        }
+        if not foreign:
+            return []
+        found: dict[_Function, None] = {}
+        module = fn.module
+        for owner, owner_cls in (
+            (module, cls),
+            *self._subclasses.get((module.rel, cls), ()),
+        ):
+            for base_module, base in self._mro(owner, owner_cls):
+                for attr in foreign:
+                    for publisher in publishers.get((base_module.rel, base, attr), ()):
+                        if publisher is not fn:
+                            found.setdefault(publisher, None)
+        return list(found)
+
+    def _handoff_params(
+        self,
+        callee: _Ref,
+        position: int,
+        module: _Module,
+        cls: str | None,
+        fn: _Function | None,
+    ) -> set[str]:
+        """The parameter name(s) a positional argument binds, or an empty set
+        when no definition of the callee in the package names one: a callee
+        defined outside it, an attribute bound to a callable, a class with
+        no package ``__init__``, or a ``*args``.
+
+        Resolution follows the rest of W003: ``self.f(x)`` through the
+        classes ``self`` can be, ``super().f(x)`` through the bases, a bare
+        ``f(x)`` lexically and then as an import, ``obj.f(x)`` by name. A
+        class binds its ``__init__``'s parameters, after ``self``; so does a
+        bound method (a ``@staticmethod`` has no ``self``).
+        """
+        kind, name = callee
+        candidates: list[tuple[_Function, int]] = []
+        if kind == "self" or kind == "super":
+            if cls is None:
+                return set()
+            if kind == "self":
+                targets = self._self_targets(module, cls, name)
+            else:
+                targets = []
+                for owner, owner_cls in self._mro(module, cls)[1:]:
+                    method = owner.classes[owner_cls].get(name)
+                    if method is not None:
+                        targets = [method]
+                        break
+            for target in targets:
+                if isinstance(target, _Function):
+                    candidates.append((target, 0 if target.is_static else 1))
+        elif kind == "name":
+            scope = fn if fn is not None else module.class_scopes.get(cls or "")
+            while scope is not None:
+                if name in scope.nested:
+                    candidates.append((scope.nested[name], 0))
+                    break
+                if name in scope.local_aliases:
+                    return set()
+                scope = scope.scope_parent
+            else:
+                if name in module.functions:
+                    candidates.append((module.functions[name], 0))
+                elif name in module.classes:
+                    candidates.extend(self._init_of(module, name))
+                elif name in self.classes_by_name:
+                    for owner, owner_cls in self.classes_by_name[name]:
+                        candidates.extend(self._init_of(owner, owner_cls))
+                else:
+                    candidates.extend(
+                        (target, 0)
+                        for target in self.defs_by_name.get(name, ())
+                        if target.cls is None
+                    )
+        elif kind == "attr":
+            candidates.extend(
+                (target, 0 if target.cls is None or target.is_static else 1)
+                for target in self.defs_by_name.get(name, ())
+            )
+            for owner, owner_cls in self.classes_by_name.get(name, ()):
+                candidates.extend(self._init_of(owner, owner_cls))
+        params = set()
+        for target, offset in candidates:
+            index = position + offset
+            if index < len(target.params):
+                params.add(target.params[index])
+        return params
+
+    def _init_of(self, module: _Module, cls: str) -> list[tuple[_Function, int]]:
+        """``cls(...)``'s ``__init__``: the nearest one in its package MRO."""
+        for owner, owner_cls in self._mro(module, cls):
+            init = owner.classes[owner_cls].get("__init__")
+            if init is not None:
+                return [(init, 1)]
+        return []
 
     @staticmethod
     def _class_of(fn: _Function) -> str | None:
@@ -1034,6 +1348,19 @@ class _WaitGraph:
             return self._self_targets(module, cls, name)
         if kind == "name" or kind == "lambda":
             scope = fn
+            if fn is None and cls is not None:
+                # A bare name in a CLASS BODY reads that class's namespace
+                # first, as Python does: `choose = _pick` there names the
+                # class's own `_pick`. Resolving it like a function body's
+                # bare name missed that method's push (PR #2944 review). A
+                # lambda's body skips the class scope.
+                if kind == "name":
+                    own = self._class_namespace(module, cls, name)
+                    if own:
+                        return own
+                # Then -- for a class defined inside a function -- that
+                # function's locals, before the module (PR #2944 round 6).
+                scope = module.class_scopes.get(cls)
             while scope is not None:
                 if name in scope.nested:
                     return [scope.nested[name]]
@@ -1052,15 +1379,9 @@ class _WaitGraph:
                         for local in scope.local_aliases[name]
                         for target in self._targets(local, module, cls, scope, seen)
                     ]
-                scope = scope.parent
-            # A bare name in a CLASS BODY reads that class's namespace first,
-            # as Python does: `choose = _pick` there names the class's own
-            # `_pick`. Resolving it like a function body's bare name missed
-            # that method's push (PR #2944 review).
-            if kind == "name" and fn is None and cls is not None:
-                own = self._class_namespace(module, cls, name)
-                if own:
-                    return own
+                # Lexically outward: a method of a class defined inside a
+                # function reads that function next, past the class scope.
+                scope = scope.scope_parent
             if name in module.functions:
                 return [module.functions[name]]
             # An import, a module global or a parameter: never a method.
@@ -1074,7 +1395,8 @@ class _WaitGraph:
 
         Only the class's own namespace, never its bases: a class body does
         not see its base classes' attributes. Empty when the class binds no
-        callable ``name``, and Python then reads the module.
+        callable ``name``, and Python then reads the enclosing function (for
+        a class defined inside one) and then the module.
 
         Two simplifications: the ``("bound", ...)`` node also carries what
         the class's methods assign to ``self.name`` (an over-approximation),
@@ -1139,10 +1461,12 @@ class _WaitGraph:
         kind, name = target
         if kind == "bound":
             return name in self.waiting_bound
+        if kind == "funcs":
+            return (
+                name in self.waiting_bare_aliases or name in self.waiting_func_names
+            )
         if name in self.waiting_aliases:
             return True
-        if kind == "funcs":
-            return name in self.waiting_func_names
         return kind == "defs" and name in self.waiting_def_names
 
     def _target_sites(self, target: _Target) -> frozenset[str]:
@@ -1151,29 +1475,37 @@ class _WaitGraph:
         kind, name = target
         if kind == "bound":
             return self._bound_sites.get(name, frozenset())
+        if kind == "funcs":
+            return self._bare_alias_sites.get(name, frozenset()) | self._func_sites.get(
+                name, frozenset()
+            )
         sites = self._alias_sites.get(name, frozenset())
         if kind == "defs":
             sites = sites | self._def_sites.get(name, frozenset())
-        elif kind == "funcs":
-            sites = sites | self._func_sites.get(name, frozenset())
         return sites
 
     def _solve(self) -> None:
         pending = [
             fn
             for fn in self.functions
-            if not fn.is_worker and (fn.own_pushes or fn.targets)
+            if not fn.is_worker and (fn.own_pushes or fn.targets or fn.handoffs)
         ]
+        alias_tables = (
+            (self.alias_targets, self.waiting_aliases),
+            (self.bare_alias_targets, self.waiting_bare_aliases),
+        )
         changed = True
         while changed:
             changed = False
             still_pending: list[_Function] = []
             for fn in pending:
-                if fn.own_pushes or any(
-                    self._target_waits(target) for target in fn.targets
+                if (
+                    fn.own_pushes
+                    or fn.handoffs
+                    or any(self._target_waits(target) for target in fn.targets)
                 ):
                     fn.waiting = True
-                    if fn.parent is None:
+                    if fn.parent is None and fn.live:
                         self.waiting_def_names.add(fn.name)
                         if fn.cls is None:
                             self.waiting_func_names.add(fn.name)
@@ -1181,15 +1513,16 @@ class _WaitGraph:
                 else:
                     still_pending.append(fn)
             pending = still_pending
-            for alias, bindings in self.alias_targets.items():
-                if alias in self.waiting_aliases:
-                    continue
-                if all(
-                    any(self._target_waits(target) for target in targets)
-                    for targets in bindings
-                ):
-                    self.waiting_aliases.add(alias)
-                    changed = True
+            for table, waiting in alias_tables:
+                for alias, bindings in table.items():
+                    if alias in waiting:
+                        continue
+                    if all(
+                        any(self._target_waits(target) for target in targets)
+                        for targets in bindings
+                    ):
+                        waiting.add(alias)
+                        changed = True
             for bound, targets in self.bound_targets.items():
                 if bound in self.waiting_bound:
                     continue
@@ -1208,11 +1541,27 @@ class _WaitGraph:
                 self.site_pushes[fn.key] = max(self.site_pushes.get(fn.key, 0), pushes)
                 if not fn.wait_pushes:
                     self.callback_only_sites.add(fn.key)
+            for publisher in fn.handoffs:
+                # The push is the publisher's, but only this await waits on it.
+                fn.sites = fn.sites | {publisher.key}
+                self.site_pushes[publisher.key] = max(
+                    self.site_pushes.get(publisher.key, 0), publisher.callback_pushes
+                )
+                if not publisher.wait_pushes:
+                    self.callback_only_sites.add(publisher.key)
 
         def union(targets: list[_Target]) -> frozenset[str]:
             return frozenset().union(
                 *(self._target_sites(target) for target in targets)
             )
+
+        def alias_union(
+            table: dict[str, list[list[_Target]]], waiting_names: set[str]
+        ) -> dict[str, frozenset[str]]:
+            return {
+                alias: frozenset().union(*(union(targets) for targets in table[alias]))
+                for alias in waiting_names
+            }
 
         changed = True
         while changed:
@@ -1220,7 +1569,7 @@ class _WaitGraph:
             def_sites: dict[str, frozenset[str]] = {}
             func_sites: dict[str, frozenset[str]] = {}
             for fn in waiting:
-                if fn.parent is None:
+                if fn.parent is None and fn.live:
                     def_sites[fn.name] = def_sites.get(fn.name, frozenset()) | fn.sites
                     if fn.cls is None:
                         func_sites[fn.name] = (
@@ -1228,18 +1577,21 @@ class _WaitGraph:
                         )
             self._def_sites = def_sites
             self._func_sites = func_sites
-            alias_sites = {
-                alias: frozenset().union(
-                    *(union(targets) for targets in self.alias_targets[alias])
-                )
-                for alias in self.waiting_aliases
-            }
+            alias_sites = alias_union(self.alias_targets, self.waiting_aliases)
+            bare_alias_sites = alias_union(
+                self.bare_alias_targets, self.waiting_bare_aliases
+            )
             bound_sites = {
                 bound: union(self.bound_targets[bound]) for bound in self.waiting_bound
             }
-            if alias_sites != self._alias_sites or bound_sites != self._bound_sites:
+            if (
+                alias_sites != self._alias_sites
+                or bare_alias_sites != self._bare_alias_sites
+                or bound_sites != self._bound_sites
+            ):
                 changed = True
             self._alias_sites = alias_sites
+            self._bare_alias_sites = bare_alias_sites
             self._bound_sites = bound_sites
             for fn in waiting:
                 sites = fn.sites | union(fn.targets)
@@ -1255,10 +1607,39 @@ class _WaitGraph:
             rows.extend([f"{root} => {site}"] * self.site_pushes.get(site, 1))
         return rows
 
+    def unresolved(self) -> list[str]:
+        """Positional handoffs of a WAITING callable whose parameter W003
+        could not name, as ``"<holder> -> <callee>#<position> => <site>"``:
+        whatever the callee does with it is invisible here, so they are
+        reported rather than silently dropped (TASK-33621.33).
+
+        Only a value W003 resolved as a definition, a bare name or a
+        ``self`` attribute counts. An ``obj.x`` value matches every ``x`` in
+        the package by name; on the real tree every one of those was a
+        collision (``Stylesheet.apply`` passed to ``getattr`` "waited"
+        through an unrelated dialog's ``apply``), so they are not reported.
+        """
+        rows: list[str] = []
+        for holder, callee, position, every in self._unresolved:
+            targets = [
+                target
+                for target in every
+                if isinstance(target, _Function) or target[0] != "defs"
+            ]
+            if not any(self._target_waits(target) for target in targets):
+                continue
+            sites = frozenset().union(
+                *(self._target_sites(target) for target in targets)
+            )
+            rows.extend(
+                f"{holder} -> {callee}#{position} => {site}" for site in sorted(sites)
+            )
+        return rows
+
     def roots(self) -> list[str]:
         sites: list[str] = []
         for fn in self.functions:
-            if fn.is_worker:
+            if fn.is_worker or not fn.live:
                 continue
             if fn.is_root and fn.waiting:
                 sites.extend(self._rows(fn.key, fn.sites, on_pump=True))
@@ -1294,11 +1675,22 @@ def collect_w003(modules: list[tuple[ast.Module, Path]]) -> list[str]:
         root reaches. ``<root>`` is ``"<path>::<Class.>function"`` (a
         pump-scheduled callable is ``"<scheduler key>-><callable>"``);
         ``<site>`` is the key of the function holding the push. A key repeats
-        once per wait push in that site and once per same-named root.
+        once per wait push in that site and once per same-named LIVE root
+        (nested functions of one name in different parents share a key; a
+        dead earlier definition is not a root). ``main`` adds the rows of
+        :func:`collect_w003_unresolved` to these.
     """
     return _WaitGraph(
         [_collect_module(tree, _rel(path)) for tree, path in modules]
     ).roots()
+
+
+def collect_w003_unresolved(modules: list[tuple[ast.Module, Path]]) -> list[str]:
+    """Positional handoffs of a waiting callable that W003 cannot bind to a
+    parameter (see :meth:`_WaitGraph.unresolved`)."""
+    return _WaitGraph(
+        [_collect_module(tree, _rel(path)) for tree, path in modules]
+    ).unresolved()
 
 
 def _read_census(census: Path | None = None) -> dict[str, int]:
@@ -1417,6 +1809,11 @@ def _write_wait_push_census(sites: list[str]) -> None:
         "#\n"
         + _NOTE_HEADER
         + "#\n"
+        "# A row `path::[Class.]function -> callee#N => ...` is instead a waiting\n"
+        "# callable handed as positional argument N to a callee W003 cannot bind\n"
+        "# to a parameter (defined outside the package, or a `*args`): what the\n"
+        "# callee does with it is invisible here.\n"
+        "#\n"
         "# path::[Class.]entry point[->scheduled callable] => path::[Class.]function\n"
         "# holding the push\toccurrences[\tnote]\n"
     )
@@ -1458,7 +1855,8 @@ def main() -> int:
         w001.extend(collect_w001(tree, path))
         w002.extend(collect_w002(tree, path))
         collected.append(_collect_module(tree, _rel(path)))
-    w003 = _WaitGraph(collected).roots()
+    graph = _WaitGraph(collected)
+    w003 = graph.roots() + graph.unresolved()
 
     if args.write:
         _write_census(w002)
@@ -1535,7 +1933,11 @@ def main() -> int:
             "the callback on the pump that is blocked on the await "
             "(TASK-33621.28). Run the flow in a worker (`run_worker(coro)` or "
             "`@work`), or push with a `callback=` and return. Each row is "
-            "`<entry point> => <function holding the push>`:"
+            "`<entry point> => <function holding the push>`; a row "
+            "`<function> -> <callee>#<n> => ...` is a waiting callable handed "
+            "as positional argument <n> to a callee W003 cannot see into -- "
+            "pass it by keyword to a parameter W003 can follow, or check what "
+            "the callee does with it:"
         )
         for key in added_waits:
             print(
