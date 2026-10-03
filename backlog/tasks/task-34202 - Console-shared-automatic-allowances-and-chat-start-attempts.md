@@ -1,5 +1,5 @@
 ---
-id: TASK-33804
+id: TASK-34202
 title: Console shared automatic allowances and chat-start attempts
 status: Done
 assignee:
@@ -10,7 +10,7 @@ labels:
   - console
   - agents
 dependencies:
-  - TASK-33802
+  - TASK-34201
 ---
 
 ## Description
@@ -60,7 +60,11 @@ Changed DB/AgentRuns_DB.py, DB/automatic_work.py, Agents/automatic_work_budget.p
 
 TDD evidence: initial missing-interface RED 9 failed; descendant settlement/context RED 4 failed; focused GREEN 31 passed. Final focused closure: 100 passed in 35.07s across the six changed test files. Scoped Ruff E9/F63/F7/F82, new-file formatting, inherited formatter-debt ratchet and git diff --check passed. No full test sweep or live dispatch was run; this foundation exposes no tool/UI start route. Self review preserved accepted ADR bodies and existing ownership boundaries.
 
-Independent Task 1 review: spec compliant and quality Approved; no blocking findings. Root accounting, local run ownership, native CAS, recovery and both migration paths verified. Live source ownership, shared capacity, conversation receipt and post-receipt acceptance latch are explicit TASK-33805 obligations. ADR-211 applies. Final scoped evidence: 100 tests passed plus lint, new-file formatting and formatter ratchet.
+Independent Task 1 review: spec compliant and quality Approved; no blocking findings. Root accounting, local run ownership, native CAS, recovery and both migration paths verified. Live source ownership, shared capacity, conversation receipt and post-receipt acceptance latch are explicit the feature implementation task obligations. ADR-211 applies. Final scoped evidence: 100 tests passed plus lint, new-file formatting and formatter ratchet.
 
-Canonical report/review and exact verification logs: Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md. TASK33805 task review now confirms live ownership, shared physical capacity, the second conversation receipt and acceptance-latch order. Both task gates and the final whole-branch review plus its single scoped fix review are approved. Final fix 9cb68f456e preserves the foundation ownership contracts; complete evidence and qualifications are in the canonical QA record. The named branch remains for the user integration decision.
+Canonical report/review and exact verification logs: Docs/superpowers/qa/2026-10-02-console-chat-starts/README.md. the feature implementation task task review now confirms live ownership, shared physical capacity, the second conversation receipt and acceptance-latch order. Both task gates and the final whole-branch review plus its single scoped fix review are approved. Final fix 9cb68f456e preserves the foundation ownership contracts; complete evidence and qualifications are in the canonical QA record. The named branch remains for the user integration decision.
 <!-- SECTION:NOTES:END -->
+
+Current-dev publication identity: 34202 replaces unmerged 33804. The landed TASK33802 census keeps its identity; the design/foundation/feature chain moved together to preserve dependency ordering. Historical QA retains original identifiers and bytes. Current evidence: Docs/superpowers/qa/2026-10-03-console-chat-starts-dev-integration/README.md.
+
+Current-dev integration note: the historical implementation notes above describe the reviewed source revision and its original schemas. TASK34203.2 qualifies the integrated branch with AgentRuns22 and ChaChaNotes76, current native continuation/maintenance owners and new QA. Historical verification artifacts retain their original schema names and bytes.
