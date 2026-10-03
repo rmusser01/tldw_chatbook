@@ -384,9 +384,7 @@ def test_ensure_recovered_is_single_flight_across_threads(components) -> None:
 
     repository.list_persona_intents = slow
 
-    workers = [
-        threading.Thread(target=coordinator.ensure_recovered) for _ in range(6)
-    ]
+    workers = [threading.Thread(target=coordinator.ensure_recovered) for _ in range(6)]
     for worker in workers:
         worker.start()
     for worker in workers:
