@@ -143,6 +143,7 @@
 
     ConsolePromptQueueRegion.-narrow #console-prompt-queue-summary {
         width: 1fr;
+        min-width: 0;
         text-wrap: nowrap;
         text-overflow: ellipsis;
     }

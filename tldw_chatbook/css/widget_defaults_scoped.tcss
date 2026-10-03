@@ -29,14 +29,12 @@
     }
 
     ConsolePromptQueueRegion #console-prompt-queue-manage {
-        width: 8;
         min-width: 8;
         height: 1;
         padding: 0 1;
     }
 
     ConsolePromptQueueRegion #console-prompt-queue-pause {
-        width: 15;
         min-width: 15;
         height: 1;
         padding: 0 1;

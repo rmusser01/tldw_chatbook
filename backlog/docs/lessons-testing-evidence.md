@@ -2686,6 +2686,21 @@ host, hover the production control, and assert both the control geometry and the
 mounted `#textual-tooltip` render. An immediate frame and a default-disabled
 framework feature can manufacture two different false UI regressions.
 
+**Recurred, TASK-33625.4, 2026-10-02 -- and the PARENT's layout refresh did not
+help.** The Console queue shelf's `sync_presentation` already ended in
+`self.refresh(layout=True)` on the shelf. After the fixed widths were removed
+so the buttons could size to their labels, a mounted painted-label test still
+showed `Pause` -> `Keep draining` painting `Keep` in the old 15 cells (it
+needs 17). Textual 8's box-model cache key includes
+the widget's OWN `_layout_updates`; a parent's refresh clears arrangement
+caches upward, not a child's cached box model. Only `button.refresh(layout=True)`
+on each relabelled Button made the new width take.
+
+**What to do.** Refresh layout on the widget whose content changed, not an
+ancestor. A painted-label test must change the label on a MOUNTED widget (walk
+every state in one app run); a fresh mount per label measures the first label
+only and passes against this bug.
+
 ---
 
 ## Test embedded panes at their allocated width, not the terminal width

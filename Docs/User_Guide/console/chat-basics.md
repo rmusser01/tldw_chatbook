@@ -449,7 +449,8 @@ of the next prompt, and **Manage** plus a state-specific action such as
 - Recognized slash commands still run immediately and are never queued.
 - Queued prompts are sent one after another, in order, for as long as each
   turn succeeds. **Pause** takes effect once the turn in progress finishes;
-  it never cuts that turn short.
+  it never cuts that turn short. Until then the shelf reads `Pausing` and the
+  button reads **Keep draining**, which cancels the pause.
 - **Manage** opens a modal pinned to this tab. Prompts are numbered from 1
   and the queue's state is written at the top, for example
   `Queue 2/10 · Draining`. You can edit, move, remove, or clear waiting prompts; a prompt
