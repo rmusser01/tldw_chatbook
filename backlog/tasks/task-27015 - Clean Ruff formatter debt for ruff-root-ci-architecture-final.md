@@ -1,8 +1,9 @@
 ---
 id: TASK-27015
 title: Clean Ruff formatter debt for ruff-root-ci-architecture-final
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - rmusser01
 created_date: '2026-08-31 18:31'
 updated_date: '2026-08-31 18:31'
 labels:
@@ -217,3 +218,13 @@ Clean the `ruff-root-ci-architecture-final` Ruff formatter batch at the owner bo
 - [ ] The diff contains no hand-written production behavior change. <!-- TASK-26000-CONTRACT: no-handwritten-behavior -->
 - [ ] After all lower-ID cleanup dependencies pass, first require an untracked-file-free checkout (`git ls-files --others --exclude-standard` prints no paths), then require the explicit Git-tracked repository-wide command to exit zero under the recorded Python 3.12.11 interpreter: `python -m ruff format --check --force-exclude .`; any post-cut unassigned failure blocks this gate, is never absorbed into the pinned counts or current batches, and requires a separate correction record. <!-- TASK-26000-CONTRACT: repository-zero-gate --><!-- TASK-26000-CONTRACT: post-cut-unassigned-correction -->
 <!-- AC:END -->
+
+## Implementation Plan
+
+1. Reconcile assigned paths against current `origin/dev` (existence + format state; missing paths recorded with dev delete/rename lineage) and against the TASK-26000 evidence JSON `cleanup_records` `paths_sha256` (mechanical ownership check).
+2. Snapshot each assigned path's `ast.dump` before formatting (type_comments=True with symmetric plain-parse fallback; normalize `TypeIgnore.lineno`).
+3. Run Ruff 0.15.22 `ruff format` on exactly the assigned paths.
+4. Snapshot after-ASTs; require per-file equality (formatter-mandated docstring-normalization deviations enumerated if they occur).
+5. `ruff format --check` must pass on every existing assigned path; `ruff check` findings must not increase vs the pre-format baseline.
+6. Run the focused test surface (bounded; never a bare pytest), plus `Tests/CI/test_backlog_task_id_uniqueness.py` and `git diff --check`; verify the three-way path partition arithmetically before writing notes.
+7. Tick ACs, record Implementation Notes (lineage, commands, results), set status Done.
