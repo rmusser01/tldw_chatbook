@@ -800,6 +800,8 @@ def build_first_request_schema_plan(
     discovery_system_prompt: str | None = None,
     spawn_override_enabled: bool = False,
     spawn_override_targets: tuple[tuple[str, tuple[str, ...]], ...] = (),
+    context_window: object | None = None,
+    plain_system_prompt: str | None = None,
 ) -> FirstRequestSchemaPlan:
     """Choose direct disclosure only when schema share and request both fit.
 
@@ -831,6 +833,11 @@ def build_first_request_schema_plan(
         spawn_override_targets: Allowlisted ``(provider, models)`` pairs the
             spawn schema enumerates when the override gate is open;
             identity-only, from ``_spawn_override_targets``.
+        context_window: The send's own ``ContextWindowResolution``; when given,
+            the plan is sized against it (an unverified one conservatively,
+            see ``first_request_window``) instead of the static catalog limit.
+        plain_system_prompt: Prompt sent when no tool is disclosed, so a
+            tool-less request carries no instructions for an absent protocol.
 
     Returns:
         A frozen schema plan whose ``request_fits`` flag proves whether any
@@ -977,7 +984,7 @@ def build_first_request_schema_plan(
             runtime_schemas=(),
             offer_find_load=False,
             log_active=False,
-            system_prompt=direct_prompt,
+            system_prompt=plain_system_prompt or direct_prompt,
             agent_definitions=agent_definitions,
             fleet_max_live=fleet_max_live,
         )
@@ -993,7 +1000,15 @@ def build_first_request_schema_plan(
         )
 
     try:
-        context_limit = get_model_token_limit(config.model, api_endpoint)
+        from .first_request_window import planning_window
+
+        # TASK-34100.5 AC#6: plan against the send's own window when known.
+        planned = planning_window(context_window, config.response_reserve_tokens)
+        if planned is not None:
+            context_limit = planned[0]
+            config = dataclasses.replace(config, response_reserve_tokens=planned[1])
+        else:
+            context_limit = get_model_token_limit(config.model, api_endpoint)
         if type(context_limit) is not int or context_limit <= 0:
             return discovery
         schema_limit = int(context_limit * DIRECT_DISCLOSURE_CONTEXT_FRACTION)

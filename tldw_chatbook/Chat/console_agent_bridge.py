@@ -5080,6 +5080,10 @@ def build_console_first_request_plan(
         fleet_max_live=fleet_max_live,
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
+        # TASK-34100.5 AC#6: the same window the send preflight used, and a
+        # tool-less request carries only the session's own prompt.
+        context_window=getattr(resolution, "context_window", None),
+        plain_system_prompt=(session_system_prompt or "").strip() or None,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (
