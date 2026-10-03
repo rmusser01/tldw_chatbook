@@ -17724,6 +17724,20 @@ input list still named it. Updating that list to `features/_console.tcss` and
 qualification claims. File moves must update explicit digest inputs as well as
 build inputs; the existing presence check caught this drift before publication.
 
+## Visible Stop needs an inside-parent geometry assertion (TASK-33805, 2026-10-02)
+
+The isolated real Console rendered an accepted background chat as Agent running,
+but its Stop button was missing at the terminal edge. The button had display=true
+and width6: an existing Redirect button used10 cells that the composer action row
+never reserved. A mounted regression measured Stop's right edge169 against its
+parent's159, then clicked Stop after the width fix and verified the target's saved
+stopped state. Checking button presence/display alone would have missed the bug.
+
+The same run found that Ctrl+U cleared a version-2 handoff visibly while the saved
+revision stayed unchanged, although direct store edit/clear tests passed. Exercise
+the mounted composer event and reopen the actual database: persistence must be
+wired to the empty edit event, not only to activation or nonblank input.
+
 ## Census os.open counts are a function of the temp path's depth
 
 **PR #2969 / TASK-33644, 2026-10-03.** The new trace-GC-pass row was pinned at
@@ -17738,3 +17752,7 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+### An accepted turn can own the composer before VALIDATING
+
+During TASK34203.2 current-dev qualification, keyboard Send canceled an idle cost-refresh timer, but the queued composer-clear Input.Changed event rearmed it while the controller still reported IDLE. The runtime already held the accepted turn. The preserved timer trace and three focused controls in the current integration QA demonstrate the gap. Refresh routing now checks the existing runtime custody for the exact chat as well as controller status; other idle chats still refresh, and an edit after refusal rearms normally. When guarding accepted work, use its actual custody owner rather than assuming run status has advanced.

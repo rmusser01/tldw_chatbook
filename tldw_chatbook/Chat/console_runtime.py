@@ -2301,13 +2301,20 @@ class ConsoleRuntime:
                 )
         return record
 
-    def has_custodied_turns(self) -> bool:
-        """Whether an accepted turn is in custody, even before its run starts.
+    def has_custodied_turns(self, session_id: str | None = None) -> bool:
+        """Whether accepted work is in custody, even before its run starts.
+
+        Args:
+            session_id: Limit the check to one chat, or check all chats when unset.
 
         Returns:
-            True until every accepted turn's task has finished.
+            True until the selected accepted turn tasks have finished.
         """
-        return bool(self._turn_custody)
+        if session_id is None:
+            return bool(self._turn_custody)
+        return any(
+            record.session_id == session_id for record in self._turn_custody.values()
+        )
 
     def _release_custody(self, turn_id: str) -> None:
         """Drop the runtime's final references to an accepted turn."""
@@ -4707,6 +4714,11 @@ class ConsoleRuntime:
         controller = self._chat_controller
         if controller is None:
             raise RuntimeError("Console controller is unavailable.")
+        drain_handoff = getattr(controller.store, "drain_agent_handoff", None)
+        if callable(drain_handoff) and not await drain_handoff(session_id):
+            raise RuntimeError(
+                "Draft custody must be confirmed before closing this chat."
+            )
         self._admission_fenced_sessions.add(session_id)
         try:
             ticket = controller.begin_session_close(

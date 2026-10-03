@@ -5,6 +5,9 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
+# Config admission remains bound to the profile selected at collection.
+pytestmark = pytest.mark.bootstrap_profile
+
 import tldw_chatbook.Chat.console_agent_bridge as bridge_module
 from tldw_chatbook.Agents.agent_service import AgentService, _count_model_messages
 from tldw_chatbook.Agents.canvas_tool_provider import (
@@ -525,7 +528,7 @@ async def test_agent_next_send_uses_selected_project_root_for_local_schemas(
     )
     monkeypatch.setattr(
         "tldw_chatbook.Chat.console_chat_controller.resolve_project_instruction_binding",
-        lambda _session, _registry: selected,
+        lambda _session, _registry, *, status_cache: selected,
     )
 
     await controller.build_context_snapshot(draft="question", session_id=session.id)

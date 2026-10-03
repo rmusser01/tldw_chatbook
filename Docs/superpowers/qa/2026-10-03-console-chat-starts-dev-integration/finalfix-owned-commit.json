@@ -1,0 +1,17 @@
+{
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "commit",
+    "-m",
+    "fix(console): preserve child approval and consume mounted handoffs"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 0.11375093460083008,
+  "output": "[codex/console-chat-starts-dev 3c4c522b40] fix(console): preserve child approval and consume mounted handoffs\n 8 files changed, 423 insertions(+), 10 deletions(-)\n"
+}

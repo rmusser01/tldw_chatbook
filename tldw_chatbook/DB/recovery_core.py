@@ -437,6 +437,8 @@ class _CoreAdapter:
     def schema_policy(self) -> SchemaPolicy | None:
         from .recovery_core_schema import (
             CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+            CHACHANOTES_V75_SCHEMA,
+            CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
             CORE_SCHEMAS,
             PROMPTS_V4_SCHEMA,
             PROMPTS_V4_TO_V5_SQL,
@@ -447,7 +449,12 @@ class _CoreAdapter:
         versions = (version,)
         migrations = ()
         if self.owner_id == "db.chachanotes.primary":
-            schemas += ((version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),)
+            schemas += (
+                (version, CHACHANOTES_DICTIONARY_UPDATE_SCHEMA),
+                (75, CHACHANOTES_V75_SCHEMA),
+                (75, CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA),
+            )
+            versions += (75,)
         elif self.owner_id == "db.prompts.primary":
             schemas += ((4, PROMPTS_V4_SCHEMA),)
             versions += (4,)

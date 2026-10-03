@@ -239,6 +239,7 @@ from tldw_chatbook.Chat.library_activity import (
     project_library_activity,
 )
 from tldw_chatbook.Chat.message_metadata import (
+    AgentHandoffLaunchMetadata,
     CharacterEmoteEventMetadata,
     CharacterEmoteMetadata,
     MessageMetadata,
@@ -1389,6 +1390,13 @@ def _invalid_runtime_backend_diagnostic(value: Any) -> str:
 class ConsoleChatSession:
     """A native Console chat session."""
 
+    incarnation_id: str = field(
+        default_factory=lambda: str(uuid4()), init=False, compare=False
+    )
+    agent_handoff_revision: int | None = None
+    agent_handoff_state: str | None = None
+    agent_handoff_launch: AgentHandoffLaunchMetadata | None = None
+
     title: str = DEFAULT_CONSOLE_SESSION_TITLE
     workspace_id: str = CONSOLE_GLOBAL_WORKSPACE_ID
     id: str = field(default_factory=lambda: str(uuid4()))
@@ -2084,6 +2092,8 @@ class ConsoleChatStore:
         # chat keeps its draft across app restarts (TASK-32482 AC #4).
         # Process-local, like the epochs above.
         self._pending_agent_handoff_clears: dict[str, None] = {}
+        self._agent_handoff_writes: dict[str, dict[str, Any]] = {}
+        self._agent_handoff_changed: Callable[[str, str], bool] | None = None
 
         # Trajectory sidecar (schema v38) capture state. LOCAL-ONLY: the
         # ``message_trajectory_metadata`` table is never synced. Timing is
@@ -2893,6 +2903,7 @@ class ConsoleChatStore:
         assistant_id: str | None = "console",
         assistant_authority_id: str | None = None,
         persona_memory_mode: str | None = None,
+        assistant_default_notice: str = "",
         character_id: int | None = None,
         character_name: str | None = None,
         user_display_name_override: str | None = None,
@@ -2985,6 +2996,7 @@ class ConsoleChatStore:
             assistant_id=assistant_id,
             assistant_authority_id=assistant_authority_id,
             persona_memory_mode=persona_memory_mode,
+            assistant_default_notice=assistant_default_notice,
             character_id=character_id,
             character_name=character_name,
             project_instruction_state=project_instruction_state,
@@ -3022,20 +3034,38 @@ class ConsoleChatStore:
                     if isinstance(metadata_obj, dict)
                     else None
                 )
-                if isinstance(handoff, dict) and handoff.get("draft"):
-                    handoff_draft = str(handoff["draft"])
-                    # Final-review fix wave (Finding 2): record a PENDING clear
-                    # instead of clearing the key here. Restore alone (the
-                    # agent-create completion path restores with activate=False)
-                    # must keep the durable key so an unopened draft survives an
-                    # app restart; the clear fires when this session first
-                    # becomes active -- see
-                    # `_consume_pending_agent_handoff_clear`.
-                    self._pending_agent_handoff_clears[
-                        str(persisted_conversation_id)
-                    ] = None
-            if handoff_draft:
-                self.set_session_draft(session.id, handoff_draft)
+                if isinstance(handoff, dict):
+                    session.agent_handoff_launch = AgentHandoffLaunchMetadata.read(
+                        handoff.get("launch")
+                    )
+                    if "version" not in handoff and handoff.get("draft"):
+                        handoff_draft = str(handoff["draft"])
+                        self._pending_agent_handoff_clears[
+                            str(persisted_conversation_id)
+                        ] = None
+                    elif (
+                        handoff.get("version") == 2
+                        and handoff.get("state") in {"pending", "consumed"}
+                        and type(handoff.get("draft_revision")) is int
+                        and handoff["draft_revision"] >= 1
+                        and isinstance(handoff.get("draft"), str)
+                    ):
+                        session.agent_handoff_revision = handoff["draft_revision"]
+                        session.agent_handoff_state = handoff["state"]
+                        if handoff["state"] == "pending":
+                            handoff_draft = handoff["draft"]
+                            self._agent_handoff_writes[session.id] = {
+                                "conversation_id": str(persisted_conversation_id),
+                                "durable_revision": handoff["draft_revision"],
+                                "revision": handoff["draft_revision"],
+                                "draft": handoff_draft,
+                                "task": None,
+                                "failed": False,
+                            }
+                    elif "version" in handoff:
+                        session.agent_handoff_state = "review_required"
+            if handoff_draft is not None:
+                session.draft = handoff_draft
             if self.active_session_id == session.id:
                 # An ACTIVATING restore (the post-restart open path) activates
                 # inside `create_session` -- before the pending clear above was
@@ -5834,8 +5864,14 @@ class ConsoleChatStore:
             "continuation_receipt": cls._canonical_fingerprint_value(
                 acceptance.continuation_receipt
             ),
+            "user_root_fork": acceptance.user_root_fork,
             "parent_message_id": acceptance.parent_message_id,
             "attachments": cls._canonical_fingerprint_value(acceptance.attachments),
+            "agent_chat_start_attempt_id": acceptance.agent_chat_start_attempt_id,
+            "agent_chat_start": cls._canonical_fingerprint_value(
+                acceptance.agent_chat_start
+            ),
+            "handoff_draft_revision": acceptance.handoff_draft_revision,
             "origin": acceptance.origin,
             "queue_entry_id": acceptance.queue_entry_id,
             "frozen_authority": cls._canonical_fingerprint_value(
@@ -9716,12 +9752,101 @@ class ConsoleChatStore:
         return self._session_or_raise(session_id).draft
 
     def set_session_draft(self, session_id: str, draft: str) -> ConsoleChatSession:
-        """Replace the in-memory composer draft for a native Console session."""
+        """Replace a composer draft, persisting only pending version-2 handoffs."""
         session = self._session_or_raise(session_id)
+        changed = session.draft != draft
         session.draft = draft
         if draft:
             session.has_user_work = True
+        pending = self._agent_handoff_writes.get(session_id)
+        if changed and pending is not None and session.agent_handoff_state == "pending":
+            pending["revision"] += 1
+            pending["draft"] = draft
+            session.agent_handoff_revision = pending["revision"]
+            if self._agent_handoff_changed is not None:
+                self._agent_handoff_changed(session_id, "draft_changed")
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                self._write_agent_handoff_revision(pending)
+            else:
+                if pending["task"] is None or pending["task"].done():
+                    pending["task"] = loop.create_task(
+                        self._drain_agent_handoff_writer(pending)
+                    )
         return session
+
+    def _write_agent_handoff_revision(self, pending: dict[str, Any]) -> bool:
+        revision, draft = pending["revision"], pending["draft"]
+        expected = pending["durable_revision"]
+        if revision == expected:
+            return not pending["failed"]
+        try:
+            written = self.persistence.update_agent_handoff_draft(
+                pending["conversation_id"],
+                expected_revision=expected,
+                draft_revision=revision,
+                draft=draft,
+            )
+        except Exception:
+            written = False
+        if written:
+            pending["durable_revision"] = revision
+        pending["failed"] = not written
+        return written
+
+    async def _drain_agent_handoff_writer(self, pending: dict[str, Any]) -> bool:
+        while pending["durable_revision"] != pending["revision"]:
+            # Snapshot on the owning loop; the worker must never read typing state.
+            revision, draft = pending["revision"], pending["draft"]
+            try:
+                written = await asyncio.to_thread(
+                    self.persistence.update_agent_handoff_draft,
+                    pending["conversation_id"],
+                    expected_revision=pending["durable_revision"],
+                    draft_revision=revision,
+                    draft=draft,
+                )
+            except Exception:
+                written = False
+            pending["failed"] = not written
+            if not written:
+                return False
+            pending["durable_revision"] = revision
+        return not pending["failed"]
+
+    def publish_agent_handoff_consumed(self, session_id: str, revision: int) -> None:
+        """Retire the exact pending writer after its durable consumption receipt."""
+        session = self._sessions.get(session_id)
+        pending = self._agent_handoff_writes.get(session_id)
+        if session is None or pending is None:
+            return
+        self._agent_handoff_writes.pop(session_id, None)
+        if pending["revision"] == revision:
+            session.draft = ""
+        session.agent_handoff_state = "consumed"
+        session.agent_handoff_revision = revision + 1
+        # Typing after the accepted receipt belongs to the ordinary composer.
+        # The writer's pending-state CAS prevents any in-flight stale write
+        # from resurrecting the consumed handoff.
+        task = pending["task"]
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def drain_agent_handoff(self, session_id: str) -> bool:
+        """Join the handoff's single coalescing writer before changing custody."""
+        pending = self._agent_handoff_writes.get(session_id)
+        if pending is None:
+            session = self._sessions.get(session_id)
+            return (
+                session is not None and session.agent_handoff_state != "review_required"
+            )
+        task = pending["task"]
+        if task is not None:
+            await asyncio.shield(task)
+        return (
+            not pending["failed"] and pending["durable_revision"] == pending["revision"]
+        )
 
     def session_one_shot_prefill(self, session_id: str) -> str | None:
         """Return the armed one-shot response prefill for a session, if any."""

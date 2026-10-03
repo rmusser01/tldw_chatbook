@@ -1007,7 +1007,10 @@ class ConsolePromptQueueCoordinator:
     ) -> None:
         """Commit the accepted boundary and settle a queued claim exactly once."""
 
-        if origin is ConsoleSubmissionOrigin.AGENT_WAKE:
+        if origin in {
+            ConsoleSubmissionOrigin.AGENT_WAKE,
+            ConsoleSubmissionOrigin.AGENT_CHAT_START,
+        }:
             return
         chain = self._chains.get(session_id)
         if chain is None:

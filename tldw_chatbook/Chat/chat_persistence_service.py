@@ -1536,6 +1536,98 @@ class ChatPersistenceService:
                 )
         return result.snapshot
 
+    def update_agent_handoff_launch(self, conversation_id: str, launch: Any) -> None:
+        """Merge bounded display facts without changing draft custody or authority."""
+        from dataclasses import asdict
+        from .message_metadata import AgentHandoffLaunchMetadata
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        if not isinstance(launch, AgentHandoffLaunchMetadata):
+            raise ValueError("invalid handoff launch metadata")
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                raise ValueError("handoff conversation unavailable")
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                raise ValueError("versioned handoff unavailable")
+            handoff["launch"] = asdict(launch)
+            cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("handoff launch publication conflict")
+
+    def update_agent_handoff_draft(
+        self,
+        conversation_id: str,
+        *,
+        expected_revision: int,
+        draft_revision: int,
+        draft: str,
+    ) -> bool:
+        """Merge one pending handoff revision under the conversation version fence."""
+        if (
+            type(expected_revision) is not int
+            or expected_revision < 1
+            or type(draft_revision) is not int
+            or draft_revision <= expected_revision
+            or not isinstance(draft, str)
+        ):
+            raise ValueError("invalid handoff revision")
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with (
+            operation_owned_connection(self.db),
+            self.db.transaction(immediate=True) as cursor,
+        ):
+            row = cursor.execute(
+                "SELECT metadata, version FROM conversations WHERE id = ? AND deleted = 0",
+                (conversation_id,),
+            ).fetchone()
+            if row is None:
+                return False
+            metadata = json.loads(row["metadata"] or "{}")
+            handoff = metadata.get("console_agent_handoff")
+            if (
+                not isinstance(handoff, dict)
+                or handoff.get("version") != 2
+                or handoff.get("state") != "pending"
+                or handoff.get("draft_revision") != expected_revision
+            ):
+                return False
+            metadata["console_agent_handoff"] = {
+                **handoff,
+                "draft": draft,
+                "draft_revision": draft_revision,
+            }
+            updated = cursor.execute(
+                "UPDATE conversations SET metadata = ?, version = version + 1, "
+                "last_modified = ?, client_id = ? WHERE id = ? AND version = ? AND deleted = 0",
+                (
+                    json.dumps(metadata),
+                    self.db._get_current_utc_timestamp_iso(),
+                    self.db.client_id,
+                    conversation_id,
+                    row["version"],
+                ),
+            )
+            return updated.rowcount == 1
+
     def commit_durable_turn(
         self,
         *,
@@ -1619,6 +1711,58 @@ class ChatPersistenceService:
                     raise RuntimeError(
                         "Durable Console Library policy no longer matches acceptance."
                     )
+            # The request pair and the exact handoff receipt share this transaction.
+            if acceptance.handoff_draft_revision is not None:
+                row = cursor.execute(
+                    "SELECT metadata, version FROM conversations WHERE id=? AND deleted=0",
+                    (acceptance.conversation_id,),
+                ).fetchone()
+                metadata = json.loads(row["metadata"] or "{}") if row else {}
+                handoff = metadata.get("console_agent_handoff")
+                receipt = (
+                    acceptance.agent_chat_start_attempt_id or acceptance.attempt_id
+                )
+                revision = acceptance.handoff_draft_revision
+                if not isinstance(handoff, dict) or handoff.get("version") != 2:
+                    raise ValueError("handoff custody unavailable")
+                if handoff.get("state") == "consumed":
+                    if (
+                        handoff.get("accepted_attempt_id") != receipt
+                        or handoff.get("draft_revision") != revision + 1
+                    ):
+                        raise ValueError("handoff receipt mismatch")
+                else:
+                    if (
+                        handoff.get("state") != "pending"
+                        or handoff.get("draft_revision") != revision
+                        or (
+                            acceptance.origin == "agent_chat_start"
+                            and handoff.get("draft") != acceptance.user_content
+                        )
+                    ):
+                        raise ValueError("handoff revision changed")
+                    metadata["console_agent_handoff"] = {
+                        **handoff,
+                        "state": "consumed",
+                        "draft": "",
+                        "draft_revision": revision + 1,
+                        "accepted_attempt_id": receipt,
+                    }
+                    updated = cursor.execute(
+                        "UPDATE conversations SET metadata=?, version=version+1, last_modified=?, client_id=? "
+                        "WHERE id=? AND version=? AND deleted=0",
+                        (
+                            json.dumps(metadata),
+                            self.db._get_current_utc_timestamp_iso(),
+                            self.db.client_id,
+                            acceptance.conversation_id,
+                            row["version"],
+                        ),
+                    )
+                    if updated.rowcount != 1:
+                        raise ValueError("handoff conversation changed")
+            elif acceptance.origin == "agent_chat_start":
+                raise ValueError("handoff revision required")
             return self.console_dispatch_repository.insert_with_messages(
                 cursor,
                 acceptance,

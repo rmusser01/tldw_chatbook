@@ -1,0 +1,37 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "-m",
+    "pytest",
+    "-q",
+    "Tests/Chat/test_console_prompt_queue_coordinator.py::test_close_tombstones_before_cancel_and_never_starts_next_prompt",
+    "Tests/UI/test_console_runtime_ownership.py::test_runtime_owned_custody_tracks_only_lifetime_handles",
+    "Tests/UI/test_console_runtime_ownership.py::test_runtime_tombstones_before_shutdown_and_disposes_via_to_thread",
+    "Tests/UI/test_console_runtime_ownership.py::test_persistent_attach_sync_failure_has_bounded_backoff_and_resume_retry",
+    "Tests/UI/test_console_runtime_ownership.py::test_reconciled_view_keeps_each_live_poll_reason_and_one_timer[wake]",
+    "Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll",
+    "Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab",
+    "Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[bad_role]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[cross_conversation]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_malformed_or_mismatched_checkpoint_identity[assistant_message_id]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_state_cas_requires_every_expected_owner_predicate[assistant_state]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[terminal_content]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[sync_intent]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[checkpoint_delete]",
+    "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_is_atomic_and_returns_committed_proof",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_child_chain_uses_its_own_exact_first_request_budget",
+    "Tests/Chat/test_console_agent_project_instructions.py::test_primary_token_omission_is_delivery_local_when_child_admits",
+    "Tests/Chat/test_console_chat_fork.py::test_configuration_and_leaf_writers_block_fork_through_live_publication[active_leaf]",
+    "Tests/Agents/test_agent_chat_create_tools.py::test_new_chat_schema_shape",
+    "--basetemp=/private/tmp/console-finalfix-baseline21-01a0fa6c"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 106.27267694473267,
+  "output": ".....................                                                    [100%]\n============================= slowest 25 durations =============================\n34.00s call     Tests/UI/test_console_launch_wake.py::test_a_launch_into_console_delivers_without_stealing_the_active_tab\n25.72s call     Tests/UI/test_console_runtime_ownership.py::test_opening_console_during_a_headless_delivery_arms_the_poll\n4.13s call     Tests/UI/test_console_launch_wake.py::test_a_launch_with_no_marks_constructs_nothing_and_reads_once\n1.63s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[bad_role]\n1.57s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[checkpoint_delete]\n1.43s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_considers_only_checkpoint_owners_on_the_selected_active_lineage\n1.32s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_state_cas_requires_every_expected_owner_predicate[assistant_state]\n1.27s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[sync_intent]\n1.27s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_is_atomic_and_returns_committed_proof\n1.26s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_terminal_settlement_failure_at_each_write_boundary_rolls_back[terminal_content]\n1.25s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_invalid_ownership[cross_conversation]\n1.23s call     Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py::test_read_quarantines_malformed_or_mismatched_checkpoint_identity[assistant_message_id]\n\n(13 durations < 1s hidden.)\n21 passed in 93.10s (0:01:33)\n"
+}

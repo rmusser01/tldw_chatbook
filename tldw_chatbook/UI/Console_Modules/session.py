@@ -248,6 +248,7 @@ from ..Navigation.pending_handoff_store import (
     HandoffChannel,
     PendingHandoffStore,
 )
+from ...Widgets.Console.console_composer_bar import ComposerDraftSnapshot
 from ...Widgets.Console import (
     ConsoleComposerUndoHistory,
     ConsoleProjectInstructionStatusRow,
@@ -1023,6 +1024,9 @@ class ConsoleSessionController:
 
         # This cluster's own state, moved verbatim from `ChatScreen.__init__`.
         self._console_visible_draft_session_id: str | None = None
+        self._visible_agent_handoff_draft: (
+            tuple[str, str, int, ComposerDraftSnapshot] | None
+        ) = None
         self._console_undo_histories: dict[str, ConsoleComposerUndoHistory] = {}
         self._console_draft_switch_snapshot: tuple[str | None, str, int] | None = None
         self._closing_session_requests: set[str] = set()
@@ -4815,6 +4819,29 @@ class ConsoleSessionController:
             composer.edit_serial,
         )
 
+    def _consume_visible_agent_handoff(self, store: Any, composer: Any) -> None:
+        """Apply an accepted handoff receipt only to its exact visible revision."""
+        captured = self._visible_agent_handoff_draft
+        if captured is None:
+            return
+        session_id, incarnation, revision, snapshot = captured
+        session = next((row for row in store.sessions() if row.id == session_id), None)
+        if session is None or session.incarnation_id != incarnation:
+            self._visible_agent_handoff_draft = None
+            return
+        if session.agent_handoff_state != "consumed":
+            return
+        self._visible_agent_handoff_draft = None
+        if (
+            self._console_visible_draft_session_id == session_id
+            and session.agent_handoff_revision == revision + 1
+            and composer.capture_draft_snapshot() == snapshot
+        ):
+            # The widget's own revision commit fences generation/edit serial;
+            # no later edit, replacement widget or source draft is consumed.
+            if composer.commit_captured_draft(composer.capture_draft_for_send()):
+                self._console_draft_switch_snapshot = None
+
     def _sync_console_session_draft(self) -> None:
         """Reconcile the composer draft with the active runtime Console session.
 
@@ -4853,6 +4880,7 @@ class ConsoleSessionController:
         composer = self._console_composer_or_none()
         if composer is None:
             return
+        self._consume_visible_agent_handoff(store, composer)
         visible_session_id = self._console_visible_draft_session_id
         if visible_session_id == active_session_id:
             self._restore_banked_raw_cli_stashes_fn(active_session_id, composer)
@@ -4909,6 +4937,16 @@ class ConsoleSessionController:
         ):
             self._on_draft_session_changed()
         self._console_visible_draft_session_id = active_session_id
+        self._visible_agent_handoff_draft = (
+            (
+                session.id,
+                session.incarnation_id,
+                session.agent_handoff_revision,
+                composer.capture_draft_snapshot(),
+            )
+            if session.agent_handoff_state == "pending"
+            else None
+        )
 
     # -- Session identity / state -------------------------------------------
 

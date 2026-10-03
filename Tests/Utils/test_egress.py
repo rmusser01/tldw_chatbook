@@ -15,6 +15,10 @@ from tldw_chatbook.Utils.egress import (
 )
 
 
+# Real config/TLS/app consumers retain their collection-selected private profile.
+pytestmark = pytest.mark.bootstrap_profile
+
+
 @pytest.fixture(autouse=True)
 def _no_real_dns_or_config(monkeypatch):
     """Default: everything resolves public; config enabled with no allowlist."""

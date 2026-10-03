@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "/private/tmp/console-dev-live-01a0fa6c/qualify_final_live.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {},
+  "started_at": 1791067368.673939,
+  "elapsed_seconds": 0.04905390739440918,
+  "returncode": 0,
+  "stdout": "{\n  \"qualified_sha\": \"3c4c522b40091901514959061c29c092033bb874\",\n  \"cases\": [\n    {\n      \"title\": \"DEV_FINAL_START\",\n      \"conversation_id\": \"248c64d3-b15f-466c-acd2-39cf2bb8ce56\",\n      \"attempt_id\": \"e437a381-123a-43bc-8267-36ed70584107\",\n      \"reply\": \"DEV_FINAL_START_OK\",\n      \"source_chain_id\": \"910469ed25b746bcbd533886d4eab1ba\",\n      \"target_chain_id\": \"46f56093ea2f4afd94a14fe54bd23a20\"\n    },\n    {\n      \"title\": \"DEV_FINAL_REMEMBERED_START\",\n      \"conversation_id\": \"02cc99d6-26f6-49df-8de9-38a88f101641\",\n      \"attempt_id\": \"e9ac2cd3-ec2b-4d66-be69-515750c45f42\",\n      \"reply\": \"DEV_FINAL_REMEMBERED_START_OK\",\n      \"source_chain_id\": \"57b76c7ed0e6412ab14111095be4627d\",\n      \"target_chain_id\": \"71c19fb53d4241f9aba2b5f034966bcd\"\n    }\n  ],\n  \"observed_primary_remembered_approval\": true,\n  \"started_target_composer_empty_on_open\": true,\n  \"later_target_edit_survives_navigation\": true,\n  \"app_exit_code\": 0,\n  \"app_pid_absent\": true,\n  \"real_config_sha256\": \"15c6cb224a6a51c7de5c3f716fbe9dfaef7b7ca05cf9daa7e3ebe247df9310da\",\n  \"real_config_size_and_mtime_unchanged\": true,\n  \"limits\": [\n    \"Important I2 remains open: caret/selection-only navigation before native acceptance is not qualified and can resurrect the accepted prompt.\",\n    \"The held preacceptance mounted-target interleaving and shared primary-child closure are qualified by automated regression controls, not this PTY successor.\",\n    \"No full repository suite or general descriptor/timer cleanup claim.\"\n  ]\n}\n",
+  "head": "3c4c522b40091901514959061c29c092033bb874"
+}

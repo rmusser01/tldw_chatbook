@@ -298,13 +298,27 @@ def declared_tables(schema: SchemaSources) -> dict[str, list[str]]:
     found: dict[str, set[str]] = {}
     for path in files:
         for text, origin in _sql_fragments(path):
-            for match in CREATE_TABLE_RE.finditer(_strip_sql_comments(text)):
+            sql = _strip_sql_comments(text)
+            # A same-fragment rebuild is persisted under its RENAME destination.
+            # Missing/wrong renames still produce an independently scanned name.
+            renames = {
+                match.group(1): (match.group(2), match.start())
+                for match in re.finditer(
+                    r'\bALTER\s+TABLE\s+["`\[]?([A-Za-z_][A-Za-z_0-9]*)["`\]]?\s+RENAME\s+TO\s+["`\[]?([A-Za-z_][A-Za-z_0-9]*)',
+                    sql,
+                    re.IGNORECASE,
+                )
+            }
+            for match in CREATE_TABLE_RE.finditer(sql):
                 if match.group("modifier"):
                     # VIRTUAL (the FTS tables) and TEMP tables are not
                     # allowlist targets; _is_substantive drops the FTS names
                     # anyway, and a TEMP table has no persistent identity.
                     continue
                 name = match.group("name")
+                renamed = renames.get(name)
+                if renamed is not None and renamed[1] > match.end():
+                    name = renamed[0]
                 if _is_substantive(name):
                     found.setdefault(name, set()).add(origin)
     return {name: sorted(origins) for name, origins in found.items()}

@@ -1,4 +1,4 @@
-"""Private accepted-wake context shared by native Console generations."""
+"""Private accepted-attempt context shared by native Console generations."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 from uuid import uuid4
 
 from .automatic_work_budget import (
@@ -53,6 +53,7 @@ class AutomaticWorkContext:
     chain_id: str
     owner_id: str
     attempt_id: str
+    attempt_kind: Literal["wake", "chat_start"] = "wake"
     _accepted: threading.Event = field(
         default_factory=threading.Event, init=False, repr=False, compare=False
     )
@@ -68,7 +69,14 @@ class AutomaticWorkContext:
 
     def mark_accepted(self) -> None:
         """Latch acceptance only after the required durable fence succeeded."""
-        attempt = self.ledger.read_attempt(self.attempt_id, owner_id=self.owner_id)
+        reader = (
+            self.ledger.read_chat_start_attempt
+            if self.attempt_kind == "chat_start"
+            else self.ledger.read_attempt
+        )
+        if self.attempt_kind not in {"wake", "chat_start"}:
+            raise AutomaticWorkRefused("acceptance_required")
+        attempt = reader(self.attempt_id, owner_id=self.owner_id)
         if attempt.chain_id != self.chain_id or attempt.state not in {
             "accepted",
             "completed",
@@ -82,7 +90,14 @@ class AutomaticWorkContext:
 
         if not self._accepted.is_set():
             raise AutomaticWorkRefused("acceptance_required")
-        attempt = self.ledger.read_attempt(self.attempt_id, owner_id=self.owner_id)
+        reader = (
+            self.ledger.read_chat_start_attempt
+            if self.attempt_kind == "chat_start"
+            else self.ledger.read_attempt
+        )
+        if self.attempt_kind not in {"wake", "chat_start"}:
+            raise AutomaticWorkRefused("acceptance_required")
+        attempt = reader(self.attempt_id, owner_id=self.owner_id)
         if attempt.chain_id != self.chain_id or attempt.state not in {
             "accepted",
             "completed",

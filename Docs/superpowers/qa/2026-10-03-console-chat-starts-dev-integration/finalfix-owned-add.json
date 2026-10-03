@@ -1,0 +1,24 @@
+{
+  "argv": [
+    "git",
+    "-c",
+    "gc.auto=0",
+    "add",
+    "--",
+    "Tests/Chat/test_console_chat_start.py",
+    "Tests/UI/test_console_session_controller.py",
+    "Tests/Chat/test_console_chat_create_integration.py",
+    "Tests/UI/test_console_runtime_ownership.py",
+    "tldw_chatbook/Chat/console_agent_bridge.py",
+    "tldw_chatbook/Chat/console_chat_controller.py",
+    "tldw_chatbook/Chat/console_chat_store.py",
+    "tldw_chatbook/UI/Console_Modules/session.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {
+    "TLDW_TEST_GC_EVERY": "1"
+  },
+  "returncode": 0,
+  "elapsed_s": 0.14339709281921387,
+  "output": ""
+}

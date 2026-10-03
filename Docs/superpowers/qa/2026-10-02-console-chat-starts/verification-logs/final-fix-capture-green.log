@@ -1,0 +1,7 @@
+.............                                                            [100%]
+============================= slowest 25 durations =============================
+1.52s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[before_start-unchanged]
+1.32s call     Tests/Chat/test_console_chat_start.py::test_destination_availability_is_rechecked_before_native_acceptance[readiness-unchanged]
+
+(23 durations < 1s hidden.)
+13 passed, 103 deselected in 11.84s

@@ -15,7 +15,7 @@ import re
 import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -226,6 +226,7 @@ class AgentWakeAuthorization:
 @dataclass
 class _WakeDelivery:
     session_id: str
+    slot_token: object = field(default_factory=object)
     authorization: AgentWakeAuthorization | None = None
 
 
@@ -247,6 +248,7 @@ class ConsoleFleetWakeCoordinator:
         self._pending = {}
         self._active: dict[str, _WakeDelivery] = {}
         self._owner_id = uuid4().hex
+        self._automatic_primary_claims: dict[str, object] = {}
         self._paused: dict[tuple[str, str | None], str] = {}
         self._result_chains: dict[str, str | None] = {}
         self._coalesce_until: dict[str, float] = {}
@@ -263,6 +265,44 @@ class ConsoleFleetWakeCoordinator:
         self._disposed = False
         self._conversation_fences: dict[str, int] = {}
         self._runtime_submitter = None
+
+    @property
+    def runtime_owner_id(self) -> str:
+        """The runtime fence shared by wake and chat-start attempts."""
+        return self._owner_id
+
+    def try_claim_automatic_primary(self, session_id: str, token: object) -> bool:
+        """Claim one shared automatic slot while retaining manual capacity."""
+        if (
+            self._disposed
+            or getattr(self._controller, "_disposed", False)
+            or getattr(self._controller, "_maintenance_paused", False)
+        ):
+            return False
+        existing = self._automatic_primary_claims.get(session_id)
+        if existing is not None and existing is not token:
+            return False
+        if not any(s.id == session_id for s in self._controller.store.sessions()):
+            return False
+        claims = set(self._automatic_primary_claims)
+        claims.discard(session_id)
+        if len(claims) >= self.MAX_AUTOMATIC_PRIMARIES:
+            return False
+        busy = set(self._controller._live_busy_session_ids())
+        busy.update(self.delivering_session_ids())
+        busy.update(claims)
+        busy.discard(session_id)
+        if len(busy) + 1 > max(0, self._controller.max_parallel_runs - 1):
+            return False
+        self._automatic_primary_claims[session_id] = token
+        return True
+
+    def release_automatic_primary(self, session_id: str, token: object) -> bool:
+        """Release only the exact claim whose worker cleanup has completed."""
+        if self._automatic_primary_claims.get(session_id) is not token:
+            return False
+        del self._automatic_primary_claims[session_id]
+        return True
 
     def wire(
         self,
@@ -525,6 +565,7 @@ class ConsoleFleetWakeCoordinator:
             live = getattr(controller, "_live_busy_session_ids", None)
             busy = set(live()) if callable(live) else set()
             busy.update(self.delivering_session_ids())
+            busy.update(self._automatic_primary_claims)
             busy.discard(session_id)
             cap = getattr(controller, "max_parallel_runs", 3)
             return len(busy) + 1 <= max(0, cap - 1)
@@ -567,9 +608,12 @@ class ConsoleFleetWakeCoordinator:
         with self._registry_lock:
             if self._disposed or conversation_id in self._conversation_fences:
                 return
-            self._active[conversation_id] = _WakeDelivery(session_id)
+            delivery = _WakeDelivery(session_id)
+            if not self.try_claim_automatic_primary(session_id, delivery.slot_token):
+                return
+            self._active[conversation_id] = delivery
             self._coalesce_until.pop(conversation_id, None)
-        coroutine = self._deliver(conversation_id, session_id)
+        coroutine = self._deliver(conversation_id, session_id, delivery.slot_token)
         try:
             task = loop.create_task(coroutine)
         except Exception as exc:  # noqa: BLE001 - failed scheduling grants no authority
@@ -579,6 +623,7 @@ class ConsoleFleetWakeCoordinator:
             )
             coroutine.close()
             self._active.pop(conversation_id, None)
+            self.release_automatic_primary(session_id, delivery.slot_token)
             return
         cancel_task = False
         with self._registry_lock:
@@ -697,7 +742,7 @@ class ConsoleFleetWakeCoordinator:
                     delivery_task.cancel()
                     return
 
-    async def _deliver(self, conversation_id, session_id):
+    async def _deliver(self, conversation_id, session_id, slot_token=None):
         from tldw_chatbook.Agents.automatic_work_budget import (
             AutomaticWorkLimits,
             AutomaticWorkRefused,
@@ -816,7 +861,12 @@ class ConsoleFleetWakeCoordinator:
                 if authorization is not None:
                     await self._finish_attempt(authorization, returned)
             finally:
-                self._active.pop(conversation_id, None)
+                delivery = self._active.get(conversation_id)
+                if delivery is not None and (
+                    slot_token is None or delivery.slot_token is slot_token
+                ):
+                    self._active.pop(conversation_id, None)
+                    self.release_automatic_primary(session_id, delivery.slot_token)
                 self.retry_soon()
 
     async def _finish_attempt(self, authorization, returned):

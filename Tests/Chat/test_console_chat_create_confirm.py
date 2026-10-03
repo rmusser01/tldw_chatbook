@@ -8,7 +8,14 @@ from tldw_chatbook.Chat.chat_persistence_service import ChatPersistenceService
 from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
-from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until  # reuse fakes
+from Tests.Chat.test_console_skill_script_confirm import (
+    _FakeApp,
+    _wait_until,
+)  # reuse fakes
+from Tests.Chat.test_console_chat_create_integration import (
+    child_new_chat_rig,
+    real_db_controller,
+)
 
 
 @pytest.fixture
@@ -91,18 +98,10 @@ def test_remember_grants_session_scope(make_controller):
     assert decision == {"allow": True, "remember": True}
     assert controller.pending_chat_create_payloads == payloads_before_second
 
-    # Different tool in the same session still confirms.
-    def second_tool():
-        with use_run_id("run-x"):
-            results.append(controller.request_chat_create_confirm(
-                _payload(tool="new_chat"), session_id="s1"))
-
-    t2 = threading.Thread(target=second_tool)
-    t2.start()
-    _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
-    controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
-    t2.join(timeout=5)
-    assert results[-1] == {"allow": True, "remember": False}
+    # A fork grant cannot authorize an unprepared new-chat payload.
+    assert controller.request_chat_create_confirm(
+        _payload(tool="new_chat"), session_id="s1"
+    ) == {"allow": False, "remember": False}
 
 
 def test_no_ui_fails_closed_immediately(make_controller):
@@ -258,8 +257,7 @@ def test_fork_card_payload_keeps_explicit_title(real_db_confirm):
 def test_new_chat_card_payload_gets_default_title(real_db_confirm):
     controller, db = real_db_confirm
     session = controller.store.create_session(title="Any")
-    card, _ = _arm_and_capture(
-        controller,
+    card = controller._enrich_chat_create_confirm_payload(
         {
             "tool": "new_chat",
             "session_id": session.id,
@@ -268,7 +266,6 @@ def test_new_chat_card_payload_gets_default_title(real_db_confirm):
             "opening_prompt": "",
             "instructions": "",
         },
-        session.id,
     )
     assert card["title"] == "New Chat"
     assert "fork_source_title" not in card
@@ -386,3 +383,149 @@ def test_primary_requester_still_rides_session_grant(make_controller):
     with use_run_id("run-9"):
         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
     assert decision == {"allow": True, "remember": True}
+
+
+# Genuine child preparation uses the same native fixture as execution controls.
+
+
+def test_child_new_chat_cancelled_during_confirmation_closes_authority(
+    child_new_chat_rig,
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def revoke(card):
+        if card:
+            cards.append(dict(card))
+            assert controller.revoke_approval_rounds_for_run(actor.run_id) == 1
+            controller.resolve_pending_chat_create(True, True, card["request_id"])
+
+    controller.set_pending_chat_create = revoke
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        decision = controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        )
+    assert decision == {"allow": False, "remember": False}
+    assert cards[0]["run_id"] == actor.run_id
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )
+    assert not controller._chat_create_session_grants.get(source.id)
+
+
+def test_child_approved_creation_revocation_closes_prepared_token(child_new_chat_rig):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(True, False, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller.request_chat_create_confirm(prepared)["allow"]
+        assert controller.revoke_approval_rounds_for_run(actor.run_id) == 0
+        outcome = controller.execute_agent_chat_create(prepared)
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert not controller._chat_creation_records
+    with use_run_actor(actor), pytest.raises(PermissionError):
+        controller.prepare_agent_chat_create(payload)
+
+
+def test_child_declined_creation_releases_prepared_token(child_new_chat_rig):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    controller.set_pending_chat_create = lambda card: (
+        controller.resolve_pending_chat_create(False, True, card["request_id"])
+        if card
+        else None
+    )
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert not controller.request_chat_create_confirm(prepared)["allow"]
+        outcome = controller.execute_agent_chat_create(prepared)
+    assert not outcome["ok"] and outcome["kind"] == "approval_required"
+    assert (
+        not controller._chat_creation_records
+        and not controller._chat_create_session_grants.get(source.id)
+    )
+
+
+def test_survivor_child_confirm_does_not_bind_next_turn_stop(
+    child_new_chat_rig, monkeypatch
+):
+    from threading import Event
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    unrelated_cancel = Event()
+    unrelated_cancel.set()
+    controller._active_cancel_events[source.id] = unrelated_cancel
+    controller._active_assistant_message_ids[source.id] = "next-primary-message"
+    cards = []
+    controller.set_pending_chat_create = lambda card: (
+        cards.append(dict(card)) if card else None
+    )
+    original = controller._is_session_cancelled
+    polls = []
+
+    def inspect_cancel(session_id, *, cancel_event, visit_event):
+        polls.append(cancel_event)
+        assert cancel_event is None, "survivor approval bound another turn's Stop"
+        assert not original(
+            session_id, cancel_event=cancel_event, visit_event=visit_event
+        )
+        controller.resolve_pending_chat_create(True, False, cards[0]["request_id"])
+        return False
+
+    monkeypatch.setattr(controller, "_is_session_cancelled", inspect_cancel)
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        assert controller.request_chat_create_confirm(prepared, session_id=source.id)[
+            "allow"
+        ]
+        assert controller.execute_agent_chat_create(prepared)["ok"]
+    assert polls == [None]
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )
+
+
+def test_child_revocation_between_record_check_and_arm_does_not_show_card(
+    child_new_chat_rig, monkeypatch
+):
+    from tldw_chatbook.Agents.run_context import use_run_actor
+
+    controller, db, runs, source, actor, payload = child_new_chat_rig
+    cards = []
+
+    def approve(card):
+        if card:
+            cards.append(dict(card))
+            controller.resolve_pending_chat_create(True, False, card["request_id"])
+
+    controller.set_pending_chat_create = approve
+    bind_visit = controller._bind_visit_cancel_signal
+
+    def revoke_before_arm():
+        controller.revoke_approval_rounds_for_run(actor.run_id)
+        return bind_visit()
+
+    with use_run_actor(actor):
+        prepared = controller.prepare_agent_chat_create(payload)
+        monkeypatch.setattr(controller, "_bind_visit_cancel_signal", revoke_before_arm)
+        assert not controller.request_chat_create_confirm(
+            prepared, session_id=source.id
+        )["allow"]
+    assert cards == []
+    assert (
+        not controller._chat_creation_records
+        and not controller.pending_chat_create_ids()
+    )

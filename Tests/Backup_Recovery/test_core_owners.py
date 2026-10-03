@@ -127,10 +127,14 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4)
         if name == "prompts"
+        else (owner._CURRENT_SCHEMA_VERSION, 75)
+        if name == "chachanotes"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
-    assert len(policy.schema_sql) == (2 if name in {"chachanotes", "prompts"} else 1)
+    assert len(policy.schema_sql) == (
+        4 if name == "chachanotes" else 2 if name == "prompts" else 1
+    )
     if name != "prompts":
         assert policy.migration_steps == ()
 

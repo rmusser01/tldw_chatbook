@@ -205,6 +205,52 @@ class _Restrictions:
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
                 )
+                # Fixed ADR-211 migration objects; unrelated DDL and domain
+                # row writes remain refused under this temporary owner gate.
+                allowed |= (
+                    action == sqlite3.SQLITE_ALTER_TABLE
+                    and first == "main"
+                    and second == "automatic_work_chains"
+                    or action == sqlite3.SQLITE_CREATE_TABLE
+                    and first == "automatic_chat_start_attempts"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and (
+                        first == "idx_automatic_chains_allowance_root"
+                        and second == "automatic_work_chains"
+                        or first
+                        in {
+                            "idx_automatic_chat_start_conversation_active",
+                            "sqlite_autoindex_automatic_chat_start_attempts_1",
+                            "sqlite_autoindex_automatic_chat_start_attempts_2",
+                            "sqlite_autoindex_automatic_chat_start_attempts_3",
+                        }
+                        and second == "automatic_chat_start_attempts"
+                    )
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first
+                    in {
+                        "idx_automatic_chains_allowance_root",
+                        "idx_automatic_chat_start_conversation_active",
+                    }
+                    or action == sqlite3.SQLITE_DROP_TRIGGER
+                    and first == "automatic_chain_identity_immutable"
+                    and second == "automatic_work_chains"
+                    or action == sqlite3.SQLITE_CREATE_TRIGGER
+                    and (
+                        first
+                        in {
+                            "automatic_chain_identity_immutable",
+                            "automatic_chain_root_insert",
+                            "automatic_chain_root_update",
+                        }
+                        and second == "automatic_work_chains"
+                        or first == "automatic_chat_start_identity_immutable"
+                        and second == "automatic_chat_start_attempts"
+                    )
+                    or action == sqlite3.SQLITE_DELETE
+                    and first == "sqlite_master"
+                    and source is None
+                )
                 if allowed:
                     return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
@@ -505,15 +551,21 @@ def _check(connection, owner, policy, restrictions):
             return payload_issues, None
         if connection.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
             return ("invalid_sqlite_integrity",), None
-        if (
-            owner.owner_id == "db.subscriptions"
-            and any(row[1] == "db_schema_version" for row in actual)
-            and connection.execute(
-                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-            ).fetchone()
-            != (75,)
+        if owner.owner_id == "db.subscriptions" and any(
+            row[1] == "db_schema_version" for row in actual
         ):
-            return ("unsupported_schema_version",), None
+            from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_V76_SCHEMA
+
+            expected_stamp = (
+                76
+                if tuple(row[3] for row in actual if row[3] is not None)
+                == _SUBSCRIPTIONS_V76_SCHEMA
+                else 75
+            )
+            if connection.execute(
+                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+            ).fetchone() != (expected_stamp,):
+                return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)
         if checker is not None:
             issues = checker(connection)

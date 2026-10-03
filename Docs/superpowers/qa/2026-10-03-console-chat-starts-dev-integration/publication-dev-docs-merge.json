@@ -1,0 +1,10 @@
+{
+  "time": 1791060806.946989,
+  "before": "78ff106faca1626faf74bb86029764475568df92",
+  "upstream": "af138397408d596a1c72c1e8e9987ea95d497b94",
+  "head": "473c7b26eccf1e7b77c4c8e2d4c7f57ccb840afe",
+  "product_tests_scripts_delta_bytes": 0,
+  "changed_paths": [
+    "backlog/tasks/task-34117 - Small-profiles-never-re-collect-trace-garbage-while-compaction-defers-on-size.md"
+  ]
+}

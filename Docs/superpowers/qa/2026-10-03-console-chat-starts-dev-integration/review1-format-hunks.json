@@ -1,0 +1,342 @@
+[
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1277-1308",
+      "Tests/ChaChaNotesDB/test_console_dispatch_checkpoint_repository.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "380-457",
+      "Tests/Chat/test_console_chat_create_confirm.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "12-12",
+      "Tests/Chat/test_console_chat_create_confirm.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "909-1056",
+      "Tests/Chat/test_console_chat_create_integration.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "202-231",
+      "Tests/DB/test_chachanotes_v76_agent_chat_starts_migration.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "11224-11225",
+      "tldw_chatbook/Chat/console_agent_bridge.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19710-19713",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19626-19632",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19277-19277",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19268-19269",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19252-19253",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19195-19206",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19093-19097",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19072-19091",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19060-19063",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file reformatted\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "19056-19056",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "18459-18462",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "5628-5628",
+      "tldw_chatbook/Chat/console_chat_controller.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "1607-1610",
+      "tldw_chatbook/Chat/console_dispatch_repository.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  },
+  {
+    "argv": [
+      "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+      "-m",
+      "ruff",
+      "format",
+      "--range",
+      "22-22",
+      "tldw_chatbook/UI/Console_Modules/workspace.py"
+    ],
+    "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+    "env": {
+      "TLDW_TEST_GC_EVERY": "1"
+    },
+    "returncode": 0,
+    "output": "1 file left unchanged\n"
+  }
+]

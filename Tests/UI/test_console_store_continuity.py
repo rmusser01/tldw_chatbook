@@ -91,6 +91,11 @@ class _StallingWakeGateway:
         self.entered_stream = asyncio.Event()
         self.release_stream = asyncio.Event()
 
+    def cached_context_window(self, settings):
+        from tldw_chatbook.Utils.token_counter import resolve_context_window
+
+        return resolve_context_window(settings.provider, settings.model or "")
+
     async def resolve_for_send(self, selection):
         if self.stall:
             self.entered_stall.set()
