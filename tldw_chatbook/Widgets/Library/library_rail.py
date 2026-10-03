@@ -16,6 +16,9 @@ from textual.message import Message
 from textual.widget import Widget
 from textual.widgets import Button, Static
 
+# SelectAllOnFocusingClickInput is re-exported: library_search_rag_panel.py
+# imports it from here, and Tests/Widgets/Library/test_library_rail.py pins that
+# both names are one object.
 from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
@@ -33,8 +36,6 @@ from tldw_chatbook.Utils.library_rail_width import (
     OrdinaryRailStyleContract,
 )
 
-# Re-exported: library_search_rag_panel.py imports it from here, and
-# Tests/Widgets/Library/test_library_rail.py pins that both names are one object.
 from tldw_chatbook.Widgets.adaptive_pane_shell import SelectAllOnFocusingClickInput
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
