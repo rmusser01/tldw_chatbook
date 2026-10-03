@@ -8805,11 +8805,11 @@ class AgentService:
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
                 from tldw_chatbook.Chat.Chat_Deps import ChatAPIError
-                from tldw_chatbook.Chat.provider_failures import (
-                    describe_stream_failure,
-                )
                 from tldw_chatbook.Chat.console_trace_service import (
                     TraceCallPersistenceError,
+                )
+                from tldw_chatbook.Chat.provider_failures import (
+                    describe_stream_failure,
                 )
 
                 budget_tokens_known = False
