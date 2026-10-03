@@ -9,6 +9,12 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from Tests import real_profile_guard as _real_profile_guard
+
+# TASK-33665: refuse writes to the real tldw profile before anything else runs.
+# Environment redirection below is the first line; this guard is the backstop.
+_real_profile_guard.install()
+
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _SANDBOXED_ENV_NAMES = (
@@ -23,6 +29,7 @@ _SANDBOXED_ENV_NAMES = (
     _TEST_CONFIG_ROOT_ENV,
     _TEST_CONFIG_OWNER_ENV,
 )
+# The caller's values, for reading only: session end never restores them.
 _PREVIOUS_TEST_ENV = {name: os.environ.get(name) for name in _SANDBOXED_ENV_NAMES}
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
 # Under pytest-xdist the controller creates the sandbox root and workers
@@ -1033,23 +1040,31 @@ def pytest_configure(config):
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Restore caller config variables and remove only an owned sandbox.
+    """Fail the run on unclaimed real-profile refusals; remove an owned sandbox.
 
-    In xdist workers the pre-suffix snapshot points at the controller's SHARED
-    sandbox, so restoring it here would aim HOME/XDG/TLDW_* back at shared
-    directories for the late-shutdown window (atexit hooks) — exactly the
-    isolation this sandboxing exists to provide. Workers are about to exit and
-    own nothing; skip both the restore and the (already owner-gated) cleanup.
+    The sandboxed environment (HOME, USERPROFILE, XDG_*, TLDW_CONFIG_PATH and
+    the rest of ``_SANDBOXED_ENV_NAMES``) is deliberately NOT restored here
+    (TASK-33665). The process keeps running after this hook: atexit handlers,
+    ``pytest_unconfigure`` and threads the tests left behind still write. A
+    restore points them at the caller's real profile. The writer from the
+    2026-10-02 incident (ChatScreen's ``ui_state.toml``) opens its temporary
+    with ``os.open(name, dir_fd=…)``, which the audit guard cannot place, so
+    only the environment keeps such writers out. Left alone, they write into
+    the dead sandbox instead. Nothing needs the restore: the process is about to
+    exit, ``_PREVIOUS_TEST_ENV`` stays readable for code that needs the
+    caller's values, and an in-process second ``pytest.main`` reuses this
+    cached module, so it also stays in the sandbox. An xdist worker owns no
+    sandbox and skips the cleanup.
     """
-    if _XDIST_WORKER:
-        return
-    for name, previous in _PREVIOUS_TEST_ENV.items():
-        if previous is None:
-            os.environ.pop(name, None)
-        else:
-            os.environ[name] = previous
-    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+    _real_profile_guard.session_end_check(session)
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT and not _XDIST_WORKER:
         shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_testnodedown(node, error):
+    """Collect an xdist worker's session-end refusals on the controller."""
+    _real_profile_guard.collect_worker_refusals(node)
 
 
 # ========== Async Support ==========
@@ -1104,6 +1119,23 @@ def _shutdown_prompts_interop_if_loaded():
     prompts_interop = sys.modules.get("tldw_chatbook.Prompt_Management.Prompts_Interop")
     if prompts_interop is not None and prompts_interop.is_initialized():
         prompts_interop.shutdown_interop()
+
+
+@pytest.fixture(autouse=True)
+def refuse_real_profile_writes():
+    """Fail a test whose code tried to write the real tldw profile (TASK-33665).
+
+    The guard raises at the write, but production code often catches broad
+    exceptions; the recorded refusal still fails the test here.
+    """
+    yield
+    violations = _real_profile_guard.take_violations()
+    if violations:
+        pytest.fail(
+            "Wrote to the real tldw profile (a refusal may come from an "
+            "earlier test's late thread):\n" + "\n".join(violations),
+            pytrace=False,
+        )
 
 
 @pytest.fixture(autouse=True)

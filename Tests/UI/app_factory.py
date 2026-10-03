@@ -426,9 +426,20 @@ def _build_test_app(
                 "tldw_chatbook.app_service_wiring.get_writing_db_path",
                 return_value=user_data_dir / "writing.sqlite",
             ),
+            # TASK-33665: this path calls config's own get_user_data_dir, which
+            # the app-module patch below does not reach.
+            patch(
+                "tldw_chatbook.app_service_wiring.get_library_collections_db_path",
+                return_value=user_data_dir / "library_collections.sqlite",
+            ),
             patch_app_global(
                 "get_user_data_dir",
                 return_value=user_data_dir,
+            ),
+            # TASK-33665: read in `__init__`, opened lazily on first TTS use.
+            patch_app_global(
+                "get_tts_profiles_db_path",
+                return_value=user_data_dir / "tts_profiles.sqlite",
             ),
             patch(
                 "tldw_chatbook.Video_Generation.video_store.get_user_data_dir",
