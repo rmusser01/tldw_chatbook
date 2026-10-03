@@ -1,11 +1,11 @@
 ---
 id: TASK-33803
 title: Release 0.2.3 from latest dev
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 19:09'
-updated_date: '2026-10-02 20:32'
+updated_date: '2026-10-03 01:26'
 labels:
   - release
   - packaging
@@ -21,9 +21,9 @@ Publish current committed dev changes as a verified new release on main and PyPI
 ## Acceptance Criteria
 <!-- AC:BEGIN -->
 - [x] #1 Release metadata and changelog agree on 0.2.3 and summarize committed changes since 0.2.2.
-- [ ] #2 Latest dev and existing main fixes are included, with required release checks and fresh installed-package verification passing.
-- [ ] #3 The verified source is merged to main, published to PyPI, and identified by an annotated tag and GitHub release.
-- [ ] #4 Final publication evidence and any material verification limitations are recorded.
+- [x] #2 Latest dev and existing main fixes are included, with required release checks and fresh installed-package verification passing.
+- [x] #3 The verified source is merged to main, published to PyPI, and identified by an annotated tag and GitHub release.
+- [x] #4 Final publication evidence and any material verification limitations are recorded.
 - [x] #5 Release source-digest inputs refer to the current Console stylesheets, with existing regression checks passing.
 - [x] #6 Resend stays off the first-paint import path, with the unchanged UI-ready module budget and affected behavior checks passing.
 <!-- AC:END -->
@@ -45,95 +45,24 @@ Reason: Existing app-only release policy and first-use import deferral implement
 ## Implementation Notes
 
 <!-- SECTION:NOTES:BEGIN -->
-Prepared 0.2.3 from dev f80d3e0090130658918ccd519d85ca700028ce98 and merged
-main 64ab237bde673919d47e4f33f3b10cf14ccbf05d without conflicts, retaining the
-evaluation case-sensitivity fix. Updated app/runtime/native source versions,
-README, changelog, and app-only release documentation. Native qualification
-and unavailable duplex voice remain unchanged under ADR-098; installed artifact
-verification follows ADR-032. No new ADR is required for this release.
+Published app-only 0.2.3 from latest committed dev ecc0a531c855bc9e80906bff90180fd2045f7159, retaining main's evaluation case-sensitivity fix. Updated app/runtime/native source versions, README, changelog and release guidance; repaired stale Console CSS digest inputs and retained upstream's three first-use Resend imports with a stronger first-paint absence guard. Experimental duplex remains unqualified; no native companion was published.
 
-Targeted baseline: 63 passed. Expanded metadata, native boundary, digest, and
-evaluation checks exposed three failures caused by the deleted generated
-Console stylesheet. Replaced its stale digest entry with the current two
-Console source sheets; the same 268 checks then passed. Builds, installed-package
-checks, required CI, index publication, and final provenance are pending.
+Release source/main cut: `f3aeb32fb3d230c0774c7fc349729d9f75c96366`, whose tree equals reviewed preparation `6ecebc13b2a553845453eece57884c372ef802a3`. Annotated `v0.2.3` points to that source. [PyPI](https://pypi.org/project/tldw-chatbook/0.2.3/) and [GitHub release](https://github.com/rmusser01/tldw_chatbook/releases/tag/v0.2.3) are published. Post-publication bookkeeping is on `codex/release-0.2.3-evidence`, preserving the immutable main/tag cut.
 
-### Refresh after dev advanced
+Validation: [required CI 37071829315](https://github.com/rmusser01/tldw_chatbook/actions/runs/37071829315) passed PR/UI/derived gates (933 UI; 1183 + 124 PR passes). [TestPyPI 37075969288](https://github.com/rmusser01/tldw_chatbook/actions/runs/37075969288) and [production 37081603061](https://github.com/rmusser01/tldw_chatbook/actions/runs/37081603061) each passed 24 metadata and all 184 installed-distribution regressions. Both workflow artifact hashes match their respective registries. Fresh registry installs passed `pip check`, version/tuple, installed-module origin, app-only gate with the dev flag set, and `tldw-cli --help` / `tldw-serve --help`.
 
-Preparation e6bb9c06ad8f1b55c4ceefd8dd6bb8cec7b33b0b passed the committed build,
-268 focused tests, 184 installed-distribution tests, and a fresh dependency-resolved
-wheel install with both CLI help commands. Required CI run 37052989900 passed:
-922 UI tests; PR phases of 1183 and 123 passes; and derived-artifact contracts.
-The protected merge correctly refused because dev advanced to
-bb865f5cfeae4c9d8c068f588ee0d85ff28a0e13 while these checks ran.
+Targeted integration evidence: 22 memo/worker, 119 release/digest/first-paint, 75 Resend and 410 readiness/session/probe passes. UI-ready remains 1033/1033 modules with no budget raised; bounded reviews found no blockers. Changed runtime/test files passed E9/F821 lint and the changed test range passed formatting. The full local suite was not requested or run.
 
-Merged the additional Console Resend commits without conflicts, retained both
-sets of testing lessons, and added Resend plus the documented, pre-existing
-TASK-33662 relaunch-recovery limitation to the changelog. Refreshed affected
-checks, installed boot probes, required CI, and publication remain pending.
+Material limitations: ten broader message-action failures and one session-settings test-double failure were reproduced with matching assertions on unchanged dev controls. Non-required Perf Guard run 37071829232's only failure was the existing TASK-33621.44 trace-maintenance rate (2.125 admissions/tick, ceiling 2), also present in baseline run 37015097693; latency and boot ratchets passed. The changelog records this and TASK-33662's relaunch-recovery limitation. An unchanged upstream test-file wrap also fails whole-file formatting; release changes introduce no formatting diff there.
+
+Existing ADR-032/098/097 govern artifact integrity, app-only scope and boot ratchets; integrated memoization follows approved ADR-126 D2. No new ADR or deviation in release scope. Detailed logs and control evidence are retained at `/private/tmp/tldw-release-0.2.3-evidence`.
+
+Published SHA-256 hashes (each index was checked against its own workflow's artifacts):
+
+| Index | Artifact | SHA-256 |
+| --- | --- | --- |
+| testpypi | `tldw_chatbook-0.2.3-py3-none-any.whl` | `5a6c3bb76c184157af5d1654b2e7d4805294e2da33bc49effa5bba3f668de7f5` |
+| testpypi | `tldw_chatbook-0.2.3.tar.gz` | `289883ac929b27e3a6fa6273c01fe657c2bf5c672c1782903790250350fea34a` |
+| pypi | `tldw_chatbook-0.2.3-py3-none-any.whl` | `525f3fafec01c2f84e4113d0a6b3fd1f328fa5eb7880049aae0c4af6084b0c5c` |
+| pypi | `tldw_chatbook-0.2.3.tar.gz` | `734c4c3a0153ad6a59bc2f7981948d54253fde92e09a1283e880e2ad636cbb20` |
 <!-- SECTION:NOTES:END -->
-
-### Resend startup regression repaired
-
-The refreshed preparation's Perf Guard exposed a new Resend eager-import cost:
-1034 own modules at UI-ready against the unchanged 1033 ADR-097 ratchet.
-A local run reproduced the same count and named module before editing. Moved
-all three Resend imports to their actual first-use sites, adjusted the existing
-UI test patch at the defining module, and added Resend to the existing
-first-paint absence assertion. Nine startup/import checks passed at 1033/1033;
-all 75 Resend unit/UI checks passed. Bounded review found no blockers. No
-budget or snapshot was raised. Required CI and publication remain pending.
-
-### Second latest-dev refresh
-
-Dev advanced to 185c845fe836bf452e4beaaf8853162ce49b1e8d (PR #2958)
-while preparation 835c1959fc906e250e952cfee851e7279983e5ca waited for
-its final required job. Its UI and PR lanes passed, and CI boot ratchets
-passed (20 passes, 2 skips; 1033/1033 UI-ready modules). The separate
-non-required trace-maintenance storage check failed at 2.125 admissions
-per tick against ceiling 2, identical to existing TASK-33621.44 and dev
-baseline run 37015097693 at ancestor ee1c1e7365c232a184e129bef1dec15afd85b24f.
-No ratchet was raised.
-
-Merged the latest dev model-configuration Phase 5 changes without conflicts,
-preserving the Resend deferral and release metadata. Added supported explicit
-cloud-key checks, local-switcher probes, and shared connection-readiness
-evidence to the changelog. This integrates already accepted ADR-012/033/114
-functionality and makes no new architectural decision. Affected checks,
-required CI, and publication remain pending.
-
-Latest refresh evidence: 119 release metadata, app-only, source-digest and
-UI-ready census checks passed, still 1033/1033 modules. Affected shared-evidence,
-readiness wording, session settings, local-switcher probing, cloud-key checks
-and Resend UI tests produced 410 passes and one identical baseline test-double
-failure: test_new_chats_resolve_the_chat_defaults_pair lacks the existing
-_console_default_settings_memo field on its SimpleNamespace. The single test
-fails identically against archived unmodified dev 185c845; critical source
-files were verified byte-for-byte against that commit before the control run.
-Bounded integration review found no blockers. The changelog now also records
-TASK-33621.44's periodic trace-maintenance performance limitation.
-
-### Reconcile upstream's duplicate Resend startup fix
-
-Dev advanced to ef8fd5d38a512be299af17b1e0d5b367a352a5d6 (#2962),
-merging the same three first-use import deferrals already in this preparation.
-Resolved the four overlapping code/test-name conflicts using the upstream
-implementations, retaining our additional first-paint absence guard and
-all release/main/digest changes. Preserved both sets of lessons and trimmed
-an inherited extra blank line at the task file's end. No new feature or
-changelog scope change. Bounded review found no blockers. All 75 Resend
-checks and 119 release/native-boundary/digest/UI-ready checks passed;
-the unchanged first-paint budget remains 1033/1033. Required CI is refreshed.
-
-### Fourth latest-dev refresh
-
-Preparation c29e028b387f6c66ba2d766c4a4e05f8cb478996 passed all three
-required jobs in run 37068668711 (PR/UI fast lanes and derived contracts).
-The protected merge refused because dev advanced during the final check to
-ecc0a531c855bc9e80906bff90180fd2045f7159 (#2924, PERF-07). Merged that
-data-directory and sensitive-input memoization without conflicts, preserving
-release metadata, main fixes and all release guards. Updated the changelog's
-configuration-performance summary. Existing approved ADR-126 D2 applies; no
-new architectural decision. All 22 affected memo/remote-worker checks and
-119 release/app-only/digest/first-paint checks passed; bounded integration
-review found no blockers. Required CI is refreshed again.

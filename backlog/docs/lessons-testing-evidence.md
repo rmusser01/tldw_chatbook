@@ -17628,3 +17628,23 @@ input list still named it. Updating that list to `features/_console.tcss` and
 `features/_console_panels.tcss` restored all 268 targeted checks without changing
 qualification claims. File moves must update explicit digest inputs as well as
 build inputs; the existing presence check caught this drift before publication.
+
+## A streamed release archive exited 141 before the build
+
+**TASK-33803, 2026-10-02.** On preparation `8f3a01f92e`,
+`Packaging/build_dist.sh` exited 141 in its `git archive | tar` extraction,
+before building. Saving the exact commit with `git archive --output=source.tar
+<sha>` and then extracting that file produced a build that passed twine,
+manifest and installed-package checks. Capturing the archive separately kept
+the input immutable and separated producer failure from extraction. Final
+TestPyPI and production workflows later rebuilt release source `f3aeb32fb3`
+and each passed all 184 installed-distribution regressions.
+
+## A pull request's base snapshot lagged the actual protected branch
+
+**TASK-33803, 2026-10-02.** Dev advanced during four release-check cycles.
+`gh pr view --json baseRefOid` still showed the preceding base when strict
+protection refused a merge; `git ls-remote origin refs/heads/dev` exposed the
+new tip. Confirm the live branch before merging, and retain full commit IDs
+for baselines and tested release cuts. After preparation merged, TestPyPI,
+main, PyPI and the annotated tag all used that exact merge commit.
