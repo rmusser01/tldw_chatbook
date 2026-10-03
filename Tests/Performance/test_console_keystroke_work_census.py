@@ -701,13 +701,15 @@ async def _census_idle_and_visit(
         on its own thread, and landing inside the short billed window it
         doubled the pass's opens about one run in ten.
         """
-        from tldw_chatbook.Backup_Recovery import runtime_maintenance
+        from tldw_chatbook.Backup_Recovery import storage_admission
         from tldw_chatbook.Chat import console_runtime as runtime_module
 
         real_owned = runtime_module.run_owned_db_call
-        real_pause_poll = runtime_maintenance._poll_local_pause_requested
+        real_probe = storage_admission._local_pause_requested
+        probe_held = threading.Event()
 
-        async def held_pause_poll() -> bool:
+        def held_probe() -> bool:
+            probe_held.set()
             return False
 
         window: dict[str, Any] = {"calls": [], "error": None}
@@ -742,11 +744,11 @@ async def _census_idle_and_visit(
                 billed.set()
             return result
 
-        # A probe already in flight finishes during the pass's unbilled batch
-        # normalization, before the epoch read starts billing.
-        monkeypatch.setattr(
-            runtime_maintenance, "_poll_local_pause_requested", held_pause_poll
-        )
+        monkeypatch.setattr(storage_admission, "_local_pause_requested", held_probe)
+        # The monitor probes one at a time, so its first held call means a
+        # probe that started before the hold has finished (within a second;
+        # an app without the monitor has none in flight).
+        await asyncio.to_thread(probe_held.wait, 5)
         monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
         monkeypatch.setattr(
             runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
@@ -765,9 +767,7 @@ async def _census_idle_and_visit(
                 await asyncio.gather(task, return_exceptions=True)
                 runtime._legacy_trace_maintenance_task = None
             monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
-            monkeypatch.setattr(
-                runtime_maintenance, "_poll_local_pause_requested", real_pause_poll
-            )
+            monkeypatch.setattr(storage_admission, "_local_pause_requested", real_probe)
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
