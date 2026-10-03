@@ -108,12 +108,48 @@ def test_second_enable_with_another_password_is_refused_byte_identical(cfg, conf
     assert decrypted["api_settings"]["openai"]["api_key"] == PLAINTEXT_KEY
 
 
-def test_second_enable_with_the_same_password_is_also_refused(cfg, config_path):
+def test_second_enable_with_the_same_password_is_an_idempotent_no_op(
+    cfg, config_path
+):
+    # Review round 2 (R2-F4): re-entering the SAME password after a successful
+    # enable (the pre-fix wizard reopens its dialog on Enter) used to return
+    # False, and the wizard then claimed the keys were "unchanged (plain
+    # text)" while they were encrypted. The same password changes nothing on
+    # disk, so it is a success that writes nothing.
     assert cfg.enable_config_encryption(PASSWORD_A) is True
     encrypted_bytes = config_path.read_bytes()
+    cfg.clear_encryption_password()
+
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+
+    assert config_path.read_bytes() == encrypted_bytes
+    assert cfg.get_encryption_password() == PASSWORD_A
+
+
+def test_same_password_enable_over_a_plaintext_secret_is_refused(cfg, config_path):
+    # The no-op is only for a file that is already fully encrypted under the
+    # typed password; one that still holds a plaintext secret is refused
+    # untouched rather than reported as encrypted.
+    assert cfg.enable_config_encryption(PASSWORD_A) is True
+    document = tomllib.loads(config_path.read_text())
+    document["api_settings"]["anthropic"] = {"api_key": "sk-ant-plain-sentinel"}
+    config_path.write_text(toml.dumps(document))
+    before = config_path.read_bytes()
 
     assert cfg.enable_config_encryption(PASSWORD_A) is False
-    assert config_path.read_bytes() == encrypted_bytes
+
+    assert config_path.read_bytes() == before
+
+
+def test_same_password_enable_over_stranded_keys_is_refused(cfg, config_path):
+    # Verifier for B, keys under A: B passes the verifier but cannot read the
+    # keys, so "already encrypted with this password" would be false.
+    config_path.write_text(toml.dumps(_stranded_document()))
+    before = config_path.read_bytes()
+
+    assert cfg.enable_config_encryption(PASSWORD_B) is False
+
+    assert config_path.read_bytes() == before
 
 
 def test_enable_validates_before_writing(cfg, config_path, monkeypatch):

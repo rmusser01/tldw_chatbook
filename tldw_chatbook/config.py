@@ -9902,6 +9902,23 @@ def _contains_encrypted_value(config_data: Mapping[str, Any]) -> bool:
     return bool(_encrypted_value_paths(config_data))
 
 
+def _already_encrypted_with(config_data: Mapping[str, Any], password: str) -> bool:
+    """Whether an encryption-on file is already exactly what enabling with
+    ``password`` would produce: the verifier accepts it, every saved value
+    strict-decrypts with it, and no sensitive value is left in plain text."""
+
+    verifier = _password_verifier(config_data)
+    if verifier is None:
+        return False
+    if not get_encryption_module().verify_password(password, verifier):
+        return False
+    try:
+        _validate_encrypted_document(config_data, password)
+    except ValueError:
+        return False
+    return True
+
+
 def _restore_previous_config_unlocked(
     config_path: Path,
     previous_serialized: Optional[str],
@@ -10069,15 +10086,19 @@ def enable_config_encryption(password: str) -> bool:
     """
     Enable encryption for the config file and encrypt existing API keys.
 
-    Refuses (returns False without writing) when encryption is already on:
-    re-running enable used to rewrite the verifier over keys still encrypted
-    under the first password. Use `change_encryption_password` to rotate.
+    Refuses (returns False without writing) when encryption is already on
+    with a different password: re-running enable used to rewrite the
+    verifier over keys still encrypted under the first password. Use
+    `change_encryption_password` to rotate. Enabling again with the SAME
+    password, on a file that is already fully encrypted under it, writes
+    nothing and returns True (review round 2, R2-F4).
 
     Args:
         password: The master password to use for encryption
 
     Returns:
-        True if encryption was enabled successfully
+        True if encryption was enabled successfully, or already was with
+        this password
     """
     try:
         config_path = get_cli_config_path()
@@ -10085,6 +10106,14 @@ def enable_config_encryption(password: str) -> bool:
             previous = _try_read_cli_config_serialized_unlocked(config_path)
             config_data = _parse_raw_cli_config_text(previous)
             if _encryption_enabled(config_data):
+                if _already_encrypted_with(config_data, password):
+                    if get_encryption_password() != password:
+                        _set_session_encryption_password(password)
+                    logger.info(
+                        "Config encryption is already enabled with this "
+                        "password; nothing was changed."
+                    )
+                    return True
                 logger.warning(
                     "Config encryption is already enabled; refusing to enable "
                     "it again. Change the master password instead."
