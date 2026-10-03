@@ -91,6 +91,20 @@ census. **What to do:** when a change makes a checker ignore something,
 count what it now ignores on the real tree and read that list, alongside
 the row diff. Identical rows only say that nothing reachable changed today.
 
+**It happened again in the same PR's review round (PR #2987, 2026-10-03).**
+A precision fix ("an unrelated callback creates a wait row") left a push out
+when the names its callback settles missed the pushing function's own
+future names -- compared across scopes. A helper's parameter
+(`partial(settle, answer)`), a callback's local alias (`fut = answer`) and
+a pusher-side alias (`answer = self._answer`) all read as "a different
+future" and were dropped. The census stayed byte-identical and all 228
+tests passed. Running the previous head's checker and the new one over
+hand-written shapes found six lost shapes; working through what the rule
+actually has to prove found 23. **For a precision fix:** run the old and
+new checker over the shapes the fix drops, and drop a match only when the
+new rule PROVES it unrelated -- a name match in another scope proves
+nothing.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
