@@ -130,10 +130,57 @@ def test_every_worker_method_is_still_a_worker_on_the_moved_class(
         assert inspect.unwrap(method) is not method, f"{name} lost its decorator"
 
 
+#: Every public top-level name FirstRunSetupWizard.py defined before the split
+#: (base 1d8fe87659), except its two tunable timeouts (see the test below).
+_OLD_PUBLIC_NAMES = (
+    "AppearanceStep",
+    "EXIT_ROUTE_LIBRARY_NOTES",
+    "FirstRunSetupWizard",
+    "GENERIC_DISCOVERY_FAILURE_CATEGORY",
+    "ModelStep",
+    "NotesSyncStep",
+    "ProtectKeysStep",
+    "ProviderChoiceList",
+    "ProviderChoiceOption",
+    "ProviderEndpointCandidateList",
+    "ProviderEndpointCandidateOption",
+    "ProviderStep",
+    "REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES",
+    "RagStep",
+    "SUMMARY_KEY_HINTS",
+    "SetupCheckbox",
+    "SetupRadioButton",
+    "SetupRadioSet",
+    "SetupStep",
+    "SetupStepFailure",
+    "SetupWizardContainer",
+    "SetupWizardNavigation",
+    "SetupWizardProgress",
+    "SpeechSetupStep",
+    "SummaryStep",
+    "ToolsStep",
+    "WelcomeStep",
+    "manual_settings_context_for_required_step",
+    "VoiceSetupStep",  # moved earlier, by TASK-33921
+)
+
+
+def test_every_old_public_import_still_resolves() -> None:
+    """``from FirstRunSetupWizard import <public name>`` keeps working."""
+    missing = [name for name in _OLD_PUBLIC_NAMES if not hasattr(wizard_module, name)]
+    assert missing == []
+
+
 def test_moved_private_helpers_are_not_reexported() -> None:
-    """A test patch left on the wizard must fail, not silently miss."""
+    """A test patch left on the wizard must fail, not silently miss.
+
+    The two timeouts are public names, but they are tuning knobs that tests
+    patch. A re-export would let ``monkeypatch.setattr(wizard, ...)`` succeed
+    and change nothing, so they are left out on purpose.
+    """
     for name in (
         "MODEL_DISCOVERY_TIMEOUT_SECONDS",
+        "CLOUD_PROBE_TIMEOUT_SECONDS",
         "_probe_first_run_provider_connection",
         "run_parakeet_provision",
         "active_managed_parakeet_dir",
