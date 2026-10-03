@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-02 23:47'
+updated_date: '2026-10-03 00:47'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -61,6 +61,17 @@ Reason: preserve the landed release metadata, first-paint guard and missing-fiel
 3. Prove approved runtime/schema/recovery/permission/physical-custody/CSS bytes unchanged. Run only incoming evaluation schema/client and release metadata/app-only/source-digest controls; obtain a focused independent immutable source/lesson/guard review. Leave incoming tasks and separate release publication outside this PR qualification.
 4. After functional checks/reviewer settle, run the original five storage/import/UI-ready/boot-CSS cases with unchanged pins/ceilings/counts/warmup/work, now including incoming Resend absence guard. Verify fatal/added-line/new-file static, CSS and affected governance/task artifacts. Retain all non-green and earlier limits.
 5. Recheck/close existing task via CLI after evidence, record qualification in plan/review/follow-up and concise PR body; doc-only closure preserves all approved bytes. Publish once exact observed e1377 lease, then fresh exact-head Qodo/all four jobs and protected head-pinned merge.
+
+## Required known-work trace integration — October 2
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md; backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md
+Reason: compose landed TASK-33801 known-work idle-check avoidance with existing admitted maintenance and physical cleanup. No new storage/runtime/permission/performance contract.
+1. Published a0708ef has all four required jobs PASS and exact-head Qodo clear, with four resolved threads/no page gaps. Live dev2612fc (PR2959 trace known-work and PR2925 audit documentation) is CONFLICTING/DIRTY; strict protection requires the preserving update. Reopen TASK33664 AC3 before implementation and capture exact prior121 and incoming13 hashes.
+2. Rebase onto exact2612fc while preserving all prior work. Direct overlap is three files: console_runtime, console_trace_maintenance and legacy migration tests. Retain upstream expect_work initialization/generation signalling exactly; put its flag consumption and conditional idle check in the existing admitted _run_admitted_batch, keeping run_batch/core admission, write recheck, physical custody and SQL unchanged. Retain all upstream new tests and all owned tests. Other118 approved and10 incoming files stay byte-exact. Preserve QA report/data as shipped, without claiming this PR reruns its wider audit.
+3. Prove exact hunk composition, all unchanged hashes and twelve-line AGENT_WAKE preflight refund. Run both bounded legacy migration/parking modules, affected runtime scheduling/GC/admission controls and exact wake/refund/nonreplay/close custody neighbors. Verify source-loaded cwd/PYTHONPATH; preserve non-green evidence and all earlier limitations. Incoming TASK33801 remains Done and TASK33802 typing helper-spawn flake remains To Do; no closure or deterministic cause claim for that separate flake.
+4. Obtain focused independent immutable review of source, SQL/core/cleanup, signalling/work-flag semantics, wake/refund and artifact/test preservation. After root functional runs and reviewer finish, run the original five storage/import/UI-ready/boot-CSS cases with exact incoming sources and unchanged pins/ceilings/counts/warmup/timeouts/work. Check fatal/added-line/new-file static, CSS and relevant diagnostic/worker/task artifacts; no full suite/dependency installation or foreign cleanup.
+5. Recheck AC3/close through CLI only after qualification; update existing plan/review/follow-up/task/PR body with exact evidence and inherited limits. Doc-only closure preserves reviewed hashes. Publish once EXACT observed a0708ef lease, then require fresh current-head Qodo/all four CI jobs/up-to-date protection before normal --match-head-commit merge, verify actual MERGED parents/tree, pause heartbeat.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
