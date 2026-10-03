@@ -1457,6 +1457,15 @@ _EMPTY_ROW = ("x1", "assistant", None, "")
             {"e0": _ROOT_FORK_METADATA},
             id="marked-fork-stays",
         ),
+        pytest.param(
+            [_flat("f0", "user"), _flat("f1", "assistant"),
+             ("x1", "user", None, ""), _flat("f2", "user"),
+             _flat("f3", "assistant")],
+            "f1",
+            {"f1", "f2", "f3"},
+            {"x1": _ROOT_FORK_METADATA},
+            id="marked-hidden-root-stays",
+        ),
     ],
 )
 def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
@@ -1506,6 +1515,50 @@ def test_flat_delete_tombstones_hidden_rows_later_in_the_chain(
     assert [m for m, _role in _visible(store, session_id)] == shown
     reopened, reopened_session, _native = _open_store(db, conversation_id)
     assert _tree_ids(reopened, reopened_session) == set(ids) - hidden
+
+
+@pytest.mark.parametrize(
+    ("target", "removed"),
+    [("c0", {"c0", "c1", "c2", "c3"}), ("c2", {"c2", "c3"})],
+    ids=["threaded-root", "threaded-tail"],
+)
+def test_threaded_delete_reads_no_root_rows_and_leaves_a_hidden_root(
+    monkeypatch, target, removed
+):
+    """Only a subtree holding a chained flat root reads the root rows.
+
+    In a parent-linked conversation a parentless tool row is its own hidden
+    root, not a later row of any chain: Delete follows the parent links and
+    leaves it, without reading the conversation's rows to look for one.
+    """
+    from tldw_chatbook.Chat.console_message_delete import delete_subtree_for_undo
+
+    rows = [
+        ("c0", "user", None, "c0 text"),
+        ("c1", "assistant", "c0", "c1 text"),
+        _TOOL_ROW,
+        ("c2", "user", "c1", "c2 text"),
+        ("c3", "assistant", "c2", "c3 text"),
+    ]
+    ids = [row[0] for row in rows]
+    db = CharactersRAGDB(":memory:", "threaded-delete")
+    conversation_id = _seed_flat(db, rows, leaf="c3")
+    store, session_id, native = _open_store(db, conversation_id)
+    assert [m for m, _role in _visible(store, session_id)] == ["c0", "c1", "c2", "c3"]
+    reads: list[str] = []
+    read_rows = db.get_message_tree_rows_for_conversation
+
+    def _counted(conversation, *args, **kwargs):
+        reads.append(conversation)
+        return read_rows(conversation, *args, **kwargs)
+
+    monkeypatch.setattr(db, "get_message_tree_rows_for_conversation", _counted)
+
+    deleted, _held = delete_subtree_for_undo(store, native[target])
+
+    assert reads == []
+    assert {message_id for message_id, _version in deleted.tombstones} == removed
+    assert _deleted(db, ids) == [int(message_id in removed) for message_id in ids]
 
 
 # --- TASK-33628.9: Delete of an unsaved message with saved rows under it -------
