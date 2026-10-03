@@ -27,11 +27,13 @@ from textual import events
 from textual.containers import Horizontal
 from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
-from textual.widgets import Collapsible, Input, Label, Select, Static
+from textual.widgets import Collapsible, Input, Select, Static
 
 from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
+    console_generation_control_support,
+    supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
@@ -72,10 +74,17 @@ MODEL_ROW_LABEL = "Model"
 STREAMING_OPTIONS = (("On", "on"), ("Off", "off"))
 #: What a blank optional field sends: nothing, so the provider's own default.
 BLANK_FIELD_HELP = "blank = provider default"
+#: A control whose support is unknown stays visible and says so in its help
+#: line (TASK-30012 AC#3).
+GENERATION_CONTROL_UNKNOWN_COPY = "Support not verified for this model."
+#: Ends the Sampling line that names the hidden fields (TASK-33006.2).
+HIDDEN_FIELDS_REASON = "(this provider does not accept them)"
+SAMPLING_TITLE = "Sampling"
 _CHOICE_FIELDS = frozenset(
     {"reasoning_effort", "reasoning_summary", "verbosity", "thinking_effort"}
 )
-_SUPPORT_NOTE_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
+#: Hidden only on an authoritative "unsupported"; "unknown" stays visible.
+_SUPPORT_CONTROL_FIELDS = _CHOICE_FIELDS | {"thinking_budget_tokens"}
 #: Apply refuses these blank (``_required_sampling_errors``).
 _REQUIRED_FIELDS = frozenset({"temperature", "top_p"})
 #: Recovery actions that are not a connection blocker: tuning opens first.
@@ -113,6 +122,26 @@ CONNECTION_FOCUS_IDS = frozenset(
 )
 
 
+def hidden_fields_line(provider_name: str, hidden: Iterable[str]) -> str:
+    """Return the Sampling title, naming the fields the provider rejects.
+
+    Args:
+        provider_name: The provider's display name.
+        hidden: Field-table names of the hidden fields, in line order.
+
+    Returns:
+        ``"Sampling"`` when nothing is hidden, else for example
+        ``"Sampling · hidden for Anthropic: Min P, Seed (this provider does
+        not accept them)"``, using the field table's labels.
+    """
+    names = ", ".join(MODEL_FIELD_LABELS[name] for name in hidden)
+    if not names:
+        return SAMPLING_TITLE
+    return (
+        f"{SAMPLING_TITLE} · hidden for {provider_name}: {names} {HIDDEN_FIELDS_REASON}"
+    )
+
+
 def connection_blocked(readiness: Any) -> bool:
     """Whether a connection blocker stands, so Connection opens expanded.
 
@@ -140,6 +169,7 @@ class ConsoleSettingsFieldRowsMixin:
     """
 
     _field_source_cache: tuple[tuple[object, ...], dict[str, str]] | None = None
+    _unknown_support_fields: frozenset[str] = frozenset()
 
     def _field_row(self, name: str) -> Horizontal:
         """Build one Model view field row: label, control, Source word, help.
@@ -150,25 +180,13 @@ class ConsoleSettingsFieldRowsMixin:
         Returns:
             The row, id ``<control id>-row``.
         """
-        from .console_settings_modal import (
-            GENERATION_CONTROL_UNKNOWN_COPY,
-            ConsoleSettingsInput,
-        )
+        from .console_settings_modal import ConsoleSettingsInput
 
         control_id = field_control_id(name)
         value = getattr(self._settings, name)
         # An obsolete restored choice's recovery copy sits beside its Select;
         # it is hidden while empty, so the row grammar holds.
         validation: list[Widget] = []
-        notes: list[Widget] = []
-        if name in _SUPPORT_NOTE_FIELDS:
-            notes.append(
-                Label(
-                    GENERATION_CONTROL_UNKNOWN_COPY,
-                    id=f"{control_id}-support",
-                    classes="console-settings-control-support",
-                )
-            )
         if name == "streaming":
             control: Widget = Select(
                 STREAMING_OPTIONS,
@@ -202,7 +220,6 @@ class ConsoleSettingsFieldRowsMixin:
                 classes="console-settings-help-line",
                 markup=False,
             ),
-            *notes,
             id=f"{control_id}-row",
             classes="console-settings-modal-row console-settings-field-row",
         )
@@ -261,7 +278,8 @@ class ConsoleSettingsFieldRowsMixin:
 
         Returns:
             The field table's help, prefixed for a blank optional field; a
-            blank required field names its valid range instead.
+            blank required field names its valid range instead. A control
+            whose support is unknown leads with the neutral copy.
         """
         field = MODEL_CONFIG_FIELDS[name]
         if isinstance(control, Select):
@@ -269,10 +287,51 @@ class ConsoleSettingsFieldRowsMixin:
         else:
             blank = isinstance(control, Input) and not control.value.strip()
         if not blank:
-            return field.help
-        if name in _REQUIRED_FIELDS:
-            return f"Required: {field.valid_range}."
-        return f"{BLANK_FIELD_HELP} · {field.help}"
+            text = field.help
+        elif name in _REQUIRED_FIELDS:
+            text = f"Required: {field.valid_range}."
+        else:
+            text = f"{BLANK_FIELD_HELP} · {field.help}"
+        if name in self._unknown_support_fields:
+            return f"{GENERATION_CONTROL_UNKNOWN_COPY} {text}"
+        return text
+
+    def _sync_generation_control_support(self) -> None:
+        """Hide the fields the draft's provider does not accept (spec rule 2).
+
+        Samplers follow the shared ``supported_generation_fields``; the
+        reasoning and thinking controls hide only on an authoritative
+        "unsupported", and an "unknown" one stays with neutral help copy
+        (TASK-30012 AC#3). The Sampling title names every hidden field, so a
+        model change re-decides both at once. Hidden values are not rewritten
+        here: Apply commits them blank (the controller's rebase) and the
+        request never carries them.
+        """
+        provider = self._active_provider
+        model = self._current_model_value()
+        supported = supported_generation_fields(provider, model, self._app_config)
+        focused = self.app.focused
+        hidden: list[str] = []
+        unknown: set[str] = set()
+        for name in SAMPLING_FIELDS + CORE_FIELDS:
+            if name in _SUPPORT_CONTROL_FIELDS:
+                support = console_generation_control_support(provider, model, name)
+                shown = support != "unsupported"
+                if support == "unknown":
+                    unknown.add(name)
+            else:
+                shown = name in supported
+            row = self.query_one(f"#{field_control_id(name)}-row")
+            if not shown:
+                hidden.append(name)
+                if focused is not None and row in focused.ancestors_with_self:
+                    self.call_after_refresh(self._focus_highest_priority_connection)
+            row.display = shown
+        self._unknown_support_fields = frozenset(unknown)
+        self.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible).title = (
+            hidden_fields_line(provider_display_name(provider, self._app_config), hidden)
+        )
+        self._sync_unsaved_hint()  # re-reads each row's help line
 
     def _sync_field_rows(self, edited_labels: Iterable[str]) -> None:
         """Show every field row's Source word and help line (spec §6).

@@ -41,6 +41,7 @@ Tests/UI/test_console_run_inspector_worldbooks.py
 Tests/UI/test_console_selection_core.py
 Tests/UI/test_console_session_tab_close.py
 Tests/UI/test_console_settings_core_first.py
+Tests/UI/test_console_settings_hidden_fields.py
 Tests/UI/test_console_system_prompt_chip.py
 Tests/UI/test_console_temporary_capture_admission.py
 Tests/UI/test_console_trace_call_recovery.py

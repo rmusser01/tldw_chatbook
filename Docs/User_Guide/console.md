@@ -462,8 +462,7 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
 - **Model**: the chat's model, its provider and its readiness word (e.g.
   "model-a · llama.cpp · Ready · not tested").
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
-  and the reasoning or thinking controls the model takes. Controls the
-  provider never uses are hidden, not shown dimmed.
+  and the reasoning or thinking controls the model takes.
 - Then four closed one-row disclosures: **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.
@@ -481,11 +480,19 @@ says what a blank sends: "blank = provider default" (nothing is sent, so the
 provider's own default applies). A blank **Temperature** or **Top P** shows
 its range instead, because Apply needs a value. Labels match Settings, for
 example **Thinking budget**, and **Budget strategy** and **When limit nears**
-under Context. A field the selected provider's request does not carry is
-dropped: for Anthropic, Min P, Seed, Presence penalty and Frequency penalty
-are accepted without error, never sent, and not written by **Save as model
-default**. A value saved for such a field earlier stays in `config.toml`
-untouched.
+under Context.
+
+Fields the selected provider does not accept are hidden, not shown dimmed,
+and the **Sampling** title names them. For Anthropic it reads "Sampling ·
+hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty,
+Reasoning effort, Reasoning summary, Verbosity (this provider does not accept
+them)"; a line that long wraps onto a second row. Choosing another model
+updates the hidden fields and the line at once. A hidden field takes no focus,
+is never sent, is cleared from the chat by **Apply**, and is not written by
+**Save as model default**; a value saved for it earlier stays in
+`config.toml` untouched. A reasoning or thinking control whose support for
+this model is not known stays visible, and its help line starts with "Support
+not verified for this model."
 
 Focus opens on **Temperature**. **Tab** walks the core fields, the four
 disclosure titles and the footer to **Use for this conversation**, never into
