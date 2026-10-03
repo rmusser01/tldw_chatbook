@@ -371,10 +371,11 @@ def test_census_rediscovers_the_original_two_seams_when_their_egress_calls_are_r
     video_processing = PACKAGE_ROOT / "Local_Ingestion" / "video_processing.py"
 
     ip_source = ingest_preflight.read_text(encoding="utf-8")
-    ip_mutated = ip_source.replace(
-        "from tldw_chatbook.Utils.egress import EgressBlockedError, check_url_or_raise",
-        "from tldw_chatbook.Utils.egress import EgressBlockedError",
-    ).replace("check_url_or_raise(url)", "pass")
+    # The import is one-name-per-line since the formatter pass (TASK-26000
+    # series), so drop the name's own line rather than rewrite the statement.
+    ip_mutated = ip_source.replace("    check_url_or_raise,\n", "").replace(
+        "check_url_or_raise(url)", "pass"
+    )
     assert "check_url_or_raise" not in ip_mutated, (
         "the fixture substitution did not match current source -- "
         "Library/ingest_preflight.py's egress call shape moved; update the "
