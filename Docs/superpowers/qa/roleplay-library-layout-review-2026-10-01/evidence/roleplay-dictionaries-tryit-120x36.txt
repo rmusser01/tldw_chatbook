@@ -1,0 +1,36 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                             │
+│ Author the pieces that shape a chat                                                                                  │
+│  Ready                                                                                                               │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Dictionaries — text find/replace rules · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                      │
+│ ╭──────────────────────────╮╭────────────────────────────────────────────────────────╮┌────────────────────────────┐ │
+│ │  Library              <  ││                                                        ││                            │ │
+│ │  Search...               ││                                                        ││  Inspector              >  │ │
+│ │           New            ││  Entries  Settings  Stats  Versions  Attachments       ││ Selected: Fantasy          │ │
+│ │          Import          ││                                                        ││ Anachronism Swaps          │ │
+│ │        Duplicate         ││                                                        ││ Type: dictionary           │ │
+│ │                          ││                                                        ││ Validation: OK             │ │
+│ │  British to American s…  ││                                                        ││ Readiness                  │ │
+│ │  15 entries · on         ││                                                        ││ Console chat is for        │ │
+│ │  Fantasy Anachronism S…  ││ Try it — substitution preview                          ││ characters and personas.   │ │
+│ │  8 entries · on          ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││           Delete           │ │
+│ │  Profanity Softener      ││ ▊ Grab your phone and the car keys, OK? The police   ▎ ││        Manage Buddy        │ │
+│ │  6 entries · off         ││ ▊ took my computer.                                  ▎ ││         Show Buddy         │ │
+│ │                          ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││        Close Buddy         │ │
+│ │                          ││   Run preview                                          ││       Disable Buddy        │ │
+│ │                          ││ Changed spans highlighted below.                       ││                            │ │
+│ │                          ││ Grab your phone and the car keys, OK? The police took  ││                            │ │
+│ │                          ││ my computer.                                           ││                            │ │
+│ │                          ││ Grab your speaking-stone and the carriage keys, Aye?   ││                            │ │
+│ │                          ││ The city watch took my scrying-glass.                  ││                            │ │
+│ ╰──────────────────────────╯╰────────────────────────────────────────────────────────╯└────────────────────────────┘ │
+│                                                                                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | c/p/d/l mode | [ ] mode | space toggle | F1 · Ctrl+P · Ctrl+Q

@@ -1,0 +1,45 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                                                                                                     │
+│ Author the pieces that shape a chat                                                                                                                          │
+│  Ready                                                                                                                                                       │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+Characters — who the AI plays · 28
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                                                                                                                                              │
+│ ╭─────────────────────────────────────╮╭────────────────────────────────────────────────────────────────────────────╮┌─────────────────────────────────────┐ │
+│ │  Library                         <  ││                     ▸ Try a test chat (nothing saved)                      ││                                     │ │
+│ │  Search...                          ││  distrusts corporate liaisons, adores the ship's cat (Ballast), and        ││  Inspector                       >  │ │
+│ │                 New                 ││  drinks her coffee strong enough to strip paint.                         ▂ ││ Selected: Captain Isolde Varga      │ │
+│ │           New Actor Pack            ││  Personality: Dry, precise, loyal, quietly haunted.                        ││ Type: character                     │ │
+│ │               Import                ││                                                                            ││ Validation: OK                      │ │
+│ │          Import Actor Pack          ││  Scenario: The Meridian's Wake has just dropped out of a jump into an      ││ Conversations (2)                   │ │
+│ │              Duplicate              ││  uncharted debris field.                                                   ││   Search this character's chats     │ │
+│ │             Sort: Name              ││  First message: *Isolde doesn't look up from the logbook.* "You're         ││  Shore leave on Kepler-9            │ │
+│ │              Tag: All               ││  late. Debris field, nine o'clock. Tell me you can read a sensor           ││  Debris field salvage               │ │
+│ │  Ada (Debugging Partner)            ││  sweep."                                                                   ││  All conversations shown.           │ │
+│ │  A patient senior engineer who h…   ││  System prompt: You are Captain Isolde Varga. Stay in character; be        ││                                     │ │
+│ │  ARIA-7                             ││  terse and tactical.                                                       ││ Readiness                           │ │
+│ │  A ship AI that has quietly beco…   ││  Creator: rp_review                                                     ▃  ││ Ready to chat in Console.           │ │
+│ │  Brother Anselm                     ││                                                                            ││              Chat now               │ │
+│ │  A monastery brewer with strong … ▁ ││  Version: 1.4                                                              ││        Send to Console draft        │ │
+│ │  Captain Isolde Varga               ││                                                                            ││             Export JSON             │ │
+│ │  Captain Isolde Varga commands t…   ││ Tags: sci-fi, space-opera, captain, long-description                       ││             Export PNG              │ │
+│ │  Chef Auguste                       ││ Alternate greetings: 3                                                     ││          Export Actor Pack          │ │
+│ │  A temperamental Parisian chef w…   ││ "Coffee's on the bridge. Don't touch Ballast."                             ││               Delete                │ │
+│ │  Coach Pemberton                    ││                                                                            ││            Manage Buddy             │ │
+│ │  A relentlessly upbeat running c…   ││  Voice & Speech                                                            ││             Show Buddy              │ │
+│ │  Default Assistant                  ││  Use global default                                                  ▼     ││             Close Buddy             │ │
+│ │  The built-in Default Assistant …   ││  Using the global speech default.                                          ││            Disable Buddy            │ │
+│ │  Detective Rosa Calderón            ││    Create                                                                  ││                                     │ │
+│ │  A sharp, sardonic homicide dete…   ││ Avatar: none                                                               ││                                     │ │
+│ │  Dungeon Master Vex                 ││    Edit     Conversations (2)                                              ││                                     │ │
+│ │  A theatrical game master who ru…   ││                            ▸ Dictionaries (0)                              ││                                     │ │
+│ │                                     ││                             ▸ World Books (1)                              ││                                     │ │
+│ ╰─────────────────────────────────────╯╰────────────────────────────────────────────────────────────────────────────╯└─────────────────────────────────────┘ │
+│                                                                                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | ctrl+enter Send to Console draft | f6 pane | c/p/d/l mode | [ ] mode | s sort | F1 help · Ctrl+P palette · Ctrl+Q quit

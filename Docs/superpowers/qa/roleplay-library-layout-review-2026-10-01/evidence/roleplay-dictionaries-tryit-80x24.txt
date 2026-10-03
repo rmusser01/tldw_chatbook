@@ -1,0 +1,24 @@
+                                   ╭─────────────╮
+ ⌃1 Home  ⌃2 Console    ⌃3 Library │ ⌃4 Roleplay │ ⌃5 Watchlists  ⌃7 S  More ▾
+────────────────────────────────────────────────────────────────────────────────
+┌──────────────────────────────────────────────────────────────────────────────┐
+│ Roleplay                                                                     │
+│  Ready                                                                       │
+└──────────────────────────────────────────────────────────────────────────────┘
+Dictionaries — text find/replace rules · 3
+ Modes:    Characters    Personas    Dictionaries    Lore
+┌──────────────────────────────────────────────────────────────────────────────┐
+│╭──────────────╮╭──────────────────────────────────────╮┌────────────────────┐│
+││  Library  <  ││  Entries  Settings  Stats  Versions  ││  Inspector     >   ││
+││  Search...   ││                                      ││ Selected: Fantasy  ││
+││     New      ││                                      ││ Anachronism Swaps  ││
+││    Import    ││  pattern   replacement     type      ││ Type: dictionary   ││
+││    Duplic    ││ Try it — substitution preview        ││ Validation: OK     ││
+││              ││ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ││ Readiness          ││
+││  15 entri… ▄ ││ ▊ keys, OK? The police took my  ▃▃ ▎ ││ Console chat is    ││
+││  Fantasy …   ││ ▊ computer.                        ▎ ││ for characters   ▆ ││
+││  8 entrie…   ││ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ││ and personas.      ││
+││              ││   Run preview                        ││      Delete        ││
+│╰──────────────╯╰──────────────────────────────────────╯└────────────────────┘│
+└──────────────────────────────────────────────────────────────────────────────┘
+  ctrl+n new | ctrl+f search | f6 pane | F1 · Ctrl+P · Ctrl+Q

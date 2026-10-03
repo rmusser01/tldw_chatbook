@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││ Search everything, pick a section, or add something new.                                                               │ │
+│ │     Import…                    ││                                                                                                                        │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││ Notes (5) · Media (2) · Conversations (6)                                                                              │ │
+│ │ ▊ Search Library…         ▎▊x▎ ││ From your Library                                                                                                      │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││  Notes · Recipe: cardamom buns                                                                                         │ │
+│ │                                ││  Media · Notes on Character Card V3                                                                                    │ │
+│ │ ────────────────────────────── ││  Conversations · Sourdough troubleshooting                                                                             │ │
+│ │ Browse                     ▾   ││ Quick actions                                                                                                          │ │
+│ │    Media (2) — your files      ││                                                                                                                        │ │
+│ │    Conversations (6)           ││      Import…         New note         Search                                                                           │ │
+│ │    Notes (5)                   ││                                                                                                                        │ │
+│ │    Prompts (4) — reuse         ││                                                                                                                        │ │
+│ │    Skills (1) — AI add-ons     ││                                                                                                                        │ │
+│ │    Collections (0)             ││                                                                                                                        │ │
+│ │    Search / RAG — find all     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Artifacts                  ▾   ││                                                                                                                        │ │
+│ │    All artifacts               ││                                                                                                                        │ │
+│ │    Chatbooks                   ││                                                                                                                        │ │
+│ │    Reports                     ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Create                     ▾   ││                                                                                                                        │ │
+│ │    New note                    ││                                                                                                                        │ │
+│ │    New prompt                  ││                                                                                                                        │ │
+│ │    New skill                   ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Study                      ▾   ││                                                                                                                        │ │
+│ │    Study decks (0)             ││                                                                                                                        │ │
+│ │    Flashcards due: 0           ││                                                                                                                        │ │
+│ │    Quizzes (0)                 ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Import / Export            ▾   ││                                                                                                                        │ │
+│ │    Import…                     ││                                                                                                                        │ │
+│ │    Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││                                                                                                                        │ │
+│ │ Details                    ▸   ││                                                                                                                        │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | i import content | ctrl+n new note | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit
