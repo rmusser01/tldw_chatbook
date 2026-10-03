@@ -165,6 +165,8 @@ Constraints:
 - backlog/tasks/task-30012 - Recompose-Conversation-Settings-around-connection-first-disclosure.md
 - Tests/UI/test_console_session_settings.py
 
+> **Resume note (2026-10-02):** a usage-limited agent run left partial, UNREVIEWED Task 3 work on the local branch `backup/p6-t3-partial` (one WIP commit on top of b5e8c862d4: console_settings_field_row.py, console_settings_modal.py, a new Tests/UI/test_console_settings_disclosures.py, the census and ratchet rows, console.md). The Task 3 implementer may inspect it with `git show backup/p6-t3-partial` and reuse what is correct, but owns the result and must verify it like new work.
+
 ## Task 3: Fold Connection, Request estimate and name into one-row disclosures (TASK-33006.3)
 
 Task file: backlog/tasks/task-33006.3 - Fold-Connection-Request-estimate-and-name-into-one-row-disclosures.md
