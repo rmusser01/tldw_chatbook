@@ -1,7 +1,7 @@
 # ADR-084: Make Library Media an adaptive reader with a permanent Reader
 
 Status: Accepted
-Amended by: [ADR-211](211-shared-adaptive-pane-shell.md) (accepted 2026-10-02; shared grip grammar. Its G1c carve-out from lines 79-80, destination-owned non-geometry preferences outside the shared normaliser, is added by Roleplay B7, TASK-33910.12)
+Amended by: [ADR-212](212-shared-adaptive-pane-shell.md) (accepted 2026-10-02; shared grip grammar. Its G1c carve-out from lines 79-80, destination-owned non-geometry preferences outside the shared normaliser, is added by Roleplay B7, TASK-33910.12)
 Date: 2026-08-23
 Related Task: Implementation tasks will be created from the approved design during planning.
 

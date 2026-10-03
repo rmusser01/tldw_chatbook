@@ -86,7 +86,7 @@ Notes on the schema:
 | messages | `components/_messages.tcss` | message-header, message-text, message-actions (all Canonical) |
 | ds_primitives | `components/_ds_primitives.tcss` | ds-panel, ds-toolbar, ds-field-row, ds-info-callout, ds-approval-card, ds-destination-header (all Canonical; extracted from the agentic monolith in task 9) |
 | sizing | `utilities/_helpers.tcss` | w-auto, w-full, w-fill, w-0, h-auto, h-full, h-fill, h-0, h-1, h-2, h-3, p-0, m-0, mt-1, mb-0, border-none (all Canonical; the tokenized replacements for runtime `.styles.*` literals, task 12) |
-| panes | `features/_library.tcss` | none — widget contract (`AdaptivePaneShell`/`AdaptivePaneGrip`/`DestinationRailRowButton` keyed to destination classes; ADR-211) |
+| panes | `features/_library.tcss` | none — widget contract (`AdaptivePaneShell`/`AdaptivePaneGrip`/`DestinationRailRowButton` keyed to destination classes; ADR-212) |
 
 ## Entry template
 
@@ -835,14 +835,14 @@ Additional explicit override classes (same precedence contract):
 
 **Purpose.** One three-pane destination frame — navigation rail, items list,
 work pane — with a full-height grip after each optional pane, shared by the
-Library's adaptive readers and Roleplay (ADR-211). The widgets live in
+Library's adaptive readers and Roleplay (ADR-212). The widgets live in
 `tldw_chatbook/Widgets/adaptive_pane_shell.py`; the pure geometry lives in
 `Utils/adaptive_reader_state.py` (`resolve_adaptive_pane_layout`). This family
 is a **widget contract**, not a class vocabulary: every rule is keyed to a
 destination's own classes and lives in that destination's lazy split sheet.
 
 **When-not-to-use.** Not for a destination that is not on the adaptive-shell
-grammar (ADR-211 does not authorise Watchlists convergence, an app-wide
+grammar (ADR-212 does not authorise Watchlists convergence, an app-wide
 workbench or a third shell pane). Never add a neutral class to a shell rule:
 a token with no split owner pins the whole rule to the boot bundle.
 

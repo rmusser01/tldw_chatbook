@@ -132,7 +132,7 @@ Every interactive control must define, at minimum:
 - **Standard shell sidebar:** `$ds-sidebar-width: 25%`,
   `$ds-sidebar-min-width: 35`, `$ds-sidebar-max-width: 80`, docked left,
   collapsible to zero width (never a sliver).
-  **Exception (ADR-211):** on adaptive-pane-shell routes (Library adaptive
+  **Exception (ADR-212):** on adaptive-pane-shell routes (Library adaptive
   readers, Roleplay) the navigation rail follows the resolver's 29-39 rail
   policy with a 24-cell floor, and a collapsed pane keeps a full-height
   five-cell grip — a labelled control, not a sliver — at every width until
@@ -141,7 +141,7 @@ Every interactive control must define, at minimum:
   promotes to `_variables.tcss` (e.g. `$ds-console-composer-height`).
   **Runtime geometry** — widths a resolver computes from the measured
   terminal — promotes instead to the config-safe Python leaf
-  `Utils/adaptive_reader_state.py` (ADR-211): a stylesheet token cannot
+  `Utils/adaptive_reader_state.py` (ADR-212): a stylesheet token cannot
   depend on the measured shell.
 - Pane borders use `$ds-grid-line` / `$ds-column-line`, never raw hex.
 
