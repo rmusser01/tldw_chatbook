@@ -724,7 +724,7 @@ logger = logger.bind(module="ChatScreen")
 
 
 def _conversation_settings_modal_module():
-    """Load the Conversation Settings modal only when its workflow starts."""
+    """Load the Chat settings modal only when its workflow starts."""
     from ...Widgets.Console import console_settings_modal
 
     return console_settings_modal
@@ -3351,12 +3351,8 @@ class ChatScreen(BaseAppScreen):
         active_provider = settings.provider
         active_model = settings.model
         if suspended_draft is not None:
-            raw_provider = suspended_draft.raw_values.get("console-settings-provider")
-            if type(raw_provider) is str:
-                active_provider = raw_provider
             active_model = suspended_draft.provider_model_drafts.get(
-                active_provider,
-                settings.model if active_provider == settings.provider else None,
+                active_provider, active_model
             )
         effective_thinking_policy = (
             await controller.effective_thinking_history_policy_for_session(session_id)
@@ -3378,7 +3374,10 @@ class ChatScreen(BaseAppScreen):
         active_run = self._console_run_active()
 
         modal_contract = _conversation_settings_modal_module()
+        from ..Console_Modules.model_switcher import open_model_picker
         modal = modal_contract.ConsoleSettingsModal(
+            model_picker=partial(open_model_picker, self),
+            chat_title=next((s.title for s in store.sessions() if s.id == session_id), ""),
             settings=store.session_settings(session_id) or settings,  # committed: unsaved-edits baseline
             origin=origin,
             initial_draft=initial_draft,
@@ -3732,14 +3731,14 @@ class ChatScreen(BaseAppScreen):
             if self._clear_conversation_settings_return_target(target):
                 self._notify_conversation_settings_return(
                     "This return was superseded by a newer request. "
-                    "Open Conversation settings again."
+                    "Open Chat settings again."
                 )
             return False
         if revision_status == "settled":
             self._discard_conversation_settings_return(
                 target,
-                "Conversation settings return is no longer available. "
-                "Open Conversation settings again.",
+                "Chat settings return is no longer available. "
+                "Open Chat settings again.",
             )
             return False
         claim = handoffs.claim(HandoffChannel.CONVERSATION_SETTINGS_RETURN)
@@ -3753,7 +3752,7 @@ class ChatScreen(BaseAppScreen):
             if self._clear_conversation_settings_return_target(target):
                 self._notify_conversation_settings_return(
                     "This return was superseded by a newer request. "
-                    "Open Conversation settings again."
+                    "Open Chat settings again."
                 )
             return False
         intent = claim.value
@@ -3767,7 +3766,7 @@ class ChatScreen(BaseAppScreen):
                 handoffs,
                 claim,
                 target,
-                "Conversation settings return was stale. The draft was not restored.",
+                "Chat settings return was stale. The draft was not restored.",
             )
             return False
         rejection_copy = self._conversation_settings_return_rejection_copy(target)
@@ -3793,19 +3792,19 @@ class ChatScreen(BaseAppScreen):
             if store.session_is_ephemeral(target.session_id):
                 return (
                     "The temporary conversation is no longer available. Its "
-                    "Conversation settings draft was not restored."
+                    "Chat settings draft was not restored."
                 )
             if (
                 store.session_settings_revision(target.session_id)
                 != target.settings_revision
             ):
                 return (
-                    "Conversation settings changed while credentials were open. "
+                    "Chat settings changed while credentials were open. "
                     "The earlier draft was not restored."
                 )
         except KeyError:
             return (
-                "The original conversation closed. Its Conversation settings draft "
+                "The original conversation closed. Its Chat settings draft "
                 "was not restored."
             )
         snapshot = getattr(self, "_suspended_conversation_settings", None)
@@ -3820,7 +3819,7 @@ class ChatScreen(BaseAppScreen):
             and snapshot.active_view == target.active_view
             and snapshot.focus_control_id == target.focus_control_id
         ):
-            return "Conversation settings return was stale. The draft was not restored."
+            return "Chat settings return was stale. The draft was not restored."
         return None
 
     def _notify_conversation_settings_return(self, message: str) -> None:
@@ -3975,7 +3974,7 @@ class ChatScreen(BaseAppScreen):
                 if self._clear_conversation_settings_return_target(target):
                     self._notify_conversation_settings_return(
                         "This return was superseded by a newer request. "
-                        "Open Conversation settings again."
+                        "Open Chat settings again."
                     )
                 return
             rejection_copy = self._conversation_settings_return_rejection_copy(target)
@@ -4000,7 +3999,7 @@ class ChatScreen(BaseAppScreen):
                     handoffs,
                     claim,
                     target,
-                    "Conversation settings return was stale. The draft was not restored.",
+                    "Chat settings return was stale. The draft was not restored.",
                 )
                 return
             store = self._ensure_console_chat_store()
@@ -4013,7 +4012,7 @@ class ChatScreen(BaseAppScreen):
                         handoffs,
                         claim,
                         target,
-                        "The original conversation closed. Its Conversation settings "
+                        "The original conversation closed. Its Chat settings "
                         "draft was not restored.",
                     )
                     return
@@ -6095,28 +6094,26 @@ class ChatScreen(BaseAppScreen):
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
 
-        ``/endpoint`` (H6): the same flow the Conversation-settings provider
-        list's "New custom endpoint…" sentinel row opens. The settings modal
-        is pushed first so the created entry lands as its selected provider
-        (``EndpointCreated`` is announced to the opener screen).
+        ``/endpoint`` (H6): the same flow as Chat settings' New endpoint….
+        The settings modal is pushed first and receives the created entry,
+        which it lands on a pair through pick mode (TASK-33006.4).
         """
         if self._console_setup_modal_blocking():
             return
         self.run_worker(self._open_console_new_endpoint(), exclusive=False)
 
     async def _open_console_new_endpoint(self) -> None:
-        """Push Conversation settings, then its endpoint template modal.
+        """Push Chat settings, then its endpoint template modal.
 
         PR-2646 review: the template must layer on the *exact* settings
-        modal this flow opened -- ``EndpointCreated`` is delivered to the
-        screen directly beneath the template (``screen_stack[-2]``), so a
-        template that lands over ChatScreen would orphan the creation (no
-        provider selection, no model discovery). The exact modal is retained
-        through ``_pushed_modal_sink``, its already-resolved provider models
-        and app config are reused (no second async resolution window while
-        the user could dismiss settings), and the stack is rechecked
-        immediately before the push: abort if the modal was dismissed or
-        covered by an unrelated screen.
+        modal this flow opened -- its result goes to that modal's
+        ``pick_created_endpoint`` (TASK-33006.4), which lists the entry's
+        models and opens pick mode on it, so the creation is never orphaned.
+        The exact modal is retained through ``_pushed_modal_sink``, its
+        already-resolved provider models and app config are reused (no
+        second async resolution window while the user could dismiss
+        settings), and the stack is rechecked immediately before the push:
+        abort if the modal was dismissed or covered by an unrelated screen.
         """
         retained: list["ConsoleSettingsModal"] = []
 
@@ -6142,19 +6139,18 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             settings_directly_beneath = False
         if not settings_directly_beneath:
-            # Dismissed (or covered by an unrelated screen) between the
-            # settings push settling and now: layering the template here
-            # would deliver EndpointCreated to whatever currently sits
-            # beneath it, so abort the flow instead.
+            # Dismissed or covered between the settings push settling and
+            # now: the created entry would land on no Chat settings, so abort.
             return
         self.app.push_screen(
             ConsoleEndpointTemplateModal(
-                # The sentinel-flow seam: seed from the exact settings
-                # modal's own resolved inputs rather than re-resolving.
+                # Seed from the settings modal's own resolved inputs; the
+                # created entry then lands on a pair through pick mode.
                 app_config=settings_modal._app_config,
                 providers_models=settings_modal._providers_models,
                 template_provider=settings_modal._active_provider or None,
-            )
+            ),
+            callback=settings_modal.pick_created_endpoint,
         )
 
     def action_open_console_prompt_insert(self) -> None:
@@ -15079,7 +15075,7 @@ class ChatScreen(BaseAppScreen):
             # lifecycle with a second, permanently-blocked gate.
             return ""
         if readiness.recovery_action == "select_model":
-            return "Choose a model in Console Settings before sending."
+            return "Choose a model in Chat settings before sending."
         if readiness.recovery_action == "configure_credential":
             if readiness.subscription_status == "pending":
                 return "Checking Claude subscription credential."
@@ -15087,7 +15083,7 @@ class ChatScreen(BaseAppScreen):
                 return "Log in with Claude Code to refresh the subscription credential."
             return "Add API key in Settings > Providers & Models before sending."
         if readiness.recovery_action == "save_endpoint":
-            return "Save provider endpoint in Conversation settings before sending."
+            return "Save provider endpoint in Chat settings before sending."
         if readiness.recovery_action == "retry_connection":
             return "Provider unreachable. Retry connection before sending."
         return "Finish provider setup before sending."

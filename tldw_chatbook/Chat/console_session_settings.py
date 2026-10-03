@@ -14,6 +14,7 @@ from types import MappingProxyType
 from typing import (
     TYPE_CHECKING,
     Callable,
+    Collection,
     Literal,
     Mapping,
     Sequence,
@@ -30,6 +31,7 @@ from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
     supported_console_provider_catalog,
     supported_console_provider_readiness_keys,
+    supported_generation_fields,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
     DEFAULT_LLAMACPP_BASE_URL,  # noqa: F401  (re-exported; console_settings_modal imports it from here)
@@ -1636,8 +1638,19 @@ def console_settings_warnings(settings: ConsoleSessionSettings) -> list[str]:
 
 def _console_session_settings_structural_errors(
     settings: ConsoleSessionSettings,
+    *,
+    blank_ok: Collection[str] = (),
 ) -> list[str]:
-    """Return pure shape/range errors shared by live and persisted settings."""
+    """Return pure shape/range errors shared by live and persisted settings.
+
+    Args:
+        settings: The settings to check.
+        blank_ok: Required samplers that may be blank: the ones the provider
+            does not accept, which the draft rebase commits blank.
+
+    Returns:
+        User-facing errors, empty when the settings are well formed.
+    """
     errors: list[str] = []
     if (
         type(settings.provider) is not str
@@ -1648,9 +1661,13 @@ def _console_session_settings_structural_errors(
     if settings.source not in CONSOLE_SESSION_SETTINGS_SOURCES:
         errors.append("Settings source must be derived or user.")
 
-    if not _float_in_range(settings.temperature, 0.0, 2.0):
+    if not (
+        settings.temperature is None and "temperature" in blank_ok
+    ) and not _float_in_range(settings.temperature, 0.0, 2.0):
         errors.append("Temperature must be between 0 and 2.")
-    if not _float_in_range(settings.top_p, 0.0, 1.0):
+    if not (settings.top_p is None and "top_p" in blank_ok) and not _float_in_range(
+        settings.top_p, 0.0, 1.0
+    ):
         errors.append("Top P must be between 0 and 1.")
     if not _is_blank_value(settings.min_p) and not _float_in_range(
         settings.min_p, 0.0, 1.0
@@ -1719,7 +1736,12 @@ def validate_console_session_settings(
     app_config: Mapping[str, object],
 ) -> list[str]:
     """Return user-facing validation errors for Console settings."""
-    errors = _console_session_settings_structural_errors(settings)
+    unaccepted = {"temperature", "top_p"} - supported_generation_fields(
+        settings.provider, settings.model, app_config
+    )
+    errors = _console_session_settings_structural_errors(
+        settings, blank_ok=unaccepted
+    )
     provider_key = provider_config_key(settings.provider)
     provider_settings = console_provider_settings(app_config, provider_key)
 
@@ -3214,7 +3236,17 @@ def normalize_console_model_value(value: object) -> str | None:
     return text
 
 
-def _format_summary_float(value: float) -> str:
+def _format_summary_float(value: float | None) -> str:
+    """Format a sampler for the summary; blank means the provider decides.
+
+    Args:
+        value: The sampler, None when the provider does not accept it.
+
+    Returns:
+        Two decimals, or the field rows' Source word for a blank row.
+    """
+    if value is None:
+        return CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
     return f"{float(value):.2f}"
 
 

@@ -179,7 +179,7 @@ class ModelConfigField:
 
 
 #: The one field table: every editor's label, help and range for each field
-#: (Alt+M popover, Conversation settings, Settings model defaults and Console
+#: (Alt+M popover, Chat settings, Settings model defaults and Console
 #: Behavior fallbacks). Labels stay within the modal's 23-cell label column.
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
     field.name: field
@@ -489,6 +489,7 @@ def console_generation_control_support(
     provider: str,
     model: str | None,
     control: ConsoleGenerationControl,
+    app_config: Mapping[str, object] | None = None,
 ) -> ConsoleControlSupport:
     """Return existing authoritative support for one generation control.
 
@@ -501,11 +502,16 @@ def console_generation_control_support(
         provider: Provider selected by the Console draft.
         model: Optional selected model identifier.
         control: Generation control whose support should be projected.
+        app_config: Config holding the ADR-146 endpoint registry. With it, a
+            ``custom-ep`` id is decided as its entry's family, the way
+            ``supported_generation_fields`` and the gateway decide it.
 
     Returns:
         ``supported``, ``unsupported``, or ``unknown`` for the exact draft.
     """
-    identity = resolve_console_provider_identity(provider)
+    identity = resolve_console_provider_identity(
+        _registry_family_provider(provider, app_config)
+    )
     execution_key = identity.execution_key
     readiness_key = identity.readiness_key
 

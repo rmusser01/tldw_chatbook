@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Not ready · no key
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ─────────────────────────────╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                    │
+ Conversations                │  Chat settings · Chat 1                                                                                                                            │                    │
+        Archive this chat     │                                                                                                                                                    │                    │
+          Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
+        Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
+   Chat 1                     │ Model             claude-sonnet-4-5 · Anthropic                                    this chat  Not ready · no key · ~200k context   Change Alt+M    │                    │
+                              │ Temperature       │ 0.3        model default      How varied replies are: lower is focused, higher is more varied.                                 │                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 4096       model default      Longest reply the model may write, in tokens.                                                    │                    │
+  ▊  Filter visible     ▎     │ Streaming         │ Off ▼  model default      Show the reply as it is generated.                                                                   │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ default ▼  provider           Support not verified for this model. blank = provider default · How much extended thinking the…  │                    │
+                              │ Thinking budget   │            provider           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…  │                    │◂ Inspect
+   New conversation           │  ▶ Sampling · Anthropic does not accept 7 fields (open to list them)                                                                             ▃ │                    │
+  Chats                       │  ▼ Connection · api.anthropic.com · key missing · change it in Settings ▸ Providers & Models                                                       │                    │
+   Chat 1                     │  Configure credential…                                                                                                                             │                    │
+                              │                                                                                                                                                    │                    │
+ ─────────────────────────────│ No non-billable live connection check is available for this provider.                                                                              │                    │
+ Character · No chats         │ Not ready · no key                                                                                                                                 │                    │
+ ─────────────────────────────│ ▼ more — scroll for the rest                                                                                                                       │                    │
+ Model                        │                                                                                                   Add or verify the Anthropic API key to continue. │                    │
+ ─────────────────────────────│                                                                                                                                                    │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
+ ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │  setup
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-4-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                      Send blocked — add an API key to continue ›       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

@@ -135,7 +135,6 @@ MIGRATION_TARGETS = [
         "tldw_chatbook.Widgets.Console.console_endpoint_template_modal",
         "ConsoleEndpointTemplateModal",
     ),
-    ("tldw_chatbook.Widgets.Console.console_provider_picker", "ConsoleProviderPicker"),
     (
         "tldw_chatbook.Widgets.Console.console_save_markdown_modal",
         "ConsoleSaveMarkdownModal",

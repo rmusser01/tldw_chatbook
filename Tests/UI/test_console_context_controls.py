@@ -432,7 +432,7 @@ async def test_full_modal_has_stable_views_and_saves_conversation_policy() -> No
             "#console-settings-save-default",
             Button,
         )
-        assert str(save_defaults.label) == "Save as provider defaults"
+        assert str(save_defaults.label) == "Save as model default"  # TASK-33006.5
         assert save_defaults.display is False
         scope = str(app.screen.query_one("#console-settings-scope", Static).renderable)
         assert "this conversation" in scope

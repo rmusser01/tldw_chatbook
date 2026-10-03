@@ -9,16 +9,26 @@
  * vocabulary, console-surface scoped. ======================================== */
 
 
+/* TASK-33006.1 (spec §6, mock (b)): Chat settings is 150x22 over the
+   Console, so the whole Model view fits at 211x44 without scrolling; both
+   caps keep it inside smaller terminals. No vertical padding: the frame,
+   header, tabs, scope, defaults line and footer cost 9 of the 22 rows,
+   leaving 13 for the MODEL row, at most 8 CORE rows and 4 disclosures. */
 #console-settings-modal {
-    width: $ds-size-120;
+    width: $ds-size-150;
     max-width: $ds-percent-95;
-    height: $ds-percent-94;
+    height: $ds-size-22;
     max-height: $ds-percent-95;
     overflow: hidden;
     scrollbar-size: 1 1;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+/* The Context and memory view keeps its own height (TASK-33006.1 AC#11). */
+#console-settings-modal.-context-view {
+    height: $ds-percent-94;
 }
 
 /* TASK-31665 AC#15: visible scrollbar thumb. `$ds-grid-line` on a
@@ -47,9 +57,11 @@
 /* TASK-33003.1 (spec §6 "a closed disclosure costs 1 row"): drop the global
    components/_widgets.tcss Collapsible frame (round border, min-height 3,
    $surface band) and Textual's padding-bottom inside Chat settings, so a
-   collapsed section is its 1-row title plus the section margin above. */
+   collapsed section is its 1-row title (TASK-33006.1 drops the margin too:
+   the four disclosures stack row on row under the CORE fields). */
 ConsoleSettingsModal Collapsible {
     min-height: $ds-size-0;
+    margin: $ds-space-0;
     padding: $ds-space-0;
     border: none;
     background: $ds-surface-panel;
@@ -57,22 +69,24 @@ ConsoleSettingsModal Collapsible {
 
 /* TASK-33003.3: the body too. The global `Collapsible > Contents` $surface
    is the fields' own fill, so a 12-column field inside a disclosure read as
-   a full row; on the panel it shows its width, as in the Context view. */
+   a full row; on the panel it shows its width, as in the Context view.
+   TASK-33006.1: no padding, so an opened disclosure's rows line up with the
+   CORE rows above it and add no blank row. */
 ConsoleSettingsModal Collapsible > Contents {
+    padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
+/* TASK-33006.2: a disclosure title spans its row. A title set after mount
+   (Sampling, Connection, Request estimate, name) keeps an auto width's first
+   measure and paints cut short; each builder keeps it to one row (141 cells,
+   owner ruling 2026-10-02), so nothing wraps. */
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-.console-settings-primary-section {
-    padding: $ds-space-0 $ds-space-1;
-    border: round $ds-action-focus;
-    background: $ds-surface-raised;
 }
 
 .console-settings-modal-row {
@@ -92,13 +106,24 @@ ConsoleSettingsModal Collapsible > Contents {
     text-wrap: wrap;
 }
 
+/* TASK-33006.6: 'Conversation max tokens' is exactly as wide as the shared
+   23-cell column and ran into its input, so the Context view's labels get
+   one more cell. The compact tier keeps 16 in both views (more specific). */
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
 /* TASK-33003.2: one-row controls (the Input/Select rules live with the rest
    of the modal's field styling in components/_agentic_terminal.tcss). These
    moved here from the modal's DEFAULT_CSS, which loses to app CSS anyway. */
 ConsoleSettingsModal Button,
 ConsoleSettingsModal #console-settings-view-tabs,
-ConsoleSettingsModal #console-settings-default-recovery-actions,
-ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+ConsoleSettingsModal #console-settings-default-recovery-actions {
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
 }
@@ -116,8 +141,8 @@ ConsoleSettingsModal .console-context-action-row {
 
 /* TASK-33003.3 (spec §6 row grammar): a Chat settings field is as wide as
    the value it holds, edge included, never a share of the viewport, so it
-   keeps its width from 211 to 235 columns. Every Input in Advanced
-   generation and in the Context view holds a number (12). An enum Select
+   keeps its width from 211 to 235 columns. Every Input in a Model view
+   field row and in the Context view holds a number (12). An enum Select
    is its longest option or blank prompt + 5: the edge, a padding cell each
    side, the arrow and its gap (Keep after compaction's 27-cell option makes
    32, so it shares the names cap). Free text keeps `1fr` so it gives way in
@@ -128,16 +153,40 @@ ConsoleSettingsModal .console-context-action-row {
    deleting dead rules for retired Console widgets paid for these.
    ponytail: the number width is by container, so a free-text Input added to
    either container later also gets 12 columns; give it an id rule then. */
-#console-settings-generation-advanced Input,
+.console-settings-field-row Input,
 #console-settings-context-view Input {
     width: $ds-size-12;
 }
 
-#console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
+#console-settings-streaming {
+    width: $ds-size-8;
 }
 
+/* TASK-33006.1 (spec §6 row grammar): Label (18) | control | Source word |
+   help line, each one row (a Static is as tall as its one line of text).
+   Source and help read in $ds-text-muted, the readable token the theme
+   guard keeps at 4.5:1 on the panel; a help line longer than the row ends
+   in an ellipsis instead of a second row. */
+.console-settings-field-label {
+    width: $ds-size-18;
+}
+
+.console-settings-field-source {
+    width: $ds-size-20;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+.console-settings-help-line {
+    width: $ds-width-fill;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+/* Final review I6: 12 fits a blank choice's "default" prompt too. */
+#console-settings-verbosity,
+#console-settings-thinking-effort,
 #console-settings-reasoning-effort,
 #console-context-thinking-history-policy {
     width: $ds-size-12;
@@ -165,9 +214,24 @@ ConsoleSettingsModal .console-context-action-row {
     max-width: $ds-size-32;
 }
 
-#console-settings-provider-picker,
-#console-settings-model-picker {
-    max-width: $ds-size-48;
+/* TASK-33006.4: model · provider | Source | readiness · context | Change.
+   The pair takes the free width; ModelPairSummary shortens only an id
+   wider than that, in the middle. Below 100 columns: pair and Change. */
+#console-settings-model-summary {
+    width: $ds-width-fill;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-settings-model-source,
+#console-settings-model-status {
+    width: auto;
+    margin: $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-source,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-status {
+    display: none;
 }
 
 #console-settings-base-url {
@@ -187,12 +251,6 @@ ConsoleSettingsModal .console-context-action-row {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-#console-settings-model-custom {
-    width: $ds-size-18;
-    min-width: $ds-size-18;
-    max-width: $ds-size-18;
 }
 
 #console-settings-model-discover {
@@ -276,24 +334,8 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-full;
     min-width: $ds-size-0;
     max-width: $ds-width-full;
-}
-
-ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
-}
-
-/* Wide-terminal tier (viewport >= 150 columns): the fixed 120-column
-   Conversation settings dialog reads as cramped next to the full-screen
-   F9 Settings on wide terminals, so grow the container to 85% of the
-   viewport, capped at 196 columns. The class is toggled by Python from
-   the app viewport width -- the container's own width cannot drive this
-   without a chicken-and-egg loop. Everything else (height, padding,
-   borders) is unchanged; the compact tier below 100 container columns
-   cannot co-occur (150 viewport columns implies a >= 120 container). */
-#console-settings-modal.-conversation-settings-wide {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
 }
 
 /* TASK-33003.8: beside a choice row's Select and its support note (a

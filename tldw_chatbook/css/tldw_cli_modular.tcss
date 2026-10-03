@@ -330,9 +330,6 @@ $ds-theme-preview-light-ink: #FFFFFF;
 $ds-theme-preview-invalid: #808080;
 
 
-$ds-console-settings-wide-max-width: 196;
-
-
 $ds-inspector-modal-width: 120;
 $ds-inspector-modal-height: 42;
 $ds-inspector-section-width: 28;
@@ -4135,12 +4132,6 @@ ConsoleAgentProgressModal { align: center middle; background: $background 60%; }
 
 
 
-
-
-App.-wide-viewport #console-settings-modal {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
-}
 
 
 App.-wide-viewport #console-inspector-modal {
@@ -8506,16 +8497,22 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 
 
+
 #console-settings-modal {
-    width: $ds-size-120;
+    width: $ds-size-150;
     max-width: $ds-percent-95;
-    height: $ds-percent-94;
+    height: $ds-size-22;
     max-height: $ds-percent-95;
     overflow: hidden;
     scrollbar-size: 1 1;
     border: round $ds-grid-line;
     background: $ds-surface-panel;
-    padding: $ds-space-1 $ds-space-2;
+    padding: $ds-space-0 $ds-space-1;
+}
+
+
+#console-settings-modal.-context-view {
+    height: $ds-percent-94;
 }
 
 
@@ -8539,6 +8536,7 @@ ConsoleWorkspaceFilesModal.-short #console-workspace-files-actions Button {
 
 ConsoleSettingsModal Collapsible {
     min-height: $ds-size-0;
+    margin: $ds-space-0;
     padding: $ds-space-0;
     border: none;
     background: $ds-surface-panel;
@@ -8546,20 +8544,17 @@ ConsoleSettingsModal Collapsible {
 
 
 ConsoleSettingsModal Collapsible > Contents {
+    padding: $ds-space-0;
     background: $ds-surface-panel;
 }
 
+
 #console-settings-provider-model-section,
-#console-settings-connection {
+#console-settings-connection,
+ConsoleSettingsModal CollapsibleTitle {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-.console-settings-primary-section {
-    padding: $ds-space-0 $ds-space-1;
-    border: round $ds-action-focus;
-    background: $ds-surface-raised;
 }
 
 .console-settings-modal-row {
@@ -8580,10 +8575,19 @@ ConsoleSettingsModal Collapsible > Contents {
 }
 
 
+.-context-view .console-settings-modal-label {
+    width: $ds-size-24;
+    max-width: $ds-size-24;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact .console-settings-modal-label {
+    width: $ds-size-16;
+}
+
+
 ConsoleSettingsModal Button,
 ConsoleSettingsModal #console-settings-view-tabs,
-ConsoleSettingsModal #console-settings-default-recovery-actions,
-ConsoleSettingsModal ModelSearchPicker .model-search-picker-control {
+ConsoleSettingsModal #console-settings-default-recovery-actions {
     height: $ds-control-height-compact;
     min-height: $ds-control-height-compact;
 }
@@ -8600,16 +8604,36 @@ ConsoleSettingsModal .console-context-action-row {
 }
 
 
-#console-settings-generation-advanced Input,
+.console-settings-field-row Input,
 #console-settings-context-view Input {
     width: $ds-size-12;
 }
 
-#console-settings-verbosity,
-#console-settings-thinking-effort {
-    width: $ds-size-11;
+#console-settings-streaming {
+    width: $ds-size-8;
 }
 
+
+.console-settings-field-label {
+    width: $ds-size-18;
+}
+
+.console-settings-field-source {
+    width: $ds-size-20;
+    padding: $ds-space-0 $ds-space-1;
+    color: $ds-text-muted;
+}
+
+.console-settings-help-line {
+    width: $ds-width-fill;
+    color: $ds-text-muted;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+
+#console-settings-verbosity,
+#console-settings-thinking-effort,
 #console-settings-reasoning-effort,
 #console-context-thinking-history-policy {
     width: $ds-size-12;
@@ -8637,9 +8661,22 @@ ConsoleSettingsModal .console-context-action-row {
     max-width: $ds-size-32;
 }
 
-#console-settings-provider-picker,
-#console-settings-model-picker {
-    max-width: $ds-size-48;
+
+#console-settings-model-summary {
+    width: $ds-width-fill;
+    text-wrap: nowrap;
+    text-overflow: ellipsis;
+}
+
+#console-settings-model-source,
+#console-settings-model-status {
+    width: auto;
+    margin: $ds-space-0 $ds-space-1;
+}
+
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-source,
+ConsoleSettingsModal.-conversation-settings-compact #console-settings-model-status {
+    display: none;
 }
 
 #console-settings-base-url {
@@ -8659,12 +8696,6 @@ ConsoleSettingsModal .console-context-action-row {
     width: $ds-width-full;
     min-width: $ds-size-0;
     height: auto;
-}
-
-#console-settings-model-custom {
-    width: $ds-size-18;
-    min-width: $ds-size-18;
-    max-width: $ds-size-18;
 }
 
 #console-settings-model-discover {
@@ -8748,17 +8779,8 @@ ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-conn
     width: $ds-width-full;
     min-width: $ds-size-0;
     max-width: $ds-width-full;
-}
-
-ConsoleSettingsModal.-conversation-settings-compact Button.console-settings-connection-action {
     height: $ds-size-1;
     min-height: $ds-size-1;
-}
-
-
-#console-settings-modal.-conversation-settings-wide {
-    width: $ds-percent-85;
-    max-width: $ds-console-settings-wide-max-width;
 }
 
 

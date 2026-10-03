@@ -1,4 +1,4 @@
-"""Immutable contracts for applying Console conversation settings."""
+"""Immutable contracts for applying Console chat settings."""
 
 from __future__ import annotations
 
