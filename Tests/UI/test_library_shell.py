@@ -15036,12 +15036,17 @@ async def test_library_conversation_unmount_fence_rejects_late_completion():
 
 
 @pytest.mark.asyncio
+@pytest.mark.bootstrap_profile
 async def test_library_shell_rail_search_submit_runs_search_canvas_query():
     """Submitting the rail-top search box feeds the promoted Search canvas
     (single query truth = ``_rag_search_state.query``): it selects the Search
     row, runs the fast ``search`` mode query against the recording fake
     service, and returns focus to the rail box (which remains mounted --
     it is not torn down when leaving the conversations canvas).
+
+    TASK-15512: enrolled in bootstrap_profile -- the real-app mount reads
+    config through the guarded loader, which trips the config-participant
+    admission under the per-test sandbox (TASK-32873 per-node enrollment).
     """
     app = _build_test_app()
     _seed_conversations(
