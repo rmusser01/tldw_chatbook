@@ -634,8 +634,14 @@ class ChatPersistenceService:
         context: "VoicePromotionContext",
         identities: "VoicePromotionIdentitySet",
         assistant_metadata_json: str,
+        user_metadata_json: str | None,
     ) -> "CompletedVoicePairCommit | None":
-        """Adopt one complete exact-ID commit or fail closed on any residue."""
+        """Adopt one complete exact-ID commit or fail closed on any residue.
+
+        ``user_metadata_json`` is the user row's exact expected record: the
+        ``root_fork`` marker when the destination is a root fork, otherwise
+        ``None`` (TASK-33628.12).
+        """
         from tldw_chatbook.Chat.console_voice_promotion import (
             CompletedVoicePairCommit,
         )
@@ -720,7 +726,7 @@ class ChatPersistenceService:
             and user["is_selected_variant"] == 1
             and user["total_variants"] == 1
             and user["usage_json"] is None
-            and user["metadata_json"] is None
+            and user["metadata_json"] == user_metadata_json
             and user["provider_continuation_json"] is None
             and user["thinking_blocks_json"] is None
             and user["assistant_generation_state"] is None
@@ -878,6 +884,12 @@ class ChatPersistenceService:
         assistant_metadata_json = MessageMetadata(
             terminal_receipt_id=identities.terminal_receipt_id
         ).to_json()
+        # A prompt sent beside an existing root is a root fork (TASK-33628.12).
+        user_metadata_json = (
+            MessageMetadata(root_fork=True).to_json()
+            if destination.user_root_fork
+            else None
+        )
         with self.db.transaction(immediate=True) as cursor:
             reconciled = self._reconcile_completed_voice_pair(
                 cursor,
@@ -886,6 +898,7 @@ class ChatPersistenceService:
                 context=context,
                 identities=identities,
                 assistant_metadata_json=assistant_metadata_json,
+                user_metadata_json=user_metadata_json,
             )
             if reconciled is not None:
                 result = reconciled
@@ -926,6 +939,7 @@ class ChatPersistenceService:
                         "sender": "user",
                         "role": "user",
                         "content": context.user_text,
+                        "metadata_json": user_metadata_json,
                     }
                 )
                 if user_message_id != identities.user_message_id:

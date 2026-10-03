@@ -628,8 +628,9 @@ the count, and Undo puts them back with the rest.
 
 A new first message in such a conversation stays its own branch beside the
 old one: an **Edit & resend** of the first message, or a prompt sent after
-rewinding to before it. Console marks it when it is saved. Two cases carry
-no mark, and Console reads them as more later messages of the old chain:
+rewinding to before it, typed or spoken in a voice exchange. Console marks it
+when it is saved. Two cases carry no mark, and Console reads them as more
+later messages of the old chain:
 
 - a first-message edit or before-first prompt saved by an older version of
   Chatbook, which had no mark to write;

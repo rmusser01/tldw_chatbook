@@ -1153,3 +1153,140 @@ def test_commit_completed_voice_pair_creates_no_provider_exchange_trace_lineage(
         ).fetchone()[0]
         == 2
     )
+
+
+# --- TASK-33628.12: a voice exchange sent before the first message ------------
+#
+# At a before-first cursor in a conversation that already holds a root, the
+# voice exchange's prompt is a new root-level branch, like a typed prompt sent
+# there. The store-resolved destination says so (``user_root_fork``), the
+# commit writes the ``root_fork`` marker on the user row, and the retry
+# reconcile expects exactly the record the destination calls for.
+
+
+def _before_first_voice_case(
+    db: CharactersRAGDB, *, user_root_fork: bool
+) -> tuple[str, ResolvedVoicePromotionDestination, VoicePromotionContext]:
+    conversation_id = db.add_conversation(
+        {"title": "Voice before first", "character_id": None}
+    )
+    first = db.add_message(
+        {
+            "id": "voice-flat-first",
+            "conversation_id": conversation_id,
+            "sender": "user",
+            "content": "flat first prompt",
+        }
+    )
+    db.set_conversation_active_cursor(
+        conversation_id, active_leaf_message_id=None, before_message_id=first
+    )
+    origin = ConsoleSessionBindingOrigin(
+        session_id="voice-session",
+        session_incarnation=1,
+        persisted_conversation_id=conversation_id,
+        conversation_binding_revision=3,
+    )
+    context = VoicePromotionContext(
+        promotion_id=_VOICE_PROMOTION_ID,
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=None,
+        expected_persisted_leaf_id=None,
+        user_text=_VOICE_USER_TEXT,
+        assistant_text=_VOICE_ASSISTANT_TEXT,
+        usage_json=_VOICE_USAGE_JSON,
+        terminal_boundary_id="terminal-boundary",
+        capture_eligible_at_dispatch=True,
+    )
+    destination = ResolvedVoicePromotionDestination(
+        session_id=origin.session_id,
+        session_incarnation=origin.session_incarnation,
+        persisted_conversation_id=conversation_id,
+        expected_persisted_leaf_id=None,
+        capture_eligible_at_dispatch=True,
+        user_root_fork=user_root_fork,
+    )
+    return conversation_id, destination, context
+
+
+def test_a_root_fork_destination_marks_the_user_row_and_its_retry_reconciles(
+    db_instance,
+):
+    """AC#2: the marked pair commits once, and a retry adopts it unchanged."""
+    _conversation_id, destination, context = _before_first_voice_case(
+        db_instance, user_root_fork=True
+    )
+    service = ChatPersistenceService(db_instance)
+
+    first = service.commit_completed_voice_pair(
+        destination=destination, context=context
+    )
+    retried = service.commit_completed_voice_pair(
+        destination=destination, context=context
+    )
+
+    user = db_instance.get_message_by_id(first.user_message_id)
+    assert user["parent_message_id"] is None
+    assert user["metadata_json"] == MessageMetadata(root_fork=True).to_json()
+    assert (first.already_committed, retried.already_committed) == (False, True)
+    assert retried.user_message_id == first.user_message_id
+    messages, marks = _promotion_identity_rows(db_instance)
+    assert (len(messages), len(marks)) == (2, 2)
+
+
+@pytest.mark.parametrize(
+    ("committed_as", "retried_as"),
+    [(True, False), (False, True)],
+    ids=["marked-row-unmarked-destination", "unmarked-row-marked-destination"],
+)
+def test_a_root_fork_mismatch_fails_the_retry_closed(
+    db_instance, committed_as, retried_as
+):
+    """AC#2: the reconcile accepts only the record the destination calls for."""
+    conversation_id, destination, context = _before_first_voice_case(
+        db_instance, user_root_fork=committed_as
+    )
+    service = ChatPersistenceService(db_instance)
+    service.commit_completed_voice_pair(destination=destination, context=context)
+    before = _promotion_persistence_snapshot(
+        db_instance, conversation_id=conversation_id
+    )
+    mismatched = ResolvedVoicePromotionDestination(
+        session_id=destination.session_id,
+        session_incarnation=destination.session_incarnation,
+        persisted_conversation_id=conversation_id,
+        expected_persisted_leaf_id=None,
+        capture_eligible_at_dispatch=True,
+        user_root_fork=retried_as,
+    )
+
+    with pytest.raises(RuntimeError, match="conflict"):
+        service.commit_completed_voice_pair(destination=mismatched, context=context)
+
+    assert (
+        _promotion_persistence_snapshot(db_instance, conversation_id=conversation_id)
+        == before
+    )
+
+
+def test_a_root_fork_destination_refuses_a_parent():
+    """A root fork is parentless; a destination with a parent cannot carry it."""
+    with pytest.raises(ValueError, match="root fork"):
+        ResolvedVoicePromotionDestination(
+            session_id="voice-session",
+            session_incarnation=1,
+            persisted_conversation_id="conversation",
+            expected_persisted_leaf_id="leaf",
+            capture_eligible_at_dispatch=True,
+            user_root_fork=True,
+        )
+    with pytest.raises(TypeError, match="user_root_fork"):
+        ResolvedVoicePromotionDestination(
+            session_id="voice-session",
+            session_incarnation=1,
+            persisted_conversation_id="conversation",
+            expected_persisted_leaf_id=None,
+            capture_eligible_at_dispatch=True,
+            user_root_fork=1,
+        )

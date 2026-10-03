@@ -1569,3 +1569,197 @@ def test_deleting_an_unsaved_message_tombstones_the_saved_rows_under_it():
     ]
     reopened, reopened_session, _ = _open_store(db, conversation_id)
     assert _visible(reopened, reopened_session) == reopened_before
+
+
+# --- TASK-33628.12: a voice exchange sent before the first message -------------
+#
+# A completed voice exchange is saved by its own commit, not by the typed send.
+# Sent after /rewind placed the cursor before the first message, its prompt is
+# a new root-level branch exactly like a typed prompt there, so it must carry
+# the root_fork marker too. Unmarked, every reopen chained it after the legacy
+# flat rows, and Delete on an earlier flat row took it along.
+
+
+async def _inline(work):
+    return work()
+
+
+async def test_a_voice_exchange_sent_before_the_first_message_is_a_marked_root_fork():
+    """AC#1/#3: the voice prompt is marked, reloads as its own branch, and
+    survives a Delete on an earlier flat row."""
+    import json
+
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionClaimStatus,
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    store, session_id, native = _open_store(db, conversation_id)
+    # Restore on the first prompt in /rewind places the cursor before it.
+    assert store.set_active_path_before(session_id, native["f0"])
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session_id
+    )
+    assert (native_leaf, persisted_leaf) == (None, None)
+    context = VoicePromotionContext(
+        promotion_id="voice-before-first",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    claim = owner.try_claim(context)
+    assert claim.status is VoicePromotionClaimStatus.CLAIMED
+    outcome = await owner.promote(claim)
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+
+    identities = derive_voice_promotion_identities(context.promotion_id)
+    pair = [identities.user_message_id, identities.assistant_message_id]
+    branch = [("user", "spoken prompt"), ("assistant", "spoken reply")]
+    assert _transcript(store, session_id) == branch
+    prompt = db.get_message_by_id(identities.user_message_id)
+    assert prompt["parent_message_id"] is None
+    assert json.loads(prompt["metadata_json"] or "{}").get("root_fork") is True
+    # The live row carries it too, so a later whole-record write keeps it.
+    live_prompt = store.messages_for_session(session_id)[0]
+    assert live_prompt.metadata is not None and live_prompt.metadata.root_fork
+    for message_id in _FLAT_IDS:
+        assert db.get_message_by_id(message_id)["metadata_json"] is None
+
+    store, session_id, native = _open_store(db, conversation_id)
+    assert _transcript(store, session_id) == branch
+    assert _root_count(store, session_id) == 2
+    siblings, index, count = store.siblings_at(native[pair[0]])
+    assert [sibling.persisted_message_id for sibling in siblings] == ["f0", pair[0]]
+    assert (index, count) == (1, 2)
+    store.set_active_leaf(session_id, native["f3"])
+    assert [m for m, _role in _visible(store, session_id)] == _FLAT_IDS
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 3
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == [
+        "f1",
+        "f2",
+        "f3",
+    ]
+    assert _deleted(db, [*_FLAT_IDS, *pair]) == [0, 1, 1, 1, 0, 0]
+    reopened, reopened_session, reopened_native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", *pair}
+    reopened.set_active_leaf(reopened_session, reopened_native[pair[1]])
+    assert [m for m, _role in _visible(reopened, reopened_session)] == pair
+
+
+async def test_a_voice_exchange_at_an_ordinary_leaf_stays_unmarked():
+    """Control: a voice exchange appended under a saved leaf is not a fork."""
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _CHAIN)
+    store, session_id, _native = _open_store(db, conversation_id)
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session_id
+    )
+    assert persisted_leaf == "c3"
+    context = VoicePromotionContext(
+        promotion_id="voice-at-leaf",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    outcome = await owner.promote(owner.try_claim(context))
+
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+    prompt_id = derive_voice_promotion_identities(context.promotion_id).user_message_id
+    prompt = db.get_message_by_id(prompt_id)
+    assert (prompt["parent_message_id"], prompt["metadata_json"]) == ("c3", None)
+    assert store.get_message(prompt_id).metadata is None
+
+
+async def test_a_temporary_voice_exchange_before_the_first_message_saves_marked():
+    """The temporary path follows the same rule: marked in memory, kept on save."""
+    import json
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Chat.console_voice_promotion import (
+        VoicePromotionContext,
+        VoicePromotionOutcomeStatus,
+        VoicePromotionOwner,
+        derive_voice_promotion_identities,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    store = ConsoleChatStore(persistence=ChatPersistenceService(db))
+    session = store.create_session(
+        title="Temporary",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    first = store.append_message(
+        session.id, role=ConsoleMessageRole.USER, content="first"
+    )
+    store.append_message(
+        session.id, role=ConsoleMessageRole.ASSISTANT, content="first reply"
+    )
+    assert store.set_active_path_before(session.id, first.id)
+    origin, native_leaf, persisted_leaf = store.snapshot_voice_promotion_origin(
+        session.id
+    )
+    context = VoicePromotionContext(
+        promotion_id="voice-temporary-before-first",
+        attempt_id="voice-attempt",
+        origin=origin,
+        expected_native_leaf_id=native_leaf,
+        expected_persisted_leaf_id=persisted_leaf,
+        user_text="spoken prompt",
+        assistant_text="spoken reply",
+        usage_json=None,
+        terminal_boundary_id="voice-boundary",
+        capture_eligible_at_dispatch=False,
+    )
+    owner = VoicePromotionOwner(lambda: store, sync_runner=_inline)
+
+    outcome = await owner.promote(owner.try_claim(context))
+
+    assert outcome.status is VoicePromotionOutcomeStatus.PROMOTED
+    native_prompt = derive_voice_promotion_identities(
+        context.promotion_id
+    ).user_message_id
+    assert store.get_message(native_prompt).metadata.root_fork
+    assert store.promote_ephemeral_session(session.id) is not None
+    for message_id, marked in ((first.id, False), (native_prompt, True)):
+        row = db.get_message_by_id(store.get_message(message_id).persisted_message_id)
+        assert row["parent_message_id"] is None
+        assert json.loads(row["metadata_json"] or "{}").get("root_fork", False) is marked

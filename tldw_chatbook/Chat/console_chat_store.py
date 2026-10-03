@@ -15641,12 +15641,14 @@ class ConsoleChatStore:
                         return None
                 elif not current_leaf_persisted_id:
                     return None
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         return ResolvedVoicePromotionDestination(
             session_id=session_id,
             session_incarnation=context.origin.session_incarnation,
             persisted_conversation_id=session.persisted_conversation_id,
             expected_persisted_leaf_id=current_leaf_persisted_id,
             capture_eligible_at_dispatch=context.capture_eligible_at_dispatch,
+            user_root_fork=flat_roots.voice_user_root_fork(self, session, context),
         )
 
     def try_claim_voice_promotion(
@@ -16141,6 +16143,8 @@ class ConsoleChatStore:
             assistant.metadata = MessageMetadata(
                 terminal_receipt_id=commit.terminal_receipt_id
             )
+        if lease.destination.user_root_fork:  # saved marked (TASK-33628.12)
+            user.metadata = MessageMetadata(root_fork=True)
         if persisted:
             user.parent_message_id = lease.destination.expected_persisted_leaf_id
             assistant.parent_message_id = user.id

@@ -29,7 +29,9 @@ before the first message (:func:`appended_metadata`) -- it records
 ``MessageMetadata.root_fork`` (stored as ``"root_fork": true`` in the row's
 local ``metadata_json``) on the new row. A send in a saved conversation writes
 its prompt in the turn's own commit, so the marker travels with that commit
-(:func:`durable_acceptance`), and a writer that replaces a row's whole record
+(:func:`durable_acceptance`); a completed voice exchange is saved by its own
+commit, so its store-resolved destination carries it instead
+(:func:`voice_user_root_fork`); and a writer that replaces a row's whole record
 carries it over (:func:`keep_root_fork`). And :func:`legacy_flat_chain`:
 
 * leaves every MARKED root out of the chain: it stays an independent root, a
@@ -57,11 +59,9 @@ chains is shown, counted, deleted and restored by Undo together.
   it and Undo restores it. The same holds for a fork whose row arrives without
   the marker: ``metadata_json`` is local-only, so another synced device, an
   export/import, or a rewrite by an older build does not carry it.
-* Other rows created at a before-first cursor are not marked and keep that
-  reading too: a completed voice exchange's prompt (its commit proof requires
-  the user row to carry no metadata), and a generated image or video reply
-  (only USER rows are marked on append; a video row stores a different record
-  in the same column).
+* A generated image or video reply created at a before-first cursor is not
+  marked and keeps that reading too (only USER rows are marked on append; a
+  video row stores a different record in the same column).
 * An unmarked all-USER set whose fork has no reply on either branch chains.
 
 DELETE (:func:`delete_seeds`). The durable subtree delete follows parent links,
@@ -92,6 +92,7 @@ if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_dispatch_checkpoint import (
         ConsoleDurableTurnAcceptance,
     )
+    from tldw_chatbook.Chat.console_voice_promotion import VoicePromotionContext
 
 
 class _ForkProjectionFlag(Protocol):
@@ -174,6 +175,32 @@ def durable_acceptance(
     ):
         return acceptance
     return replace(acceptance, user_root_fork=True)
+
+
+def voice_user_root_fork(
+    store: Any, session: _ForkProjectionFlag, context: VoicePromotionContext
+) -> bool:
+    """Whether a completed voice exchange's prompt is a new root-level branch.
+
+    Its prompt is appended under the claimed native leaf, so the typed
+    prompt's rule decides (:func:`appended_metadata`): a USER row appended with
+    no parent while the session already holds a root, outside a fork
+    projection (TASK-33628.12).
+
+    Args:
+        store: The Console store resolving the exchange's destination.
+        session: The session the exchange is published to.
+        context: The sealed exchange; ``expected_native_leaf_id`` is the
+            native parent its prompt is appended under.
+
+    Returns:
+        True when the prompt is saved with the ``root_fork`` marker.
+    """
+    children = store._children_by_parent.get(context.origin.session_id)
+    marker = appended_metadata(
+        None, ConsoleMessageRole.USER, context.expected_native_leaf_id, children, session
+    )
+    return marker is not None
 
 
 def keep_root_fork(
