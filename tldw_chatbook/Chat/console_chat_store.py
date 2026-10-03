@@ -146,7 +146,6 @@ from tldw_chatbook.Chat.console_generation_settings_metadata import (
     merge_console_generation_settings,
     snapshot_from_session_settings,
 )
-from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
 from tldw_chatbook.Chat.console_library_activity_buffer import (
     ConsoleLibraryActivityBuffer,
     LibraryActivityFlushResult,
@@ -5983,6 +5982,10 @@ class ConsoleChatStore:
                 if preparation is None or preparation.session_id not in self._sessions:
                     raise RuntimeError("Durable preparation is unavailable.")
                 session = self._sessions[preparation.session_id]
+                from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+                acceptance = flat_roots.durable_acceptance(
+                    acceptance, self._nodes_by_session.get(session.id, {})
+                )
                 existing_reservation = self._durable_commit_in_flight.get(
                     acceptance.preparation_id
                 )
@@ -10894,7 +10897,7 @@ class ConsoleChatStore:
         markers whose durable accounting lives elsewhere: direct user commands
         use local-command run logs, while model calls use the agent run log.
         """
-        self._session_or_raise(session_id)
+        session = self._session_or_raise(session_id)
         if raw_cli_presentation is not None and (
             type(raw_cli_presentation) is not RawCliPresentation
             or role is not ConsoleMessageRole.TOOL
@@ -10960,6 +10963,9 @@ class ConsoleChatStore:
             and self.persistence is not None
             and (defer_terminal_persistence or arm_finalizer)
         )
+        old_leaf = self._active_leaf_by_session[session_id]
+        children = self._children_by_parent.get(session_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -10968,7 +10974,9 @@ class ConsoleChatStore:
             tool_output_full=tool_output_full,
             tool_diff=tool_diff,
             change_review_run_id=change_review_run_id,
-            metadata=metadata,
+            metadata=flat_roots.appended_metadata(
+                metadata, role, old_leaf, children, session
+            ),
             activity_presentation=activity_presentation,
             activity_round_ordinal=activity_round_ordinal,
             raw_cli_presentation=raw_cli_presentation,
@@ -11006,7 +11014,6 @@ class ConsoleChatStore:
                     session_id, anchor_node, content, tool_output_full
                 )
             return self._snapshot(message)
-        old_leaf = self._active_leaf_by_session[session_id]
         self._register_tree_node(session_id, message, parent_native_id=old_leaf)
         self._active_leaf_by_session[session_id] = message.id
         self._recompute_active_path(session_id)
@@ -11124,6 +11131,7 @@ class ConsoleChatStore:
         session_id = self._message_session_index[anchor_message_id]
         session = self._sessions[session_id]
         parent_native_id = self._native_parent_by_message.get(anchor_message_id)
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
         message = ConsoleChatMessage(
             id=message_id or str(uuid4()),
             role=role,
@@ -15396,9 +15404,9 @@ class ConsoleChatStore:
         revised in place while a turn runs: a realtime user row is created
         ``pending`` at turn-commit and becomes ``final``/``empty``/``failed``
         when its transcript resolves, and a reply is marked ``interrupted``
-        after the fact. So this always overwrites (the caller composes the
-        whole record; there is no partial merge to get wrong) and persists
-        immediately WHEN there is a durable row to write to.
+        after the fact. So this overwrites (the caller composes the whole
+        record; only the store's own ``root_fork`` marker is carried over) and
+        persists immediately WHEN there is a durable row to write to.
 
         A row with no persisted id yet is left alone on purpose: an empty
         realtime user row is not written at all until its transcript lands
@@ -15414,7 +15422,8 @@ class ConsoleChatStore:
         """
         message = self._message_or_raise(message_id)
         self._reject_quarantined_generation_mutation(message)
-        message.metadata = metadata
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+        message.metadata = flat_roots.keep_root_fork(message.metadata, metadata)
         if message.persisted_message_id is not None:
             self._persist_metadata_only(message)
         return self._snapshot(message)
@@ -21914,26 +21923,16 @@ class ConsoleChatStore:
     def _chain_legacy_flat_roots(self, session_id: str) -> None:
         """Chain legacy flat root-level rows into one linear spine (C1 repair).
 
-        :func:`~tldw_chatbook.Chat.console_legacy_flat_roots.legacy_flat_chain`
-        picks the roots to chain: every unmarked root that is legacy flat data.
-        A root ``_create_sibling`` marked as a fork stays an independent root
-        (that module's docstring has the rule and its residual edges).
-
-        Roots are chained in their existing insertion order, which is the DB's
-        timestamp-ASC order (``get_root_messages_for_conversation`` orders roots
-        by timestamp; ``ConsoleChatMessage`` carries no timestamp of its own, so
-        insertion order is the ordering signal -- exactly the accepted fallback
-        for equal/absent timestamps). Each chained root ``r_i`` (i >= 1) is
-        re-parented onto ``r_{i-1}`` and moved out of the ``None`` bucket into
-        ``r_{i-1}``'s ordered child list; any real subtree already hanging off a
-        root (e.g. a post-feature message whose real parent is a flat row) is
-        left intact. After chaining the only roots are ``r_0`` and any kept
-        fork, and the active-leaf ancestry walk traverses the full spine plus
-        any subtrees.
-
-        This is an IN-MEMORY reconstruction only: durable ``parent_message_id``
-        rows are never rewritten (resume's active-leaf repair is the durable fix).
+        ``console_legacy_flat_roots.legacy_flat_chain`` picks the roots: every
+        unmarked legacy flat root (a marked fork stays its own root; that module
+        has the rule and its residual edges). They chain in insertion order, the
+        DB's timestamp-ASC root order: each ``r_i`` (i >= 1) moves from the
+        ``None`` bucket to the end of ``r_{i-1}``'s child list, any real subtree
+        left intact, so the ancestry walk traverses the whole spine. IN-MEMORY
+        only: durable ``parent_message_id`` rows are never rewritten.
         """
+        from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         children = self._children_by_parent.get(session_id)
         if children is None:
             return

@@ -435,3 +435,35 @@ def test_root_fork_marker_reads_without_inverting(stored, expected) -> None:
 
     assert restored is not None
     assert restored.root_fork is expected
+
+
+#: ``to_json`` of a receipt-only record, byte for byte, as every build before
+#: the marker existed wrote it.
+_PRE_MARKER_RECEIPT_JSON = (
+    '{"canvas_cards": [], "character_emote": null, "engine": "", '
+    '"interrupted": false, "model": "", "origin": "", "provider": "", '
+    '"template_kind": "", "template_source": "", '
+    '"terminal_receipt_id": "0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51", '
+    '"transcript_status": ""}'
+)
+
+
+def test_an_unmarked_record_keeps_the_bytes_it_had_before_the_marker() -> None:
+    """``root_fork`` is written only when it is true.
+
+    Ownership proofs compare a stored row with ``to_json()`` of the record they
+    expect, byte for byte, and rows saved by older builds carry no marker key.
+    Writing ``"root_fork": false`` on every row would stop those rows matching.
+    """
+    from dataclasses import replace
+
+    receipt = MessageMetadata(
+        terminal_receipt_id="0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51"
+    )
+
+    assert receipt.to_json() == _PRE_MARKER_RECEIPT_JSON
+    assert "root_fork" not in json.loads(MessageMetadata(engine="realtime").to_json())
+    assert json.loads(replace(receipt, root_fork=True).to_json()) == {
+        **json.loads(_PRE_MARKER_RECEIPT_JSON),
+        "root_fork": True,
+    }

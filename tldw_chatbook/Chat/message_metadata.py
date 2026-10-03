@@ -305,9 +305,10 @@ class MessageMetadata:
             machine-injected auto-wake notice row, ``"hook"`` for a
             run-hooks row (block reason / injected context), ``""``
             otherwise.
-        root_fork: True on a root-level row the Console forked beside a
-            ROOT message (Edit and resend of a conversation's first
-            message). Stored as ``"root_fork": true``; it is what tells the
+        root_fork: True on a root-level row the Console created beside an
+            existing root (Edit and resend of a conversation's first
+            message, or a prompt sent after rewinding before it). Stored as
+            ``"root_fork": true`` and omitted when false; it is what tells the
             legacy flat-row repair
             (:mod:`tldw_chatbook.Chat.console_legacy_flat_roots`) that this
             parentless row is a branch, not a pre-branching flat row. Like
@@ -388,9 +389,15 @@ class MessageMetadata:
         """Serialize for the ``messages.metadata_json`` column.
 
         Returns:
-            A stable (key-sorted) JSON object string.
+            A stable (key-sorted) JSON object string. ``root_fork`` appears
+            only when true, so an unmarked record keeps the exact bytes it had
+            before the field existed: ownership proofs compare stored rows
+            with this string, and rows saved by older builds have no such key.
         """
-        return json.dumps(asdict(self), sort_keys=True)
+        payload = asdict(self)
+        if not self.root_fork:
+            del payload["root_fork"]
+        return json.dumps(payload, sort_keys=True)
 
     def remap_canvas_origins(self, message_ids: Mapping[str, str]) -> "MessageMetadata":
         """Return metadata with only Canvas card message origins remapped."""

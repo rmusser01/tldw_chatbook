@@ -1048,6 +1048,165 @@ async def test_a_new_first_message_edit_fork_is_marked_and_outlives_a_flat_delet
     assert [m for m, _role in _visible(reopened, reopened_session)] == fork
 
 
+async def test_a_prompt_sent_after_rewinding_before_the_first_message_is_marked():
+    """/rewind to before the first prompt, then send: a new root-level branch.
+
+    The new prompt is saved parentless beside the flat rows, the same shape as
+    a first-message edit fork, so it must carry the marker too. Unmarked, every
+    reopen chained it after the flat rows: the transcript showed the history the
+    user rewound away, the next send carried it to the model, and Delete on an
+    earlier flat row took the new branch with it.
+    """
+    import json
+
+    from tldw_chatbook.Chat.console_message_delete import (
+        console_delete_scope,
+        delete_subtree_for_undo,
+    )
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    controller, _gateway, store, session_id, native = await _open_console(
+        db, conversation_id
+    )
+    # Restore on the first prompt in /rewind places the cursor before it.
+    assert store.set_active_path_before(session_id, native["f0"])
+    assert (await controller.submit_draft("again")).accepted
+
+    branch = [("user", "again"), ("assistant", "reply 1")]
+    assert _transcript(store, session_id) == branch
+    prompt_id = store.messages_for_session(session_id)[0].persisted_message_id
+    prompt = db.get_message_by_id(prompt_id)
+    assert prompt["parent_message_id"] is None
+    assert json.loads(prompt["metadata_json"] or "{}").get("root_fork") is True
+    for message_id in _FLAT_IDS:
+        assert db.get_message_by_id(message_id)["metadata_json"] is None
+
+    controller, gateway, store, session_id, native = await _open_console(
+        db, conversation_id
+    )
+    assert _transcript(store, session_id) == branch
+    assert _root_count(store, session_id) == 2
+    # The next send carries only the new branch, not the rewound-away rows.
+    assert (await controller.submit_draft("next")).accepted
+    sent = [
+        (message["role"], message["content"])
+        for message in gateway.requests[-1]
+        if message["role"] in {"user", "assistant"}
+    ]
+    assert sent == [*branch, ("user", "next")]
+    branch_ids = [
+        m.persisted_message_id for m in store.messages_for_session(session_id)
+    ]
+    assert len(branch_ids) == 4
+
+    scope = console_delete_scope(store, native["f1"])
+    deleted, _held = delete_subtree_for_undo(store, native["f1"])
+
+    assert scope.removed_count == deleted.count == 3
+    assert sorted(message_id for message_id, _version in deleted.tombstones) == [
+        "f1",
+        "f2",
+        "f3",
+    ]
+    assert _deleted(db, [*_FLAT_IDS, *branch_ids]) == [0, 1, 1, 1, 0, 0, 0, 0]
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _tree_ids(reopened, reopened_session) == {"f0", *branch_ids}
+    assert [m for m, _role in _visible(reopened, reopened_session)] == branch_ids
+
+
+def test_a_whole_record_metadata_rewrite_keeps_the_root_fork_marker():
+    """A writer that replaces a row's whole record does not erase the marker.
+
+    A realtime prompt is appended with its own record and later rewritten whole
+    when its transcript resolves. Appended at a before-first cursor it is a new
+    root-level branch, and losing the marker on that rewrite would chain it
+    into the flat rows on the next reopen.
+    """
+    import json
+
+    from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
+    from tldw_chatbook.Chat.message_metadata import MessageMetadata
+
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = _seed(db, _FLAT)
+    store, session_id, native = _open_store(db, conversation_id)
+    assert store.set_active_path_before(session_id, native["f0"])
+    spoken = store.append_message(
+        session_id,
+        role=ConsoleMessageRole.USER,
+        content="spoken",
+        persist=True,
+        metadata=MessageMetadata(engine="realtime", transcript_status="pending"),
+    )
+
+    store.set_message_metadata(
+        spoken.id, MessageMetadata(engine="realtime", transcript_status="final")
+    )
+
+    row = db.get_message_by_id(store.get_message(spoken.id).persisted_message_id)
+    assert row["parent_message_id"] is None
+    stored = json.loads(row["metadata_json"])
+    assert (stored["root_fork"], stored["transcript_status"]) == (True, "final")
+    reopened, reopened_session, _native = _open_store(db, conversation_id)
+    assert _root_count(reopened, reopened_session) == 2
+    assert [m for m, _role in _visible(reopened, reopened_session)] == [row["id"]]
+
+
+def test_a_receipt_row_saved_before_the_marker_still_proves_its_closed_turn():
+    """Rows written before the marker existed keep matching exact-JSON proofs.
+
+    The closed-turn proof accepts a receipt-only assistant row only when its
+    stored record equals ``to_json()`` of the receipt-only record. Rows saved by
+    older builds have no marker key, so an unmarked record must not add one.
+    """
+    from tldw_chatbook.Chat.console_trace_service import ConsoleTraceService
+
+    receipt_id = "0b9f0d4e-2f40-4f1c-9a47-3d1c2b7e6a51"
+    # A receipt-only record as builds before the marker stored it.
+    pre_marker = (
+        '{"canvas_cards": [], "character_emote": null, "engine": "", '
+        '"interrupted": false, "model": "", "origin": "", "provider": "", '
+        '"template_kind": "", "template_source": "", '
+        f'"terminal_receipt_id": "{receipt_id}", "transcript_status": ""}}'
+    )
+    db = CharactersRAGDB(":memory:", "flat-delete")
+    conversation_id = db.add_conversation({"title": "Closed turn"})
+    for message_id, role, parent, extra in [
+        ("u1", "user", None, {}),
+        (
+            "a1",
+            "assistant",
+            "u1",
+            {"assistant_generation_state": "discarded", "metadata_json": pre_marker},
+        ),
+        ("u2", "user", "a1", {}),
+    ]:
+        db.add_message(
+            {
+                "id": message_id,
+                "conversation_id": conversation_id,
+                "sender": role,
+                "role": role,
+                "content": f"{message_id} text",
+                "parent_message_id": parent,
+                **extra,
+            }
+        )
+    assert db.get_message_by_id("a1")["metadata_json"] == pre_marker
+
+    with db.transaction() as cursor:
+        owner = ConsoleTraceService._closed_turn_assistant(
+            cursor,
+            conversation_id=conversation_id,
+            previous_turn_id="u1",
+            current_turn_id="u2",
+            allow_failed=True,
+        )
+
+    assert owner == "a1"
+
+
 def test_the_root_fork_marker_survives_an_edit_and_keeps_other_metadata():
     """An in-place edit rewrites the row's metadata from the store's copy.
 
@@ -1135,38 +1294,68 @@ def test_flat_delete_and_undo_past_the_sqlite_variable_limit():
 def test_a_temporary_chat_with_an_edited_first_message_still_saves(fork_projection):
     """Saving a temporary chat keeps working after its first message is resent.
 
-    A forked chat's save stores fork-only facts (here the carried image's label)
-    in the same local column and refuses a row that also carries other
-    metadata, so a fork projection never marks a root fork. Its rows are all
-    parent-linked, so it holds no flat row to tell a fork from. An ordinary
-    temporary chat keeps the marker through the save.
+    Both root-fork paths are covered: an edit-and-resend sibling, and a prompt
+    appended after rewinding before the first message. A forked chat's save
+    stores fork-only facts (here the carried image's label) in the same local
+    column and refuses a row that also carries other metadata, so a fork
+    projection never marks a root fork. Its rows are all parent-linked, so it
+    holds no flat row to tell a fork from. An ordinary temporary chat keeps
+    the marker through the save.
     """
     import json
+    from io import BytesIO
+
+    from PIL import Image as PILImage
 
     from tldw_chatbook.Chat.console_chat_models import (
         ConsoleMessageRole,
         MessageAttachment,
     )
     from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 
     db = CharactersRAGDB(":memory:", "flat-delete")
     store = ConsoleChatStore(persistence=ChatPersistenceService(db))
-    session = store.create_session(title="Temporary", ephemeral=True)
-    session.fork_projection = fork_projection
-    image = (MessageAttachment(b"\x89PNG\r\n\x1a\n", "image/png", "chart.png", 0),)
+    session = store.create_session(
+        title="Temporary",
+        settings=ConsoleSessionSettings(provider="openai", model="gpt-test"),
+        ephemeral=True,
+    )
+    png = BytesIO()
+    PILImage.new("RGB", (2, 2), (0, 0, 0)).save(png, format="PNG")
+    image = (MessageAttachment(png.getvalue(), "image/png", "chart.png", 0),)
     user, assistant = ConsoleMessageRole.USER, ConsoleMessageRole.ASSISTANT
     first = store.append_message(
         session.id, role=user, content="first", attachments=image
     )
-    store.append_message(session.id, role=assistant, content="first reply")
+    reply = store.append_message(session.id, role=assistant, content="first reply")
+    if fork_projection:
+        # Fork that exchange into a temporary chat the way Fork builds one.
+        snapshot = store.stage_fork_snapshot(
+            store.issue_fork_fence(reply.id),
+            title="Temporary fork",
+            fork_session_id="temporary-fork",
+            fork_conversation_id=None,
+        )
+        session = store.register_fork_snapshot(snapshot, activate=False)
+        assert session.fork_projection
+        first = store.get_message(snapshot.messages[0].native_message_id)
     edited = store.create_sibling(
         first.id, role=user, content="edited", attachments=image
     )
     store.append_message(session.id, role=assistant, content="edited reply")
+    # A prompt sent after rewinding before the first message is a root fork too.
+    assert store.set_active_path_before(session.id, first.id)
+    again = store.append_message(
+        session.id, role=user, content="again", attachments=image
+    )
+    store.append_message(session.id, role=assistant, content="again reply")
 
     assert store.promote_ephemeral_session(session.id) is not None
 
-    row = db.get_message_by_id(store.get_message(edited.id).persisted_message_id)
-    assert row["parent_message_id"] is None
-    marker = json.loads(row["metadata_json"] or "{}").get("root_fork", False)
-    assert marker is (not fork_projection)
+    # The chat's first prompt had no root beside it, so it is never marked.
+    for message, marked in ((first, False), (edited, True), (again, True)):
+        row = db.get_message_by_id(store.get_message(message.id).persisted_message_id)
+        assert row["parent_message_id"] is None
+        marker = json.loads(row["metadata_json"] or "{}").get("root_fork", False)
+        assert marker is (marked and not fork_projection)

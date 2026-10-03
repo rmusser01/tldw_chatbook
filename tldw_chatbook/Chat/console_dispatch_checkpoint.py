@@ -195,6 +195,10 @@ class ConsoleDurableTurnAcceptance:
     reconstructability: ConsoleDispatchReconstructability
     contributions: tuple[ConsoleTransactionContribution, ...]
     continuation_receipt: ContinuationReceipt | None = None
+    #: The USER row is a new root-level branch beside an existing root; it is
+    #: saved with ``MessageMetadata(root_fork=True)`` (see
+    #: ``console_legacy_flat_roots``). Valid only with no parent.
+    user_root_fork: bool = False
 
 
 @dataclass(frozen=True, slots=True)

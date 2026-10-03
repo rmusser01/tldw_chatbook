@@ -599,6 +599,48 @@ def test_acceptance_requires_the_checkpoint_and_frozen_authority_attempt_to_matc
     assert db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 0
 
 
+def test_a_root_fork_prompt_is_saved_marked_and_refused_with_a_parent(
+    tmp_path: Path,
+) -> None:
+    """A prompt sent at a before-first cursor is saved with the root-fork marker.
+
+    The marker names a parentless branch beside existing roots, so an acceptance
+    that claims it with a parent is invalid and writes nothing.
+    """
+    db, conversation_id = _db_and_conversation(tmp_path / "root-fork.sqlite")
+    repository = ConsoleDispatchRepository(db)
+    earlier = db.add_message(
+        {
+            "conversation_id": conversation_id,
+            "sender": "assistant",
+            "role": "assistant",
+            "content": "earlier",
+        }
+    )
+    marked = replace(_acceptance(conversation_id), user_root_fork=True)
+
+    # A live parent in the same conversation: only the marker makes this invalid.
+    with pytest.raises(
+        ConsoleDispatchCheckpointValidationError,
+        match="Invalid durable turn acceptance",
+    ):
+        _insert(db, repository, replace(marked, parent_message_id=earlier))
+    count = db.get_connection().execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+    assert count == 1
+
+    _insert(db, repository, marked)
+    other_conversation = db.add_conversation({"title": "unmarked"})
+    _insert(db, repository, _acceptance(other_conversation, suffix="2"))
+
+    rows = dict(
+        db.get_connection()
+        .execute("SELECT id, metadata_json FROM messages WHERE role = 'user'")
+        .fetchall()
+    )
+    assert json.loads(rows["user-1"])["root_fork"] is True
+    assert rows["user-2"] is None
+
+
 @pytest.mark.parametrize(
     "corruption",
     ["preparation_id", "attempt_id", "authority_attempt", "assistant_message_id"],
