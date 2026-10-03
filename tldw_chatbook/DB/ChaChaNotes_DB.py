@@ -12392,7 +12392,7 @@ UPDATE db_schema_version
         now = self._get_current_utc_timestamp_iso()
 
         try:
-            with self.transaction() as conn:
+            with self.transaction(immediate=True) as conn:
                 current_state = conn.execute(
                     """
                     SELECT rowid, title, version, deleted, character_id, assistant_kind, assistant_id,

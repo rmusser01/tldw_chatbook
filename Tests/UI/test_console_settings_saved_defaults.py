@@ -12,7 +12,8 @@ under the production stylesheets and drives it with real keys.
 from __future__ import annotations
 
 import pytest
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Input, Select, Static
+from textual.widgets._select import SelectOverlay
 
 from Tests.UI.test_console_settings_core_first import (
     CoreFirstHarness,
@@ -102,11 +103,17 @@ async def test_title_names_the_chat_and_counts_its_unsaved_edits() -> None:
 async def test_footer_offers_the_four_actions_in_order(size) -> None:
     """AC#2: the Esc hint, then Use saved defaults, Save as model default,
     Default for new chats (Ctrl+N) and Apply to this chat (Ctrl+Enter), on
-    one painted row; Cancel is the Context view's, not the Model view's."""
+    one painted row; Cancel is the Context view's, not the Model view's.
+
+    Plan ruling R14, pinned here because TASK-33006.6 lands after this task:
+    the Context view keeps its own scope copy and offers no defaults action
+    (its defaults line: ``test_context_view_paints_no_defaults_line``)."""
     app = CoreFirstHarness()
     modal = pick_modal(app, _settings(**EDITED))
     async with app.run_test(size=size) as pilot:
         await _open(pilot, app, modal)
+        default_scope = modal.query_one("#console-settings-default-scope", Static)
+        assert default_scope.display and str(default_scope.content)
         apply = modal.query_one("#console-settings-save", Button)
         row = _painted(app.screen)[apply.region.y]
         labels = (
@@ -124,7 +131,46 @@ async def test_footer_offers_the_four_actions_in_order(size) -> None:
         modal.query_one("#console-settings-view-context", Button).press()
         await settle(pilot, app)
         assert modal.query_one("#console-settings-cancel", Button).display
-        assert not modal.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display
+        for action in (
+            USE_SAVED_DEFAULTS_ID,
+            "console-settings-save-default",
+            "console-settings-make-default",
+        ):
+            assert not modal.query_one(f"#{action}", Button).display, action
+        assert str(modal.query_one("#console-settings-scope", Static).content) == (
+            "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
+        )
+
+
+class StaleDefaultsLine(Exception):
+    """The known TASK-33006.6 AC#2 defect, raised only where it shows."""
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=StaleDefaultsLine,
+    reason=(
+        "TASK-33006.6 AC#2: switching to the Context view leaves the defaults "
+        "line painted. This task landed before TASK-33006.6 (plan R2/R14); "
+        "that task fixes it and removes this marker."
+    ),
+)
+@pytest.mark.asyncio
+async def test_context_view_paints_no_defaults_line() -> None:
+    """R14: the defaults-scope line shows only beside a defaults action; the
+    Context view offers none, so it must not paint the line."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(**EDITED))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        default_scope = modal.query_one("#console-settings-default-scope", Static)
+        line = str(default_scope.content)
+        assert default_scope.display and line  # beside Save as model default
+        modal.query_one("#console-settings-view-context", Button).press()
+        await settle(pilot, app)
+        assert not modal.query_one("#console-settings-save-default", Button).display
+        if any(line in row for row in _painted(app.screen)):
+            raise StaleDefaultsLine(line)
 
 
 @pytest.mark.parametrize(
@@ -160,6 +206,30 @@ async def test_every_advertised_key_works_from_a_field(key, action, mask) -> Non
         submission = results[0].submission
         assert submission.action is action
         assert submission.default_field_mask == mask
+
+
+@pytest.mark.asyncio
+async def test_ctrl_n_works_inside_an_open_select_dropdown() -> None:
+    """AC#2: the open dropdown (Textual's SelectOverlay) binds no Ctrl+N and
+    types only printable keys, so Ctrl+N reaches the modal. The highlighted
+    option is not a choice, so the submission keeps the committed value."""
+    app = CoreFirstHarness()
+    results: list = []
+    modal = pick_modal(app, _settings(**EDITED))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal, results)
+        streaming = modal.query_one("#console-settings-streaming", Select)
+        committed = streaming.value
+        streaming.focus()
+        await pilot.press("enter", "down")
+        await pilot.pause()
+        assert streaming.expanded and isinstance(app.focused, SelectOverlay)
+        await pilot.press("ctrl+n")
+        await settle(pilot, app)
+        assert len(results) == 1, results
+        submission = results[0].submission
+        assert submission.action is ConsoleSettingsAction.MAKE_NEW_CHAT_DEFAULT
+        assert streaming.value == committed
 
 
 @pytest.mark.asyncio
