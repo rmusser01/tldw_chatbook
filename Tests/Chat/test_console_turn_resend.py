@@ -20,7 +20,6 @@ from Tests.Chat.test_console_dispatch_recovery import (
     _acceptance,
     _database,
     _insert,
-    _restored_store,
 )
 from tldw_chatbook.Chat import console_chat_controller as controller_module
 from tldw_chatbook.Chat.attachment_core import PendingAttachment
@@ -414,17 +413,9 @@ async def test_resend_after_a_discarded_dispatch_recovery(
     db, conversation_id, repository = _database(tmp_path / "discard.sqlite")
     databases.append(db)
     _insert(db, repository, _acceptance(conversation_id))
-    # The recovery card's own suite restores with native ids equal to the
-    # persisted ids; a hydrated relaunch cannot claim the card (see report).
-    store, session_id = _restored_store(db, conversation_id)
-    gateway = _Gateway("ok")
-    console = SimpleNamespace(
-        db=db,
-        store=store,
-        session_id=session_id,
-        gateway=gateway,
-        controller=_controller(store, gateway),
-    )
+    # TASK-33662: restored through the production hydration (fresh native
+    # ids), not ``_restored_store``, whose native ids equal the persisted ids.
+    console = _restore(db, conversation_id)
     assert resend_target_id(_path(console)) is None
     discarded = await console.controller.discard_dispatch_recovery(console.session_id)
     assert discarded.accepted, discarded.visible_copy

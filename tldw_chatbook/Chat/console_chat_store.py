@@ -3434,9 +3434,9 @@ class ConsoleChatStore:
             )
             if action is None or not action.enabled:
                 return None
-            try:
-                message = self._message_or_raise(current.assistant_message_id)
-            except KeyError:
+            nodes = self._nodes_by_session.get(session_id, {})  # own tree: TASK-33662
+            message = nodes.get(current.assistant_message_id)
+            if message is None:
                 return None
             self._dispatch_recovery_message_baselines[session_id] = self._snapshot(
                 message
@@ -13738,19 +13738,6 @@ class ConsoleChatStore:
                 type(exc).__name__,
             )
 
-    def _persist_message_projection(self, message: ConsoleChatMessage) -> bool:
-        if self.persistence is None or message.persisted_message_id is None:
-            return True
-        try:
-            return self._persist_existing_message(message)
-        except Exception as exc:
-            logger.warning(
-                "Failed to persist Console roleplay message projection "
-                "(error_type={}).",
-                type(exc).__name__,
-            )
-            return False
-
     def _persist_session_system_prompt(
         self, session: ConsoleChatSession, system_prompt: str | None
     ) -> bool:
@@ -21846,12 +21833,25 @@ class ConsoleChatStore:
         ``all_nodes`` -- resume re-derives them from ``AgentRunsDB`` and overlays
         them onto the view afterward -- but any that slip in are registered in
         the session index only, mirroring ``_ingest_linear_messages``.
+
+        TASK-33662: a dispatch recovery names its owner rows by persisted id,
+        which a live turn's native ids equal. A restored owner keeps that id as
+        its native id (unless another session holds it), or Retry and Discard
+        cannot find it after a relaunch.
         """
+        recovery = self.dispatch_recovery_for_session(session_id)
+        owner_ids = {
+            getattr(recovery, "assistant_message_id", None),
+            getattr(getattr(recovery, "checkpoint", None), "user_message_id", None),
+        } - self._message_session_index.keys() - {None, ""}
         registered: list[ConsoleChatMessage] = []
         persisted_to_native: dict[str, str] = {}
         for node in all_nodes:
             restored = replace(
                 node,
+                id=node.persisted_message_id
+                if node.persisted_message_id in owner_ids
+                else node.id,
                 citation_presentation=None,
                 activity_presentation=None,
                 raw_cli_presentation=None,

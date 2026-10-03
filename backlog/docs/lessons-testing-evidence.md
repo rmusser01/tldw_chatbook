@@ -169,6 +169,35 @@ shared failure's message as well as its name, at least for tests in the code the
 change touched. A test that already fails at base shields every new reason it
 could fail for.
 
+## A restore helper that reuses persisted ids as native ids hides relaunch bugs
+
+**TASK-33662, 2026-10-02.** After a real relaunch, the dispatch-recovery card's
+Retry and Discard both refused with "That response recovery action is
+unavailable." The recovery names its owner rows by persisted id. The
+production hydration (`console_messages_from_conversation_tree` →
+`_ingest_full_tree`) gives every restored node a fresh native id, so the
+store's lookup missed. The recovery suite never saw it: its `_restored_store`
+helper hand-builds nodes with `id=row["id"]`, so native id equals persisted
+id. 38 call sites in 11 files use that helper, and
+`test_console_thinking_persistence.py` has its own copy (25 more). A live turn
+has the same equality, which is why every in-session test passed. The same miss
+also left a restored provider-continuation owner unnormalized, with its actions
+disabled.
+
+The fix restored the equality for the owner rows. That exposed a second shape
+no test had: a second open of the same chat (fresh ids, same store) could
+claim the FIRST session's node through the store-wide message index. The
+claim now looks only in its own session's tree.
+
+**What to do.**
+- A test of anything that survives a restart restores through the production
+  hydration (`hydrate_console_session`, or `console_messages_from_conversation_tree`
+  plus `restore_persisted_session`). Assert once that a restored node's id
+  differs from its persisted id, so the test cannot quietly fall back to the
+  shortcut.
+- When a fix makes an id resolvable store-wide, test a second session holding
+  the same conversation.
+
 ## A CI-only pilot failure can be a product race that only a slow runner hits
 
 **TASK-33661, PR #2956, 2026-10-02.** Two real-send Console pilots failed in the

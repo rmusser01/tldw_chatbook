@@ -80,11 +80,16 @@ decision; it does not mean a model is still running. The composer says **Send
 blocked — resolve response recovery first**.
 
 Use the recovery controls above the composer. **Retry anyway** may send a
-duplicate request because the previous delivery cannot be confirmed. **Discard**
-keeps your user message and settles the interrupted response without replaying
-the request. A failed recovery leaves the available controls usable so you can
-address the reported problem and try again or discard. Once recovery settles,
-the composer clears this blocker.
+duplicate request because the previous delivery cannot be confirmed. (If the
+request was accepted but never sent, the card reads **Response accepted;
+waiting for dispatch.** and offers **Retry response** instead.) A retry streams
+the reply into the same pending response. **Discard** keeps your user message
+and settles the interrupted response without replaying the request. A failed
+recovery leaves the available controls usable so you can address the reported
+problem and try again or discard. Once recovery settles, the composer clears
+this blocker. After **Discard**, your user message offers **Resend** to ask
+again without forking, including after you reopen the conversation — see
+[Resend a broken turn](#resend-a-broken-turn).
 
 ### Collapsed rail labels
 
