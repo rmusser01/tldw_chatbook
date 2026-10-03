@@ -161,7 +161,7 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/UI/Library_Modules/library_collections_saved_search_controller.py": 49,
     # TASK-33628.10: 976 -> 964. The ensure-selection decision moved to
     # library_conversation_reader_freshness.py with its new transcript re-check.
-    # 964 -> 967 (Qodo #2989): a completed load calls that module's
+    # 964 -> 967 (2026-10-03, Qodo #2989): a completed load calls that module's
     # recheck_settled_load, so a load a list read found in flight is re-checked.
     "tldw_chatbook/UI/Library_Modules/library_conversation_reader_controller.py": 967,
     "tldw_chatbook/UI/Library_Modules/library_conversations_controller.py": 1800,
