@@ -34,7 +34,6 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from rich.cells import cell_len, set_cell_size
-from textual import events
 from textual.app import RenderResult
 from textual.containers import Horizontal
 from textual.content import Content
@@ -62,7 +61,10 @@ from tldw_chatbook.Chat.console_session_settings import (
     resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
+from tldw_chatbook.Chat.provider_readiness import (
+    get_provider_readiness,
+    provider_config_key,
+)
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from .console_model_popover import context_copy
@@ -1016,17 +1018,17 @@ class ConsoleSettingsFieldRowsMixin:
         """
         self._focus_change()
 
-    def on_descendant_focus(self, event: events.DescendantFocus) -> None:
+    def _open_disclosure_holding(self, widget: Widget) -> None:
         """Open a closed disclosure when focus lands inside it.
 
         Tab never enters one (its contents are hidden), but a restored, a
         recovery or a programmatic target can; its own title can too, and
-        that keeps the disclosure closed.
+        that keeps the disclosure closed. The modal's one focus handler calls
+        this before its focus bookkeeping and reveal.
 
         Args:
-            event: The focus event bubbling from the focused descendant.
+            widget: The newly focused descendant.
         """
-        widget = event.widget
         for ancestor in widget.ancestors:
             if (
                 isinstance(ancestor, Collapsible)

@@ -15,13 +15,13 @@ from textual.widgets import Button, Collapsible, Input
 from textual.worker import WorkerCancelled
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from Tests.UI.test_console_provider_apply_defaults_flow import (  # noqa: F401
     _ConsoleFlowHarness,
     _drain_settings_tasks,
     _reset_default_intent_state,
 )
 from Tests.UI.test_destination_shells import _wait_for_selector
-from Tests.UI.app_factory import _build_test_app, attach_chachanotes_db
 from tldw_chatbook.Chat.console_chat_models import ConsoleMessageRole
 from tldw_chatbook.Chat.console_provider_support import supported_generation_fields
 from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
@@ -255,3 +255,87 @@ async def test_saved_model_defaults_reach_a_chat_with_work_only_through_apply(
         durable = snapshot()
         assert (durable.provider, durable.model) == ("llama_cpp", "model-a")
         assert (durable.temperature, durable.max_tokens) == (pytest.approx(0.25), 777)
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_a_blank_top_p_applies_summarises_and_sends(
+    request, tmp_path, monkeypatch
+) -> None:
+    """Qodo #2992: Custom OpenAI 2 does not accept Top P, so Use saved defaults
+    stages it blank and Apply commits it blank. Apply used to crash in the
+    settings summary's float(); the summary now shows the field rows' Source
+    word for the blank, Chat settings reopens on it, and a send carries no
+    Top P."""
+    from tldw_chatbook.Chat.Chat_Functions import API_CALL_HANDLERS
+    from tldw_chatbook.Chat.console_session_settings import (
+        CONSOLE_VALUE_SOURCE_WORDS,
+        ConsoleValueLayer,
+    )
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.Widgets.Console import ConsoleComposerBar
+
+    pair = {"provider": "custom_2", "model": "model-a"}
+    app = _console_app(
+        chat_defaults={**pair, "temperature": 0.3},
+        **{"api_settings.custom_2": {"api_url": "http://127.0.0.1:9101/v1"}},
+    )
+    app.chat_api_provider_value, app.chat_api_model_value = pair.values()
+    app.providers_models = {"custom_2": ["model-a"]}
+    # File-backed: the send commits its trace from a worker thread.
+    app.chachanotes_db = CharactersRAGDB(tmp_path / "chachanotes.db", "test-client")
+    request.addfinalizer(app.chachanotes_db.close)
+    captured: list[dict] = []
+    monkeypatch.setitem(
+        API_CALL_HANDLERS,
+        "custom-openai-api-2",
+        lambda **kwargs: captured.append(kwargs) or "reply",
+    )
+    harness = _ConsoleFlowHarness(app)
+    async with harness.run_test(size=(211, 44)) as pilot:
+        console = harness.screen_stack[-1]
+        await _wait_for_selector(console, pilot, "#console-settings-summary")
+        store = console._ensure_console_chat_store()
+        session_id = store.active_session_id
+        work = ConsoleSessionSettings(**pair, top_p=0.5, source="user")
+        store.replace_session_settings(session_id, work)
+        assert "top_p" not in supported_generation_fields(*pair.values(), app.app_config)
+
+        modal = await _use_saved_defaults(harness, pilot)
+        assert modal._build_draft().top_p is None
+        await pilot.press("ctrl+enter")
+        for _ in range(3):
+            await pilot.pause()
+        assert harness.screen is console
+        await _drain_settings_tasks(app)
+        await _settle(harness, pilot)
+
+        applied = store.session_settings(session_id)
+        assert (applied.top_p, applied.temperature) == (None, pytest.approx(0.3))
+        word = CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
+        summary = console._build_console_settings_summary_state()
+        assert f"P {word}" in summary.sampling_row, summary.sampling_row
+
+        await pilot.press("ctrl+o")  # Chat settings reopens on the blank
+        for _ in range(4):
+            await pilot.pause()
+        reopened = harness.screen
+        assert isinstance(reopened, ConsoleSettingsModal)
+        assert reopened.query_one("#console-settings-top-p", Input).value == ""
+        await pilot.press("escape")
+        for _ in range(3):
+            await pilot.pause()
+        assert harness.screen is console
+
+        composer = console.query_one("#console-native-composer", ConsoleComposerBar)
+        composer.load_draft("hello")
+        await pilot.pause(0.1)
+        console.query_one("#console-send-message", Button).press()
+        for _ in range(200):
+            if captured:
+                break
+            await pilot.pause(0.05)
+
+    assert captured, "the Custom OpenAI 2 handler was never called"
+    assert not {"topp", "top_p"} & set(captured[-1]), sorted(captured[-1])
+    assert captured[-1]["temp"] == pytest.approx(0.3)

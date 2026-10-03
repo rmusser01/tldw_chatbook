@@ -3244,7 +3244,17 @@ def normalize_console_model_value(value: object) -> str | None:
     return text
 
 
-def _format_summary_float(value: float) -> str:
+def _format_summary_float(value: float | None) -> str:
+    """Format a sampler for the summary; blank means the provider decides.
+
+    Args:
+        value: The sampler, None when the provider does not accept it.
+
+    Returns:
+        Two decimals, or the field rows' Source word for a blank row.
+    """
+    if value is None:
+        return CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.PROVIDER_SCALARS]
     return f"{float(value):.2f}"
 
 

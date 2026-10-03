@@ -457,3 +457,69 @@ async def test_settings_pointers_advertise_the_settings_key() -> None:
         assert "F4 Settings" in tooltip and "F9" not in tooltip
         assert "F4 Settings" in BASE_URL_ENTRY_HINT_COPY
         assert "F9" not in BASE_URL_ENTRY_HINT_COPY
+
+
+async def _focus_settled(pilot) -> None:
+    await pilot.pause(0.2)  # the modal's focus reveal settles on a timer
+    for _ in range(3):
+        await pilot.pause()
+
+
+@pytest.mark.asyncio
+async def test_tab_reveals_a_field_the_scrolled_view_hides_and_remembers_it() -> None:
+    """Qodo #2992: the field rows' disclosure opening and the modal's focus
+    bookkeeping both answer DescendantFocus. Tab from Temperature with the
+    body scrolled to its end still scrolls Max tokens into view, and an
+    action button taking focus afterwards leaves Max tokens as the control a
+    Configure-credential return restores."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        for disclosure_id in (SAMPLING_DISCLOSURE_ID, CONNECTION_DISCLOSURE_ID):
+            modal.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+        temperature = modal.query_one(f"#{field_control_id('temperature')}", Input)
+        temperature.focus()
+        await _focus_settled(pilot)
+        body = modal.query_one("#console-settings-body")
+        body.scroll_end(animate=False, immediate=True)
+        await _focus_settled(pilot)
+        max_tokens = modal.query_one(f"#{field_control_id('max_tokens')}", Input)
+        assert not body.content_region.contains_region(max_tokens.region)
+
+        await pilot.press("tab")
+        await _focus_settled(pilot)
+
+        assert app.focused is max_tokens
+        assert body.content_region.contains_region(max_tokens.region), (
+            max_tokens.region,
+            body.content_region,
+        )
+        modal.query_one("#console-settings-save", Button).focus()
+        await _focus_settled(pilot)
+        assert modal.capture_suspended_draft().focus_control_id == max_tokens.id
+
+
+@pytest.mark.asyncio
+async def test_focus_inside_a_closed_disclosure_opens_it_and_reveals_the_field() -> None:
+    """Qodo #2992: a programmatic focus (a restored or recovery target) on a
+    field inside the closed Sampling disclosure opens it, and the same focus
+    event scrolls the field into view."""
+    app = CoreFirstHarness()
+    modal = _modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        sampling = modal.query_one(f"#{SAMPLING_DISCLOSURE_ID}", Collapsible)
+        assert sampling.collapsed is True
+        seed = modal.query_one(f"#{field_control_id('seed')}", Input)
+
+        seed.focus()
+        await _focus_settled(pilot)
+
+        assert sampling.collapsed is False
+        assert app.focused is seed
+        body = modal.query_one("#console-settings-body")
+        assert body.content_region.contains_region(seed.region), (
+            seed.region,
+            body.content_region,
+        )
