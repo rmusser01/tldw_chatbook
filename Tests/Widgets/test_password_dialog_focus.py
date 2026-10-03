@@ -149,3 +149,39 @@ async def test_show_password_reveals_every_field_in_change_mode() -> None:
         dialog.query_one("#show-password-toggle", StateCheckbox).value = True
         await pilot.pause(0.05)
         assert not any(field.password for field in fields)
+
+
+def _post_burst(app: App, text: str) -> None:
+    """Queue every key at once, the way auto-type (a password manager, or a
+    pasted burst over tmux) delivers them -- no pause for the app to settle
+    between keys, unlike ``pilot.press``."""
+    from textual import events
+
+    for char in text:
+        if char == "\t":
+            app.post_message(events.Key("tab", None))
+        else:
+            app.post_message(events.Key(char, char))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["setup", "change"])
+async def test_a_burst_of_keys_with_tabs_fills_each_field(mode) -> None:
+    # Review round 2 (F-R2-5): 'current<Tab>new<Tab>new' arriving as one
+    # burst dropped the second Tab, so both copies of the new password landed
+    # in the New field and submit said "Passwords do not match". Tab is a
+    # non-priority binding: the App forwards the next keys to the OLD focus
+    # before the Tab, queued behind them, bubbles back and moves focus.
+    app = _Host(mode)
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.1)
+        dialog = app.screen
+        assert isinstance(dialog, PasswordDialog)
+        prefix = "currentpw\t" if mode == "change" else ""
+        _post_burst(app, prefix + "newpassword\tnewpassword")
+        await pilot.pause(0.5)
+        if mode == "change":
+            current = dialog.query_one("#current-password-input", Input)
+            assert current.value == "currentpw"
+        assert dialog.query_one("#password-input", Input).value == "newpassword"
+        assert dialog.query_one("#confirm-input", Input).value == "newpassword"

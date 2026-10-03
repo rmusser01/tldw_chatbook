@@ -49,7 +49,24 @@ class PasswordDialog(ModalScreen):
 
     # TASK-21141 (UAT K-2): keyboard users need a way out. Escape follows
     # the same path as the Cancel button.
-    BINDINGS = [Binding("escape", "cancel_dialog", "Cancel", show=False)]
+    # TASK-34100.4 review round 2 (F-R2-5): Tab and Shift+Tab are PRIORITY
+    # bindings here. Textual's own Tab is a non-priority Screen binding: the
+    # App forwards each key to the focused field first, so in a burst
+    # ('current<Tab>new<Tab>new' from a password manager's auto-type) the
+    # keys after a Tab reached the OLD field before the Tab moved focus, and
+    # submit reported "Passwords do not match". A priority binding moves
+    # focus before the next key is forwarded.
+    BINDINGS = [
+        Binding("escape", "cancel_dialog", "Cancel", show=False),
+        Binding("tab", "app.focus_next", "Next field", show=False, priority=True),
+        Binding(
+            "shift+tab",
+            "app.focus_previous",
+            "Previous field",
+            show=False,
+            priority=True,
+        ),
+    ]
 
     # TASK-34100.4 (protect-summary-05): the first password field takes focus
     # on open, so typing without Tab fills it. Without this, App.AUTO_FOCUS
