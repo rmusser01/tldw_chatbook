@@ -370,6 +370,73 @@ def test_reset_strips_every_encrypted_value_and_the_encryption_table(cfg, config
     assert cfg.get_encryption_password() is None
 
 
+def test_rekey_adopts_an_earlier_password_that_reads_every_key(cfg, config_path):
+    # Review round 2 (R2-F5): in the stranded state (verifier for B, keys
+    # under A) the user who remembers A could only reset -- deleting keys A
+    # still reads. A password that strict-decrypts every saved value becomes
+    # the master password again; the old verifier (B) stops working.
+    config_path.write_text(toml.dumps(_stranded_document()))
+
+    assert cfg.rekey_encryption_verifier(PASSWORD_A) is True
+
+    document = tomllib.loads(config_path.read_text())
+    engine = ConfigEncryption()
+    verifier = document["encryption"]["password_verifier"]
+    assert engine.verify_password(PASSWORD_A, verifier) is True
+    assert engine.verify_password(PASSWORD_B, verifier) is False
+    decrypted = engine.decrypt_config_strict(document, PASSWORD_A)
+    assert decrypted["api_settings"]["openai"]["api_key"] == PLAINTEXT_KEY
+    assert document["encryption"]["enabled"] is True
+    assert cfg.get_encryption_password() == PASSWORD_A
+
+
+def test_rekey_repairs_a_missing_verifier(cfg, config_path):
+    document = _stranded_document()
+    del document["encryption"]["password_verifier"]
+    config_path.write_text(toml.dumps(document))
+
+    assert cfg.rekey_encryption_verifier(PASSWORD_A) is True
+
+    verifier = tomllib.loads(config_path.read_text())["encryption"][
+        "password_verifier"
+    ]
+    assert ConfigEncryption().verify_password(PASSWORD_A, verifier) is True
+
+
+@pytest.mark.parametrize("password", [PASSWORD_B, "not-any-password"])
+def test_rekey_refuses_a_password_that_cannot_read_the_keys(
+    cfg, config_path, password
+):
+    config_path.write_text(toml.dumps(_stranded_document()))
+    before = config_path.read_bytes()
+
+    assert cfg.rekey_encryption_verifier(password) is False
+
+    assert config_path.read_bytes() == before
+    assert cfg.get_encryption_password() is None
+
+
+def test_rekey_refuses_when_nothing_is_encrypted(cfg, config_path):
+    # With no encrypted value every password "reads every key"; adopting one
+    # would let any guess replace the verifier.
+    document = _stranded_document()
+    document["api_settings"]["openai"]["api_key"] = ""
+    config_path.write_text(toml.dumps(document))
+    before = config_path.read_bytes()
+
+    assert cfg.rekey_encryption_verifier("any-guess-at-all") is False
+
+    assert config_path.read_bytes() == before
+
+
+def test_rekey_refuses_when_encryption_is_off(cfg, config_path):
+    before = config_path.read_bytes()
+
+    assert cfg.rekey_encryption_verifier(PASSWORD_A) is False
+
+    assert config_path.read_bytes() == before
+
+
 @pytest.mark.parametrize(
     "value",
     [

@@ -17,6 +17,9 @@ from pathlib import Path
 #: reasons. ``startup_unlock`` maps them; they never reach ``minimal_recovery``.
 UNLOCK_QUIT_REASON = "configuration_unlock_quit"
 UNLOCK_RESET_REASON = "configuration_unlock_reset"
+#: The typed password fails the verifier (or there is none) but reads every
+#: saved key: adopt it and repair the verifier (review round 2, R2-F5).
+UNLOCK_REKEY_REASON = "configuration_unlock_rekey"
 #: Recovery reasons with their own plain sentence (review round 1): a served
 #: (browser) child cannot prompt, and "no private terminal" is no longer the
 #: copy for every unexpected unlock failure.
@@ -37,12 +40,27 @@ UNLOCK_MISMATCH = "That password didn't match. Try again."
 #: user typed the RIGHT password; only a reset gets them past it.
 UNLOCK_STRANDED = (
     "That password is right, but some saved keys were encrypted with a "
-    "different password and can't be read with it. Leave the prompt empty "
-    "to reset the saved keys."
+    "different password and can't be read with it. If you set an earlier "
+    "master password, enter that one; otherwise leave the prompt empty to "
+    "reset the saved keys."
 )
 UNLOCK_VERIFIER_MISSING = (
     "config.toml says its API keys are encrypted, but the check for the "
-    "master password is missing, so they can't be unlocked."
+    "master password is missing."
+)
+#: Encrypted keys exist, so the password that encrypted them still reads
+#: them: ask for it instead of offering only the reset (R2-F5).
+UNLOCK_VERIFIER_MISSING_ASK = (
+    UNLOCK_VERIFIER_MISSING + " Enter your master password to unlock the "
+    "keys and repair the check, or leave the prompt empty to reset them."
+)
+UNLOCK_REKEYED = (
+    "That password reads every saved key, so it is your master password "
+    "again. Use it each time chatbook starts."
+)
+UNLOCK_REKEY_FAILED = (
+    "Repairing the master-password check failed; config.toml was left as it "
+    "was."
 )
 UNLOCK_RESET_EXPLAINED = (
     "Resetting removes the encrypted API keys from config.toml and turns "
@@ -103,11 +121,13 @@ _UNLOCK_RECOVERY_COPY = {
         "available. Quit, then relaunch chatbook from a terminal window to "
         "enter it."
     ),
+    # Reached only when nothing is encrypted (encrypted keys ask for the
+    # password instead, which needs a private terminal of its own).
     "configuration_unlock_unavailable": (
-        "config.toml says its API keys are encrypted, but the check for its "
-        "master password is missing, so they cannot be unlocked. Quit, then "
-        "relaunch chatbook from a terminal window: it offers to reset the "
-        "saved keys. Chats, notes and documents are not affected."
+        "config.toml says encryption is on, but the check for its master "
+        "password is missing. Quit, then relaunch chatbook from a terminal "
+        "window: it offers a reset that turns encryption off. Chats, notes "
+        "and documents are not affected."
     ),
     UNLOCK_SERVED_REASON: (
         "This browser session can't ask for the master password, so the "
@@ -239,9 +259,18 @@ def startup_preflight() -> tuple[str | None, str | None]:
             return UNLOCK_SERVED_REASON, None
         verifier = encryption.get("password_verifier")
         if not isinstance(verifier, str) or not verifier:
-            # No password can unlock this file, but the reset needs none:
-            # offer it where someone can answer (review round 1; the old copy
-            # sent the user to hand-edit config.toml).
+            if _has_saved_ciphertext(document):
+                # The password that encrypted the keys still reads them:
+                # ask for it, and repair the check (review round 2, R2-F5).
+                return _unlock_interactively(
+                    ConfigEncryption(),
+                    document,
+                    None,
+                    intro=UNLOCK_VERIFIER_MISSING_ASK,
+                )
+            # Nothing is encrypted, so no password matters and the reset
+            # loses nothing: offer it where someone can answer (review round
+            # 1; the old copy sent the user to hand-edit config.toml).
             if not _can_answer():
                 return "configuration_unlock_unavailable", None
             _say(UNLOCK_VERIFIER_MISSING)
@@ -268,7 +297,9 @@ def startup_preflight() -> tuple[str | None, str | None]:
         return reason, None
 
 
-def _unlock_interactively(engine, document, verifier) -> tuple[str | None, str | None]:
+def _unlock_interactively(
+    engine, document, verifier: str | None, *, intro: str = UNLOCK_INTRO
+) -> tuple[str | None, str | None]:
     """Ask until the master password strict-decrypts, or the user gives up.
 
     TASK-34100.4 (protect-summary-02): a wrong password re-prompts in place
@@ -276,14 +307,22 @@ def _unlock_interactively(engine, document, verifier) -> tuple[str | None, str |
     and offers a reset or quit. There is no attempt cap: this guards a local
     file, and each try already costs an scrypt derivation.
 
+    Args:
+        engine: The ConfigEncryption engine.
+        document: The parsed config.toml.
+        verifier: The saved password verifier, or None when it is missing.
+        intro: The sentence shown before the first prompt.
+
     Returns:
-        ``(None, password)`` once every saved value decrypts, or
+        ``(None, password)`` once every saved value decrypts;
+        ``(UNLOCK_REKEY_REASON, password)`` when the password fails the
+        verifier (or there is none) but reads every saved key; or
         ``(UNLOCK_RESET_REASON | UNLOCK_QUIT_REASON, None)``.
 
     Raises:
         ValueError: No private terminal is available to ask for the password.
     """
-    _say(UNLOCK_INTRO)
+    _say(intro)
     while True:
         try:
             password = _secret(UNLOCK_PROMPT)
@@ -294,15 +333,61 @@ def _unlock_interactively(engine, document, verifier) -> tuple[str | None, str |
             return _give_up_choice(), None
         try:
             # Ctrl+C after Enter lands here, while scrypt runs: still a quit.
-            verified = engine.verify_password(password, verifier)
-            readable = verified and _decrypts(engine, document, password)
+            outcome = _check_password(engine, document, verifier, password)
         except (EOFError, KeyboardInterrupt):
             _say("")
             return UNLOCK_QUIT_REASON, None
-        if readable:
-            return None, password
+        if outcome is None or outcome == UNLOCK_REKEY_REASON:
+            return outcome, password
         password = None
-        _say(UNLOCK_STRANDED if verified else UNLOCK_MISMATCH)
+        _say(outcome)
+
+
+def _check_password(engine, document, verifier, password: str) -> str | None:
+    """None to unlock, UNLOCK_REKEY_REASON to adopt, else what to tell the user.
+
+    A password that fails the verifier is still tried against the saved keys
+    (review round 2, R2-F5): in the stranded state the user's EARLIER
+    password reads them all, and refusing it left only a reset that deleted
+    keys it could read. AES-GCM authenticates, so a wrong password cannot
+    "decrypt" a value.
+    """
+    verified = verifier is not None and engine.verify_password(password, verifier)
+    if verified and _decrypts(engine, document, password):
+        return None
+    if _reads_every_saved_key(engine, document, password):
+        return UNLOCK_REKEY_REASON
+    return UNLOCK_STRANDED if verified else UNLOCK_MISMATCH
+
+
+def _saved_values(document) -> dict:
+    """The document without its ``[encryption]`` table (the saved keys)."""
+    return {key: value for key, value in document.items() if key != "encryption"}
+
+
+def _has_saved_ciphertext(value) -> bool:
+    """Whether any saved value outside ``[encryption]`` is ``enc:`` ciphertext."""
+    from tldw_chatbook.Utils.config_encryption import ConfigEncryption
+
+    pending = [_saved_values(value)]
+    while pending:
+        current = pending.pop()
+        for item in current.values():
+            if isinstance(item, dict):
+                pending.append(item)
+            elif isinstance(item, str) and item.startswith(
+                ConfigEncryption.ENCRYPTION_PREFIX
+            ):
+                return True
+    return False
+
+
+def _reads_every_saved_key(engine, document, password: str) -> bool:
+    """Every saved ``enc:`` value decrypts with ``password`` -- and there is at
+    least one, or any guess would pass."""
+    if not _has_saved_ciphertext(document):
+        return False
+    return _decrypts(engine, _saved_values(document), password)
 
 
 def _decrypts(engine, document, password: str) -> bool:
@@ -346,7 +431,7 @@ def startup_unlock() -> int | None:
     reason, password = startup_preflight()
     if reason == UNLOCK_QUIT_REASON:
         return 0
-    if reason is not None and reason != UNLOCK_RESET_REASON:
+    if reason is not None and reason not in (UNLOCK_RESET_REASON, UNLOCK_REKEY_REASON):
         return minimal_recovery(reason)
     from .storage_admission import admit_startup
 
@@ -362,6 +447,16 @@ def startup_unlock() -> int | None:
                 _say(UNLOCK_RESET_FAILED)
                 return 1
             _say(UNLOCK_RESET_DONE)
+            return _paused()
+        if reason == UNLOCK_REKEY_REASON:
+            from tldw_chatbook.config import rekey_encryption_verifier
+
+            # Re-encrypts under this password with a new verifier and
+            # installs it for the session, through the normal config writer.
+            if not rekey_encryption_verifier(password):
+                _say(UNLOCK_REKEY_FAILED)
+                return 1
+            _say(UNLOCK_REKEYED)
             return _paused()
         from tldw_chatbook.config import (
             get_encryption_password,

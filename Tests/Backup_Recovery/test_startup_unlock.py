@@ -58,6 +58,10 @@ document = {
 }
 if condition.startswith('no-verifier'):
     del document['encryption']['password_verifier']
+if condition in ('no-verifier-headless', 'no-verifier-nothing-encrypted'):
+    # Encryption on, no verifier, and nothing encrypted: no password matters,
+    # so only the (lossless) reset is offered.
+    del document['api_settings']['openai']['api_key']
 if condition == 'served':
     # textual-serve's child: stdin is the web driver's pipe and getpass would
     # open the SERVER operator's terminal.
@@ -77,19 +81,27 @@ answers = {
     'forced-crash': ['typed-secret-sentinel'],
     'stranded': ['unlock-sentinel', ''],
     'stranded-reset': ['unlock-sentinel', ''],
+    # Review round 2 (R2-F5): the earlier password reads every key.
+    'stranded-recover': ['unlock-sentinel', 'stranded-sentinel'],
     'interrupt-during-check': ['typed-secret-sentinel'],
-    'no-verifier': [],
+    'no-verifier': [''],
+    'no-verifier-recover': ['typed-secret-sentinel', 'unlock-sentinel'],
+    'no-verifier-nothing-encrypted': [],
     'no-verifier-headless': [],
     'served': [],
     'no-terminal': [],
 }[condition]
-# After a reset, '' answers "Press Enter to start chatbook." (round 2).
+# After a reset or a re-key, '' answers "Press Enter to start chatbook."
+# (review round 2).
 choices = {
     'wrong-then-quit': ['q'],
     'reset': ['r', ''],
     'stranded': ['q'],
     'stranded-reset': ['r', ''],
+    'stranded-recover': [''],
     'no-verifier': ['r', ''],
+    'no-verifier-recover': [''],
+    'no-verifier-nothing-encrypted': ['r', ''],
 }.get(condition, [])
 def secret(prompt):
     if 'CONFIG_IMPORTED_BEFORE_PROMPT' not in seen:
@@ -179,7 +191,14 @@ print('FILE_UNCHANGED=' + str(selector.read_bytes() == before))
 print('FILE_HAS_CIPHERTEXT=' + str('enc:' in text))
 print('FILE_HAS_ENCRYPTION=' + str('[encryption]' in text))
 import tomllib
-database = tomllib.loads(text).get('database', {})
+final = tomllib.loads(text)
+if condition in ('stranded-recover', 'no-verifier-recover'):
+    final_verifier = final.get('encryption', {}).get('password_verifier')
+    for name, password in (('STRANDED', 'stranded-sentinel'), ('UNLOCK', 'unlock-sentinel')):
+        print('VERIFIER_FOR_' + name + '=' + str(
+            bool(final_verifier) and engine.verify_password(password, final_verifier)
+        ))
+database = final.get('database', {})
 print('DB_SETTINGS_KEPT=' + str(
     database.get('chachanotes_db_path') == str(chats_db)
     and database.get('media_db_path') == str(media_db)
@@ -356,6 +375,58 @@ def test_stranded_keys_can_be_reset_from_the_prompt(tmp_path):
     assert "FILE_HAS_CIPHERTEXT=False" in out
     assert "FILE_HAS_ENCRYPTION=False" in out
     _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+@pytest.mark.parametrize("entry", ["module", "cli"])
+def test_an_earlier_password_that_reads_every_key_unlocks_and_repairs_the_check(
+    tmp_path, entry
+):
+    # Review round 2 (R2-F5): verifier for one password, keys under an
+    # earlier one. The earlier password was answered "didn't match" and the
+    # only way on was a reset that deleted keys it still reads.
+    result, verifier = _run_module_entry(tmp_path, "stranded-recover", entry=entry)
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "PASSWORD_RECOVERED=True" in out
+    assert "KEY_DECRYPTED=True" in out
+    assert "VERIFIER_FOR_STRANDED=True" in out
+    assert "VERIFIER_FOR_UNLOCK=False" in out
+    assert "FILE_HAS_CIPHERTEXT=True" in out and "FILE_HAS_ENCRYPTION=True" in out
+    assert "RECOVERY=\n" in out
+    region = _unlock_output(result)
+    # The right-but-stranded password now points at the earlier one.
+    assert "If you set an earlier master password, enter that one" in region
+    assert "That password didn't match" not in region
+    recovered = region.index("it is your master password again")
+    assert region.index("Press Enter to start chatbook.", recovered) > recovered
+    _assert_no_log_lines(region)
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_missing_verifier_asks_for_the_password_and_repairs_the_check(tmp_path):
+    result, verifier = _run_module_entry(tmp_path, "no-verifier-recover")
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "PASSWORD_SET=True" in out
+    assert "KEY_DECRYPTED=True" in out
+    assert "VERIFIER_FOR_UNLOCK=True" in out
+    assert "check for the master password is missing" in result.stderr
+    assert result.stderr.count("That password didn't match. Try again.") == 1
+    assert "[R]eset saved keys or [Q]uit" not in result.stderr
+    _assert_no_log_lines(_unlock_output(result))
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_missing_verifier_with_nothing_encrypted_offers_only_the_reset(tmp_path):
+    result, _verifier = _run_module_entry(tmp_path, "no-verifier-nothing-encrypted")
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "Master password" not in result.stderr
+    assert "[R]eset saved keys or [Q]uit" in result.stderr
+    assert "FILE_HAS_ENCRYPTION=False" in out
 
 
 @pytest.mark.timeout(240)
