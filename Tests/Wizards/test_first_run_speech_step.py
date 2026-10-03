@@ -318,7 +318,7 @@ async def test_non_english_f32_selection_changes_the_exact_managed_target():
 
 @pytest.mark.asyncio
 async def test_summary_checks_the_configured_exact_artifact(tmp_path, monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
     from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
     policy = speech_state.routing_policy()
@@ -329,8 +329,8 @@ async def test_summary_checks_the_configured_exact_artifact(tmp_path, monkeypatc
         calls.append((model, precision))
         return tmp_path
 
-    monkeypatch.setattr(wizard_module, "managed_model_artifact_root", lambda: tmp_path)
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    monkeypatch.setattr(summary_step_module, "managed_model_artifact_root", lambda: tmp_path)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", exact_active)
     wizard = _wizard(wizard_data={"welcome": {"track": "quick"}})
     step = SummaryStep(
         wizard=wizard,
@@ -379,13 +379,13 @@ async def test_compose_exposes_path_free_existing_gguf_configuration():
 
 
 def test_transcribe_cpp_config_worker_reports_path_free_success(tmp_path, monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     selected = tmp_path / "private-model.gguf"
     configured: list[Path] = []
     fake_app = _patch_app(monkeypatch)
     monkeypatch.setattr(
-        wizard_module,
+        speech_step_module,
         "configure_transcribe_cpp_model_path",
         lambda path: configured.append(path),
     )
@@ -637,11 +637,11 @@ async def test_commit_persists_after_use_as_default_without_reinstalling(monkeyp
     """End-to-end proof the affordance actually makes the promise true:
     pressing it, then Next (commit()), persists the recommended selection
     with no install/activate worker involved."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     active_dir = Path("/fake/active")
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _elsewhere_wizard()
     step = _step(installed=[_installed_item(active=True, ready=True)], wizard=wizard)
@@ -978,10 +978,10 @@ def test_failed_activation_does_not_mark_the_step_as_acted():
 
 @pytest.mark.asyncio
 async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(None)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(None)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -997,10 +997,10 @@ async def test_commit_is_skip_safe_when_never_verified_active(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_commit_does_not_verify_or_persist_an_unavailable_selection(monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     active_lookup = MagicMock(return_value=Path("/should-not-be-used"))
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", active_lookup)
+    monkeypatch.setattr(speech_step_module, "active_managed_parakeet_dir", active_lookup)
     wizard = _wizard()
     step = _step(wizard=wizard)
     step._curated_selections = lambda: frozenset()
@@ -1024,11 +1024,11 @@ async def test_commit_does_not_persist_when_active_but_user_did_not_act_this_run
     already persisted in [transcription] completely untouched -- proven at
     the correct boundary: wizard.commit_config, the only write path, is
     never even awaited, so no bytes of the real config file can change."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -1044,11 +1044,11 @@ async def test_commit_does_not_persist_when_active_but_user_did_not_act_this_run
 async def test_commit_persists_the_recommended_selection_once_verified_active(
     tmp_path, monkeypatch
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -1080,11 +1080,11 @@ async def test_commit_persists_the_live_pressed_default_selection(
     real step (real curated_registry, nothing monkeypatched about
     selectability) so English/INT8 is genuinely the only pre-pressed radio,
     and proves the live-radio path is byte-identical to the old constant."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -1119,7 +1119,7 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
     THAT selection instead of silently keeping the English/v2 default --
     the exact scenario the review flagged as "will silently diverge the
     moment a second combination becomes selectable"."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
     from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
     policy = speech_state.routing_policy()
@@ -1127,7 +1127,7 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
 
     active_dir = tmp_path / "installed"
     monkeypatch.setattr(
-        wizard_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
+        speech_step_module, "active_managed_parakeet_dir", _active_lookup(active_dir)
     )
     wizard = _wizard()
     step = _step(wizard=wizard)
@@ -1157,7 +1157,7 @@ async def test_commit_follows_a_hypothetical_second_selectable_language(
 async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
     tmp_path, monkeypatch
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
     from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
     policy = speech_state.routing_policy()
@@ -1176,7 +1176,7 @@ async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
             else None
         )
 
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", exact_active)
+    monkeypatch.setattr(speech_step_module, "active_managed_parakeet_dir", exact_active)
     wizard = _wizard()
     step = _step(wizard=wizard)
     step._acted_this_run = True
@@ -1203,10 +1203,10 @@ async def test_commit_requires_and_persists_the_exact_v3_f32_artifact(
 
 @pytest.mark.asyncio
 async def test_commit_reports_failure_when_persistence_write_fails(monkeypatch):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     monkeypatch.setattr(
-        wizard_module,
+        speech_step_module,
         "active_managed_parakeet_dir",
         _active_lookup(Path("/fake/active")),
     )
@@ -1227,10 +1227,10 @@ async def test_commit_never_persists_when_the_runtime_extra_is_missing(monkeypat
     the write (the UI-side gate is the primary defense; this is the second
     independent check, mirroring RagStep's own commit() re-check of
     deps_installed())."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     monkeypatch.setattr(
-        wizard_module,
+        speech_step_module,
         "active_managed_parakeet_dir",
         _active_lookup(Path("/fake/active")),
     )
@@ -1451,7 +1451,7 @@ def test_end_to_end_install_flow_calls_the_real_wrapped_functions(
     own event loop (mirrors Tests/UI/test_parakeet_v2_install_ui.py::
     test_install_worker_passes_a_progress_callback, the same technique for
     Library's own Parakeet v2 install worker)."""
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
     from tldw_chatbook.UI.Wizards import first_run_speech_step_state as speech_state
 
     policy = speech_state.routing_policy()
@@ -1472,8 +1472,8 @@ def test_end_to_end_install_flow_calls_the_real_wrapped_functions(
         provision_calls.append((model, precision, passed_report))
         return tmp_path / "installed"
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_preflight", fake_preflight)
-    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fake_provision)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_preflight", fake_preflight)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", fake_provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *a, **kw: fn(*a, **kw)
 
@@ -1752,7 +1752,7 @@ async def test_vad_provision_cancellation_reaches_underlying_coroutine(
     monkeypatch,
     tmp_path,
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     started = threading.Event()
     cancelled = threading.Event()
@@ -1768,7 +1768,7 @@ async def test_vad_provision_cancellation_reaches_underlying_coroutine(
             cancelled.set()
             raise
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_vad_provision", gated_provision)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_vad_provision", gated_provision)
     prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
     step = _step(wizard=_wizard_with_source(_OwnerTrackingSource()))
     step._apply_external_vad_provision_result = lambda *args: terminal_results.append(
@@ -1886,7 +1886,7 @@ def test_verifier_uses_scope_captured_on_loop_after_scope_map_changes(
     monkeypatch,
     tmp_path,
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     _patch_app(monkeypatch)
     prepared = SimpleNamespace(key=ParakeetSourceKey.V2_INT8)
@@ -1901,7 +1901,7 @@ def test_verifier_uses_scope_captured_on_loop_after_scope_map_changes(
     captured_scope = "setup-speech-captured"
     step._external_scope_ids[token] = "setup-speech-later-map-value"
     monkeypatch.setattr(
-        wizard_module,
+        speech_step_module,
         "get_current_worker",
         lambda: SimpleNamespace(is_cancelled=False),
     )
@@ -1936,12 +1936,12 @@ def test_changed_external_source_uses_shared_path_private_error(
     monkeypatch,
     tmp_path,
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
     monkeypatch.setattr(
-        wizard_module,
+        speech_step_module,
         "get_current_worker",
         lambda: SimpleNamespace(is_cancelled=False),
         raising=False,
@@ -2416,7 +2416,7 @@ def test_managed_install_prefers_managed_only_after_provision_succeeds(
     monkeypatch,
     tmp_path,
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     events: list[str] = []
     report = _report(destination=tmp_path / "managed")
@@ -2427,7 +2427,7 @@ def test_managed_install_prefers_managed_only_after_provision_succeeds(
         events.append("provision")
         return tmp_path / "managed" / "root"
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_provision", provision)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
     step = _step(wizard=_wizard_with_source(source_service))
@@ -2464,12 +2464,12 @@ def test_managed_activation_prefers_managed_only_after_activation_succeeds(monke
 
 
 def test_managed_provision_failure_never_prefers_managed(monkeypatch, tmp_path):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     async def fail_provision(*args, **kwargs):
         raise OSError("download failed")
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_provision", fail_provision)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", fail_provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
     source_service = MagicMock()
@@ -2511,12 +2511,12 @@ def test_managed_install_preference_failure_reports_partial_success(
     monkeypatch,
     tmp_path,
 ):
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_speech_step as speech_step_module
 
     async def provision(*args, **kwargs):
         return tmp_path / "managed" / "root"
 
-    monkeypatch.setattr(wizard_module, "run_parakeet_provision", provision)
+    monkeypatch.setattr(speech_step_module, "run_parakeet_provision", provision)
     fake_app = _patch_app(monkeypatch)
     fake_app.call_from_thread.side_effect = lambda fn, *args: fn(*args)
     source_service = MagicMock()

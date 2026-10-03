@@ -22,7 +22,8 @@ from pathlib import Path
 
 import pytest
 
-from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+# TASK-34100.1: the two steps moved to their own modules.
+from tldw_chatbook.UI.Wizards import first_run_protect_step, first_run_summary_step
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import ProtectKeysStep, SummaryStep
 
 #: The two coroutine workers this task hardened, by the name `run_worker`
@@ -32,9 +33,15 @@ _HARDENED_WORKERS = {"_apply_password_worker", "_render_rows"}
 
 
 def _run_worker_flags() -> dict[str, dict[str, bool]]:
-    tree = ast.parse(Path(wizard_module.__file__).read_text(encoding="utf-8"))
     found: dict[str, dict[str, bool]] = {}
-    for node in ast.walk(tree):
+    nodes = [
+        node
+        for module in (first_run_protect_step, first_run_summary_step)
+        for node in ast.walk(
+            ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+        )
+    ]
+    for node in nodes:
         if not isinstance(node, ast.Call):
             continue
         if not (isinstance(node.func, ast.Attribute) and node.func.attr == "run_worker"):

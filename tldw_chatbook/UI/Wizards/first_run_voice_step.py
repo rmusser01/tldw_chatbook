@@ -48,7 +48,7 @@ from tldw_chatbook.TTS.omnivoice_artifact_catalog import (
 )
 from tldw_chatbook.UI.Screens.model_browser_state import install_failure_message
 from tldw_chatbook.UI.Wizards import first_run_voice_step_state as voice_state
-from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupCheckbox,
     SetupRadioButton,
     SetupRadioSet,

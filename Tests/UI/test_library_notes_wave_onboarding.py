@@ -35,9 +35,10 @@ from tldw_chatbook.Widgets.Console.console_setup_modal import (
 
 def test_wizard_summary_offers_write_your_first_note() -> None:
     """The Summary step offers a notes path beside "Add your first document"."""
-    from tldw_chatbook.UI.Wizards import FirstRunSetupWizard as wizard_module
+    # TASK-34100.1: the Summary step moved to its own module.
+    from tldw_chatbook.UI.Wizards import first_run_summary_step as summary_module
 
-    source = inspect.getsource(wizard_module)
+    source = inspect.getsource(summary_module)
     assert '"Write your first note", id="setup-exit-library-notes"' in source
     assert '@on(Button.Pressed, "#setup-exit-library-notes")' in source
 

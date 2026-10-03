@@ -66,7 +66,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     is_untouched_default_session,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    CLOUD_PROBE_TIMEOUT_SECONDS,
     AppearanceStep,
     FirstRunSetupWizard,
     ModelStep,
@@ -81,6 +80,9 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     SummaryStep,
     ToolsStep,
     VoiceSetupStep,
+)
+from tldw_chatbook.UI.Wizards.first_run_provider_step import (
+    CLOUD_PROBE_TIMEOUT_SECONDS,
     _probe_first_run_provider_connection,
     _provider_group_option_id,
     _provider_options,
@@ -8109,7 +8111,7 @@ async def test_provider_step_probe_budgets_cloud_vs_local(monkeypatch):
     from unittest.mock import AsyncMock
 
     from tldw_chatbook.UI.Screens import settings_endpoint_probe
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _probe_first_run_provider_connection,
     )
 
@@ -9312,9 +9314,11 @@ async def test_mounted_model_owner_timeout_fences_late_result_and_keeps_manual_r
     from unittest.mock import AsyncMock
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -9527,7 +9531,7 @@ async def test_mounted_provider_handoff_is_fenced_after_model_navigation_and_unm
 
 
 def test_real_discovery_result_extracts_exact_safe_unique_model_ids():
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9543,7 +9547,7 @@ def test_real_discovery_result_rejects_malformed_or_unsafe_models(malformed):
     from tldw_chatbook.LLM_Provider_Catalog.model_discovery_contracts import (
         DiscoveredModel,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -9641,9 +9645,11 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     from types import SimpleNamespace
 
     import tldw_chatbook.config as config_module
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_model_discovery as model_discovery_module
 
-    monkeypatch.setattr(wizard_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05)
+    monkeypatch.setattr(
+        model_discovery_module, "MODEL_DISCOVERY_TIMEOUT_SECONDS", 0.05
+    )
     monkeypatch.setattr(
         config_module,
         "get_cli_providers_and_models",
@@ -10070,14 +10076,14 @@ async def test_summary_default_speech_check_skips_service_construction_when_stor
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     absent_root = tmp_path / "never-created"
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: absent_root
+        summary_step_module, "managed_model_artifact_root", lambda: absent_root
     )
     probe = MagicMock()
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -10114,15 +10120,15 @@ async def test_summary_default_speech_check_still_checks_when_store_root_exists(
     from types import SimpleNamespace
     from unittest.mock import AsyncMock
 
-    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+    import tldw_chatbook.UI.Wizards.first_run_summary_step as summary_step_module
 
     existing_root = tmp_path / "already-there"
     existing_root.mkdir()
     monkeypatch.setattr(
-        wizard_module, "managed_model_artifact_root", lambda: existing_root
+        summary_step_module, "managed_model_artifact_root", lambda: existing_root
     )
     probe = MagicMock(return_value=None)
-    monkeypatch.setattr(wizard_module, "active_managed_parakeet_dir", probe)
+    monkeypatch.setattr(summary_step_module, "active_managed_parakeet_dir", probe)
 
     wizard = SimpleNamespace(
         app_instance=MagicMock(app_config={}),
@@ -13356,7 +13362,7 @@ def test_real_sized_provider_catalog_reaches_the_picker_intact():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13393,7 +13399,7 @@ def test_typed_catalog_over_the_discovery_ceiling_is_rejected():
     from tldw_chatbook.LLM_Provider_Catalog.openai_compatible_model_discovery import (
         DISCOVERED_MODEL_MAX_COUNT,
     )
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13410,7 +13416,7 @@ def test_malformed_entry_in_the_tail_is_still_rejected():
     """Every entry is validated, not just those before a truncation point."""
     from dataclasses import replace
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _model_ids_from_discovery_result,
     )
 
@@ -13462,7 +13468,7 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
     user needs (the key lives one step Back).
     """
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13485,7 +13491,7 @@ def test_handed_off_auth_failure_keeps_its_authentication_category():
 def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
     """Without a typed outcome there is nothing more specific to say."""
     from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13499,7 +13505,7 @@ def test_handed_off_failure_without_a_recorded_outcome_stays_generic():
 
 def test_handed_off_failure_category_survives_a_malformed_outcome():
     """A junk recorded outcome degrades to the generic wording, never raises."""
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_model_discovery import (
         _handed_off_failure_category,
     )
 
@@ -13516,7 +13522,7 @@ def test_provider_connection_ui_draft_cannot_be_pickled():
     """
     import pickle
 
-    from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
+    from tldw_chatbook.UI.Wizards.first_run_provider_step import (
         _ProviderConnectionUiDraft,
     )
 

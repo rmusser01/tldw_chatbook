@@ -99,7 +99,6 @@ from tldw_chatbook.UI.Wizards.first_run_setup_state import (
     build_first_run_model_discovery_key,
 )
 from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
-    _PICKER_MODEL_LIMIT,
     FirstRunSetupWizard,
     ModelStep,
     NotesSyncStep,
@@ -110,6 +109,7 @@ from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import (
     VoiceSetupStep,
     _SettlingGuardedConfirmationDialog,
 )
+from tldw_chatbook.UI.Wizards.first_run_model_step import _PICKER_MODEL_LIMIT
 
 
 #: Ceiling for a settle wait, not a performance assertion (TASK-24652).
