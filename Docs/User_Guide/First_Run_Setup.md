@@ -135,17 +135,27 @@ Master password (leave empty if you forgot it):
   behind by an older version that let you set a second password) prints
   "That password is right, but some saved keys were encrypted with a
   different password and can't be read with it." The app does not open with
-  keys it cannot read; leave the prompt empty to reset them.
+  keys it cannot read. If you remember the earlier master password, enter
+  it; otherwise leave the prompt empty to reset the keys.
+- **An earlier password that still reads every saved key** is accepted even
+  though it is not the latest one you set. chatbook says "That password
+  reads every saved key, so it is your master password again", re-encrypts
+  the keys under it and waits for Enter before opening the app. The later
+  password stops working.
 - **Forgot it?** Press Enter on an empty prompt. chatbook explains what a
   reset does and offers `[R]eset saved keys or [Q]uit`. **Reset** removes
-  every encrypted value from config.toml and turns encryption off, then opens
-  the app; chats, notes and documents are not touched, and you re-enter your
-  API keys in Settings ▸ Providers & Models. **Quit** leaves everything as it
-  was.
+  every encrypted value from config.toml and turns encryption off, then
+  waits for Enter so you can read what happened, and opens the app. Chats,
+  notes and documents are not touched; you re-enter your API keys in
+  Settings ▸ Providers & Models. **Quit** leaves everything as it was. The
+  choice is read from the terminal even when standard input is redirected.
 - **Ctrl+C or Ctrl+D** at the prompt, or while the password is being
   checked, quits without changing anything.
 - **config.toml says encryption is on but its password check is missing**:
-  chatbook says so and offers the same `[R]eset saved keys or [Q]uit` choice.
+  chatbook says so. If saved keys are encrypted, it asks for the master
+  password: one that reads every key unlocks them and repairs the check, and
+  an empty entry offers the reset. If nothing is encrypted, it offers the
+  `[R]eset saved keys or [Q]uit` choice straight away.
 - If chatbook cannot ask privately (no terminal attached), it opens a small
   recovery window that says so in plain words; relaunch from a terminal to try
   again. Backup & Restore stays one button away there but no longer opens on
@@ -154,10 +164,13 @@ Master password (leave empty if you forgot it):
   password.** Each browser session shows that recovery window instead of
   prompting on the server's terminal. To serve chatbook in a browser, turn
   encryption off first (from a terminal launch, in Settings ▸ Privacy &
-  Security ▸ Encryption).
+  Security ▸ Encryption). In that window, opening another profile from
+  Backup & Restore says it needs a terminal instead of ending the session.
 
 A saved key that is still encrypted is never treated as a usable key: if a
-key cannot be decrypted, its provider shows as not set up rather than ready.
+key cannot be decrypted, its provider shows as not set up rather than ready
+("Saved API key is still encrypted"), even a local provider that needs no
+key. Re-enter or clear the key in Settings ▸ Providers & Models.
 
 ## Running it again
 
