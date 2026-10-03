@@ -1,0 +1,12 @@
+# v-model-4 (OpenRouter + key, typed 'anthropic/claude-opus' in 'Or enter a model name', Enter) -- config.toml excerpt
+[chat_defaults]
+rag_auto_retrieve_on_send = false
+user_display_name = "User"
+provider = "openrouter"
+model = "anthropic/claude-opus"
+
+[api_settings.openrouter]
+model = "anthropic/claude-opus"
+temperature = 0.7
+
+# OpenRouter public /api/v1/models (same day): 466 ids; 'anthropic/claude-opus' listed: False; nearest: anthropic/claude-opus-5.5, anthropic/claude-opus-5 ...

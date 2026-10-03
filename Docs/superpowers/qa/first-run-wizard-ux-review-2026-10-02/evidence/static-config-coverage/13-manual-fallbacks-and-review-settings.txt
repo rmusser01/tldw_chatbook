@@ -1,0 +1,47 @@
+# 'Manual setup' fallbacks for a failed step route to surfaces that do not own the setting
+REQUIRED_STEP_MANUAL_SETTINGS_CATEGORIES: Mapping[str, str] = {
+    wizard_state.STEP_WELCOME: "diagnostics",
+    wizard_state.STEP_PROVIDER: "providers-models",
+    wizard_state.STEP_MODEL: "providers-models",
+    wizard_state.STEP_VOICE: "speech-tts",
+    wizard_state.STEP_SPEECH: "speech-tts",
+    wizard_state.STEP_TOOLS: "advanced-config",
+    wizard_state.STEP_NOTES: "advanced-config",
+    wizard_state.STEP_APPEARANCE: "appearance",
+    wizard_state.STEP_PROTECT: "privacy-security",
+    wizard_state.STEP_SUMMARY: "diagnostics",
+}
+
+Speech -> speech-tts: Settings > Speech & TTS has no transcription controls (grep transcription settings_speech_tts.py):
+0
+Tools -> advanced-config (raw TOML), although the live owner is 810:TOOL_GATES_PANE_PATH = "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
+Notes -> advanced-config (raw TOML), although notes sync is configured in Library > Notes
+Protect -> privacy-security, which only displays encryption state (see 08-*)
+
+# Summary 'Review settings' exits with completed=False (FirstRunSetupWizard.py:9977-9986) ...
+    async def _open_provider_settings(self) -> None:
+        if not await self.persist_current_checkpoint():
+            self._show_completion_save_error()
+            return
+        self._dismiss_screen(
+            {
+                "completed": False,
+                "exit_route": "settings",
+                "exit_context": {"category": "providers-models"},
+            }
+... so the next launch takes the 'prompt' (Continue setup?) branch (first_run_setup_state.py:1234-1248):
+def setup_recovery_action(
+    app_config: Mapping[str, object], environ: Mapping[str, str]
+) -> Literal["offer", "prompt", "home", "none"]:
+    """Choose the single startup action for setup or recovery."""
+
+    if should_offer_wizard(app_config, environ):
+        return "offer"
+    if _wizard_flag(app_config, SETUP_COMPLETED_KEY):
+        return "none"
+    if not _wizard_flag(app_config, SETUP_STARTED_KEY):
+        return "none"
+    draft = read_setup_draft(app_config)
+    if draft is None:
+        return "none"
+    return "home" if draft.resume_attempted else "prompt"
