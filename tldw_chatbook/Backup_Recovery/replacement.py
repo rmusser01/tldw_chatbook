@@ -1038,9 +1038,11 @@ def _first_profile_container(
             raise ValueError("replacement_config_container_unverified")
         state.append((item.path, item.metadata, info.st_dev, info.st_ino, info.st_mode))
     if user_data:
-        tokens = {f"inode:{dev}:{ino}" for _, _, dev, ino, _ in state}
+        tokens = {f"inode:{ino}" for _, _, _dev, ino, _ in state}  # TASK-34200
+        from .bootstrap import identity_view
+
         if any(
-            tokens.intersection(entry["historical"])
+            tokens.intersection(identity_view(entry["historical"]))
             for name, entry in registry.items()
             if name not in names or any(name in row["namespaces"] for row in profiles)
         ):
