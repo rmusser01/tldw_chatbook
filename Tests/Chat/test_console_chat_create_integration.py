@@ -716,8 +716,9 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
 
 @pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
 def test_confirmed_create_refuses_a_source_retained_during_close(
-    real_db_controller, tool
-):
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    tool: str,
+) -> None:
     """A committed Close prevents rows and UI completion before deletion.
 
     Args:
@@ -757,8 +758,11 @@ def test_confirmed_create_refuses_a_source_retained_during_close(
     "close_at", ["durable-create", "ui-handoff", "ui-handoff-error"]
 )
 def test_inflight_create_cannot_publish_after_its_source_closes(
-    real_db_controller, monkeypatch, tool, close_at
-):
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    close_at: str,
+) -> None:
     """Actual Close suppresses a started creation and its queued UI handoff.
 
     Args:
@@ -866,8 +870,10 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
 
 @pytest.mark.parametrize("view_change", ["detached", "reattached"])
 def test_chat_create_completion_uses_the_current_view_sink(
-    real_db_controller, monkeypatch, view_change
-):
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+    view_change: str,
+) -> None:
     """View detachment preserves durable results and reattachment owns UI.
 
     Args:
@@ -911,8 +917,9 @@ def test_chat_create_completion_uses_the_current_view_sink(
 
 
 def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
-    real_db_controller, monkeypatch
-):
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A later source Close cannot discard an already-admitted UI result.
 
     Args:

@@ -1,5 +1,6 @@
 """Confirm rounds for agent-initiated chat creation (fork_chat / new_chat)."""
 import threading
+from collections.abc import Callable
 
 import pytest
 
@@ -406,7 +407,9 @@ def test_primary_requester_still_rides_session_grant(make_controller, closing):
     assert not controller.pending_chat_create_ids()
 
 
-def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
+def test_close_cannot_resurrect_a_remembered_chat_create_grant(
+    make_controller: Callable[[], ConsoleChatController],
+) -> None:
     """A decided confirmation cannot recreate a grant after real Close.
 
     Args:
@@ -477,8 +480,10 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
 @pytest.mark.bootstrap_profile
 @pytest.mark.parametrize("closing", [False, True], ids=["navigate", "close"])
 def test_legacy_chat_create_marshal_keeps_its_unscoped_contract(
-    make_controller, monkeypatch, closing
-):
+    make_controller: Callable[[], ConsoleChatController],
+    monkeypatch: pytest.MonkeyPatch,
+    closing: bool,
+) -> None:
     """An unparked legacy round remains visible after navigation, or denies Close.
 
     Args:

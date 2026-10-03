@@ -1107,3 +1107,27 @@ proof, exact receipts, fixture modes, limits and the discarded formatter attempt
 Keep TASK-32367 In Progress until latest-dev publication, clean resolved Qodo and
 all four hosted gates, followed by final metadata-head review/checks and verified
 protected normal merge.
+
+
+Remaining public chat-test typing (2026-10-03 UTC)
+
+Qodo46dc223b reports two untyped new integration tests. Audit all new public
+module-level tests introduced by this PR and annotate both reported tests plus
+four matching new Close/view/legacy tests in the same two modules. Existing
+controller/DB/pytest types and one test-only Callable import suffice. The audit
+now finds no newly introduced untyped public test. After removing only these
+new annotations/import, both full module ASTs equal published 5c6262a8; every
+body, assertion, marker, fixture, helper, stage and deadline stays exact. All
+251 other source pins, including all production, remain unchanged (253 current).
+No new ADR is required for test-only annotations; existing contracts apply.
+
+Both complete real SQLite/worker modules pass all58 cases with zero
+failures/errors/skips in 33.13s, under the existing
+profile owners and without an added collection plugin or admission bypass.
+Explicit changed-range format, zero-new Ruff35, diff/Backlog checks and full
+artifact preflight (135.46s) pass with all253 pins
+stable. QA oct03_public_chat_test_typing retains exact proof and receipts; prior
+mounted/host/37-Perf/native/queue evidence retains original source/fixture
+identity, without fresh broad/native replay claims. Keep TASK32367 In Progress
+until latest-dev publication, exact-head clean resolved Qodo/all four hosted
+gates, final metadata-head review/checks and verified protected normal merge.
