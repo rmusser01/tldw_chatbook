@@ -47,6 +47,16 @@ was deleted; see the note where its entry used to be.)
 import re
 from pathlib import Path
 
+# Collection-time import: this file's own body only reads source text, but the
+# Tests/UI autouse `_disable_model_catalog_refresh` fixture lazily imports
+# `tldw_chatbook.app`, whose module body runs `load_settings()`. Reaching that
+# import with a per-test profile selected while `config` is still bound to the
+# session profile trips the config-participant admission
+# (RecoveryRequired("raw_source_selection_changed")) at setup, before any
+# assertion -- the class documented for "any Tests/UI module that doesn't
+# import the app" (TASK-33621.36). Importing here binds config at collection
+# time, the same remedy as test_install_command_clipboard.py.
+import tldw_chatbook.app  # noqa: F401 - bind config before fixtures rebind its profile.
 from Tests.UI.test_non_obscuring_focus_contract import (
     BUNDLE, css_selectors, css_selectors_contain_class,
 )
@@ -128,11 +138,9 @@ KNOWN_UNSTYLED: dict[str, str] = {
         "hidden entirely via query_one(#id) + styles.display/height, never "
         "selected via the class."
     ),
-    "console-inspector-outer-scroll-hint": (
-        "duplicates #console-inspector-outer-scroll-hint; the pinned cue's "
-        "height/display are set inline and its copy is updated through the "
-        "id, so this class carries no independent style."
-    ),
+    # "console-inspector-outer-scroll-hint" removed 2026-10-02: the token
+    # gained a real .class rule, so the entry went stale — exactly what
+    # test_registry_entries_are_still_unstyled exists to catch.
     "console-left-rail-outer-hint": (
         "duplicates #console-left-rail-outer-hint; the pinned cue's "
         "height/display are set inline and its copy is updated through the "
