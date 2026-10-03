@@ -161,6 +161,12 @@ async def test_first_list_read_loads_without_a_recheck() -> None:
 
 @pytest.mark.asyncio
 async def test_return_visit_reloads_a_transcript_whose_saved_epoch_moved() -> None:
+    """A saved count that moved while Library was covered reloads the reader.
+
+    One re-check read finds the new epoch and total; the existing reader
+    pipeline then reloads the same conversation in place and paints all
+    three messages, without changing Read/Info.
+    """
     host = _harness()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen, service = await _open_alpha(pilot, host)
@@ -293,6 +299,11 @@ async def test_return_visit_reloads_an_edited_transcript_with_the_same_count() -
 
 @pytest.mark.asyncio
 async def test_return_visit_keeps_an_unchanged_transcript_without_reloading() -> None:
+    """An unchanged saved transcript costs one re-check read and nothing more.
+
+    The reader keeps the generation it loaded, and the re-check is the only
+    detail read the return visit makes.
+    """
     host = _harness()
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen, service = await _open_alpha(pilot, host)
