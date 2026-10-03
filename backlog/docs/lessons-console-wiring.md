@@ -42,6 +42,25 @@ letting the caller restore prior UI. Both cases then passed.
 
 ---
 
+## Dispatch-recovery Retry replays the accepted turn; a setting change cannot reach it
+
+**TASK-34100.5, 2026-10-03.** A durable send refused before dispatch (it could
+not fit the model) keeps its fail-closed dispatch owner, and the first fix made
+that owner's Retry re-enable once the session's model or reply limit changed:
+"Settings changed — Retry sends it again." A unit test with a real store and
+controller passed. Live, on a fresh profile with OpenAI's template default
+`gpt-5.6-terra`, Alt+M to gpt-4.1 then Retry failed again — under the *old*
+model. `retry_dispatch_recovery` resumes the frozen durable continuation: its
+provider, model, reply limit and attached context window were fixed when the
+turn was accepted. Resend on the user message re-plans with current settings and
+got a reply. The card now keeps Retry disabled and says "Change a setting above,
+then Discard and Resend the message."
+
+Before offering Retry as the fix for a refusal, check what the retried turn is
+built from. A test that only asserts the action is *enabled* proves nothing about
+whether pressing it can change the outcome — drive the retry and read what it
+sent.
+
 ## An unchanged recovery projection can still need its click latch released
 
 **TASK-32819, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
