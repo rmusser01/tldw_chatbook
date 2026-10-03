@@ -1,7 +1,7 @@
 ---
 id: TASK-32369
 title: anthropic and cohere handlers emit real HTTP 400 errors for local validation failures
-status: In Progress
+status: Done
 assignee:
   - '@claude'
 created_date: '2026-09-11 01:55'
