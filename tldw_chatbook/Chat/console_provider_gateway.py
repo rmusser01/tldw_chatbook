@@ -6776,6 +6776,7 @@ class ConsoleProviderGateway:
                     break
                 if item.kind == "error":
                     if isinstance(item.payload, ChatAPIError):
+                        item.payload.console_copy = item.text
                         raise item.payload
                     if item.local:
                         # TASK-32369: as the non-stream path does (task-32342), a

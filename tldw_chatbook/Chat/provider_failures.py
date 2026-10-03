@@ -10,7 +10,7 @@ through this module.
 
 import asyncio
 
-from tldw_chatbook.Chat.Chat_Deps import ChatConfigurationError
+from tldw_chatbook.Chat.Chat_Deps import ChatAPIError, ChatConfigurationError
 
 _MDN_BOILERPLATE_MARKER = "For more information check:"
 
@@ -125,3 +125,14 @@ def describe_stream_failure(exc: BaseException) -> str:
     if detail and detail.lower() != summary.lower():
         return f"{summary} ({detail})"
     return summary
+
+
+def describe_console_stream_failure(exc: BaseException) -> str:
+    """Return gateway-sanitized copy at the Console's visible failure surfaces.
+
+    Durable agent summaries continue to use the unchanged diagnostic helper.
+    Other errors keep their existing description.
+    """
+    if isinstance(exc, ChatAPIError) and exc.console_copy:
+        return exc.console_copy
+    return describe_stream_failure(exc)

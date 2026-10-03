@@ -484,6 +484,7 @@ from tldw_chatbook.Tools.watchlists_command_service import WatchlistsCommandServ
 from tldw_chatbook.Utils.sensitive_paths import SensitiveExclusion
 from tldw_chatbook.Utils.input_validation import validate_console_draft
 from tldw_chatbook.Chat.provider_failures import (  # noqa: F401  (re-export: tests and callers import describe_stream_failure from here)
+    describe_console_stream_failure,
     describe_stream_failure,
 )
 from tldw_chatbook.Chat.console_cost_tracker import (
@@ -28603,7 +28604,9 @@ class ConsoleChatController:
             # Provider failures are surfaced as run status plus a transcript
             # system row; they must never be written into assistant message
             # content, which is persisted and replayed as model context.
-            visible_copy = f"Provider stream failed: {describe_stream_failure(exc)}"
+            visible_copy = (
+                f"Provider stream failed: {describe_console_stream_failure(exc)}"
+            )
             self.store.record_trajectory_timing(
                 assistant_message_id, model_status="failed"
             )
@@ -29930,7 +29933,9 @@ class ConsoleChatController:
             # the pre-regenerate base + status for a failed regenerate;
             # preserves whatever partial content already streamed
             # otherwise).
-            visible_copy = f"Agent run failed: {describe_stream_failure(exc)}"
+            visible_copy = (
+                f"Agent run failed: {describe_console_stream_failure(exc)}"
+            )
             if getattr(
                 getattr(exc, "response", None), "status_code", None
             ) is not None and self._session_history_carries_images(session_id):
@@ -30487,7 +30492,7 @@ class ConsoleChatController:
         exhausted", or the loop-guard's own user-facing "Agent stopped:
         ..." copy -- TASK-1231/F3 AC4) is surfaced when available.
         """
-        from tldw_chatbook.Agents.agent_models import RUN_STUCK, STEP_ERROR
+        from tldw_chatbook.Agents.agent_models import RUN_ERROR, RUN_STUCK, STEP_ERROR
 
         reason = ""
         for step in reversed(getattr(outcome, "steps", None) or []):
@@ -30514,6 +30519,8 @@ class ConsoleChatController:
                 f"Agent run stuck: "
                 f"{reason or 'budget or loop limit reached'}.{suffix}"
             )
+        if outcome.status == RUN_ERROR and getattr(outcome, "console_copy", None):
+            return f"Agent run failed: {outcome.console_copy}"
         return f"Agent run failed: {reason or outcome.status}."
 
     @staticmethod
