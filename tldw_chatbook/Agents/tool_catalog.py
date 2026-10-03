@@ -74,6 +74,7 @@ from .agent_models import (
     failed_tool_record_projection,
 )
 from .run_context import current_run_id
+
 # ADR-097 boot ratchet: deferred off the boot path (loads on first use). (tool_arg_coercion imports at the dispatch site.)
 from .run_log_search import (
     MAX_CROSS_RUN_RUNS,
@@ -81,6 +82,7 @@ from .run_log_search import (
     MAX_STATS_GROUPS,
     STATS_GROUP_BY_FIELDS,
 )
+
 # NOTE (boot budget, ADR-097): `run_tool_policy` is annotation-only here
 # (`from __future__ import annotations` above); the TYPE_CHECKING import
 # keeps the module off the UI-ready census path. The live policy object is
@@ -114,6 +116,7 @@ class ToolExecutionPolicy(StrEnum):
 
     BOUNDED_ABANDONABLE = "bounded_abandonable"
     DEFINITIVE_AFTER_START = "definitive_after_start"
+
 
 SPAWN_TOOL_SCHEMA = ToolSchema(
     id="runtime:spawn_subagent",
@@ -188,9 +191,7 @@ def build_spawn_schema(
     """
     if not definitions and not override_enabled:
         return SPAWN_TOOL_SCHEMA
-    roster = "\n".join(
-        _spawn_roster_line(d) for d in definitions
-    )
+    roster = "\n".join(_spawn_roster_line(d) for d in definitions)
     properties: dict[str, Any] = {
         # Shallow-copied so no future consumer of the built schema can
         # mutate the module-global SPAWN_TOOL_SCHEMA through this alias.
@@ -266,8 +267,7 @@ def build_chat_create_schema(
     if not routed and not override_enabled:
         return base
     properties: dict[str, Any] = {
-        name: dict(spec)
-        for name, spec in base.parameters["properties"].items()
+        name: dict(spec) for name, spec in base.parameters["properties"].items()
     }
     if routed:
         roster = "\n".join(
@@ -314,10 +314,7 @@ def _spawn_roster_line(d: AgentDefinition) -> str:
     """One roster line; ADR-147 routing suffix only when routed."""
     line = f"- {d.name} — {d.description}" if d.description else f"- {d.name}"
     if d.provider or d.model:
-        line += (
-            f" (runs on {d.provider or 'parent'}"
-            f" / {d.model or 'default model'})"
-        )
+        line += f" (runs on {d.provider or 'parent'} / {d.model or 'default model'})"
     return line
 
 
@@ -336,8 +333,7 @@ def _override_provider_description(
     if not override_targets:
         return header + "\n(none configured — any override will be refused)"
     lines = "\n".join(
-        f"- {provider} (models: {', '.join(models)})" if models
-        else f"- {provider}"
+        f"- {provider} (models: {', '.join(models)})" if models else f"- {provider}"
         for provider, models in override_targets
     )
     return header + "\n" + lines
@@ -524,8 +520,18 @@ _FIND_TOOLS_LISTING_CHAR_LIMIT = 700
 
 _FUZZY_STOPWORDS = frozenset(
     {
-        "a", "an", "and", "by", "for", "in", "of", "on", "or",
-        "the", "to", "with",
+        "a",
+        "an",
+        "and",
+        "by",
+        "for",
+        "in",
+        "of",
+        "on",
+        "or",
+        "the",
+        "to",
+        "with",
     }
 )
 
@@ -572,10 +578,11 @@ def build_find_tools_schema(names: "Sequence[str]") -> ToolSchema:
         label = "Available tools"
     suffix = f" {label}: {listing}."
     if len(suffix) > _FIND_TOOLS_LISTING_CHAR_LIMIT:
-        suffix = suffix[: _FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
+        suffix = suffix[:_FIND_TOOLS_LISTING_CHAR_LIMIT] + "…"
     return _dataclass_replace(
         FIND_TOOLS_SCHEMA, description=FIND_TOOLS_SCHEMA.description + suffix
     )
+
 
 SKILL_FILE_TOOL_SCHEMA = ToolSchema(
     id="runtime:skill_file",
@@ -1246,10 +1253,7 @@ def redact_root_locator(value: Any, root: "Path | RemoteRoot | None") -> Any:
                     value = value.replace(locator, ".")
             return value
         if isinstance(value, dict):
-            return {
-                key: redact_root_locator(item, root)
-                for key, item in value.items()
-            }
+            return {key: redact_root_locator(item, root) for key, item in value.items()}
         if isinstance(value, list):
             return [redact_root_locator(item, root) for item in value]
         if isinstance(value, tuple):
@@ -1264,10 +1268,7 @@ def redact_root_locator(value: Any, root: "Path | RemoteRoot | None") -> Any:
                 value = value.replace(locator, ".")
         return value
     if isinstance(value, dict):
-        return {
-            key: redact_root_locator(item, root)
-            for key, item in value.items()
-        }
+        return {key: redact_root_locator(item, root) for key, item in value.items()}
     if isinstance(value, list):
         return [redact_root_locator(item, root) for item in value]
     if isinstance(value, tuple):
@@ -1464,11 +1465,14 @@ class BuiltinToolProvider:
         from tldw_chatbook.Tools.workspace_file_roots import run_workspace
         from tldw_chatbook.Utils.path_validation import validate_path_multi
 
-        with self._file_authority(), run_workspace(
-            self._workspace_id,
-            read_binding_ids=self._workspace_read_binding_ids,
-            write_binding_ids=self._workspace_write_binding_ids,
-            binding_authority=self._workspace_binding_authority,
+        with (
+            self._file_authority(),
+            run_workspace(
+                self._workspace_id,
+                read_binding_ids=self._workspace_read_binding_ids,
+                write_binding_ids=self._workspace_write_binding_ids,
+                binding_authority=self._workspace_binding_authority,
+            ),
         ):
             roots = allowed_file_roots(write=write, sandbox_root=_tool_sandbox_root())
             path = validate_path_multi(value, roots)
@@ -1583,11 +1587,14 @@ class BuiltinToolProvider:
             # concurrent run's. `self._workspace_id=None` keeps the
             # ContextVar at `None`, which is `allowed_file_roots`' own
             # documented fallback to the active workspace.
-            with authority, run_workspace(
-                self._workspace_id,
-                read_binding_ids=self._workspace_read_binding_ids,
-                write_binding_ids=self._workspace_write_binding_ids,
-                binding_authority=self._workspace_binding_authority,
+            with (
+                authority,
+                run_workspace(
+                    self._workspace_id,
+                    read_binding_ids=self._workspace_read_binding_ids,
+                    write_binding_ids=self._workspace_write_binding_ids,
+                    binding_authority=self._workspace_binding_authority,
+                ),
             ):
                 execution_started = True
                 raw = asyncio.run(tool.execute(**args))
@@ -1899,9 +1906,8 @@ class ToolCatalogRegistry:
             entries = provider.list_catalog()
         except Exception:  # noqa: BLE001 - malformed provider fails closed
             return False
-        if (
-            frozenset(entry.name for entry in entries) != expected_names
-            or any(entry.source != "library" for entry in entries)
+        if frozenset(entry.name for entry in entries) != expected_names or any(
+            entry.source != "library" for entry in entries
         ):
             return False
         with self._catalog_lock:
@@ -1933,8 +1939,7 @@ class ToolCatalogRegistry:
         assert isinstance(provider, CanvasToolProvider)
         if (
             type(authority) is not CanvasToolRegistrationAuthority
-            or authority.classification
-            is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
+            or authority.classification is not CANVAS_MUTATION_APPROVAL_CLASSIFICATION
             or not provider.authenticates_registration_authority(authority)
             or not provider.scope_is_current()
         ):
@@ -1943,9 +1948,10 @@ class ToolCatalogRegistry:
             entries = provider.list_catalog()
         except Exception:  # noqa: BLE001 - malformed provider fails closed
             return False
-        if (
-            frozenset(entry.name for entry in entries) != CANVAS_RESERVED_TOOL_NAMES
-            or any(entry.source != "canvas" for entry in entries)
+        if frozenset(
+            entry.name for entry in entries
+        ) != CANVAS_RESERVED_TOOL_NAMES or any(
+            entry.source != "canvas" for entry in entries
         ):
             return False
         with self._catalog_lock:
@@ -2010,7 +2016,10 @@ class ToolCatalogRegistry:
             entry
             for entry in entries
             if entry.name not in CANVAS_RESERVED_TOOL_NAMES
-            or (provider is not None and self._authenticated_canvas_name(provider, entry.name))
+            or (
+                provider is not None
+                and self._authenticated_canvas_name(provider, entry.name)
+            )
         ]
 
     def find(
@@ -2056,9 +2065,7 @@ class ToolCatalogRegistry:
             elif needle in description:
                 rank = 3
             else:
-                matched = len(
-                    query_tokens & _fuzzy_tokens(f"{name} {description}")
-                )
+                matched = len(query_tokens & _fuzzy_tokens(f"{name} {description}"))
                 if not matched or not query_tokens:
                     continue
                 rank = 4
@@ -2261,9 +2268,13 @@ class ToolCatalogRegistry:
         """
         try:
             schema = provider.load_schema(tool_id)
-            from .tool_arg_coercion import coerce_tool_args  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
+            from .tool_arg_coercion import (
+                coerce_tool_args,
+            )  # ADR-097 boot ratchet: deferred off the boot path (loads on first use).
 
-            repaired, coerced = coerce_tool_args(args, getattr(schema, "parameters", None))
+            repaired, coerced = coerce_tool_args(
+                args, getattr(schema, "parameters", None)
+            )
         except Exception:  # noqa: BLE001 -- repair is best-effort by design
             return args
         if coerced:
@@ -2300,13 +2311,14 @@ class ToolCatalogRegistry:
             if not self._authenticated_canvas_name(provider, name):
                 from .canvas_tool_provider import CanvasToolProvider
 
-                if isinstance(provider, CanvasToolProvider) and not provider.canvas_enabled:
+                if (
+                    isinstance(provider, CanvasToolProvider)
+                    and not provider.canvas_enabled
+                ):
                     return ToolResult.blocked(
                         "Canvas is disabled. Restart Chatbook after re-enabling it."
                     )
-                return ToolResult.blocked(
-                    "Canvas authority is unavailable."
-                )
+                return ToolResult.blocked("Canvas authority is unavailable.")
             if name in {"canvas_create", "canvas_update"} and not (
                 self.is_canvas_reversible_conversation_local_mutation(name)
             ):

@@ -33,7 +33,11 @@ import time
 import pytest
 
 from Tests.Agents.test_agent_service import SUBAGENT_PROMPT_PREFIX
-from Tests.Agents.test_fleet_runtime import FLEET_CFG, make_fleet_service, make_inline_service
+from Tests.Agents.test_fleet_runtime import (
+    FLEET_CFG,
+    make_fleet_service,
+    make_inline_service,
+)
 from tldw_chatbook.Agents import agent_service
 from tldw_chatbook.Agents.agent_models import (
     FENCE_TOOL_RESULT_PREFIX,
@@ -271,9 +275,7 @@ def make_deps(call_model, *, invoke=None, cancel=None, drain=None, on_record=Non
         invoke_tool=invoke or (lambda call: ToolResult(ok=True, content="42")),
         spawn=lambda task: ToolResult(ok=True, content="sub done"),
         find_tools=lambda query: [],
-        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(
-            accepted=(CALC,)
-        ),
+        load_schemas=lambda _ids, _messages, _call: ToolLoadSelection(accepted=(CALC,)),
         should_cancel=cancel or (lambda: False),
         clock=lambda: 0.0,
         drain_mailbox=drain,
@@ -745,9 +747,7 @@ def _coordinator_drain(coordinator, handle_id, drain_calls):
 def test_red_g_a_cancelled_run_leaves_entries_queued():
     coordinator = _coord()
     handle = coordinator.reserve(task="child", agent=None)
-    coordinator.post_steering(
-        handle.handle_id, STEERING_SOURCE_USER, "still queued"
-    )
+    coordinator.post_steering(handle.handle_id, STEERING_SOURCE_USER, "still queued")
     drain_calls = []
 
     def call_model(messages, active):
@@ -920,7 +920,11 @@ def test_fleet_child_drain_is_wired_to_its_own_coordinator_mailbox(db):
     second_payload = chat.child_calls["task one"][1]["messages_payload"]
     # Delivered at the coherent boundary: after the batch's tool result,
     # as the final message before the child's next assistant turn.
-    assert second_payload[-1] == {"role": "user", "content": labeled, "_tldw_exchange_continuation": True}
+    assert second_payload[-1] == {
+        "role": "user",
+        "content": labeled,
+        "_tldw_exchange_continuation": True,
+    }
     assert str(second_payload[-2]["content"]).startswith(
         f"{FENCE_TOOL_RESULT_PREFIX}calculator:"
     )
@@ -970,9 +974,7 @@ def test_only_the_threaded_fleet_child_is_wired_for_drain(db, monkeypatch):
         if not prompt.startswith(SUBAGENT_PROMPT_PREFIX)
     ]
     child_drains = [
-        drain
-        for prompt, drain in recorded
-        if prompt.startswith(SUBAGENT_PROMPT_PREFIX)
+        drain for prompt, drain in recorded if prompt.startswith(SUBAGENT_PROMPT_PREFIX)
     ]
     # TASK-25903 updated this contract: the primary is now wired too -- to
     # its USER-steering mailbox (steer_primary), a different producer from
