@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 10:10'
+updated_date: '2026-10-03 10:38'
 labels:
   - agents
   - console
@@ -174,6 +174,19 @@ Reason: explicitly document the transient provider exception/outcome/Console han
 2. Strengthen the actual SQLite AgentService/Console test before extending production: require gateway display/model/recovery copy in the actual agent failure system row, but unchanged content-free STEP_ERROR and run-log bytes. Preserve its existing diagnostic assertions. Verify the new assertion fails at the actual lost RunOutcome presentation.
 3. Add a keyword-only repr-excluded transient console_copy on RunOutcome. AgentService carries only the projected ChatAPIError presentation while its diagnostic step and persistence remain unchanged; Console reads it only for failed outcomes. Leave stuck/budget behavior, retained child histories, original model/provider audit, tools/permissions/fallback/SQL/custody unchanged. Existing module imports remain deferred.
 4. Verify actual direct and agent UI, diagnostic SQL/run logs, generic/stuck/fallback neighbors, source/AST/artifacts and focused immutable independent review. Retain original controller2PASS/2 hook-admission FAIL1.989s as inherited pre-delivery fixture limits; do not alter old fixtures/markers. Original five budgets follow only after all activity settles. Close AC3/4 and publish only after full qualification.
+
+## Strict-base hook visit and lazy Settings preservation — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/197-console-hook-configuration-review.md; backlog/decisions/097-boot-budget-ratchets.md; existing ADR150/199/211.
+Reason: mechanically preserve shipped TASK33642 visit-only metadata reuse and deferred Hooks Settings import with authoritative Send/review/Settings consent still unchanged; no new owner, authority, storage, schema, dependency, gate or ceiling.
+
+1. Preserve independent Ready source/targeted-functional approval at d9f315107052369751cfbb6d550d1dd878fc758f. ALL FOUR published f8b jobs passed and exact-head Qodo was clear before strict-base work. Actual dev0409592a2db8d50825d3482c144bc84ef6d1d523 now requires the next preserving update under live strict protection enforced for administrators. Existing AC3/4 remain open. Capture all238 approved Git/disk hashes, ten non-overlap incoming hashes, full tracked tree/modes/blob IDs and deletion before rebase.
+2. Append only the authenticated test-duration erratum to the testing lesson, retaining every reviewed prefix byte: actual agent RED XML is2.377s and first GREEN is2.137s, correcting earlier2.383/2.140 transcriptions; final-head confirmation is2PASS1.883s. Record source/prefix proof. Rebase the feature range once from420b onto exact040959. Preserve all237 other prior approved files and all ten incoming paths byte-exact; no actual patch or manifest overlap exists. Incoming TASK33642 remains Done/checked as shipped.
+3. Read and qualify incoming visit warm reuse/invalidation, selected-config/data-root/no-follow directory/lock posture, admission pause/seal/recovery and authoritative Send/review paths. Run unchanged bounded hook permission, Console hook admission/review and Settings Hooks consumers. Run the incoming556-module pre-import guard; final original storage cases themselves qualify tightened39/112/35351 visit limits. Preserve all source/assertions/markers; do not retarget old live config or mask inherited Settings-search failures. No wider audit or new physical-key/live-server claim.
+4. Authenticate full source/tree/index, exact incoming tightened guard/snapshot bytes, unchanged original assertion ASTs and typed provider/fallback/diagnostic SQL custody. Check fatal/static/format debt, diagnostic/worker/CSS/task/whitespace artifacts proportionately and request immutable independent source/functional review. No production repair is planned.
+5. Only after functional/review/artifact activity settles, run ORIGINAL five storage/app-import/UI-ready/boot-CSS cases with exact incoming040 guard sources and REPO_ROOT child cwd/PYTHONPATH. Read actual counts; retain earlier681/686 and1033/1033 as historical, not new measurements. No pin/ceiling/warmup/count/timeout/work change. Obtain supplemental independent raw/XML/hash/count approval, then recheck AC3/4 and close TASK33664 via CLI with all positive/NON-GREEN evidence and inherited limits.
+6. Documentation-only closure updates the four owned canonical records and preserves every approved source/lesson/ADR/index hash and capture_cloud.py deletion. Publish once with EXACT observed f8bcd94f6b50249e8e07356b9a4320483362406e lease. Require fresh current-head Qodo/no actionable threads/ALL FOUR jobs and actual strict protection before normal head-pinned protected merge. Do not rebase while fresh jobs run. Verify MERGED parents/tree/concurrency, then pause heartbeat.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
