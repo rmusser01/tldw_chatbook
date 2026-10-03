@@ -30,6 +30,10 @@ class _Response:
         self.status_code = status
         self.headers: dict[str, str] = {}
 
+    def json(self) -> Any:
+        """An empty HTTP error body has no JSON, as with requests.Response."""
+        raise ValueError("The scripted HTTP response has no JSON body.")
+
     def close(self) -> None:
         """Nothing to release."""
 
