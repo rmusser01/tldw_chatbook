@@ -22,6 +22,8 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [dev, main]
+  # SPIKE (merge-queue test, never merges): dispatch entry point.
+  workflow_dispatch:
 
 # Deliberately NOT path-filtered.
 #
@@ -63,7 +65,7 @@ permissions:
 jobs:
   pr-fast-lane:
     name: PR Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     # TASK-32831: the main and admission-sensitive invocations measured 14m45s
     # and 4m59s, plus setup; keep both required steps within one bounded job.
@@ -148,7 +150,7 @@ jobs:
     # ~20 min against a 30-min cap, and spending its last headroom here would
     # make the required check fail on a timeout the first time either half grew.
     name: UI Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -196,7 +198,7 @@ jobs:
           python-version: '3.12.11'
 
       - name: Require successful PR fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ github.event_name != 'push' && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -207,7 +209,7 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ github.event_name != 'push' && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."

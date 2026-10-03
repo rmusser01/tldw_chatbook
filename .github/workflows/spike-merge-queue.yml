@@ -1,0 +1,44 @@
+name: SPIKE merge-queue mechanics
+
+# THROWAWAY (merge-queue design test, 2026-10-03). Never merged into dev.
+# Fires when auto-merge is armed on the spike PR; rebases it with GITHUB_TOKEN,
+# then dispatches the required workflow on the branch, and records what happened.
+on:
+  pull_request:
+    types: [auto_merge_enabled]
+    branches: [dev]
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: write
+
+jobs:
+  spike:
+    if: startsWith(github.head_ref, 'spike/merge-queue')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NODE_ID: ${{ github.event.pull_request.node_id }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      OLD_HEAD: ${{ github.event.pull_request.head.sha }}
+      BRANCH: ${{ github.head_ref }}
+      REPO: ${{ github.repository }}
+    steps:
+      - name: Q5 auto_merge_enabled fired a pull_request run
+        run: echo "event=$GITHUB_EVENT_NAME pr=$PR_NUMBER old_head=$OLD_HEAD" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Q3 rebase with GITHUB_TOKEN (GraphQL REBASE, pinned head)
+        run: |
+          gh api graphql \
+            -f query='mutation($id:ID!,$oid:GitObjectID!){updatePullRequestBranch(input:{pullRequestId:$id,expectedHeadOid:$oid,updateMethod:REBASE}){pullRequest{headRefOid}}}' \
+            -f id="$PR_NODE_ID" -f oid="$OLD_HEAD" | tee rebase.json
+          echo "rebase result: $(cat rebase.json)" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Q1/Q2 dispatch the required workflow on the branch
+        run: |
+          sleep 10
+          gh workflow run derived-artifacts.yml -R "$REPO" --ref "$BRANCH" 2>&1 | tee dispatch.txt || true
+          echo "dispatch: $(cat dispatch.txt)" >> "$GITHUB_STEP_SUMMARY"
+          gh pr view "$PR_NUMBER" -R "$REPO" --json headRefOid,autoMergeRequest,mergeStateStatus | tee -a "$GITHUB_STEP_SUMMARY"
