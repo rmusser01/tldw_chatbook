@@ -79,6 +79,99 @@ def test_cgnat_blocked(monkeypatch):
     assert not evaluate_url_policy("http://h.example/").allowed
 
 
+# ---------------------------------------------------------------------------
+# One shared address-classification predicate (task-609)
+# ---------------------------------------------------------------------------
+
+#: Addresses every fetch layer must accept: ordinary public v4/v6 plus the
+#: two IANA globally-reachable anycast entries (192.0.0.9/.10).
+_FETCHABLE_PUBLIC = (
+    "93.184.216.34",
+    "1.1.1.1",
+    "2606:4700::6810:85e5",
+    "192.0.0.9",
+    "192.0.0.10",
+    "::ffff:93.184.216.34",
+)
+
+#: One representative of every rejected address category, from the task-609
+#: delta matrix computed against both layers: RFC1918/ULA private, loopback,
+#: link-local, unspecified, multicast, RFC 6598 CGNAT (not is_private on
+#: Python 3.12 -- caught only by the is_global floor, task-610), cloud
+#: metadata endpoints, documentation ranges, reserved v4, the non-anycast
+#: part of 192.0.0.0/24, v4-mapped private/CGNAT, and the NAT64 well-known
+#: prefix (is_global yet is_reserved -- see the reconciliation test below).
+_NOT_FETCHABLE = (
+    "10.0.0.5",
+    "192.168.1.1",
+    "fd00::1",
+    "127.0.0.1",
+    "::1",
+    "169.254.1.1",
+    "fe80::1",
+    "0.0.0.0",
+    "::",
+    "224.0.0.1",
+    "ff02::1",
+    "100.64.0.1",
+    "100.100.100.200",
+    "169.254.169.254",
+    "fd00:ec2::254",
+    "2001:db8::1",
+    "192.0.2.5",
+    "250.1.2.3",
+    "192.0.0.100",
+    "::ffff:10.0.0.1",
+    "::ffff:100.64.0.1",
+    "64:ff9b::1.2.3.4",
+    "64:ff9b::7f00:1",
+)
+
+
+def test_address_is_fetchable_shared_floor():
+    """The one per-address predicate both SSRF layers route through (task-609).
+
+    Utils/egress's own policy pipeline and skill_remote_fetch's per-hop
+    revalidation must not be able to drift on which address categories are
+    rejected; this sweep pins the shared verdict for every category in the
+    delta matrix.
+    """
+    for ip in _FETCHABLE_PUBLIC:
+        assert egress.address_is_fetchable(ip), ip
+    for ip in _NOT_FETCHABLE:
+        assert not egress.address_is_fetchable(ip), ip
+    # Fail closed on unparseable input.
+    assert not egress.address_is_fetchable("not-an-ip")
+
+
+def test_nat64_well_known_prefix_blocked_everywhere(monkeypatch):
+    """task-609 delta reconciliation, strict side wins.
+
+    ``64:ff9b::/96`` is the one category the two layers disagreed on:
+    ``is_global`` is True (so egress's old classification said "public")
+    while ``is_reserved`` is True (so the skill layer's six-predicate chain
+    rejected it). The prefix embeds IPv4 -- ``64:ff9b::7f00:1`` IS
+    ``127.0.0.1`` -- so allowing it is a rebinding-shaped hole; both layers
+    now reject it via the shared predicate (egress tightens).
+    """
+    assert not egress.address_is_fetchable("64:ff9b::7f00:1")
+
+    _resolve_to(monkeypatch, ["64:ff9b::7f00:1"])
+    d = evaluate_url_policy("https://h.example/")
+    assert not d.allowed and d.reason == "private"
+
+    # And through the strict pre-fetch guard, which ignores all trust config.
+    assert not egress.is_public_http_url("https://[64:ff9b::7f00:1]/x.zip")
+
+    # The same URL through the skill layer's per-hop check (skill side of
+    # the equivalence is pinned in Tests/Skills/test_skill_remote_fetch.py).
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
+    from tldw_chatbook.Skills_Interop.skill_remote_fetch import _assert_host_allowed
+
+    with pytest.raises(RemoteSkillError, match="not reachable"):
+        _assert_host_allowed("nat64.example", lambda h: ["64:ff9b::7f00:1"])
+
+
 def test_metadata_ip_blocked_even_when_trusted(monkeypatch):
     _resolve_to(monkeypatch, ["169.254.169.254"])
     d = evaluate_url_policy(

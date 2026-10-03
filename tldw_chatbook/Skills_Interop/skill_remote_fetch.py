@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..Utils.egress import address_is_fetchable
 from .skill_package_inspection import (
     SkillPackageInspection,
     SkillPackageKind,
@@ -201,7 +202,18 @@ def _default_resolver(host: str) -> list[str]:
 
 
 def _assert_host_allowed(host: str, resolver) -> None:
-    """Reject unless EVERY resolved address is public (mixed sets reject)."""
+    """Reject unless EVERY resolved address is fetchable (mixed sets reject).
+
+    The per-address verdict is ``Utils.egress.address_is_fetchable`` -- the
+    ONE shared SSRF classification predicate (task-609), also used by
+    egress's own policy pipeline -- so this layer and the egress layer cannot
+    drift on which address categories are rejected (private/loopback/
+    link-local/reserved/unspecified/multicast/CGNAT/metadata/NAT64 all
+    reject; see that function's docstring for the full taxonomy). This layer
+    stays deliberately stricter than egress AROUND the predicate: https-only
+    per hop (enforced in fetch_zip_bytes), no trusted_origins, no config
+    allowlist.
+    """
     try:
         literal = ipaddress.ip_address(host)
         addresses = [str(literal)]
@@ -213,9 +225,7 @@ def _assert_host_allowed(host: str, resolver) -> None:
     if not addresses:
         raise RemoteSkillError(f"Could not resolve {host}.")
     for raw in addresses:
-        addr = ipaddress.ip_address(raw.split("%", 1)[0])
-        if (addr.is_private or addr.is_loopback or addr.is_link_local
-                or addr.is_reserved or addr.is_multicast or addr.is_unspecified):
+        if not address_is_fetchable(raw.split("%", 1)[0]):
             raise RemoteSkillError("That host is not reachable from here.")
 
 
