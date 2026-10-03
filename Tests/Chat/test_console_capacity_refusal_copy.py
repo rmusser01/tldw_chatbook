@@ -105,3 +105,54 @@ async def test_a_known_window_refusal_never_claims_the_size_is_unknown(
     assert len(rows) == 1, _system_rows(store)
     assert "isn't known" not in rows[0]
     assert "Switch model" in rows[0]
+
+
+@pytest.mark.asyncio
+async def test_a_refused_send_reads_not_sent_and_retry_waits_for_a_setting(
+    tmp_path, monkeypatch
+) -> None:
+    """The live first send showed 'Response accepted; waiting for dispatch.'
+    with an enabled Retry under a refusal that no Retry could change. The
+    recovery surface now says the message was not sent, and Retry stays
+    disabled -- with the hint -- until a setting that could fix it changes."""
+    from tldw_chatbook.Chat.console_chat_models import (
+        ConsoleDispatchRecoveryActionId,
+    )
+    from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
+    from tldw_chatbook.Utils import token_counter
+
+    monkeypatch.setitem(token_counter.PROVIDER_CONTEXT_WINDOWS, "openai", 4096)
+    _db, store, controller, gateway = _live_controller(
+        tmp_path,
+        gateway=_UnknownWindowGateway(),
+        overrides=ConsoleContextPolicyOverrides(),
+    )
+
+    await controller.submit_draft("hello there", session_id="session-1")
+
+    shown = store.dispatch_recovery_for_presentation("session-1")
+    assert shown is not None, "the turn still needs Retry or Discard"
+    assert "accepted" not in shown.visible_copy.lower(), shown.visible_copy
+    assert "waiting for dispatch" not in shown.visible_copy
+    assert "Not sent" in shown.visible_copy
+    assert shown.warning == ""
+    actions = {action.action_id: action for action in shown.actions}
+    retry = actions[ConsoleDispatchRecoveryActionId.RETRY_RESPONSE]
+    assert retry.enabled is False
+    assert retry.disabled_reason == "Change a setting above, then retry"
+    assert actions[ConsoleDispatchRecoveryActionId.DISCARD].enabled is True
+
+    # Switching the model is a change that could fix it: Retry comes back.
+    store.replace_session_settings(
+        "session-1",
+        ConsoleSessionSettings(provider="openai", model="gpt-4.1-mini"),
+    )
+    shown = store.dispatch_recovery_for_presentation("session-1")
+    assert shown is not None
+    retry = next(
+        action
+        for action in shown.actions
+        if action.action_id is ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
+    )
+    assert retry.enabled is True
+    assert gateway.stream_calls == 0
