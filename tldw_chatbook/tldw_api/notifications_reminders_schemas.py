@@ -103,6 +103,10 @@ NotificationKind = Literal[
     "automation_run_failed",
     "automation_run_timed_out",
     "automation_run_skipped",
+    # ADR-184 2A: tool-requesting automation runs terminate with this
+    # outcome until the read-only tool envelope exists (and side-effecting
+    # calls keep it at runtime).
+    "automation_run_approval_required",
 ]
 
 
