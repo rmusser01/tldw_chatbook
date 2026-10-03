@@ -20,14 +20,14 @@ from Tests.UI.test_console_model_switcher import (
     open_switcher,
 )
 from tldw_chatbook.Utils.token_counter import resolve_context_window
-from tldw_chatbook.Widgets.Console.console_model_popover import _context_copy
+from tldw_chatbook.Widgets.Console.console_model_popover import context_copy
 
 
-def test_context_copy_marks_estimates_and_shortens_sizes() -> None:
-    assert _context_copy(200_000, True) == "200k"
-    assert _context_copy(32_000, False) == "~32k"
-    assert _context_copy(1_048_576, True) == "1M"
-    assert _context_copy(512, True) == "512"
+def testcontext_copy_marks_estimates_and_shortens_sizes() -> None:
+    assert context_copy(200_000, True) == "200k"
+    assert context_copy(32_000, False) == "~32k"
+    assert context_copy(1_048_576, True) == "1M"
+    assert context_copy(512, True) == "512"
 
 
 @pytest.mark.asyncio
@@ -42,5 +42,5 @@ async def test_rows_print_the_catalog_window_without_a_serving_request() -> None
             ("llama_cpp", "model-b"),
         ):
             window = resolve_context_window(provider, model)
-            expected = _context_copy(window.tokens, window.verified)
+            expected = context_copy(window.tokens, window.verified)
             assert f" {expected}  " in line_with(list_lines(app, switcher), model)

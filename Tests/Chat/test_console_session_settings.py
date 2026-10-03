@@ -13,6 +13,7 @@ import tldw_chatbook.Chat.console_session_settings as session_settings
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatSession
 from tldw_chatbook.Chat.console_context_repository import ConsoleMemoryRecord
+from tldw_chatbook.Chat.console_provider_endpoints import SAVE_ENDPOINT_ACTION_LABEL
 from tldw_chatbook.Chat.console_provider_support import (
     resolve_console_provider_identity,
 )
@@ -2158,7 +2159,7 @@ def test_readiness_blocks_unsaved_generic_endpoint_with_safe_details() -> None:
 
     assert readiness.label == "Endpoint not saved"
     assert readiness.native_send_supported is False
-    assert "Save model defaults" in readiness.detail
+    assert SAVE_ENDPOINT_ACTION_LABEL in readiness.detail
     assert "Selected endpoint: http://127.0.0.1:9999/v1" in readiness.detail
     assert "Saved endpoint: http://127.0.0.1:11434" in readiness.detail
 

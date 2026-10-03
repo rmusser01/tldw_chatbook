@@ -185,6 +185,7 @@ async def test_saved_model_defaults_reach_a_chat_with_work_only_through_apply(
     app = _console_app()
     db_path = request.getfixturevalue("tmp_path") / "chachanotes.db"
     app.chachanotes_db = CharactersRAGDB(str(db_path), "test-client")
+    request.addfinalizer(app.chachanotes_db.close)
     harness = _ConsoleFlowHarness(app)
     config_path = get_cli_config_path()
     async with harness.run_test(size=(211, 44)) as pilot:

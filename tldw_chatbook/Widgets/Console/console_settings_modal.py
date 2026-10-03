@@ -38,7 +38,7 @@ from tldw_chatbook.Chat.console_context_policy import (
     ContextPolicyError,
 )
 from tldw_chatbook.Chat.console_provider_endpoints import (
-    effective_provider_endpoint, first_configured_endpoint,
+    SAVE_ENDPOINT_ACTION_LABEL, effective_provider_endpoint, first_configured_endpoint,
     normalize_generic_endpoint_for_compare,
 )
 from tldw_chatbook.Chat.console_provider_support import (
@@ -150,7 +150,7 @@ from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID, CONNECTION_FOCUS_IDS, CONNECTION_TITLE, CORE_FIELDS,
     ENDPOINT_ROW_ID, MODEL_CHANGE_ID, REQUEST_ESTIMATE_DISCLOSURE_ID,
-    SAMPLING_DISCLOSURE_ID, SAMPLING_FIELDS, SAMPLING_FOCUS_IDS, SAMPLING_TITLE,
+    BLANK_CHOICE_PROMPT, SAMPLING_DISCLOSURE_ID, SAMPLING_FOCUS_IDS, SAMPLING_TITLE,
     ConsoleSettingsFieldRowsMixin, ModelPicker, connection_blocked,
 )
 from .console_settings_saved_defaults import (
@@ -166,7 +166,6 @@ if TYPE_CHECKING:
     from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 
 MODAL_BODY_MIN_HEIGHT = 0
-MODAL_LABEL_WIDTH = 23  # $ds-size-23: the shared label column (CSS owns it)
 MODEL_DISCOVER_BUTTON_ID = "console-settings-model-discover"
 MODEL_DISCOVER_STATUS_ID = "console-settings-model-discover-status"
 MODEL_DISCOVER_BUTTON_LABEL = "Test connection & list models"
@@ -1481,9 +1480,7 @@ class ConsoleSettingsModal(
         )
         select = Select(
             [(choice.replace("xhigh", "x-high").title(), choice) for choice in options],
-            value=selected,
-            allow_blank=True,
-            id=control_id,
+            prompt=BLANK_CHOICE_PROMPT, value=selected, allow_blank=True, id=control_id,
             classes="console-settings-control",
         )
         select.tooltip = self._choice_placeholder(control_id)
@@ -1594,8 +1591,7 @@ class ConsoleSettingsModal(
                     id=SAMPLING_DISCLOSURE_ID,
                     classes="console-settings-model-view",
                 ):
-                    for name in SAMPLING_FIELDS:
-                        yield self._field_row(name)
+                    yield from self._sampling_rows()
                 with Collapsible(
                     title=CONNECTION_TITLE,
                     collapsed=not (
@@ -2751,42 +2747,6 @@ class ConsoleSettingsModal(
             return CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY
         return CONSOLE_SETTINGS_MODEL_SCOPE_COPY
 
-    def _configured_section(self, section_path: str) -> Mapping[str, object]:
-        """Return one dotted config section from the opening snapshot."""
-
-        current: object = self._app_config
-        for part in section_path.split("."):
-            if not isinstance(current, Mapping):
-                return {}
-            current = current.get(part)
-        return current if isinstance(current, Mapping) else {}
-
-    def _changed_default_fields(
-        self, draft: ConsoleSessionSettings
-    ) -> frozenset[str]:
-        """Return persisted default fields whose visible values changed."""
-
-        provider_key = provider_config_key(draft.provider)
-        provider_settings = self._provider_settings(provider_key)
-        provider_defaults = self._configured_section(
-            f"console.provider_defaults.{provider_key}"
-        )
-        chat_defaults = self._configured_section("chat_defaults")
-        changed: set[str] = set()
-        if provider_settings.get("model") != draft.model:
-            changed.add(f"api_settings.{provider_key}.model")
-        if chat_defaults.get("provider") != provider_key:
-            changed.add("chat_defaults.provider")
-        if chat_defaults.get("model") != draft.model:
-            changed.add("chat_defaults.model")
-        if chat_defaults.get("streaming") != draft.streaming:
-            changed.add("chat_defaults.streaming")
-        for name in FULL_MODEL_DEFAULT_FIELDS - {"streaming"}:
-            value = getattr(draft, name)
-            if value is not None and provider_defaults.get(name) != value:
-                changed.add(f"console.provider_defaults.{provider_key}.{name}")
-        return frozenset(changed)
-
     @staticmethod
     def _primary_disabled_reason(readiness: ConsoleSettingsReadiness) -> str:
         """Map the current blocker to adjacent actionable guidance."""
@@ -2865,16 +2825,17 @@ class ConsoleSettingsModal(
             and not self._active_run
             and not self._context_operation_active()
         )
-        changed_defaults = self._changed_default_fields(settings)
+        # The same answer Use saved defaults reads (review I5).
         show_defaults = (
-            bool(changed_defaults) or needs_endpoint_persistence
+            needs_endpoint_persistence
+            or bool(settings.model) and self._saved_defaults_differ(endpoint=False)
         ) and self._active_view == "model"
         recovery_active = (
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
         )
         save_button.label = (
-            "Save endpoint & use model"
+            SAVE_ENDPOINT_ACTION_LABEL
             if needs_endpoint_persistence
             else SAVE_MODEL_DEFAULT_LABEL
         )
@@ -4483,12 +4444,12 @@ class ConsoleSettingsModal(
         self._rebase_event_guard = False
 
     def _defer_pending_entry_discovery(self, provider: str) -> None:
-        """Schedule the follow-up probe past the switch's control echoes.
+        """Schedule a created entry's probe past the pick's control echoes.
 
-        Projecting the switched-to draft re-syncs the field controls, whose
-        echoes must not cancel a probe started inside the switch; deferring
-        one refresh lets them drain, so the probe captures its nonce against
-        the settled draft.
+        The pick's rebase re-syncs the field controls, whose echoes must not
+        cancel a probe started inside it; deferring one refresh lets them
+        drain, so the probe captures its nonce against the settled draft
+        (``pick_created_endpoint`` armed it, TASK-33006.4).
         """
         self.call_after_refresh(self._run_pending_entry_discovery, provider)
 
@@ -4497,7 +4458,7 @@ class ConsoleSettingsModal(
 
         The probe resolves its identities from the mounted draft, so it must
         run only after ``_active_provider`` addresses the new entry (the
-        rebase or the raw draft swap above). A pending record for a
+        pick's rebase landed on it). A pending record for a
         different provider stays armed for its own switch.
         """
         pending = self._pending_entry_discovery

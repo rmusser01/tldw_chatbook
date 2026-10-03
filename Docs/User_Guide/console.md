@@ -484,8 +484,7 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   there for every keyboard.
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
   and the reasoning or thinking controls the model takes.
-- Then four closed disclosures, one row each (a long Sampling line wraps,
-  below): **Sampling** (Top P, Min P, Top K,
+- Then four closed disclosures, each title one row: **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.
   Each closed title already shows its value:
@@ -493,7 +492,8 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
     from, and where to change it, for example "Connection ·
     api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in
     Settings ▸ Providers & Models". The key part reads *key from env
-    \<variable\>*, *key saved*, *key missing* or *no key needed* (*Claude
+    \<variable\>*, *key saved*, *unsaved key* (typed here, not saved yet),
+    *key missing* or *no key needed* (*Claude
     subscription* for Anthropic's subscription sign-in, and *key not
     checked* while another problem, such as a missing endpoint, comes
     first); the key itself is never shown, and neither is a user name or
@@ -521,20 +521,25 @@ where the value comes from, and one line of help. The words are the ones
 **Switch model** uses: *edited \** (changed in this open), *this chat*,
 *model default*, *Console Behavior*, *provider* and *built-in*. A blank field
 says what a blank sends: "blank = provider default" (nothing is sent, so the
-provider's own default applies). A blank **Temperature** or **Top P** shows
+provider's own default applies), and its word reads *provider*; a blank
+dropdown, such as **Reasoning effort**, shows *default*. A blank **Temperature** or **Top P** shows
 its range instead, because Apply needs a value while the provider accepts the
 field. Labels match Settings, for
 example **Thinking budget**, and **Budget strategy** and **When limit nears**
 under Context.
 
 Fields the selected provider does not accept are hidden, not shown dimmed,
-and the **Sampling** title names them. For Anthropic it reads "Sampling ·
-hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty,
-Reasoning effort, Reasoning summary, Verbosity (this provider does not accept
-them)"; a line that long wraps onto a second row. A saved endpoint is judged
+and the **Sampling** title says so on its one row. When their names fit it
+names them, for example "Sampling · hidden for llama.cpp: Reasoning summary,
+Verbosity, Thinking (this provider does not accept them)"; otherwise it
+counts them, for Anthropic
+"Sampling · Anthropic does not accept 7 fields (open to list them)". Opened,
+**Sampling** lists every hidden field above its rows: "Anthropic does not
+accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort,
+Reasoning summary, Verbosity." A saved endpoint is judged
 as the server type it was saved with, so a llama.cpp endpoint hides what
-llama.cpp does not accept. Choosing another model updates the hidden fields
-and the line at once. A hidden field takes no focus,
+llama.cpp does not accept. Choosing another model updates the hidden fields,
+the title and the list at once. A hidden field takes no focus,
 is never sent, is cleared from the chat by **Apply**, and is not written by
 **Save as model default**; a value saved for it earlier stays in
 `config.toml` untouched. A reasoning or thinking control whose support for
@@ -561,7 +566,10 @@ defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
 **Apply to this chat (Ctrl+Enter)**. Each key works from any field. Only
 **Save as model default** and **Default for new chats** write
 `config.toml`; **Apply to this chat** changes this chat alone and writes no
-configuration. The **Context and memory** view has a **Cancel** button in
+configuration. **Save as model default** shows only while the draft differs
+from the saved defaults, the same test that dims **Use saved defaults**, so
+the footer never offers a save beside **Matches saved defaults**. While the
+unsaved-changes prompt shows, **Alt+M** and **Ctrl+N** do nothing. The **Context and memory** view has a **Cancel** button in
 place of the default actions. The line above the footer that names where a
 default goes ("Used by future conversations for Anthropic.") shows only
 beside **Save as model default**, so the **Context and memory** view never
@@ -572,7 +580,8 @@ defaults you saved later (a chat nobody has used yet follows them on its
 own). It replaces the draft with exactly what a new chat on the same
 provider and model would start with: the model's saved defaults, then the
 provider's saved Console defaults, then Console Behavior, then the provider's
-settings. Any unapplied edit in **Model and generation** is dropped, every
+settings. Any unapplied edit to a generation field or the endpoint is
+replaced (an edit to **Your name in this chat** is kept), every
 field that now differs from the chat reads *edited \**, and the provider and
 model stay as they are. Nothing changes until you **Apply to this chat**.
 While the draft already equals those defaults, the button is dimmed and reads
@@ -635,7 +644,9 @@ to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
 is saved to `config.toml` immediately. **Create** then lists the models the
-new server serves and opens Switch model's pick mode with the entry's name
+new server serves (the **Connection** status line reads "Listing the models
+<name> serves…" meanwhile; if the listing fails, pick mode still opens) and
+opens Switch model's pick mode with the entry's name
 in **Find**, offering those models beside the ones you named: pick one (or
 type a model id after the name) and the chat moves to that pair, after
 which the new server's connection is tested; **Esc** keeps the chat's pair.

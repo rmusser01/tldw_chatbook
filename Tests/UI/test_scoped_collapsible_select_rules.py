@@ -87,7 +87,7 @@ async def test_chat_settings_collapsed_section_costs_two_rows_under_production_c
         _assert_no_leaked_geometry(screen)
 
         sections = [c for c in screen.query(Collapsible) if c.region.area]
-        assert len(sections) == 4  # TASK-33006.1: + Sampling (was Advanced)
+        assert len(sections) == 4  # TASK-33006.1: + Connection; Sampling replaced Advanced
         for section in sections:
             assert section.collapsed
             margin = section.styles.margin

@@ -27,9 +27,13 @@ from tldw_chatbook.Chat.console_session_settings import ConsoleSessionSettings
 from tldw_chatbook.Utils.token_counter import ContextWindowResolution
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
-    CONNECTION_SUMMARY_CELLS,
+    DISCLOSURE_TITLE_CELLS,
     FIELD_ROW_FIELDS,
     INVALID_ENDPOINT_HOST,
+    NAME_DISCLOSURE_ID,
+    NAME_INPUT_ID,
+    REQUEST_ESTIMATE_DISCLOSURE_ID,
+    SAMPLING_DISCLOSURE_ID,
     SETTINGS_POINTER,
     connection_summary,
     endpoint_host,
@@ -48,12 +52,9 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
 # RecoveryRequired("raw_source_selection_changed") under the per-test sandbox.
 pytestmark = pytest.mark.bootstrap_profile
 
-ESTIMATE_ID = "console-settings-request-estimate"
-NAME_ID = "console-settings-identity-advanced"
-#: The disclosures this task folds. Sampling's one row is T1's test; its
-#: Anthropic line wraps by TASK-33006.2's ruling (it names seven fields).
-FOLDED = (CONNECTION_DISCLOSURE_ID, ESTIMATE_ID, NAME_ID)
-POINTER = "change it in Settings ▸ Providers & Models"
+#: Every closed disclosure, one row each (owner ruling 2026-10-02): this
+#: task's three, and Sampling, which counts the fields it cannot name.
+FOLDED = (SAMPLING_DISCLOSURE_ID, CONNECTION_DISCLOSURE_ID, REQUEST_ESTIMATE_DISCLOSURE_ID, NAME_DISCLOSURE_ID)
 SECRET = "sk-test-0123456789abcdefXYZ"
 LONG_HOST = "a-very-long-internal-inference-hostname.corp.example.com"
 LONG_ENV = "MY_COMPANY_LLM_GATEWAY_API_KEY"
@@ -92,37 +93,37 @@ _CONNECTION_CHATS = (
     pytest.param(
         _anthropic_from_env,
         _settings("anthropic", "claude-opus-4-8", temperature=0.7),
-        f"Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · {POINTER}",
+        f"Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · {SETTINGS_POINTER}",
         id="env-key",
     ),
     pytest.param(
         None,
         _settings("openai", "gpt-5", temperature=0.7),
-        f"Connection · api.openai.com · key saved · {POINTER}",
+        f"Connection · api.openai.com · key saved · {SETTINGS_POINTER}",
         id="saved-key",
     ),
     pytest.param(
         _openai_missing,
         _settings("openai", "gpt-5", temperature=0.7),
-        f"Connection · api.openai.com · key missing · {POINTER}",
+        f"Connection · api.openai.com · key missing · {SETTINGS_POINTER}",
         id="missing-key",
     ),
     pytest.param(
         None,
         _settings(),
-        f"Connection · 127.0.0.1:9099 · no key needed · {POINTER}",
+        f"Connection · 127.0.0.1:9099 · no key needed · {SETTINGS_POINTER}",
         id="keyless-local",
     ),
     pytest.param(
         None,
         _settings("custom-ep:gpu-box", "model-a", temperature=0.7),
-        f"Connection · 192.168.1.9:8080 · no key needed · {POINTER}",
+        f"Connection · 192.168.1.9:8080 · no key needed · {SETTINGS_POINTER}",
         id="registry-entry",
     ),
     pytest.param(
         _together_blank_endpoint,
         _settings("together", "model-t", temperature=0.7),
-        f"Connection · api.together.xyz · key from env TOGETHER_API_KEY · {POINTER}",
+        f"Connection · api.together.xyz · key from env TOGETHER_API_KEY · {SETTINGS_POINTER}",
         id="engine-preset-default",
     ),
 )
@@ -164,6 +165,8 @@ def _readiness(**facts):
         ({"credential_source": "environment"}, "OPENAI_API_KEY", "key from env OPENAI_API_KEY"),
         ({"credential_source": "environment"}, None, "key from env"),
         ({"credential_source": "stored"}, None, "key saved"),
+        # T3 review item 1: a key typed in a draft is not saved yet.
+        ({"credential_source": "draft"}, None, "unsaved key"),
         ({"credential": "missing", "configuration_issue": "credential_missing"}, "OPENAI_API_KEY", "key missing"),
         ({"credential": "missing", "configuration_issue": "endpoint_missing"}, None, "key not checked"),
         ({"credential": "not_required"}, None, "no key needed"),
@@ -183,7 +186,7 @@ def test_connection_summary_shortens_only_the_host_to_stay_one_row() -> None:
         f"Connection · api.openai.com · key saved · {SETTINGS_POINTER}"
     )
     line = connection_summary("h" * 200, "key from env GATEWAY_KEY")
-    assert len(line) == CONNECTION_SUMMARY_CELLS
+    assert len(line) == DISCLOSURE_TITLE_CELLS
     assert line.endswith(f"… · key from env GATEWAY_KEY · {SETTINGS_POINTER}")
 
 
@@ -229,7 +232,7 @@ async def test_connection_summary_follows_a_typed_endpoint() -> None:
         for _ in range(3):
             await pilot.pause()
         line = _title_line(app, modal, CONNECTION_DISCLOSURE_ID)
-        assert f"Connection · 10.0.0.5:8080 · no key needed · {POINTER}" in line, line
+        assert f"Connection · 10.0.0.5:8080 · no key needed · {SETTINGS_POINTER}" in line, line
         # A half-typed IPv6 host makes urlsplit raise; the title says so and
         # the modal keeps running (it crashed the open modal before the guard).
         await pilot.press("ctrl+a", *"http://[fe80")
@@ -252,11 +255,11 @@ async def test_connection_summary_follows_a_typed_endpoint() -> None:
 async def test_every_closed_disclosure_measures_one_row(
     size, setup, settings, monkeypatch
 ) -> None:
-    """AC#6: under the production stylesheets each disclosure this task
-    folds (Connection, Request estimate, name) is one row closed, a long
-    custom host included (it is shortened, the rest stays). Sampling is not
-    in FOLDED: its title is TASK-33006.2's hidden-fields line, which wraps
-    for Anthropic (an open owner decision, see TASK-33006.1's notes)."""
+    """AC#6 and the owner ruling of 2026-10-02: under the production
+    stylesheets every closed disclosure (Sampling, Connection, Request
+    estimate, name) is one row, a long custom host included (it is
+    shortened, the rest stays) and Anthropic's seven hidden fields too
+    (Sampling counts them)."""
     app = CoreFirstHarness()
     setup(app, monkeypatch)
     modal = _modal(app, settings)
@@ -267,7 +270,7 @@ async def test_every_closed_disclosure_measures_one_row(
             assert disclosure.collapsed is True, disclosure_id
             assert disclosure.region.height == 1, (disclosure_id, disclosure.region)
         line = _title_line(app, modal, CONNECTION_DISCLOSURE_ID)
-        assert POINTER in line, line
+        assert SETTINGS_POINTER in line, line
         if settings.provider == "custom-ep:gateway":
             assert f"key from env {LONG_ENV}" in line and "…" in line, line
             assert LONG_HOST[:20] in line, line
@@ -391,7 +394,7 @@ async def test_request_estimate_summary_shows_the_estimate_and_follows_it() -> N
     modal = _modal(app, _settings())
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        assert "Request estimate · 10 / 4k tokens" in _title_line(app, modal, ESTIMATE_ID)
+        assert "Request estimate · 10 / 4k tokens" in _title_line(app, modal, REQUEST_ESTIMATE_DISCLOSURE_ID)
 
     app = CoreFirstHarness()
     modal = _modal(app, _settings(), context_window_resolver=resolver)
@@ -399,9 +402,9 @@ async def test_request_estimate_summary_shows_the_estimate_and_follows_it() -> N
         await _open(pilot, app, modal)
         for _ in range(4):
             await pilot.pause()
-        line = _title_line(app, modal, ESTIMATE_ID)
+        line = _title_line(app, modal, REQUEST_ESTIMATE_DISCLOSURE_ID)
         assert "Request estimate · 10 / 200,000 tokens" in line, line
-        assert modal.query_one(f"#{ESTIMATE_ID}", Collapsible).region.height == 1
+        assert modal.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible).region.height == 1
 
 
 @pytest.mark.asyncio
@@ -413,7 +416,7 @@ async def test_name_summary_shows_the_name_this_chat_uses_and_follows_edits() ->
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         assert "Your name in this chat · User (global default)" in _title_line(
-            app, modal, NAME_ID
+            app, modal, NAME_DISCLOSURE_ID
         )
 
     app = CoreFirstHarness()
@@ -425,19 +428,19 @@ async def test_name_summary_shows_the_name_this_chat_uses_and_follows_edits() ->
     )
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        assert "Your name in this chat · Lab [gpu]" in _title_line(app, modal, NAME_ID)
-        name = modal.query_one("#console-settings-user-display-name", Input)
+        assert "Your name in this chat · Lab [gpu]" in _title_line(app, modal, NAME_DISCLOSURE_ID)
+        name = modal.query_one(f"#{NAME_INPUT_ID}", Input)
         name.focus()  # opens the disclosure
         await pilot.pause()
         await pilot.press("ctrl+a", "A", "d", "a")
         for _ in range(3):
             await pilot.pause()
-        assert "Your name in this chat · Ada" in _title_line(app, modal, NAME_ID)
+        assert "Your name in this chat · Ada" in _title_line(app, modal, NAME_DISCLOSURE_ID)
         await pilot.press("ctrl+a", "backspace")
         for _ in range(3):
             await pilot.pause()
         assert "Your name in this chat · Default Name (global default)" in _title_line(
-            app, modal, NAME_ID
+            app, modal, NAME_DISCLOSURE_ID
         )
 
 

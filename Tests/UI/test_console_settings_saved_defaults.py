@@ -243,6 +243,29 @@ async def test_ctrl_n_works_inside_an_open_select_dropdown() -> None:
         assert streaming.value == committed
 
 
+@pytest.mark.parametrize("key", ["alt+m", "ctrl+n"])
+@pytest.mark.asyncio
+async def test_no_footer_or_model_key_acts_while_the_close_guard_shows(key) -> None:
+    """Final review I4 and T5 item 7: with the unsaved prompt showing, Alt+M
+    (a priority binding) opens no pick mode and Ctrl+N saves no default; the
+    prompt keeps focus inside its own buttons."""
+    app = CoreFirstHarness()
+    results: list = []
+    modal = pick_modal(app, _settings(**EDITED))
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal, results)
+        await _type(pilot, modal, "temperature", "0.3")
+        await pilot.press("escape")
+        await settle(pilot, app)
+        guard = modal.query_one("#console-settings-close-guard")
+        assert guard.display
+        await pilot.press(key)
+        await settle(pilot, app)
+        assert app.screen is modal and results == []
+        assert guard.display
+        assert app.focused is not None and guard in app.focused.ancestors
+
+
 @pytest.mark.asyncio
 async def test_save_as_model_default_keeps_the_full_field_mask() -> None:
     """AC#7 (ADR-095:74-77): Save as model default patches every field."""
@@ -311,14 +334,19 @@ async def test_use_saved_defaults_stages_the_new_chat_values_and_keeps_the_pair(
 async def test_use_saved_defaults_is_disabled_with_its_reason_while_the_draft_matches() -> None:
     """AC#6: matching the saved defaults disables the button, and its
     painted label says why; an edit enables it, and using it disables it
-    again with focus moved on to Apply."""
+    again with focus moved on to Apply. Save as model default shows exactly
+    while Use saved defaults is enabled, so the footer never offers a save
+    beside "Matches saved defaults" (final review I5)."""
     app = CoreFirstHarness()
     modal = pick_modal(app, _settings())  # the chat already holds the defaults
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
         button = modal.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button)
-        assert button.disabled
-        assert SAVED_DEFAULTS_MATCH_LABEL in _painted(app.screen)[button.region.y]
+        save_default = modal.query_one("#console-settings-save-default", Button)
+        assert button.disabled and not save_default.display
+        row = _painted(app.screen)[button.region.y]
+        assert SAVED_DEFAULTS_MATCH_LABEL in row
+        assert SAVE_MODEL_DEFAULT_LABEL not in row
 
         # A cleared Temperature is an edit too (found live): the defaults
         # would put 0.4 back, though the draft falls back to it on Apply.
@@ -327,12 +355,12 @@ async def test_use_saved_defaults_is_disabled_with_its_reason_while_the_draft_ma
         assert not button.disabled
         await _type(pilot, modal, "temperature", "0.9")
         await settle(pilot, app)
-        assert not button.disabled
+        assert not button.disabled and save_default.display
         assert str(button.label) == USE_SAVED_DEFAULTS_LABEL
 
         await pilot.click(button)
         await settle(pilot, app)
-        assert button.disabled
+        assert button.disabled and not save_default.display
         assert str(button.label) == SAVED_DEFAULTS_MATCH_LABEL
         assert _value(modal, "temperature") == "0.4"
         assert app.focused is modal.query_one("#console-settings-save", Button)

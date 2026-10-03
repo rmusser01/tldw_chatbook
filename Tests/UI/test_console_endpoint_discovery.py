@@ -496,6 +496,14 @@ async def test_endpoint_command_create_lands_on_a_pair_in_pick_mode(
         assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
         assert picker.query_one("#console-popover-find", Input).value == "Command box "
         await harness.workers.wait_for_complete()
+        # The listing's served model is a row before anything is typed.
+        served = ("custom-ep:command-box", "served-z")
+        for _ in range(30):
+            await pilot.pause(0.02)
+            pairs = {(row.provider, row.model) for row in picker._rows}
+            if served in pairs:
+                break
+        assert served in pairs, pairs
         await pilot.press(*"served-z", "enter")
         for _ in range(30):
             await pilot.pause(0.02)

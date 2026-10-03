@@ -52,7 +52,13 @@ from tldw_chatbook.UI.Screens.settings_screen import (
     SettingsScreen,
 )
 from tldw_chatbook.Widgets.Console import console_settings_modal
-from tldw_chatbook.Widgets.Console.console_settings_modal import MODAL_LABEL_WIDTH
+from tldw_chatbook.Widgets.Console.console_settings_field_row import FIELD_ROW_FIELDS
+
+#: The label columns in css/features/_console_panels.tcss: the Model view's
+#: field rows ($ds-size-18) and the shared modal label ($ds-size-23); the
+#: Context view's ($ds-size-24) is wider than the shared one.
+_FIELD_ROW_LABEL_CELLS = 18
+_MODAL_LABEL_CELLS = 23
 
 _GENERATION_CONTROL_IDS = {
     "temperature": "temperature",
@@ -138,9 +144,13 @@ def test_drift_pairs_resolve_to_one_label_each():
 
 
 def test_labels_fit_the_existing_label_columns():
-    """Parent AC#8: no label outgrows the modal's 23-cell label column."""
+    """Parent AC#8, strict (TASK-33006.6 review item 5): every label is
+    narrower than the column it paints in, so it never touches its control."""
+    from rich.cells import cell_len
+
     for name, label in MODEL_FIELD_LABELS.items():
-        assert len(label) <= MODAL_LABEL_WIDTH, name
+        column = _FIELD_ROW_LABEL_CELLS if name in FIELD_ROW_FIELDS else _MODAL_LABEL_CELLS
+        assert cell_len(label) < column, (name, label)
 
 
 def test_modal_settings_paths_name_real_settings_categories():
