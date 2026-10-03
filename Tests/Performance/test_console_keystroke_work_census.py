@@ -601,9 +601,8 @@ async def _census_idle_and_visit(
     * ``trace:`` -- the 1 Hz legacy trace-maintenance batch, driven exactly
       as its loop does (per tick; a helper spawn/s, via
       ``run_owned_db_call``'s owned connection).
-    * ``gc:`` -- one eligible GC interval of the production maintenance loop
-      after it parked (TASK-33644): from the pass's graph-epoch read through
-      its collection and compaction.
+    * ``gc:`` -- the production maintenance loop's first GC pass
+      (TASK-33644): its graph-epoch read, collection and compaction attempt.
     * ``visit:`` -- Console -> Library (uncounted) -> Console. The route is
       reusable (TASK-31520), so the return is a warm resume: no mount, only
       ``on_screen_resume`` and what it schedules.
@@ -617,8 +616,15 @@ async def _census_idle_and_visit(
         pilot: the running app's pilot, on a settled Console after the burst.
         counts: census mapping; phase keys are added as ``<phase>:<unit>``.
         counting: shared ``{"on": bool}`` switch.
-        trace_maintenance: the captured ``(database, normalizer_factory)``
-            the runtime would have started its maintenance loop with.
+        trace_maintenance: one captured ``(database, normalizer_factory,
+            runtime, real_schedule)`` per scheduling call: the arguments the
+            runtime would have started its maintenance loop with, the runtime
+            itself and the real ``_schedule_legacy_trace_maintenance`` that
+            ``gc_pass`` uses to start that loop.
+        monkeypatch: pytest fixture that owns every patch the GC pass makes
+            (owned-call wrapper, ready delay, held backup probe). The pass
+            puts the wrapper and the probe back when it ends; the fixture
+            undoes the rest at teardown.
     """
     from textual import worker_manager
 
