@@ -2786,6 +2786,8 @@ async def test_console_empty_transcript_uses_compact_ready_state():
         # Ready state is compact: one displayed ready line, no action row at all.
         body = empty_panel.query_one("#console-empty-body", Static)
         assert getattr(body.render(), "plain", str(body.render())) == (
+            # TASK-34100.5 AC#11: the arrival line names what setup connected.
+            "Setup complete — llama.cpp · local-model. "
             "Ready — type a message to begin."
         )
         assert body.display is True

@@ -81,3 +81,38 @@ def test_home_after_skip_says_not_set_up_instead_of_blocked() -> None:
 
     assert _header_line(skipped) == "Home | Not set up · Local"
     assert _header_line(ready) == "Home | Ready · Local"
+
+
+def _ready_line(*, provider_label: str, model: str) -> str:
+    from tldw_chatbook.Chat.console_onboarding_state import (
+        build_console_setup_card_state,
+    )
+
+    state = build_console_setup_card_state(
+        readiness=SimpleNamespace(operability="ready_to_send", blocker=None),
+        provider_label=provider_label,
+        has_model=bool(model),
+        model=model,
+        first_send_completed=False,
+        has_messages=False,
+        guidance_dismissed=False,
+    )
+    assert state.mode == "ready_line"
+    return state.body_copy
+
+
+def test_arrival_is_one_setup_complete_line_naming_the_pair() -> None:
+    """TASK-34100.5 AC#11 (E10): arrival says what setup connected in one
+    transcript line instead of a stack of toasts."""
+
+    assert _ready_line(provider_label="OpenAI", model="gpt-4.1-mini") == (
+        "Setup complete — OpenAI · gpt-4.1-mini. Ready — type a message to begin."
+    )
+    # A local model saved as a file path shows its file name, not the path.
+    assert _ready_line(
+        provider_label="llama.cpp",
+        model="/Users/me/models/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    ) == (
+        "Setup complete — llama.cpp · qwen2.5-0.5b-instruct-q4_k_m.gguf. "
+        "Ready — type a message to begin."
+    )

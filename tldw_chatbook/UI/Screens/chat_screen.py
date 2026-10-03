@@ -15009,11 +15009,11 @@ class ChatScreen(BaseAppScreen):
             if settings_readiness is None
             else settings_readiness
         )
-        has_model = _has_selected_text(getattr(settings, "model", None))
+        model = getattr(settings, "model", None)
         return build_console_setup_card_state(
             readiness=readiness,
             provider_label=readiness.provider_display_name or "Provider",
-            has_model=has_model,
+            has_model=_has_selected_text(model), model=str(model or ""),
             first_send_completed=self._console_first_send_completed(),
             has_messages=self._message._active_console_transcript_has_messages(),
             guidance_dismissed=self._console_guidance_dismissed,
