@@ -2927,6 +2927,13 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
+      "call_count": 1,
+      "diagnostic_digest": "a28f9534cc1cc8f4f2cf",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_conversation_reader_freshness.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
       "call_count": 2,
       "diagnostic_digest": "a08b83f78f776361138b",
       "owner": "TASK-494",

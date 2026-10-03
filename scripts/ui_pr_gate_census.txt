@@ -67,6 +67,7 @@ Tests/UI/test_lab_rail_store.py
 Tests/UI/test_lab_server_status.py
 Tests/UI/test_lab_ux_fixes.py
 Tests/UI/test_library_collections_reader_geometry.py
+Tests/UI/test_library_conversation_reader_freshness.py
 Tests/UI/test_library_export_cancel.py
 Tests/UI/test_library_export_destination_validation.py
 Tests/UI/test_library_export_progress_apply.py
@@ -75,6 +76,7 @@ Tests/UI/test_library_grip_capture.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
 Tests/UI/test_library_rag_legacy_chunk_report.py
+Tests/UI/test_library_reader_console_delete_refresh.py
 Tests/UI/test_library_url_ingest_submit.py
 Tests/UI/test_llm_screen_ollama_probe_nonblocking.py
 Tests/UI/test_markdown_hygiene_1995.py
