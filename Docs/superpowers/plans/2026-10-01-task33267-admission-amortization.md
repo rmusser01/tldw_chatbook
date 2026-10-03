@@ -72,7 +72,7 @@ Task1 and I1 fix reviews passed; fixed probe SHA34278facac896ecc0e4ed8a3319243d3
 ### Task 4: Qualify and integrate the finite change (Stage 4)
 
 **Goal:** Demonstrate actual numeric improvements and all preserved platform contracts, then integrate reviewed work.
-**Status:** Not Started
+**Status:** In Progress
 **Files:** Update this plan's stage statuses, approved spec verification record if needed, official TASK-33560 evidence the minimum separate real-idle benchmark and its focused contract tests, and existing finite/native workflow selectors required for changed code.
 **Interfaces:** Consume retained historical/current/probe receipts and immutable stage commits; preserve their original source identities. Consume existing macOS/Linux/Windows native runner and finite product selection, with unchanged preflight, isolation and deadlines.
 
@@ -95,3 +95,10 @@ Task2 implementation/concurrency gates passed scoped SPEC and whole-stage QUALIT
 Stage2 completion is implementation/safety completion, not numerical/native acceptance. Original65b complete3.7872705ms and historical boot arithmetic79.9013084941% failed their unchanged goals; later corrections are unmeasured. Broader failed controls/intentional failed-close owners stay recorded without resets. Task4 must qualify the <.5ms complete boundary, >=80% boot and >=50% further real idle goals with actual macOS/Linux/Windows costs. Windows warm storage reuse stays disabled where complete native pins cannot be safely reused; cold/native costs are measured rather than waived.
 
 Task3 consumes actualHold/BorrowFrame positive-retirement interfaces and the accepted PERF07 applicability /private/tmp/backup2955-perf07-upstream-review.md. Input/result memos are never Hold authority. Use lifecycle-only native wakes with prior-start+1.0s due times and no overlap, and four store parse observations only after fresh complete bytes plus positive raw retirement/current servingHold validation. Read the stage handoff brief; no new cache authority, fallback/reset policy, dependency or deadline. Task4 minimal native/idle preparation /private/tmp/task33560-task4-minimal-qualification-plan.md stays NOT GO until accepted Task3 source.
+
+
+## Task3 safety and Task4 implementation handoff
+
+Task3 SPEC and QUALITY pass at faeaf4a5, with exact final38/175/12 covering phases225PASS. Earlier unsuccessful85/BASE/isolated controls remain visible; numerical/native/real-idle targets are not accepted. Normal performance-only rebase onto published reviewed PR2955 f6c71d91 / deve6ab66 yields fbf0e93e,17equal patches and23own blob-types-modes retained, fixed34278 probe unchanged. The new upstream trace work hint/write-generation loop is part of the contemporary idle baseline.
+
+Stage3 stays In Progress only for its final identical probe/numerical gate; its code safety/quality is complete. Stage4 begins minimum harness/finite-selection implementation plus local contract checks while PR2955 requiredCI settles. Actual native and numerical qualification requires accepted harness reviews and appropriate protected integration. No source identity, target, platform requirement or deadline changes.
