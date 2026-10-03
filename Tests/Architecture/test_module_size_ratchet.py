@@ -124,8 +124,28 @@ _BUDGETS: dict[str, int] = {
     # `origin/dev` 9e33252708 — see the module docstring's second pass.
     "tldw_chatbook/UI/Screens/watchlists_collections_screen.py": 14324,
     # TASK-33921: 10,854 on dev 2026-10-03 (over by 450); the Voice step moved
-    # to UI/Wizards/first_run_voice_step.py.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 9866,
+    # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
+    # moved to its own module (9,866 -> 3,149), then the busy line and the
+    # worker helper's call sites landed (3,183). The wizard keeps the
+    # container, progress, nav bar, dialog and screen.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3183,
+    # TASK-34100.1: the modules the wizard's steps moved into, each born
+    # governed at its exact size so the split cannot regrow one god module a
+    # step at a time. A fix that needs room puts its code in a new helper
+    # module beside the step, never in a raised row.
+    "tldw_chatbook/UI/Wizards/first_run_provider_step.py": 2466,
+    "tldw_chatbook/UI/Wizards/first_run_speech_step.py": 1716,
+    "tldw_chatbook/UI/Wizards/first_run_model_step.py": 1012,
+    "tldw_chatbook/UI/Wizards/first_run_setup_widgets.py": 495,
+    "tldw_chatbook/UI/Wizards/first_run_summary_step.py": 469,
+    "tldw_chatbook/UI/Wizards/first_run_appearance_step.py": 291,
+    "tldw_chatbook/UI/Wizards/first_run_protect_step.py": 174,
+    "tldw_chatbook/UI/Wizards/first_run_model_discovery.py": 173,
+    "tldw_chatbook/UI/Wizards/first_run_rag_step.py": 125,
+    "tldw_chatbook/UI/Wizards/first_run_tools_step.py": 114,
+    "tldw_chatbook/UI/Wizards/first_run_busy_status.py": 104,
+    "tldw_chatbook/UI/Wizards/first_run_welcome_step.py": 90,
+    "tldw_chatbook/UI/Wizards/first_run_notes_step.py": 44,
     "tldw_chatbook/UI/Screens/llm_screen.py": 5180,
     "tldw_chatbook/UI/Screens/change_review_screen.py": 4967,
 }
