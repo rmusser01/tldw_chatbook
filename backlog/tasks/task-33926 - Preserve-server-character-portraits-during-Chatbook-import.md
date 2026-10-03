@@ -4,7 +4,7 @@ title: Preserve server character portraits during Chatbook import
 status: Done
 assignee: []
 created_date: '2026-10-03 06:52'
-updated_date: '2026-10-03 14:05'
+updated_date: '2026-10-03 14:09'
 labels: []
 dependencies: []
 references:
@@ -44,6 +44,8 @@ New tests and changed models pass Ruff lint/format. Importer Ruff:62HEAD→62cur
 The human explicitly granted approvals on 2026-10-03, including companion draft publication for server PR3096. Fresh fetch confirms main f3aeb32fb3d230c0774c7fc349729d9f75c96366 is unchanged; reviewed commit20948093434ac9af6a0c6c055586840baa4b651d and production/tests are unchanged. Publish the reviewed repair normally as a draft PR, attach it to the task, and report its dependency accurately to the server compatibility thread. Existing 39 focused tests and independent source review qualify this unchanged source; do not rerun unchanged tests for counts. No companion merge or live UAT acceptance is authorized by this publication. ADR required:no; existing V1 core and image-column contracts remain.
 
 Touched repair files: tldw_chatbook/Chatbooks/chatbook_importer.py, tldw_chatbook/Chatbooks/chatbook_models.py, and Tests/Chatbooks/test_chatbook_character_image_import.py. The official CLI serialized unsupported modified_files metadata out of frontmatter; source scope is retained here. Acceptance criteria, description, final summary and Done status read back unchanged; publication adds tracking only.
+
+Published and read back draft companion PR2978: https://github.com/rmusser01/tldw_chatbook/pull/2978. Attached to the current task. Current main and reviewed production/tests are unchanged; draft publication completes the approved action, while companion merge and live UAT acceptance remain unrequested.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
