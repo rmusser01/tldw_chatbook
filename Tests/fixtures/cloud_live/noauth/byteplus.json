@@ -1,0 +1,39 @@
+{
+  "server": "byteplus",
+  "base_url": "https://ark.ap-southeast.bytepluses.com/api/v3",
+  "probe_model": "seed-2-0-lite-260228",
+  "listing": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "AuthenticationError",
+        "message": "the API key or AK/SK in the request is missing or invalid. request id: 02179074198775069d9f56ebaf8adc0cbe3483f4c0cffb81a3b6a",
+        "param": "",
+        "type": "Unauthorized"
+      }
+    }
+  },
+  "chat_no_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "AuthenticationError",
+        "message": "the API key or AK/SK in the request is missing or invalid. request id: 021790741988361798132a7c84228b35f5c1a465b83379e32bed1",
+        "param": "",
+        "type": "Unauthorized"
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": {
+        "code": "AuthenticationError",
+        "message": "The API key format is incorrect. Request id: 021790741988938c891133c7aa592195d19c3080f8a135d49db50",
+        "param": "",
+        "type": "Unauthorized"
+      }
+    }
+  },
+  "probed_at": "2026-09-30T04:19:49+00:00"
+}

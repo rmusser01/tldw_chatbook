@@ -2,7 +2,8 @@
 
 Full-raw OpenAI-shaped envelopes captured from real servers on
 **2026-09-24** (macOS 26.5.2, arm64, Apple M5 Max) by
-`Tests/fixtures/longtail/capture_local.py` and `capture_cloud.py`.
+`Tests/fixtures/longtail/capture_local.py`. Cloud providers are captured separately
+into `Tests/fixtures/cloud_live/` (see its README; TASK-33640).
 
 These fixtures are the evidence gate for Phase 2 (ADR-179): the parser
 widenings (Task 4), preset allowances (Task 5), and the custom-family swap
@@ -37,10 +38,8 @@ after capture; no developer-running instance was touched.
   EVIDENCE** and must be treated as provisional in later tasks.
 - **LM Studio** — GUI application, unscripted by design; llama-server
   (captured above) represents the server family for evidence purposes.
-- **Together / Cerebras / Fireworks** — clean skip: no
-  `TOGETHER_API_KEY` / `CEREBRAS_API_KEY` / `FIREWORKS_API_KEY` in the
-  capture environment. No cloud fixture exists yet; provider-specific
-  allowances derived without a fixture remain provisional (Task 5).
+- **Cloud providers** — not captured here: `Tests/fixtures/cloud_live/capture.py`
+  captures every engine preset whose key is available.
 
 ## Headline findings (see the inventory test for the pinned sets)
 
@@ -72,12 +71,7 @@ Re-capture against fresh local servers (starts/stops each server itself):
 python3 Tests/fixtures/longtail/capture_local.py
 ```
 
-Cloud (writes only the fixtures whose key is present):
-
-```bash
-TOGETHER_API_KEY=<key> CEREBRAS_API_KEY=<key> FIREWORKS_API_KEY=<key> \
-  python3 Tests/fixtures/longtail/capture_cloud.py
-```
+Cloud presets: see `Tests/fixtures/cloud_live/README.md`.
 
 Single-round sanitized replay templates are stored per fixture in the
 `capture_cmd` field (credentials appear only as the literal `<key>`
