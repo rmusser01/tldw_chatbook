@@ -372,6 +372,11 @@ def _capability_generation_fields(
         supported.add("reasoning_effort")
     if _engine_reasoning_effort_support(execution_key, model) == "supported":
         supported.add("reasoning_effort")
+    engine_record = RECORDS_BY_KEY.get(execution_key or "")
+    if engine_record is not None and engine_record.engine_driven and engine_record.reasoning_effort:
+        # A preset that sends reasoning effort (Fireworks): the draft rebase
+        # must carry the user's level to the request.
+        supported.add("reasoning_effort")
     if execution_key in _LOCAL_BUDGET_EXECUTION_KEYS:
         supported.add("thinking_budget_tokens")
     return frozenset(supported)
@@ -407,8 +412,10 @@ def reasoning_effort_values_sent(
 
     A local strict-template request drops a level its chat template rejects
     ("minimal" on llama.cpp) with only a debug log, so an editor offering it
-    would save a value that is never sent (TASK-33002.1). Every other
-    provider keeps ``values`` unchanged.
+    would save a value that is never sent (TASK-33002.1). An engine preset
+    with ``reasoning_effort_values`` (Fireworks) keeps the levels it sends,
+    after its ``reasoning_effort_map`` (Fireworks sends "minimal" as "low").
+    Every other provider keeps ``values`` unchanged.
 
     Args:
         provider: Provider identity, config key or ``custom-ep`` id.
@@ -421,6 +428,13 @@ def reasoning_effort_values_sent(
     execution_key = resolve_console_provider_identity(
         provider_config_key(_registry_family_provider(provider, app_config))
     ).execution_key
+    engine_record = RECORDS_BY_KEY.get(execution_key or "")
+    if engine_record is not None and engine_record.reasoning_effort_values is not None:
+        mapped = engine_record.reasoning_effort_map
+        return tuple(
+            value for value in values
+            if mapped.get(value, value) in engine_record.reasoning_effort_values
+        )
     if not build_local_thinking_payload_fields(execution_key, "low", None):
         return values
     return tuple(
