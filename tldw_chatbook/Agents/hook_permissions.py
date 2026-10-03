@@ -82,23 +82,32 @@ def default_hook_permissions_path() -> Path:
     return Path(config.get_user_data_dir()) / "hook_permissions.json"
 
 
-def _file_stamp(path: Path) -> tuple[int, int, int, int, int] | None:
-    """A file's identity, size and change times, or None when it is absent.
+def _file_stamp(path: Path) -> tuple[int, int, int, int, int, int] | None:
+    """A file's type, identity, size and change times, without following links.
 
     Args:
         path: The file to observe.
 
     Returns:
-        ``(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)``, or ``None``.
+        ``(st_mode, st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)`` of the
+        entry itself (so a symlink swapped in is a different stamp), or
+        ``None`` when it is absent.
 
     Raises:
         OSError: The file could not be observed for another reason.
     """
     try:
-        info = os.stat(path)
+        info = os.lstat(path)
     except FileNotFoundError:
         return None
-    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+    return (
+        info.st_mode,
+        info.st_dev,
+        info.st_ino,
+        info.st_size,
+        info.st_mtime_ns,
+        info.st_ctime_ns,
+    )
 
 
 def _empty_state() -> dict:
@@ -445,13 +454,16 @@ class HookPermissions:
 
         Returns:
             The config selection (the effective config path as well as the
-            loaded source) and generation, both files' identity and change
-            times (``None`` for a missing file), the no-follow posture of the
-            store's lock file and of every component of both parent
-            directories (the full read refuses an unsafe one), the storage
-            admission epoch and the serving state of its native holds, and
-            the in-memory sealing, refresh and closed state the snapshot
-            also reflects.
+            loaded source), generation and the environment that selects the
+            data root; both files' type, identity and change times taken
+            without following links (``None`` for a missing file); the
+            no-follow posture of both lock files and of every component of
+            both parent directories (the full read refuses an unsafe one);
+            the storage admission epoch and the serving state of its native
+            holds; and the in-memory sealing, refresh and closed state the
+            snapshot also reflects. Admission records other processes keep
+            on disk are not mirrored: no authority derives from a visit
+            snapshot, and Send and review always run the full read.
         """
         from tldw_chatbook.Backup_Recovery import bootstrap, storage_admission
 
@@ -469,8 +481,12 @@ class HookPermissions:
             str(config.get_cli_config_path()),
             config._CONFIG_CACHE_SOURCE,
             config._CONFIG_GENERATION,
+            # The data root (and so the store) follows HOME and the XDG
+            # variables as well as config; a retarget forces a full read.
+            os.environ.copy(),
             _file_stamp(config_path),
             _file_stamp(store_path),
+            posture(config_path.with_name(config_path.name + ".lock")),
             posture(store_path.with_name(store_path.name + ".lock")),
             tuple(posture(part) for part in chain(config_path.parent)),
             tuple(posture(part) for part in chain(store_path.parent)),

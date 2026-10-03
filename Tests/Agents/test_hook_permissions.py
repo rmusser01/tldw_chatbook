@@ -248,6 +248,92 @@ def test_a_maintenance_pause_is_not_served_from_a_warm_visit(hook_file, monkeypa
     assert not paused.ready
 
 
+def test_a_store_swapped_for_a_symlink_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch
+):
+    """TASK-33642: the store is stamped without following links.
+
+    The same file reached through a symlink keeps its identity and times
+    under ``stat``; a full read refuses it as non-regular.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    store = approved.store_path
+    moved = store.with_name("moved-hook-permissions.json")
+    store.rename(moved)
+    store.symlink_to(moved)
+    try:
+        count = len(reads)
+        linked = owner.visit_snapshot()
+    finally:
+        store.unlink()
+        moved.rename(store)
+    assert len(reads) > count, "a store reached through a symlink was served from the reuse"
+    assert not linked.ready
+
+
+def test_a_retargeted_data_root_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch, tmp_path
+):
+    """TASK-33642: the environment that selects the data root is stamped.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and retargets XDG_DATA_HOME.
+        tmp_path: The other data root.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "other-data"))
+    count = len(reads)
+    moved = owner.visit_snapshot()
+    assert len(reads) > count, "a retargeted data root was served the old store's grants"
+    assert moved is not approved
+
+
+def test_a_tampered_config_lock_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch, tmp_path
+):
+    """TASK-33642: the config writer's lock file is stamped too.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+        tmp_path: Holds the symlink's target.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    owner.visit_snapshot()
+    lock = hook_file.with_name(hook_file.name + ".lock")
+    assert lock.exists()
+    target = tmp_path / "elsewhere.lock"
+    target.write_text("")
+    original = lock.read_bytes()
+    lock.unlink()
+    lock.symlink_to(target)
+    try:
+        count = len(reads)
+        tampered = owner.visit_snapshot()
+    finally:
+        lock.unlink()
+        lock.write_bytes(original)
+        lock.chmod(0o600)
+    assert len(reads) > count, "a tampered config lock was served from the reuse"
+    assert not tampered.ready
+
+
 def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     owner = _owner()
     assert not owner.snapshot().ready
