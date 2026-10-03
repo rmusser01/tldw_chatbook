@@ -778,8 +778,9 @@ from ..Library_Modules.screen_constants import (
     LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS,
     _LIBRARY_SLASH_CANVAS_FILTERS,
     LIBRARY_NOTES_AUTOSAVE_SECONDS,
+    LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
     LIBRARY_NOTE_CONTENT_MAX_CHARS,
-    LIBRARY_NOTE_BLANK_SEED_TITLE,
+    LIBRARY_NOTE_BLANK_SEED_TITLE,  # noqa: F401 - re-exported; GC moved out
     LIBRARY_PROMPT_TEXT_MAX_CHARS,
     LIBRARY_PROMPT_SAVE_STATUS_COPY,
     LIBRARY_SKILL_TEXT_MAX_CHARS,
@@ -11106,14 +11107,18 @@ class LibraryScreen(BaseAppScreen):
             return False
         return self._acquire_file_notes_transition("screen")
 
-    async def flush_pending_work(self) -> bool:
-        """Persist pending note edits before the app navigates away.
+    async def flush_pending_work(self, *, gc_untouched_blank: bool = True) -> bool:
+        """Persist pending note edits before the app navigates away or quits.
 
         The app awaits this from ``handle_screen_navigation`` before
         discarding this screen instance -- without it, a note edit whose
         debounced autosave has not fired yet (the timer re-arms on every
         keystroke) would be destroyed with the screen when the user switches
-        tabs mid-edit.
+        tabs mid-edit. ``confirm_quit`` awaits it too (TASK-34000.1).
+
+        Args:
+            gc_untouched_blank: False defers the untouched-blank-note GC; the
+                quit runs it from ``prepare_for_quit`` once every prompt said yes.
 
         Returns:
             True only for the coordinator's typed ``PERMITTED`` result and
@@ -11124,7 +11129,11 @@ class LibraryScreen(BaseAppScreen):
         if self._prompts_state.mutation_in_flight:
             return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
-        note_flush = await self._flush_library_note_save()
+        note_flush = await (
+            self._flush_library_note_save()
+            if gc_untouched_blank
+            else self._flush_library_note_save(gc_untouched_blank=False)
+        )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
         if not prompt_flush_allowed:
@@ -11143,6 +11152,17 @@ class LibraryScreen(BaseAppScreen):
             and skill_flush_allowed
         )
 
+    async def confirm_quit(self) -> bool:
+        """Ctrl+Q flushes pending Library work, or asks first (TASK-34000.1)."""
+        from ..Library_Modules.library_pending_work import confirm_library_quit
+
+        return await confirm_library_quit(self)
+
+    async def prepare_for_quit(self) -> None:
+        """The quit is approved: drop an untouched new note (TASK-34000.1)."""
+        from ..Library_Modules.library_pending_work import prepare_library_quit
+
+        await prepare_library_quit(self)
 
     def apply_navigation_context(self, context: Mapping[str, Any]) -> None:
         """Admit route context through the Library-owned navigation controller."""
@@ -20742,10 +20762,13 @@ class LibraryScreen(BaseAppScreen):
             return
         self._notes_state.autosave_state = "idle"
         self._invalidate_library_note_autosave()
-        generation = self._notes_state.autosave_generation
-        self._notes_state.autosave_timer = self.set_timer(
-            LIBRARY_NOTES_AUTOSAVE_SECONDS,
-            lambda: self._fire_library_note_autosave(generation),
+        from ..Library_Modules.library_pending_work import arm_library_note_autosave
+
+        arm_library_note_autosave(  # TASK-34000.1: debounce capped by a max wait
+            self,
+            snapshot,
+            debounce=LIBRARY_NOTES_AUTOSAVE_SECONDS,
+            max_wait=LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS,
         )
 
     @on(Input.Changed, '#library-note-title')
@@ -20953,66 +20976,22 @@ class LibraryScreen(BaseAppScreen):
         outcome = await self._library_note_session.request_save(explicit=explicit)
         self._apply_library_note_save_outcome(outcome)
 
-    async def _flush_library_note_save(self) -> NoteFlushOutcome:
-        """Cross the coordinator's pending-work barrier before navigation."""
+    async def _flush_library_note_save(
+        self, *, gc_untouched_blank: bool = True
+    ) -> NoteFlushOutcome:
+        """Cross the coordinator's pending-work barrier before navigation.
+
+        Args:
+            gc_untouched_blank: False keeps this session's untouched new note
+                (the quit discards it later, in ``prepare_for_quit``).
+        """
         self._invalidate_library_note_autosave()
-        if (
-            self._notes_state.session_blank_id
-            and self._notes_state.session_blank_id == self._notes_state.selected_note_id
-            # task-3315: never start a SECOND destructive op from the
-            # untouched-blank GC while a discard/delete is already running
-            # or admitted -- fall through to the session flush, whose own
-            # destructive guard vetoes navigation until it settles.
-            and not self._library_note_session.destructive_running
-            and self._library_note_session.destructive_admission is None
-        ):
-            fields = self._read_library_note_editor_fields()
-            if fields is not None:
-                raw_title, raw_content, raw_keywords_text = fields
-                # task-3315 (LIB-14 regression, pre-arc dev churn): the
-                # session coordinator seeds a Blank note's title with the
-                # literal seed and ``_read_library_note_editor_fields`` now
-                # projects the SNAPSHOT rather than the widgets (13cf08f90,
-                # notes-adaptive PR #1439) -- the editor presents that seed
-                # as an empty placeholder-only Input, so it must count as
-                # blank here or the untouched-blank GC never fires and every
-                # abandoned Blank note leaves a permanent "Untitled" row
-                # (exactly what task-2858 AC#5 forbids).
-                # (P0, xhigh review + live-verify round) The seed only
-                # counts as blank while it is still THE SEED. Keying on
-                # string equality alone destroyed a note the user
-                # deliberately titled "Untitled" (body empty) on
-                # navigate-away, with no prompt and no undo -- a string
-                # cannot tell the create seam's default from the same
-                # letters typed by a human, so the provenance marker
-                # decides. An emptied-out title is blank either way.
-                # (rebase note: task-4021 independently re-derived this
-                # same root cause -- the literal seed must count as blank
-                # too, or this GC branch is unreachable -- but its version
-                # lacked the ``_notes_state.title_user_edited`` provenance
-                # guard below; dev's fuller check is kept as-is and covers
-                # task-4021's reachability claim too.)
-                title_blank = not raw_title.strip() or (
-                    raw_title == LIBRARY_NOTE_BLANK_SEED_TITLE
-                    and not self._notes_state.title_user_edited
-                )
-                if title_blank and not any(
-                    value.strip() for value in (raw_content, raw_keywords_text)
-                ):
-                    # task-32556 AC#1: a note the user never touched is
-                    # discarded silently on purpose (the guide documents
-                    # that). A title the user actually TYPED -- whitespace,
-                    # so still blank -- is a different event: keystrokes went
-                    # in, the row vanished, and nothing said so. Name it.
-                    typed_a_blank_title = bool(raw_title) and not raw_title.strip()
-                    await self._gc_pending_blank_note()
-                    if typed_a_blank_title:
-                        notify = getattr(self.app_instance, "notify", None)
-                        if callable(notify):
-                            notify(
-                                "Empty note discarded", severity="information"
-                            )
-                    return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        from ..Library_Modules.library_pending_work import (
+            gc_untouched_session_blank_note,
+        )
+
+        if gc_untouched_blank and await gc_untouched_session_blank_note(self):
+            return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
         outcome = await self._library_note_session.flush()

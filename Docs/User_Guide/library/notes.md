@@ -477,10 +477,22 @@ Edit/Preview/Info) takes you back to the list, and opening another note still
 works.
 
 **Autosave** runs about two seconds after you stop typing; the meta line
-flips to "saving…" and back to "saved". If the same note was changed
-somewhere else while you were editing, a banner appears: "This note
-changed elsewhere — Overwrite saves your text; Reload discards it." —
+flips to "saving…" and back to "saved". If you keep typing without a
+two-second pause, it still saves at least every ten seconds, so a long
+burst of steady typing is never held back until you stop. If the same note
+was changed somewhere else while you were editing, a banner appears: "This
+note changed elsewhere — Overwrite saves your text; Reload discards it." —
 pick **Overwrite** or **Reload**.
+
+**Quitting with unsaved changes.** **Ctrl+Q** saves the open note before
+Chatbook exits, so text typed in the last moments is kept, and a new note
+keeps the title and body you typed. If that save cannot finish — the title
+is one the save refuses, the note changed elsewhere, or the write fails —
+Chatbook does not exit. It asks 'Quit and discard unsaved changes to
+"<title>"?' with **Keep editing** selected: Keep editing (or Enter, or
+Escape) returns you to the editor with your text intact, and only **Discard
+and quit** exits without saving it. The same question covers an unsaved
+Prompt or Skill draft and a Folder files edit that could not be saved.
 
 While any editor field — the title, the body, or either keyword box — has
 keyboard focus, nothing repaints the editor underneath you: a refresh that
@@ -597,8 +609,8 @@ itself already exists at that point — it is in the list and in the rail's
 count — so its status reads "Empty note — type to keep it" rather than
 "Saved": what is not yet safe is not the note, but the fact that you have
 written nothing in it. If you leave again via "‹ Back to list" without typing
-anything, the blank note is quietly discarded rather than left behind as a
-stray "Untitled" row.
+anything, or quit Chatbook, the blank note is quietly discarded rather than
+left behind as a stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
 keywords, still counts as blank and is discarded on the way out. Because

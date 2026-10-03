@@ -175,6 +175,11 @@ LIBRARY_LIST_ENTRY_FOCUS_ARMED_SECONDS = 2.0
 #: arm's own generation check once the user takes control.
 LIBRARY_LIST_ENTRY_FOCUS_RETRY_SECONDS = 0.05
 LIBRARY_NOTES_AUTOSAVE_SECONDS = 2.0
+#: TASK-34000.1 (review N-01): the debounce above re-arms on every keystroke,
+#: so one key every 1.2 s was never saved at all. A burst of unsaved typing
+#: is persisted at least this often, measured from its first keystroke
+#: (``library_pending_work.library_note_autosave_delay``).
+LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS = 10.0
 LIBRARY_NOTE_CONTENT_MAX_CHARS = 2_000_000
 # The literal title a just-created "Blank note" row is seeded with (LIB-14,
 # task-4021). The editor presents it placeholder-only (empty Input,

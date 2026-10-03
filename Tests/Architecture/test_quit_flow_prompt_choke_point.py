@@ -28,7 +28,10 @@ this scans, statically:
   (TASK-33622.14). ``PersonasScreen.confirm_quit`` delegates there, so the
   scan cannot follow it through ``self.``; the module's flow is shared with
   app navigation and is handed its ``ask``, so no function in it may wait on
-  a pushed screen at all.
+  a pushed screen at all;
+* every module-level function of ``Library_Modules/library_pending_work.py``
+  (TASK-34000.1), for the same reason: ``LibraryScreen.confirm_quit`` and
+  ``prepare_for_quit`` delegate there.
 
 and fails if any of them waits on a pushed screen other than through the
 choke point. Calls into other classes are not followed; the rule is pinned
@@ -46,6 +49,8 @@ APP_LIFECYCLE = PACKAGE / "app_lifecycle.py"
 CONFIRMATION_DIALOG = PACKAGE / "Widgets" / "confirmation_dialog.py"
 #: Roleplay's quit hook delegates here; every function in it is scanned.
 ROLEPLAY_DRAFT_GUARD = PACKAGE / "UI" / "Persona_Modules" / "roleplay_draft_guard.py"
+#: Library's quit hooks delegate here (TASK-34000.1); every function is scanned.
+LIBRARY_PENDING_WORK = PACKAGE / "UI" / "Library_Modules" / "library_pending_work.py"
 
 #: Hooks the quit walk (and the workflow authoring owner) call with no args.
 WALK_HOOKS = frozenset({"confirm_quit", "prepare_for_quit", "prepare_quit"})
@@ -194,11 +199,14 @@ def _scan_tree() -> tuple[list[str], list[str]]:
     )
     roots.extend(found_roots)
     offences.extend(found_offences)
-    # Missing on a tree without TASK-33622.14: the reach test then names it.
-    if ROLEPLAY_DRAFT_GUARD.exists():
+    # Missing on a tree without TASK-33622.14 / TASK-34000.1: the reach
+    # test then names it.
+    for delegate in (ROLEPLAY_DRAFT_GUARD, LIBRARY_PENDING_WORK):
+        if not delegate.exists():
+            continue
         found_roots, found_offences = scan_module_functions(
-            ROLEPLAY_DRAFT_GUARD.read_text(encoding="utf-8"),
-            str(ROLEPLAY_DRAFT_GUARD.relative_to(REPO_ROOT)),
+            delegate.read_text(encoding="utf-8"),
+            str(delegate.relative_to(REPO_ROOT)),
             quit_named_only=False,
         )
         roots.extend(found_roots)
@@ -236,6 +244,13 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         "confirm_roleplay_quit",
         "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
         "confirm_roleplay_drafts",
+        # TASK-34000.1: Library's hooks, and the module they delegate to.
+        "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.confirm_quit",
+        "tldw_chatbook/UI/Screens/library_screen.py:LibraryScreen.prepare_for_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:"
+        "confirm_library_quit",
+        "tldw_chatbook/UI/Library_Modules/library_pending_work.py:"
+        "prepare_library_quit",
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"

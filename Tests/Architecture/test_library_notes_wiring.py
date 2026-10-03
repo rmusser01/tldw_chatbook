@@ -98,8 +98,10 @@ from tldw_chatbook.UI.Library_Modules.library_notes_state import (
 #: wave 4: task-32536 adds ``failure_line``, the complete one-sentence
 #: blocker ("Can't use this note in Console -- ... Next: ...") that replaced
 #: the two disagreeing messages the critique found, rendered verbatim in
-#: place of the generic "{action} failed" line (105 + 1 = 106).
-_EXPECTED_NOTES_STATE_FIELD_COUNT = 106
+#: place of the generic "{action} failed" line (105 + 1 = 106). **107**:
+#: TASK-34000.1 adds ``autosave_burst``, the burst of unsaved typing the
+#: autosave max wait bounds (106 + 1 = 107).
+_EXPECTED_NOTES_STATE_FIELD_COUNT = 107
 
 #: The 3 WIRING attributes the state PR deliberately left on ``LibraryScreen``
 #: (the ``_conversation_reader_controller``/``_library_media_browse_
