@@ -1202,3 +1202,28 @@ been copied into the repo.
 `${var:?}` (for example `rm -rf "${S:?}/${dir:?}"`) so an empty value aborts instead of
 widening the target. Do not rely on word splitting in the Bash tool, which is zsh:
 split explicitly with `${=pair}` or `read -r a b <<< "$pair"`, or use a literal list.
+
+**Recurrence (Roleplay frame B0, 2026-10-02): the empty value was a filter, not a
+path.** A CI cleanup loop had the same shape:
+`for pair in "<PR> <branch>" …; do set -- $pair; gh run list --branch "$2" … | … gh run cancel`.
+It ran in the Bash tool (zsh), so `$2` was empty again. `gh run list --branch ""` does not
+fail; it applies no branch filter and lists the repository's recent runs. The loop
+cancelled 8 in-flight CI runs on the branches of 5 other sessions. All 8 were re-run,
+but each lost its place in the queue. The `rm -rf` rule above did not help, because
+nothing here was a path. An empty argument to a *filter* widens the selection just as
+an empty path segment widens a delete.
+
+**What to do (any loop whose action is destructive or shared: cancel, delete, close,
+merge, force-push):**
+- Write it as an explicit `bash` script (`bash <<'EOF' … EOF`, or a file run with
+  `bash`) with `set -u` at the top.
+- Refuse empty arguments: `[ -n "$branch" ] || { echo "empty branch"; exit 1; }`, or
+  `${branch:?}`.
+- Cross-check the pairing at the source: the PR's `headRefName`
+  (`gh pr view <n> --json headRefName -q .headRefName`) must equal the branch you are
+  about to act on.
+- Filter twice: once in the API call (`--branch "$branch"`) and once on the result
+  (`--json databaseId,headBranch` piped to `jq 'select(.headBranch == $b)'`). Then an
+  ignored or empty server-side filter still selects nothing.
+- Dry-run first: print the run ids and their `headBranch` values, read them, and only
+  then cancel.
