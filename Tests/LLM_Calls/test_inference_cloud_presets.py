@@ -11,28 +11,18 @@ never silent). Memory-not-evidence (fixture-unproven, recorded in the
 registry comment only): Together a top-level ``prompt`` string plus
 choice-level ``logprobs``; Cerebras a top-level ``time_info`` object.
 
-The cloud fixture flip (Task 2's deferred cloud side) parametrizes over
-fixture files that EXIST -- exactly like
-``Tests/LLM_Calls/test_longtail_fixture_characterization.py`` -- so absent
-fixtures skip cleanly and the first captured envelope replays under its
-record's real (strict + empty) profile with no test change.
+Live captures of these (and every other engine preset) replay under their
+record in ``Tests/LLM_Calls/test_live_capture_replay.py`` (TASK-33640).
 """
 
 from __future__ import annotations
 
-import json
 import tomllib
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import pytest
 
-from tldw_chatbook.LLM_Calls import hosted_provider_engine
-from tldw_chatbook.LLM_Calls.hosted_chat_streaming import SSERecord
-from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
-    HostedProviderResolution,
-    HostedProviderStream,
-)
 from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 PRESET_KEYS = ("together", "fireworks", "cerebras")
@@ -187,125 +177,3 @@ def test_default_urls_pass_the_discovery_gate(key: str) -> None:
     base = EXPECTED_DEFAULTS[key]["base_url"]
     assert supports_openai_compatible_model_discovery(key, base) is True
     assert build_models_url(base, key) == f"{base}/models"
-
-
-# --- cloud fixture flip (Task 2's cloud side): parse under each record ---
-# No cloud fixtures exist in this environment (no provider keys, Task 2
-# outcome), so this parametrizes over fixture files that EXIST and skips
-# cleanly today; the first captured envelope replays under its record's
-# real profile -- strict parser + the record's (currently empty)
-# allowances -- through the engine's own path.
-
-FIXTURE_DIR = Path(__file__).resolve().parents[1] / "fixtures" / "longtail"
-
-
-def load_cloud_fixtures() -> Iterator[Path]:
-    """Every captured inference-cloud fixture that exists."""
-    if not FIXTURE_DIR.is_dir():
-        return
-    for key in PRESET_KEYS:
-        path = FIXTURE_DIR / f"{key}.json"
-        if path.is_file():
-            yield path
-
-
-def _require_complete_stream(fixture: dict[str, Any]) -> None:
-    """Loader-side degraded-capture guard (the longtail suite's rule)."""
-    events = fixture.get("stream_events")
-    if not isinstance(events, list) or not events:
-        raise ValueError(
-            f"fixture {fixture.get('server', '?')}: stream_events is empty"
-            " -- degraded capture"
-        )
-    if events[-1] != "[DONE]":
-        raise ValueError(
-            f"fixture {fixture.get('server', '?')}: stream_events does not"
-            " terminate in [DONE] -- degraded capture"
-        )
-
-
-def _fixture(path: Path) -> dict[str, Any]:
-    fixture = json.loads(path.read_text(encoding="utf-8"))
-    _require_complete_stream(fixture)
-    return fixture
-
-
-def _replay_under_record(
-    monkeypatch: pytest.MonkeyPatch,
-    record: Any,
-    *,
-    body: dict[str, Any] | None = None,
-    stream_events: list[str] | None = None,
-) -> Any:
-    """Replay one captured envelope through the engine under the REAL
-    record (strict parser + the record's allowances), the longtail-suite
-    monkeypatch pattern: factory transport construction and both response
-    wrappers, not a hand-built stream."""
-    streaming = stream_events is not None
-    resolution = HostedProviderResolution(
-        provider=record.key,
-        model="cloud-model",
-        api_key="secret",
-        base_url=record.default_base_url or "https://engine.invalid/v1",
-        timeout=10.0,
-        retries=0,
-        retry_delay=0.0,
-        streaming=streaming,
-    )
-    monkeypatch.setattr(
-        hosted_provider_engine,
-        "resolve_hosted_request",
-        lambda _record, **_kwargs: resolution,
-    )
-    if streaming:
-        sse_records = iter(
-            [SSERecord(event=None, data=payload) for payload in stream_events]
-        )
-        monkeypatch.setattr(
-            hosted_provider_engine, "owned_json_post", lambda **_kw: sse_records
-        )
-    else:
-        monkeypatch.setattr(
-            hosted_provider_engine, "owned_json_post", lambda **_kw: body
-        )
-    handler = hosted_provider_engine.build_hosted_chat_handler(record)
-    return handler(
-        input_data=[{"role": "user", "content": "Say ok."}],
-        api_key="secret",
-        streaming=streaming,
-    )
-
-
-@pytest.fixture(
-    params=sorted(p.stem for p in load_cloud_fixtures()), ids=lambda s: s
-)
-def cloud_fixture(request: pytest.FixtureRequest) -> dict[str, Any]:
-    return _fixture(FIXTURE_DIR / f"{request.param}.json")
-
-
-def test_cloud_bodies_parse_under_their_record(
-    cloud_fixture: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = RECORDS_BY_KEY[cloud_fixture["server"]]
-    for field in ("chat_response", "tool_call_response"):
-        body = cloud_fixture.get(field)
-        if not isinstance(body, dict):
-            continue
-        result = _replay_under_record(monkeypatch, record, body=body)
-        expected_reason = body["choices"][0]["finish_reason"]
-        assert result["choices"][0]["finish_reason"] == expected_reason
-        assert result.terminal_turn.finish_reason == expected_reason
-
-
-def test_cloud_streams_parse_under_their_record(
-    cloud_fixture: dict[str, Any], monkeypatch: pytest.MonkeyPatch
-) -> None:
-    record = RECORDS_BY_KEY[cloud_fixture["server"]]
-    stream = _replay_under_record(
-        monkeypatch, record, stream_events=list(cloud_fixture["stream_events"])
-    )
-    assert isinstance(stream, HostedProviderStream)
-    frames = list(stream)
-    assert frames, "every captured event must replay as a visible frame"
-    terminal = stream.terminal_turn
-    assert terminal.finish_reason is not None
