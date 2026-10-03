@@ -111,9 +111,7 @@ async def test_unmount_without_changes_writes_nothing():
 
         await window.remove()
 
-        assert calls == [], (
-            "unmount rewrote the config file although nothing changed"
-        )
+        assert calls == [], "unmount rewrote the config file although nothing changed"
 
 
 async def test_click_and_click_back_writes_nothing():

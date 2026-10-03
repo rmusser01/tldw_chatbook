@@ -1370,7 +1370,6 @@ async def test_start_review_blocks_when_pending_session_teardown_keeps_failing()
         assert controller._pending_review_session_teardown is not None
 
 
-
 def _review_candidates(count: int = 6) -> list[dict]:
     """`count` distinct due cards, so a review queue can actually advance."""
     return [
@@ -1657,9 +1656,7 @@ async def test_double_press_on_one_card_applies_sm2_once(tmp_path):
 
     db = CharactersRAGDB(str(tmp_path / "study.db"), "study-review-probe")
     deck_id = db.create_deck("Doubling deck")
-    card_id = db.create_flashcard(
-        {"deck_id": deck_id, "front": "Q", "back": "A"}
-    )
+    card_id = db.create_flashcard({"deck_id": deck_id, "front": "Q", "back": "A"})
     local = LocalStudyService(db)
 
     class RealDbStudyScopeService(FakeStudyScopeService):

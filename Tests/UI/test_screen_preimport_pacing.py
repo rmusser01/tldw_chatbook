@@ -183,9 +183,7 @@ def test_shutdown_breaks_out_of_a_long_gap_mid_sleep(monkeypatch):
 
     monkeypatch.setattr(app_module.time, "sleep", fake_sleep)
 
-    app._pause_between_preimports(
-        app_module.SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS
-    )
+    app._pause_between_preimports(app_module.SCREEN_PREIMPORT_MAX_ROUTE_GAP_SECONDS)
 
     # Two slices happened, then the shutdown check stopped the gap AND the
     # navigation park never ran.

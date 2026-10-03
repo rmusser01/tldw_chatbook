@@ -217,8 +217,7 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # enumerate what the screen manages).
             assert (
                 "MCP (Model Context Protocol) lets chatbook use external "
-                "tools — most people never need to change anything here."
-                in mcp_text
+                "tools — most people never need to change anything here." in mcp_text
             )
             assert "scoped tools" not in mcp_text
             assert (
@@ -307,7 +306,8 @@ async def test_phase6_recovery_copy_is_visible_in_running_app(
             # landing copy is the surviving empty/no-source cue (design: the
             # canvas empty state carries the landing-page guidance).
             assert (
-                "Search everything, pick a section, or add something new." in library_text
+                "Search everything, pick a section, or add something new."
+                in library_text
             )
 
 

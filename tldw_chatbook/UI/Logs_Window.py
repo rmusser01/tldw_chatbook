@@ -549,8 +549,7 @@ class LogsWindow(Container):
             # task-15476 AC #2: the filter matched more than the rendered
             # cap -- say so, rather than silently showing a partial result.
             parts.append(
-                f"(filter matched {self._visible_total}; "
-                f"showing most recent {shown})"
+                f"(filter matched {self._visible_total}; showing most recent {shown})"
             )
         if total >= MAX_LOG_RECORDS:
             parts.append(f"(buffer keeps last {MAX_LOG_RECORDS:,})")
@@ -573,7 +572,10 @@ class LogsWindow(Container):
             "CRITICAL", 0
         )
         if errors:
-            status, label = "error", f"{errors} error{'s' if errors != 1 else ''} in buffer"
+            status, label = (
+                "error",
+                f"{errors} error{'s' if errors != 1 else ''} in buffer",
+            )
         else:
             status, label = "ready", "Listening"
         header.sync_state(
