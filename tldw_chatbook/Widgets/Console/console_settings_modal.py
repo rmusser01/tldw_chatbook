@@ -153,10 +153,13 @@ from .console_settings_field_row import (
     SAMPLING_DISCLOSURE_ID, SAMPLING_FIELDS, SAMPLING_FOCUS_IDS, SAMPLING_TITLE,
     ConsoleSettingsFieldRowsMixin, ModelPicker, connection_blocked,
 )
+from .console_settings_saved_defaults import (
+    APPLY_LABEL, NEW_CHAT_DEFAULT_LABEL, SAVE_MODEL_DEFAULT_LABEL, USE_SAVED_DEFAULTS_ID,
+    USE_SAVED_DEFAULTS_LABEL, ConsoleSettingsSavedDefaultsMixin,
+)
 from .console_settings_summary import build_console_readiness_presentation
 from .console_settings_unsaved import (
-    ConsoleSettingsUnsavedGuardMixin,
-    snapshot_unsaved_baseline,
+    ConsoleSettingsUnsavedGuardMixin, chat_settings_title, snapshot_unsaved_baseline,
 )
 
 if TYPE_CHECKING:
@@ -542,7 +545,7 @@ def _valid_snapshot_settings_mapping(source: Mapping[str, object]) -> bool:
 
 @dataclass(frozen=True, slots=True)
 class ConsoleSettingsDraftSnapshot:
-    """Versioned, process-memory-only raw Conversation settings draft."""
+    """Versioned, process-memory-only raw Chat settings draft."""
 
     settings: ConsoleSessionSettings
     context_policy_overrides: ConsoleContextPolicyOverrides
@@ -797,7 +800,8 @@ PROVIDER_CHOICE_INPUTS = tuple(
     for label, input_id, control in _PROVIDER_CHOICE_CONTROLS
 )
 CONSOLE_SETTINGS_MODEL_SCOPE_COPY = (
-    "Use: this conversation only. Defaults: future provider conversations."
+    "Applies to this chat only · saved with the conversation · defaults live in "
+    "Settings ▸ Providers & Models (F4)"
 )
 CONSOLE_SETTINGS_CONTEXT_SCOPE_COPY = (
     "Use: this conversation only. Defaults: F4 Settings > Console Behavior."
@@ -956,6 +960,7 @@ class ConsoleSettingsRecoveryButton(Button):
 class ConsoleSettingsModal(
     ConsoleSettingsFieldRowsMixin,
     ConsoleSettingsUnsavedGuardMixin,
+    ConsoleSettingsSavedDefaultsMixin,
     SafeModalDismissMixin,
     ModalScreen[
         ConsoleSettingsCommittedSubmission
@@ -1059,6 +1064,7 @@ class ConsoleSettingsModal(
         # TASK-33006.4: the MODEL row's Change; the button works without Alt.
         # Priority: a terminal's Alt+M carries "m", which a focused field types.
         Binding("alt+m", "change_model", "Change model", show=False, priority=True),
+        Binding("ctrl+n", "make_new_chat_default", "Default for new chats", show=False),
     ]
     SAFE_MODAL_CONTENT = "#console-settings-modal"
 
@@ -1095,9 +1101,10 @@ class ConsoleSettingsModal(
         suspended_draft: ConsoleSettingsDraftSnapshot | None = None,
         expected_settings_revision: int = 0,
         model_picker: ModelPicker | None = None,
+        chat_title: str = "",
     ) -> None:
         super().__init__()
-        self._model_picker = model_picker
+        self._model_picker, self._chat_title = model_picker, chat_title
         self._unsaved_committed = (settings, context_state, user_display_name_override)
         if transfer is not None:
             origin = transfer.origin
@@ -1508,7 +1515,7 @@ class ConsoleSettingsModal(
         )
 
         with Vertical(id="console-settings-modal"):
-            yield Static("Conversation settings", classes="console-modal-header")
+            yield Static(chat_settings_title(self._chat_title, 0), id="console-settings-modal-title", classes="console-modal-header", markup=False)
             with Horizontal(id="console-settings-view-tabs"):
                 model_view = Button(
                     (
@@ -2100,7 +2107,7 @@ class ConsoleSettingsModal(
             )
             disabled_reason.can_focus = True
             disabled_reason.tooltip = (
-                "Explains why Conversation settings cannot be applied."
+                "Explains why Chat settings cannot be applied."
             )
             disabled_reason.display = False
             yield disabled_reason
@@ -2130,44 +2137,15 @@ class ConsoleSettingsModal(
                 classes="console-settings-modal-row console-settings-modal-actions",
             ):
                 yield Label("Esc close", id="console-settings-esc-hint", classes="console-settings-action-scope", markup=False)
+                # TASK-33006.5 (spec mock (b)): Cancel is the Context view's;
+                # _sync_action_copy sizes every button from its label.
                 with Horizontal(classes="console-settings-action-group"):
                     yield Button("Cancel", id="console-settings-cancel")
-                    save_default = Button(
-                        "Save as model default",
-                        id="console-settings-save-default",
-                        disabled=not self._can_save,
-                    )
-                    save_default.tooltip = (
-                        "Apply to this chat and save the shown generation profile "
-                        "for this exact provider and model."
-                    )
-                    save_default.remove_class(*(name for name in save_default.classes if name.startswith("w-")))
-                    save_default.set_styles(width=None)
-                    save_default.add_class("w-24")
-                    save_default.styles.min_width = 24
-                    yield save_default
+                    yield Button(USE_SAVED_DEFAULTS_LABEL, id=USE_SAVED_DEFAULTS_ID)
+                    yield Button(SAVE_MODEL_DEFAULT_LABEL, id="console-settings-save-default", disabled=not self._can_save)
                 with Horizontal(classes="console-settings-action-group"):
-                    make_default = Button(
-                        "Make default for new chats",
-                        id="console-settings-make-default",
-                        disabled=not self._can_save,
-                    )
-                    make_default.remove_class(*(name for name in make_default.classes if name.startswith("w-")))
-                    make_default.set_styles(width=None)
-                    make_default.add_class("w-28")
-                    make_default.styles.min_width = 28
-                    yield make_default
-                    apply = Button(
-                        "Apply to this chat",
-                        id="console-settings-save",
-                        variant="primary",
-                        disabled=not self._can_save,
-                    )
-                    apply.remove_class(*(name for name in apply.classes if name.startswith("w-")))
-                    apply.set_styles(width=None)
-                    apply.add_class("w-20")
-                    apply.styles.min_width = 20
-                    yield apply
+                    yield Button(NEW_CHAT_DEFAULT_LABEL, id="console-settings-make-default", disabled=not self._can_save)
+                    yield Button(APPLY_LABEL, id="console-settings-save", variant="primary", disabled=not self._can_save)
             guard = Vertical(
                 Static("", id="console-settings-close-message", markup=False),
                 Horizontal(
@@ -2661,14 +2639,8 @@ class ConsoleSettingsModal(
         self._reveal_focused_control(focused, self._focus_reveal_generation)
 
     def _sync_action_copy(self, compact: bool) -> None:
-        """Synchronize footer copy and widths for the responsive layout."""
+        """Synchronize footer widths for the responsive layout."""
 
-        make_default = self.query_one("#console-settings-make-default", Button)
-        apply_button = self.query_one("#console-settings-save", Button)
-        make_default.label = (
-            "Default for new chats" if compact else "Make default for new chats"
-        )
-        apply_button.label = "Use for this conversation"
         actions = self.query_one("#console-settings-actions", Vertical)
         for button in actions.query(Button):
             if compact:
@@ -2762,6 +2734,8 @@ class ConsoleSettingsModal(
         self.query_one("#console-settings-scope", Static).update(self._scope_copy())
         self.query_one("#console-settings-save-default", Button).display = show_model
         self.query_one("#console-settings-make-default", Button).display = show_model
+        self.query_one(f"#{USE_SAVED_DEFAULTS_ID}", Button).display = show_model
+        self.query_one("#console-settings-cancel", Button).display = not show_model
         self.query_one("#console-settings-save", Button).display = not recovery_active
         readiness = self.query_one("#console-settings-new-chat-default-block", Static)
         readiness.display = show_model and bool(str(readiness.renderable))
@@ -2823,7 +2797,7 @@ class ConsoleSettingsModal(
             ),
             "endpoint_invalid": f"Enter a valid {provider} endpoint to continue.",
             "endpoint_not_saved": (
-                f"Save the {provider} endpoint in Conversation settings before "
+                f"Save the {provider} endpoint in Chat settings before "
                 "using it here."
             ),
             "credential_missing": f"Add or verify the {provider} API key to continue.",
@@ -2889,12 +2863,6 @@ class ConsoleSettingsModal(
             and not self._context_operation_active()
         )
         changed_defaults = self._changed_default_fields(settings)
-        provider_defaults_changed = any(
-            field.startswith("api_settings.")
-            or field.endswith(".provider")
-            or field.endswith(".model")
-            for field in changed_defaults
-        )
         show_defaults = (
             bool(changed_defaults) or needs_endpoint_persistence
         ) and self._active_view == "model"
@@ -2905,9 +2873,7 @@ class ConsoleSettingsModal(
         save_button.label = (
             "Save endpoint & use model"
             if needs_endpoint_persistence
-            else "Save as provider defaults"
-            if provider_defaults_changed
-            else "Save as generation defaults"
+            else SAVE_MODEL_DEFAULT_LABEL
         )
         save_width = max(24, len(str(save_button.label)) + 2)
         save_button.remove_class(*(name for name in save_button.classes if name.startswith("w-")))
@@ -2949,7 +2915,7 @@ class ConsoleSettingsModal(
         elif self._active_run:
             reason = "Available when the current run finishes."
         elif not self._can_save:
-            reason = "Conversation settings cannot be changed right now."
+            reason = "Chat settings cannot be changed right now."
         elif apply_button.disabled and not needs_endpoint_persistence:
             reason = self._primary_disabled_reason(readiness)
         disabled_reason.update(reason)
@@ -3494,6 +3460,7 @@ class ConsoleSettingsModal(
             if control.id not in excluded_ids and self._is_effectively_focusable(control)
         ]
         for selector in (
+            f"#{USE_SAVED_DEFAULTS_ID}",
             "#console-settings-save-default",
             "#console-settings-make-default",
             "#console-settings-save",
@@ -4408,12 +4375,12 @@ class ConsoleSettingsModal(
             )
         )
 
-    def _rebase_to(self, provider: str, model: str) -> bool:
-        """Delegate a provider·model change to the controller-owned rebaser."""
+    def _rebase_to(self, provider: str, model: str, source: ConsoleSettingsDraftState | None = None) -> bool:
+        """Delegate a pair change (or Use saved defaults' ``source``) to the controller's rebaser."""
 
         if self._draft_rebaser is None:
             return False
-        source = self._snapshot_before_rebase()
+        source = source or self._snapshot_before_rebase()
         try:
             rebased = self._draft_rebaser(
                 source,

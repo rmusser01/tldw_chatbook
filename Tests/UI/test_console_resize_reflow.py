@@ -334,18 +334,25 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         await pilot.pause()
 
         panel = modal.query_one("#console-settings-modal")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # Rewritten on purpose by TASK-33006.5: Cancel is the Context view's,
+        # and Use saved defaults leads (dimmed here: this harness passes no
+        # draft rebaser, which it needs).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert [str(button.label) for button in actions] == [
-            "Cancel",
-            "Save as provider defaults",
-            "Default for new chats",
-            "Use for this conversation",
+            "Use saved defaults",
+            "Save as model default",
+            "Default for new chats (Ctrl+N)",
+            "Apply to this chat (Ctrl+Enter)",
         ]
         assert panel.region.x >= 0
         assert panel.region.right <= width
         assert panel.region.bottom <= 24
-        assert all(button.display for button in actions)
-        assert all(button.can_focus and not button.disabled for button in actions)
+        assert actions[0].disabled
+        assert all(button.can_focus and not button.disabled for button in actions[1:])
         assert all(
             panel.content_region.contains_region(button.region) for button in actions
         ), (
@@ -357,7 +364,7 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
         actions[1].focus()
         await pilot.pause()
         focus_order: list[str] = []
-        for _ in actions:
+        for _ in actions[1:]:
             focused = app.focused
             focus_order.append(getattr(focused, "id", "") or "")
             assert focused is not None
@@ -368,7 +375,6 @@ async def test_full_settings_actions_remain_mouse_reachable_at_narrow_width(
             "console-settings-save-default",
             "console-settings-make-default",
             "console-settings-save",
-            "console-settings-cancel",
         ]
         apply_button = actions[-1]
         top_hit = modal.get_widget_at(
@@ -833,7 +839,6 @@ async def test_full_settings_successful_recovery_clears_prior_error_banner(
 @pytest.mark.parametrize(
     "button_id",
     (
-        "console-settings-cancel",
         "console-settings-save-default",
         "console-settings-save",
     ),
@@ -863,7 +868,13 @@ async def test_blocked_full_settings_keeps_enabled_actions_mouse_reachable(
 
         panel = modal.query_one("#console-settings-modal")
         blocked = modal.query_one("#console-settings-new-chat-default-block")
-        actions = list(modal.query("#console-settings-actions Button"))
+        # TASK-33006.5: Cancel is the Context view's, so the Model view's
+        # shown actions are measured (its Cancel case is gone).
+        actions = [
+            button
+            for button in modal.query("#console-settings-actions Button")
+            if button.display
+        ]
         assert blocked.display
         assert "not configured" in str(blocked.renderable)
         assert modal.query_one("#console-settings-make-default", Button).disabled

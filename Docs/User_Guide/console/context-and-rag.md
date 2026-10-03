@@ -117,7 +117,7 @@ yet" instead.
 
 A note that held your message, or that reports a failed **Compact now**, also
 gives a next step. "Nothing to compact yet" is not a failure and gives none.
-In **Conversation settings > Context and memory** you can raise
+In **Chat settings > Context and memory** you can raise
 **Conversation max tokens**, set **If compaction fails** to **Omit older
 context** (the message is then sent without compacting), or set **When limit
 nears** to **Off**. You can also start a new chat. In a saved chat, the

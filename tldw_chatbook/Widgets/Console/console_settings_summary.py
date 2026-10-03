@@ -48,7 +48,7 @@ _BLOCKER_COPY = {
     "provider_unsupported": "provider is not supported",
     "provider_configuration_invalid": "review provider settings",
     "endpoint_invalid": "invalid base URL",
-    "endpoint_not_saved": "save the endpoint in Conversation settings",
+    "endpoint_not_saved": "save the endpoint in Chat settings",
     "credential_missing": "missing API key",
     "credential_rejected": "credential was rejected",
     "model_missing": "choose a model",
@@ -80,7 +80,7 @@ _RECOVERY_COPY = {
     "save_endpoint": (
         "Configure endpoint",
         "console",
-        "Save the provider endpoint in Conversation settings",
+        "Save the provider endpoint in Chat settings",
     ),
     "configure_credential": (
         "Configure API key",
@@ -197,7 +197,7 @@ def build_console_readiness_presentation(
             action = (
                 "Configure endpoint",
                 "console",
-                f"Save the {provider} endpoint in Conversation settings",
+                f"Save the {provider} endpoint in Chat settings",
             )
 
     credential_value = {
@@ -458,7 +458,7 @@ class ConsoleSettingsSummary(RecomposeCaptureGuard, Vertical):
         header.styles.max_height = CONSOLE_SETTINGS_ROW_HEIGHT
         with header:
             title = Static(
-                "Conversation settings",
+                "Chat settings",
                 id="console-settings-title",
                 classes="destination-section console-settings-title",
             )

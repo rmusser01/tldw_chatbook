@@ -1,4 +1,4 @@
-"""Typed, secret-free navigation contracts for Conversation settings."""
+"""Typed, secret-free navigation contracts for Chat settings."""
 
 from __future__ import annotations
 

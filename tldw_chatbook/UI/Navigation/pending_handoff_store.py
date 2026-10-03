@@ -370,7 +370,7 @@ class PendingHandoffStore:
         mutated, and no handoff value is returned.
 
         Args:
-            claim: The opaque Conversation settings return claim whose draft
+            claim: The opaque Chat settings return claim whose draft
                 has transferred to its destination modal.
 
         Returns:

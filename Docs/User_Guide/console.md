@@ -292,7 +292,7 @@ A known connection failure blocks sending too. When a connection test of
 this chat's server — **Test connection & list models** in Chat settings, or
 **Test Provider** in Settings — was refused or timed out, the Console reads,
 for example, "Not ready · refused :9099" (the header badge, the Model
-section, the Conversation settings rows and this card's "Reconnect the
+section, the Chat settings rows and this card's "Reconnect the
 provider server" step), and the composer reads "Send blocked — retry the
 connection to continue". **Retry connection** tests that same server again
 in place; it opens no settings. If the server now answers, the chat is Ready and Send
@@ -452,11 +452,15 @@ during a run); **Esc** expands it and returns the caret to your draft.
 
 ### Session settings & model selection
 
-The **Console Settings** modal (**Chat settings**) is the one place provider,
-model, and generation settings live. Open it with **Ctrl+O** from anywhere in
+**Chat settings** is the one place provider, model, and generation settings
+for one chat live. Open it with **Ctrl+O** from anywhere in
 Console, `/settings`, the palette's "Console: Chat settings…", the control
 bar's **Settings** button, or the **Session Settings** action in the
-Inspector. It is 150 columns by 22 rows, and the **Model and generation**
+Inspector. Its title names the chat and counts your unsaved edits ("Chat
+settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
+says what it changes: "Applies to this chat only · saved with the
+conversation · defaults live in Settings ▸ Providers & Models (F4)". It is
+150 columns by 22 rows, and the **Model and generation**
 view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
 - **Model**: the chat's model and its provider's name, where the pair comes
@@ -538,14 +542,30 @@ this model is not known stays visible, and its help line starts with "Support
 not verified for this model."
 
 Focus opens on **Temperature**. **Tab** walks the core fields, the four
-disclosure titles and the footer to **Use for this conversation**, never into
+disclosure titles and the footer to **Apply to this chat**, never into
 a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
 the view tabs. A focus target that a credential round trip cannot restore
 lands on **Change**.
 The **Context and memory** view keeps its taller frame and scrolls.
-- Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
-  applies to this session only. Save as default also writes provider +
-  streaming defaults to config."
+
+The footer reads, left to right: the Esc hint (below), **Use saved
+defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
+**Apply to this chat (Ctrl+Enter)**. Each key works from any field. Only
+**Save as model default** and **Default for new chats** write
+`config.toml`; **Apply to this chat** changes this chat alone and writes no
+configuration. The **Context and memory** view has a **Cancel** button in
+place of the default actions.
+
+**Use saved defaults** is how a chat that already holds work picks up
+defaults you saved later (a chat nobody has used yet follows them on its
+own). It replaces the draft with exactly what a new chat on the same
+provider and model would start with: the model's saved defaults, then the
+provider's saved Console defaults, then Console Behavior, then the provider's
+settings. Any unapplied edit in **Model and generation** is dropped, every
+field that now differs from the chat reads *edited \**, and the provider and
+model stay as they are. Nothing changes until you **Apply to this chat**.
+While the draft already equals those defaults, the button is dimmed and reads
+**Matches saved defaults**.
 
 The modal is a dense form: every field, dropdown and button in it (the
 **Model and generation** / **Context and memory** tabs included) is one row
@@ -571,7 +591,7 @@ than the window,
 disappears once you have scrolled to the bottom; scroll back up and it
 returns.
 
-Closing never throws edits away without asking. Left of **Cancel**, the
+Closing never throws edits away without asking. At its left, the
 footer reads "Esc close" while nothing is edited, and "Esc close (asks: 2
 unsaved)" once something is, counting edits in both tabs and any carried in
 from the **Alt+M** popover. Changing a value back to what the chat already
@@ -581,11 +601,11 @@ it comes from; picking On or Off pins it for this chat, which counts as an
 edit even when it matches the inherited value. Switching model can return it
 to following its default, which counts too.
 With edits, **Esc**, a click outside the modal, and
-**Cancel** open a prompt that names the edited fields ("2 unsaved edits to
+the Context view's **Cancel** open a prompt that names the edited fields ("2 unsaved edits to
 this chat: Temperature, Max tokens.") and offers **Apply to this chat**
 (Enter), **Discard** (d) and **Keep editing** (Esc). Keep editing puts you
 back in the field you were editing. Apply goes through the same path as the
-footer's **Use for this conversation** button, so it writes nothing to
+footer's **Apply to this chat** button, so it writes nothing to
 `config.toml`; if a value is invalid, the modal stays open with the error
 summary. When Apply is unavailable (a run is active, say), the prompt says
 so, shows **Apply to this chat** dimmed, and starts on **Keep editing**. A

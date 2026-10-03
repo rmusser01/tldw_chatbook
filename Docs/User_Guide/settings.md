@@ -329,7 +329,10 @@ loads the latest saved defaults. New Console chats take the saved defaults, and
 so does an open chat you have not touched yet: no messages and no edited
 settings. It follows the next time Console shows it, even when its provider
 already reads Ready, and Console tells you if its provider changed. A chat that
-holds any work keeps its own settings.
+holds any work keeps its own settings; to give it the new defaults, open
+**Chat settings** (**Ctrl+O**) in that chat, choose **Use saved defaults**,
+then **Apply to this chat**. That applies them to the one chat and writes
+nothing to `config.toml`.
 
 #### QwenCloud
 
@@ -1608,7 +1611,9 @@ not open an editor.
   only prints the file's location.
 - **A Console setting didn't take.** Global fallbacks reach new chats and open
   chats you have not touched; a chat with messages or edited settings keeps
-  what it resolved, and a session or provider+model setting outranks them. Rail presentation is different: after a
+  what it resolved (in that chat, **Chat settings** ▸ **Use saved defaults**,
+  then **Apply to this chat**, adopts them), and a session or provider+model
+  setting outranks them. Rail presentation is different: after a
   successful Save, return to a freshly opened Console screen to see it; no app
   restart is required.
 - **Save Raw TOML is greyed out.** Validate the current text. If the file changed

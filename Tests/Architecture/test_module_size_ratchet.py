@@ -114,7 +114,10 @@ _BUDGETS: dict[str, int] = {
     # and their adapters, Custom model and Keep unverified are gone; the
     # model changes only through Switch model's pick mode. Its review fix
     # lowers it to 6,189: a created entry's landing moved to the field rows.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6189,
+    # TASK-33006.5 lowers it to 6,156: the footer buttons lost their
+    # compose-time geometry and Use saved defaults lives in
+    # console_settings_saved_defaults.py.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6156,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

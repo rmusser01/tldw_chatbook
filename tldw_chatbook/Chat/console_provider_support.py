@@ -179,7 +179,7 @@ class ModelConfigField:
 
 
 #: The one field table: every editor's label, help and range for each field
-#: (Alt+M popover, Conversation settings, Settings model defaults and Console
+#: (Alt+M popover, Chat settings, Settings model defaults and Console
 #: Behavior fallbacks). Labels stay within the modal's 23-cell label column.
 MODEL_CONFIG_FIELDS: dict[str, ModelConfigField] = {
     field.name: field
