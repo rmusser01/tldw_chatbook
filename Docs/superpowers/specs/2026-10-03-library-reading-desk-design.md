@@ -1,6 +1,6 @@
 # Library reading desk — design
 
-Status: Draft for owner approval (TASK-34000.42) — revision 2 (working-note model, tidy links)
+Status: **Approved by the owner 2026-10-03** (revision 2: working-note model, tidy links). Implementation: TASK-34000.42.1–.7
 Date: 2026-10-03
 Origin: Library + Notes UX review 2026-10-02 (`qa/notes-library-ux-review-2026-10-02/`), findings S-02, S-03,
 L-16, L-25; improvement proposals IA-04 / R-28 (`improvements/ia-loop.md`, `improvements/ranked.md`).
@@ -50,7 +50,7 @@ a new server sync domain (ADR-105).
 | Q4 | Layout | **The note takes the Items slot**; the reader stays the work pane and keeps its width. |
 | Q5 | What does `q` quote? | **The mouse selection if any, else a keyboard paragraph cursor** (`j`/`k`). |
 | Q6 | How do links look while editing? | **Tidy links**: the editor shows `title ↗` and reveals the raw Markdown when the caret enters the link (also serves the `[[` note links of TASK-34000.11). |
-| — | Sections 1-5 below | Approved in conversation 2026-10-03; this document awaits approval with the mockups. |
+| — | Sections 1-5, mockups, revision 2 | Approved 2026-10-03 (conversation + the published review page). |
 
 ## 4. Behaviour
 
@@ -221,7 +221,7 @@ in a 42-cell companion. Preview renders them as `paper-retrieval-practice ↗`. 
 `↗` form in Edit; that requires an editor capability that does not exist yet (concealing the link
 target, revealing raw Markdown when the caret enters the link). **Ruled: build it** — the editor shows
 `title ↗` for `[title](media://…)` and `[[Title]](note://…)` links and reveals the raw Markdown while
-the caret is inside the link; copy and save always use the raw text. It is delivery slice D7.
+the caret is inside the link; copy and save always use the raw text. It is delivery slice D6.
 
 ## 7. Keyboard, errors, accessibility, performance
 - Desk keys (`n`, `q`, `j`/`k`, `]`/`[`) bind through `check_action` and only act while the reader has
@@ -244,11 +244,11 @@ isolated profile.
 |---|---|---|
 | D1 Source links | In-app routing of `media://<uuid>[#p<n>]` (shares TASK-34000.11's router), Trash / Not-in-Library states, self-healing anchors | TASK-34000.11 |
 | D2 Derived index | Migration, `VALID_TABLES`, index + plan pin, rebuild-on-save, backfill, Info lines | — |
-| D3 Shell companion | List region hosts a companion; width rule; stacked faces; grip label; ADR-086/084 amendments accepted | — |
-| D4 Desk in Media | `n` open/create/toggle, `▾` chooser, `]`/`[`, Escape ladder, ‹ Items, navigation survival, footer/F1, Note button | D2, D3, TASK-34000.25, TASK-34000.39 (L-25 one-row byline) |
+| D3 Shell companion | List region hosts a companion; width rule; stacked faces; grip label — implements the ADR-086/084 amendments accepted 2026-10-03 | — |
+| D4 Desk in Media | `n` opens/toggles the working note, Write in… picker + `cites N ▾` swap, `]`/`[` keep the working note, Escape ladder, ‹ Items, navigation survival, footer/F1, Note button | D2, D3, TASK-34000.25, TASK-34000.39 (L-25 one-row byline) |
 | D5 Quoting | Paragraph cursor, selection path, `q`, attribution, receipt | D1, D4 |
-| D7 Tidy links in the editor | Render `[title](media://…)` / `[[Title]](note://…)` as `title ↗` in the note editor, raw while the caret is inside; copy/save use raw text | D1, TASK-34000.11 |
-| D6 Loop UAT + docs | Live rerun of the researcher journey at 120x36 / 160x45 / 235x52; User Guide (Media, Notes); ADR status | D1-D5 |
+| D6 Tidy links in the editor | Render `[title](media://…)` / `[[Title]](note://…)` as `title ↗` in the note editor, raw while the caret is inside; copy/save use raw text | D1, TASK-34000.11 |
+| D7 Loop UAT + docs | Live rerun of the researcher journey at 120x36 / 160x45 / 235x52; User Guide (Media, Notes); ADR status | D1-D6 |
 
 Tests: real-app Pilot tests per behaviour; **rendered-geometry assertions** (actual `region.width`, not
 CSS intent) at 235/160/120/100/80/60 columns for D3; in-memory SQLite tests for D2 (rebuild after
