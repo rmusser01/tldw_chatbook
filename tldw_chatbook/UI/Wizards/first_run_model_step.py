@@ -45,6 +45,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioSet,
     SetupStep,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
 
 # How many discovered models the radio picker renders. The full set stays on
@@ -163,7 +164,7 @@ class ModelStep(SetupStep):
         self._manual_decision_active = False
         self.selected_model_id = ""
         self._model_id_from_custom_input = False
-        if not self.is_mounted:
+        if not self.is_attached:
             return
         try:
             custom = self.query_one("#setup-model-custom", Input)
@@ -296,7 +297,8 @@ class ModelStep(SetupStep):
         if rendered_is_current:
             self._restore_model_radio_selection(discovery_key)
         if provider_key and not rendered_is_current:
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 partial(
                     self._load_models,
                     provider_key,
@@ -314,7 +316,8 @@ class ModelStep(SetupStep):
             # forever -- a permanently-stuck loading indicator for a state
             # that was never actually loading. Replace it with copy that
             # tells the user what to do instead.
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 partial(
                     self._render_models,
                     [],
@@ -398,7 +401,7 @@ class ModelStep(SetupStep):
             discover = None
         elif (
             isinstance(owner, ProviderStep)
-            and owner.is_mounted
+            and owner.is_attached
             and owner.app is self.app
         ):
             try:

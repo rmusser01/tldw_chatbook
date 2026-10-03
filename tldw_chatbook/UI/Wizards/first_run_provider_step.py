@@ -62,6 +62,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     ProviderChoiceOption,
     SetupStep,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_provider_support import ConsoleProviderCatalogEntry
@@ -666,7 +667,7 @@ class ProviderStep(SetupStep):
         try:
             key_input = self._sensitive_key_input
             endpoint_input = self._sensitive_endpoint_input
-            if (key_input is None or endpoint_input is None) and self.is_mounted:
+            if (key_input is None or endpoint_input is None) and self.is_attached:
                 key_input = self.query_one("#setup-provider-api-key", Input)
                 endpoint_input = self.query_one("#setup-provider-endpoint", Input)
             if key_input is None or endpoint_input is None:
@@ -740,7 +741,7 @@ class ProviderStep(SetupStep):
             "setup-provider-discovery",
             "setup-provider-probe",
         )
-        if selected_was_in_progress and publish_status and self.is_mounted:
+        if selected_was_in_progress and publish_status and self.is_attached:
             try:
                 self.query_one("#setup-provider-probe-status", Static).update(
                     "Check paused; returning will retry."
@@ -787,7 +788,8 @@ class ProviderStep(SetupStep):
         self._local_discovery_state = "in_progress"
         if user_requested:
             self._render_detection_results((), status="Searching local endpoints…")
-        self.run_worker(
+        run_wizard_worker(
+            self,
             partial(self._discover_servers, generation, provider_key),
             exclusive=True,
             group="setup-provider-local-discovery",
@@ -814,7 +816,7 @@ class ProviderStep(SetupStep):
         ):
             return
         self._local_discovery_state = state
-        if not self.is_mounted or not self.is_active:
+        if not self.is_attached or not self.is_active:
             return
         self._detected_servers = servers
         if servers:
@@ -957,7 +959,7 @@ class ProviderStep(SetupStep):
         """Capture only the active provider's controls before replacing them."""
 
         owner = provider_key or self.selected_provider_key
-        if not owner or not self.is_mounted:
+        if not owner or not self.is_attached:
             return
         draft = self._provider_ui_draft(owner)
         try:
@@ -1063,7 +1065,7 @@ class ProviderStep(SetupStep):
         )
         if callable(invalidate_handoff):
             invalidate_handoff()
-        if self.is_mounted and provider_draft is not None:
+        if self.is_attached and provider_draft is not None:
             self._begin_selected_provider_discovery(
                 provider_draft, sync_live_credential=False
             )
@@ -1185,7 +1187,7 @@ class ProviderStep(SetupStep):
         self._obsolete_provider_generation(
             "setup-provider-discovery", "setup-provider-probe"
         )
-        if (cancelled or invalidated or changed) and self.is_mounted:
+        if (cancelled or invalidated or changed) and self.is_attached:
             self.query_one("#setup-provider-probe-status", Static).update(
                 "Provider settings changed since test; test again." if changed else ""
             )
@@ -1286,7 +1288,7 @@ class ProviderStep(SetupStep):
             self._last_tested_provider_identity = saved
 
     def _refresh_auth_readiness(self) -> None:
-        if not self.selected_provider_key or not self.is_mounted:
+        if not self.selected_provider_key or not self.is_attached:
             return
         readiness = self._current_provider_readiness()
         self._subscription_readiness_status = readiness.subscription_status
@@ -1570,7 +1572,8 @@ class ProviderStep(SetupStep):
         self.query_one("#setup-provider-probe-status", Static).update(
             "Checking the selected provider…"
         )
-        self.run_worker(
+        run_wizard_worker(
+            self,
             partial(
                 self._discover_selected_provider,
                 provider_draft,
@@ -2239,7 +2242,8 @@ class ProviderStep(SetupStep):
         token = self._provider_test_evidence.begin(identity)
         self._active_probe_token = token
         self.query_one("#setup-provider-probe-status", Static).update("Testing…")
-        self.run_worker(
+        run_wizard_worker(
+            self,
             partial(
                 self._run_probe,
                 generation,
@@ -2281,7 +2285,7 @@ class ProviderStep(SetupStep):
             if self._provider_test_evidence.cancel_probe(token):
                 if self._active_probe_token is token:
                     self._active_probe_token = None
-                if generation == self.probe_generation and self.is_mounted:
+                if generation == self.probe_generation and self.is_attached:
                     self.query_one("#setup-provider-probe-status", Static).update("")
             raise
         except Exception as exc:
@@ -2304,7 +2308,7 @@ class ProviderStep(SetupStep):
         if (
             generation == self.probe_generation
             and provider_key == self.selected_provider_key
-            and self.is_mounted
+            and self.is_attached
         ):
             self._render_provider_evidence(identity)
 

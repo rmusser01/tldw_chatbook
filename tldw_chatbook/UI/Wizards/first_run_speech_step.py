@@ -19,10 +19,7 @@ from typing import (
 )
 
 from loguru import logger
-from textual import (
-    on,
-    work,
-)
+from textual import on
 from textual.app import ComposeResult
 from textual.containers import Vertical
 from textual.css.query import NoMatches
@@ -90,6 +87,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupRadioSet,
     SetupStep,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import wizard_work
 
 if TYPE_CHECKING:
     from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import SetupWizardContainer
@@ -624,7 +622,7 @@ class SpeechSetupStep(SetupStep):
         return (
             token == self._external_selection_token
             and token[1] == id(self)
-            and self.is_mounted
+            and self.is_attached
         )
 
     def _release_external_scope(self, token: tuple[int, int]) -> None:
@@ -731,11 +729,10 @@ class SpeechSetupStep(SetupStep):
             scope_id,
         )
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-speech-external-verify",
         exclusive=True,
-        exit_on_error=False,
         description="Verify external Parakeet source",
     )
     def _verify_external_source(
@@ -848,11 +845,10 @@ class SpeechSetupStep(SetupStep):
             prepared,
         )
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-speech-external-ready",
         exclusive=True,
-        exit_on_error=False,
         description="Prepare external Parakeet configuration",
     )
     def _prepare_external_readiness(
@@ -925,11 +921,10 @@ class SpeechSetupStep(SetupStep):
         )
         self._set_external_status(message, busy=False)
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-speech-external-vad-preflight",
         exclusive=True,
-        exit_on_error=False,
         description="Check managed VAD dependency",
     )
     def _preflight_external_vad(
@@ -1024,10 +1019,9 @@ class SpeechSetupStep(SetupStep):
             report,
         )
 
-    @work(
+    @wizard_work(
         group="setup-speech-external-vad-install",
         exclusive=True,
-        exit_on_error=False,
         description="Install managed VAD dependency",
     )
     async def _provision_external_vad(
@@ -1142,7 +1136,7 @@ class SpeechSetupStep(SetupStep):
             self._service = self._service_factory()
         return self._service
 
-    @work(thread=True, group="setup-speech-load", exclusive=True, exit_on_error=False)
+    @wizard_work(thread=True, group="setup-speech-load", exclusive=True)
     def _load_installed_state(self) -> None:
         try:
             service = self._service_for_worker()
@@ -1228,11 +1222,10 @@ class SpeechSetupStep(SetupStep):
             picker_callback,
         )
 
-    @work(
+    @wizard_work(
         thread=True,
         group="setup-speech-transcribe-cpp-gguf",
         exclusive=True,
-        exit_on_error=False,
     )
     def _configure_transcribe_cpp_gguf(self, selected_path: Path) -> None:
         """Admit and persist a selected GGUF off the Textual event loop."""
@@ -1264,8 +1257,8 @@ class SpeechSetupStep(SetupStep):
         )
         self.refresh(recompose=True)
 
-    @work(
-        thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False
+    @wizard_work(
+        thread=True, group="setup-speech-install", exclusive=True
     )
     def _preflight_install(self) -> None:
         import asyncio
@@ -1313,8 +1306,8 @@ class SpeechSetupStep(SetupStep):
             return
         self._provision_install()
 
-    @work(
-        thread=True, group="setup-speech-install", exclusive=True, exit_on_error=False
+    @wizard_work(
+        thread=True, group="setup-speech-install", exclusive=True
     )
     def _provision_install(self) -> None:
         import asyncio
@@ -1410,8 +1403,8 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._activate_model()
 
-    @work(
-        thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False
+    @wizard_work(
+        thread=True, group="setup-speech-lifecycle", exclusive=True
     )
     def _activate_model(self) -> None:
         try:
@@ -1463,8 +1456,8 @@ class SpeechSetupStep(SetupStep):
         self.refresh(recompose=True)
         self._delete_model()
 
-    @work(
-        thread=True, group="setup-speech-lifecycle", exclusive=True, exit_on_error=False
+    @wizard_work(
+        thread=True, group="setup-speech-lifecycle", exclusive=True
     )
     def _delete_model(self) -> None:
         try:
@@ -1708,7 +1701,7 @@ class SpeechSetupStep(SetupStep):
         finally:
             self._external_commit_handoff = None
             self._external_commit_pending = False
-            if self.is_mounted:
+            if self.is_attached:
                 self.refresh(recompose=True)
 
     def _check_active(self, selection: speech_state.SpeechSelection) -> Any:

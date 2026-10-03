@@ -40,6 +40,7 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     SetupCheckbox,
     SetupStep,
 )
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 from tldw_chatbook.UI.Wizards.first_run_speech_step import SpeechSetupStep
 
 
@@ -169,12 +170,11 @@ class SummaryStep(SetupStep):
             )
         if self._render_worker is not None and self._render_worker.is_running:
             return
-        self._render_worker = self.run_worker(
+        self._render_worker = run_wizard_worker(
+            self,
             self._render_rows(),
             exclusive=True,
             group="setup-summary-load",
-            # TASK-32892: a raise in this worker must not exit the app.
-            exit_on_error=False,
         )
 
     async def _render_rows(self) -> None:
