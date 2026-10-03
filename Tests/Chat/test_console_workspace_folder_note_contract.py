@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 
+from Tests.private_profile import private_profile_test
 from tldw_chatbook.Agents.local_tool_provider import LocalToolProvider
 from tldw_chatbook.Agents.tool_catalog import ToolCatalogRegistry
 from tldw_chatbook.Chat.console_agent_bridge import build_console_first_request_plan
@@ -49,18 +50,6 @@ class _WorkspaceRun:
 @pytest.fixture(autouse=True)
 def _isolated_roots(monkeypatch):
     monkeypatch.setattr(roots_module, "_default_registry_instance", None)
-    # Same precedent as Tests/Agents/test_local_tool_provider.py's
-    # ``_default_specs_without_config_reads``: provider construction reads the
-    # web-deep-search gate through get_cli_setting, which trips the known
-    # sandboxed-config Backup_Recovery failure. Pin every gate to its default.
-    def _default(_section, _key=None, default=None):
-        return default
-
-    monkeypatch.setattr(
-        "tldw_chatbook.Agents.local_tool_provider.get_cli_setting", _default
-    )
-    # The plan's prompt resolver reads config lazily through the module.
-    monkeypatch.setattr("tldw_chatbook.config.get_cli_setting", _default)
     yield
 
 
@@ -163,8 +152,9 @@ def _note_line_for(note: str, alias: str) -> str:
 @pytest.mark.parametrize(
     "names", [("myproj",), ("myproj", "docs")], ids=["one-folder", "two-folders"]
 )
+@private_profile_test
 def test_every_folder_the_note_names_is_listed_by_fs_list_with_the_alias_it_gives(
-    tmp_path, monkeypatch, names, inside_launch
+    request, tmp_path, monkeypatch, names, inside_launch
 ) -> None:
     run = _workspace_run(
         tmp_path, monkeypatch, names=names, inside_launch=inside_launch
@@ -185,8 +175,9 @@ def test_every_folder_the_note_names_is_listed_by_fs_list_with_the_alias_it_give
         assert f"{folder_name}-README.md" in result.content
 
 
+@private_profile_test
 def test_note_never_frames_paths_relative_to_the_launch_directory(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ) -> None:
     run = _workspace_run(tmp_path, monkeypatch)
     note = _plan(run, _local_provider(run)).config.workspace_context_note
@@ -196,8 +187,9 @@ def test_note_never_frames_paths_relative_to_the_launch_directory(
     assert str(run.tmp_path) not in note  # never an absolute host path
 
 
+@private_profile_test
 def test_note_lists_only_the_working_folder_when_a_selection_narrows_the_run(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ) -> None:
     run = _workspace_run(tmp_path, monkeypatch, names=("myproj", "docs"))
     selection = next(
@@ -219,8 +211,9 @@ def test_note_lists_only_the_working_folder_when_a_selection_narrows_the_run(
     assert "docs" not in note
 
 
+@private_profile_test
 def test_note_says_bound_folders_need_path_tools_when_the_run_has_none(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ) -> None:
     run = _workspace_run(tmp_path, monkeypatch)
     options = tuple(run.authority.options)
@@ -235,8 +228,9 @@ def test_note_says_bound_folders_need_path_tools_when_the_run_has_none(
     assert "fs_*" in note  # names what is missing, not a path to try
 
 
+@private_profile_test
 def test_note_says_builtin_relative_paths_resolve_in_private_scratch(
-    tmp_path, monkeypatch
+    request, tmp_path, monkeypatch
 ) -> None:
     run = _workspace_run(tmp_path, monkeypatch)
     note = roots_module.workspace_context_note(
