@@ -1121,7 +1121,7 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   `TLDW_FIRST_TOKEN_TIMEOUT_SECONDS`); gaps between later tokens keep the
   90-second stall window (`stream_stall_timeout_seconds`). After 15 seconds
   with no token the reply line reads "Waiting for the model to start
-  answering · 0:42 · a large local model can take a few minutes to load ·
+  answering · 42s · a large local model can take a few minutes to load ·
   Stop: Esc". If the wait runs out, the failure says the model may still be
   loading and names that setting, or suggests a smaller model.
 - **There's no Tools chip before the first send.** Tools are counted lazily,
