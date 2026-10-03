@@ -3695,7 +3695,13 @@ class ConsoleRuntime:
                     ):
                         parked = False
                     continue
-                seen_work = trace_maintenance_work_generation()
+                # TASK-33801: an exchange written since the last pass -- while
+                # parked, during that pass or its cleanup -- means this pass has
+                # work, so it skips the idle check's extra admission.
+                current_work = trace_maintenance_work_generation()
+                if current_work != seen_work:
+                    maintenance.expect_work = True
+                seen_work = current_work
                 try:
                     result = await run_owned_db_call(database, maintenance.run_batch)
                 except Exception as exc:  # noqa: BLE001 - retry remains restart-safe

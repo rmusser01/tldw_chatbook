@@ -387,6 +387,52 @@ def test_new_legacy_row_after_logical_completion_reopens_checkpoint(
     assert LegacyTraceNormalizer(db).read_calls(second_message_id)
 
 
+def test_a_pass_with_known_work_skips_the_idle_check(
+    db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """TASK-33801: a pass that knows it has work opens one transaction, not two.
+
+    The read-only idle check costs a storage admission of its own; on a pass
+    with work it only falls through to the write path, so a work pass paid
+    three admissions where it used to pay two. The first pass (state unknown)
+    and a pass the loop flags with ``expect_work`` go straight to the write
+    path; later idle passes still use the read-only check.
+
+    Args:
+        db: A real ChaChaNotes database.
+        monkeypatch: Records every transaction a pass opens.
+    """
+    conversation_id = db.add_conversation({"title": "known work"})
+    assert conversation_id is not None
+    _insert_exchange(
+        db, message_id=_message(db, conversation_id, "answer-0"), capture=_capture(0)
+    )
+    opened: list[bool] = []
+    real_transaction = db.transaction
+
+    def recording_transaction(*, immediate: bool = False):
+        opened.append(immediate)
+        return real_transaction(immediate=immediate)
+
+    monkeypatch.setattr(db, "transaction", recording_transaction)
+    maintenance = LegacyTraceMaintenance(db)
+
+    assert maintenance.run_batch().logical_complete is True
+    assert opened == [True], f"first pass opened {opened}"
+
+    opened.clear()
+    assert maintenance.run_batch().logical_complete is True
+    assert opened == [False], f"idle pass opened {opened}"
+
+    _insert_exchange(
+        db, message_id=_message(db, conversation_id, "answer-1"), capture=_capture(1)
+    )
+    opened.clear()
+    maintenance.expect_work = True
+    assert maintenance.run_batch().processed_rows == 1
+    assert opened == [True], f"flagged work pass opened {opened}"
+
+
 def test_complete_check_without_new_rows_takes_no_write_transaction(
     db: CharactersRAGDB, monkeypatch: pytest.MonkeyPatch
 ) -> None:
