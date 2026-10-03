@@ -14886,20 +14886,24 @@ DELETE FROM keywords
                     raise ConflictError(msg, entity="messages", entity_id=message_id)
 
                 if content_changed and not preserve_descendants:
+                    # Unary ``+`` keeps both steps off the (conversation_id, id)
+                    # index, as in soft_delete_message_subtree: with no
+                    # sqlite_stat1 the planner otherwise scans the whole
+                    # conversation once per descendant (TASK-33628.11).
                     descendant_rows = conn.execute(
                         """
                         WITH RECURSIVE descendants(id) AS (
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         SELECT id FROM descendants
                         """,
@@ -14918,14 +14922,14 @@ DELETE FROM keywords
                             SELECT id
                               FROM messages
                              WHERE parent_message_id = ?
-                               AND conversation_id = ? AND deleted = 0
+                               AND +conversation_id = ? AND deleted = 0
                             UNION
                             SELECT child.id
                               FROM messages AS child
                               JOIN descendants AS parent
                                 ON child.parent_message_id = parent.id
                              WHERE child.deleted = 0
-                               AND child.conversation_id = ?
+                               AND +child.conversation_id = ?
                         )
                         UPDATE messages
                            SET deleted = 1,

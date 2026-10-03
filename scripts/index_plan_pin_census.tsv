@@ -189,7 +189,7 @@ idx_messages_feedback	pre-convention	plan never captured without stats
 idx_messages_role	pre-convention	plan never captured without stats
 idx_messages_selected_variant	pre-convention	plan never captured without stats
 idx_messages_variant_of	pre-convention	plan never captured without stats
-idx_messages_variants_by_parent	pre-convention	plan never captured without stats
+idx_messages_variants_by_parent	plan-pinned	Tests/DB/test_message_subtree_delete_bounds.py (TASK-33628.11)
 idx_mindmap_nodes_mindmap_id	pre-convention	plan never captured without stats
 idx_msg_gen_meta_message	pre-convention	plan never captured without stats
 idx_msgs_conv_ts	pre-convention	plan never captured without stats
