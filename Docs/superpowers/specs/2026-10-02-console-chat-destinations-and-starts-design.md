@@ -2,7 +2,7 @@
 
 Date: 2026-10-02
 Status: Approved after written-spec review on 2026-10-02
-Task: [TASK-34201](../../../backlog/tasks/task-34201%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
+Task: [TASK-34213](../../../backlog/tasks/task-34213%20-%20Design-Console-chat-destinations-and-bounded-agent-starts.md)
 Decision: [ADR-211](../../../backlog/decisions/211-console-chat-destinations-and-bounded-starts.md)
 
 ```text

@@ -1,0 +1,13 @@
+{
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/check_backlog_task_ids.py"
+  ],
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "env": {},
+  "started_at": 1791067490.623861,
+  "elapsed_seconds": 0.6697719097137451,
+  "returncode": 0,
+  "stdout": "No duplicate task IDs across 4911 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.\n",
+  "head": "3c4c522b40091901514959061c29c092033bb874"
+}

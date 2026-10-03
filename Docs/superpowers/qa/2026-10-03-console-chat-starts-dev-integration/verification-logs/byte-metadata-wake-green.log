@@ -1,0 +1,9 @@
+........................................................................ [ 90%]
+........                                                                 [100%]
+============================= slowest 25 durations =============================
+2.84s call     Tests/Chat/test_automatic_wake_budget.py::test_fourth_automatic_generation_pauses_without_consuming_result
+2.00s call     Tests/Chat/test_automatic_wake_budget.py::test_readiness_refusal_refunds_only_unaccepted_attempt
+1.92s call     Tests/Chat/test_automatic_wake_budget.py::test_completion_write_failure_retains_claim_and_never_replays
+
+(22 durations < 1s hidden.)
+80 passed in 17.78s
