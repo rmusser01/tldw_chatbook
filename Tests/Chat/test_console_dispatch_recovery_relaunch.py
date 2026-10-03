@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import asyncio
 import sqlite3
+from collections.abc import Iterator
+from contextlib import closing
 from dataclasses import replace
 from types import SimpleNamespace
 
@@ -36,9 +38,9 @@ from Tests.Chat.test_console_dispatch_recovery import (
 )
 from Tests.Chat.test_console_turn_resend import (
     REPLY,
-    _Gateway,
     _console,
     _controller,
+    _Gateway,
     _path,
 )
 from tldw_chatbook.Chat.chat_conversation_service import ChatConversationService
@@ -61,7 +63,13 @@ ASSISTANT = ConsoleMessageRole.ASSISTANT
 
 
 @pytest.fixture
-def databases():
+def databases() -> Iterator[list[CharactersRAGDB]]:
+    """Collect the databases a test opens and close them at teardown.
+
+    Returns:
+        A list the test appends each ``CharactersRAGDB`` it opens to; every
+        entry is closed, newest first, when the test ends.
+    """
     opened: list[CharactersRAGDB] = []
     yield opened
     for db in reversed(opened):
@@ -100,9 +108,8 @@ async def _crash_mid_reply(tmp_path, databases):
     conversation_id = console.store._sessions[
         console.session_id
     ].persisted_conversation_id
-    crashed = sqlite3.connect(tmp_path / "crashed.sqlite")
-    console.db.get_connection().backup(crashed)
-    crashed.close()
+    with closing(sqlite3.connect(tmp_path / "crashed.sqlite")) as crashed:
+        console.db.get_connection().backup(crashed)
     console.gateway.release.set()
     await asyncio.wait_for(task, 5)
     db = CharactersRAGDB(tmp_path / "crashed.sqlite", client_id="relaunch-test")
