@@ -71,6 +71,343 @@ def _edit(path, mutate):
     path.write_text(toml.dumps(raw))
 
 
+def _count_reads(owner, monkeypatch, *, settle_ns: int = 0) -> list[int]:
+    """Count the owner's full reads (config section plus permission store).
+
+    Args:
+        owner: The hook permission owner under test.
+        monkeypatch: Wraps the owner's full read.
+        settle_ns: The visit settle window; ``0`` lets a visit keep a
+            snapshot of files written moments ago, as these tests do.
+
+    Returns:
+        One entry per full read.
+    """
+    from tldw_chatbook.Agents import hook_permissions
+
+    monkeypatch.setattr(hook_permissions, "_VISIT_SETTLE_NS", settle_ns)
+    reads: list[int] = []
+    real = owner._current
+
+    def counted(*args, **kwargs):
+        reads.append(1)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(owner, "_current", counted)
+    return reads
+
+
+def _settle(owner, reads: list[int]) -> None:
+    """Visit until a visit reads nothing (a reconcile write costs one more)."""
+    for _ in range(4):
+        before = len(reads)
+        owner.visit_snapshot()
+        if len(reads) == before:
+            return
+    raise AssertionError("visit snapshots never stopped reading")
+
+
+def test_a_warm_visit_reads_nothing_until_a_file_changes(hook_file, monkeypatch):
+    """TASK-33642: an unchanged Console visit reuses the last hook snapshot.
+
+    An approval (a store write) or a hook edit (a config write) is read on
+    the next visit and shown.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    reads = _count_reads(owner, monkeypatch)
+    first = owner.visit_snapshot()
+    _settle(owner, reads)
+    settled = len(reads)
+    warm = owner.visit_snapshot()
+    assert len(reads) == settled, "a warm visit re-read the hook files"
+    assert warm.rows == first.rows and not warm.ready
+
+    assert _approve(owner).ready
+    count = len(reads)
+    approved = owner.visit_snapshot()
+    assert len(reads) > count and approved.ready, "an approval was not picked up"
+
+    _settle(owner, reads)
+    _edit(hook_file, lambda hooks: hooks["hook"][0].update(timeout_s=7))
+    count = len(reads)
+    edited = owner.visit_snapshot()
+    assert len(reads) > count and not edited.ready, "a hook edit was not picked up"
+
+
+def test_a_sealed_hook_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: in-memory sealing invalidates the reused visit snapshot too.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    assert approved.ready
+
+    owner._seal(approved, [row.entry.key for row in approved.rows if row.entry])
+    count = len(reads)
+    sealed = owner.visit_snapshot()
+    assert len(reads) > count and not sealed.ready, "a sealed hook was still approved"
+
+
+def test_a_hook_sealed_while_the_stamp_is_probed_is_not_served(hook_file, monkeypatch):
+    """TASK-33642: sealing is re-read under its lock before a warm visit returns.
+
+    The seal lands after the reuse stamp copied the in-memory state but before
+    the visit returns, so the stamp still matches the cached one.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and seals mid-probe.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    real_stamp = owner._visit_stamp
+    sealed_once: list[int] = []
+
+    def stamp_then_seal(*args):
+        stamp = real_stamp(*args)
+        if not sealed_once:
+            sealed_once.append(1)
+            owner._seal(approved, [row.entry.key for row in approved.rows if row.entry])
+        return stamp
+
+    monkeypatch.setattr(owner, "_visit_stamp", stamp_then_seal)
+    count = len(reads)
+    sealed = owner.visit_snapshot()
+    assert len(reads) > count and not sealed.ready, "a sealed hook was still approved"
+
+
+def test_a_just_written_hook_file_is_not_kept_for_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: a snapshot is kept only once both files' last write settled.
+
+    A same-size edit inside one coarse timestamp tick leaves an equal stamp,
+    so a snapshot of a file changed within the settle window is re-read.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads; a window longer than the
+            test (rather than the real second) keeps it independent of load.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch, settle_ns=10**15)
+    for _ in range(3):
+        count = len(reads)
+        assert owner.visit_snapshot().ready
+        assert len(reads) > count, "a visit kept a snapshot of a just-written file"
+
+
+def test_a_retargeted_config_path_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch
+):
+    """TASK-33642: a config selection moved in-process forces a full read.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and retargets the config.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    other = hook_file.parent / "other-profile.toml"
+    other.write_text("")
+    monkeypatch.setenv("TLDW_CONFIG_PATH", str(other))
+    count = len(reads)
+    moved = owner.visit_snapshot()
+    assert len(reads) > count, "a retargeted config was served the old profile's hooks"
+    assert moved is not approved
+
+
+def test_an_unsafe_store_directory_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch
+):
+    """TASK-33642: the store directory's posture is part of the reuse stamp.
+
+    A full read refuses a group-writable profile directory; a warm visit must
+    not keep showing the approved snapshot read before it changed.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    directory = approved.store_path.parent
+    mode = directory.stat().st_mode & 0o777
+    directory.chmod(mode | 0o020)
+    try:
+        count = len(reads)
+        unsafe = owner.visit_snapshot()
+    finally:
+        directory.chmod(mode)
+    assert len(reads) > count, "an unsafe store directory was served from the reuse"
+    assert unsafe is not approved
+
+
+def test_a_tampered_store_lock_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch, tmp_path
+):
+    """TASK-33642: the store's lock file is part of the reuse stamp.
+
+    A full read refuses a lock file swapped for a symlink; a warm visit must
+    not keep showing the approval read before the swap.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+        tmp_path: Holds the symlink's target.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    lock = approved.store_path.with_name(approved.store_path.name + ".lock")
+    assert lock.exists()
+    target = tmp_path / "elsewhere.lock"
+    target.write_text("")
+    lock.unlink()
+    lock.symlink_to(target)
+    try:
+        count = len(reads)
+        tampered = owner.visit_snapshot()
+    finally:
+        lock.unlink()
+    assert len(reads) > count, "a swapped lock file was served from the reuse"
+    assert not tampered.ready
+
+
+def test_a_maintenance_pause_is_not_served_from_a_warm_visit(hook_file, monkeypatch):
+    """TASK-33642: while storage admission is paused, a visit reads in full.
+
+    The full read is refused at the admission boundary and reports recovery;
+    a warm visit must not keep showing the approval from before the pause.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and opens a pause.
+    """
+    from tldw_chatbook.Backup_Recovery import storage_admission
+
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    owner.visit_snapshot()
+    monkeypatch.setattr(storage_admission, "_pause", object())
+    count = len(reads)
+    paused = owner.visit_snapshot()
+    assert len(reads) > count, "a paused admission was served from the reuse"
+    assert not paused.ready
+
+
+def test_a_store_swapped_for_a_symlink_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch
+):
+    """TASK-33642: the store is stamped without following links.
+
+    The same file reached through a symlink keeps its identity and times
+    under ``stat``; a full read refuses it as non-regular.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    store = approved.store_path
+    moved = store.with_name("moved-hook-permissions.json")
+    store.rename(moved)
+    store.symlink_to(moved)
+    try:
+        count = len(reads)
+        linked = owner.visit_snapshot()
+    finally:
+        store.unlink()
+        moved.rename(store)
+    assert len(reads) > count, (
+        "a store reached through a symlink was served from the reuse"
+    )
+    assert not linked.ready
+
+
+def test_a_retargeted_data_root_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch, tmp_path
+):
+    """TASK-33642: the environment that selects the data root is stamped.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads and retargets XDG_DATA_HOME.
+        tmp_path: The other data root.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    approved = owner.visit_snapshot()
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "other-data"))
+    count = len(reads)
+    moved = owner.visit_snapshot()
+    assert len(reads) > count, (
+        "a retargeted data root was served the old store's grants"
+    )
+    assert moved is not approved
+
+
+def test_a_tampered_config_lock_is_not_served_from_a_warm_visit(
+    hook_file, monkeypatch, tmp_path
+):
+    """TASK-33642: the config writer's lock file is stamped too.
+
+    Args:
+        hook_file: The private profile's config with one hook defined.
+        monkeypatch: Counts the owner's full reads.
+        tmp_path: Holds the symlink's target.
+    """
+    owner = _owner()
+    assert _approve(owner).ready
+    reads = _count_reads(owner, monkeypatch)
+    _settle(owner, reads)
+    owner.visit_snapshot()
+    lock = hook_file.with_name(hook_file.name + ".lock")
+    assert lock.exists()
+    target = tmp_path / "elsewhere.lock"
+    target.write_text("")
+    original = lock.read_bytes()
+    lock.unlink()
+    lock.symlink_to(target)
+    try:
+        count = len(reads)
+        tampered = owner.visit_snapshot()
+    finally:
+        lock.unlink()
+        lock.write_bytes(original)
+        lock.chmod(0o600)
+    assert len(reads) > count, "a tampered config lock was served from the reuse"
+    assert not tampered.ready
+
+
 def test_consent_survives_a_new_owner_and_state_contains_no_commands(hook_file):
     owner = _owner()
     assert not owner.snapshot().ready
