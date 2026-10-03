@@ -5,6 +5,14 @@ production bundle's own rules: the gallery composes the canonical classes and
 contributes no family styling of its own (``features/_pattern_gallery.tcss``
 is layout glue only). The dark+light SVG snapshots in
 ``Tests/UI/snapshots/pattern_gallery/`` pin this rendering (spec 3.4).
+
+Widget-contract families have no public classes, so nothing of theirs is
+composed here by class name: ``lists`` is exercised through the stock widgets
+below, and ``panes`` (``AdaptivePaneShell``/``AdaptivePaneGrip``/
+``DestinationRailRowButton``; the shared adaptive-pane-shell ADR) is deliberately NOT rendered -- its
+rules are keyed to destination classes in lazy split sheets, and this gallery
+renders against the boot bundle only, so a sample would paint unstyled and
+misdocument the family. See ``backlog/docs/component-patterns.md``.
 """
 
 from __future__ import annotations
