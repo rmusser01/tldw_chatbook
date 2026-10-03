@@ -1,0 +1,477 @@
+{
+  "server": "venice",
+  "base_url": "https://api.venice.ai/api/v1",
+  "probe_model": "gemini-3-6-flash",
+  "listing": {
+    "status": 200,
+    "entries": [
+      {
+        "id": "gemini-3-6-flash"
+      },
+      {
+        "id": "gemini-3-7-flash"
+      },
+      {
+        "id": "gemini-3-8-flash"
+      },
+      {
+        "id": "gemini-3-5-flash-lite"
+      },
+      {
+        "id": "z-ai-glm-5-3"
+      },
+      {
+        "id": "z-ai-glm-5-3-flash"
+      },
+      {
+        "id": "zai-org-glm-5-2"
+      },
+      {
+        "id": "zai-org-glm-5-1"
+      },
+      {
+        "id": "zai-org-glm-5"
+      },
+      {
+        "id": "z-ai-glm-5-turbo"
+      },
+      {
+        "id": "z-ai-glm-5v-turbo"
+      },
+      {
+        "id": "olafangensan-glm-4.7-flash-heretic"
+      },
+      {
+        "id": "zai-org-glm-4.7-flash"
+      },
+      {
+        "id": "zai-org-glm-4.6"
+      },
+      {
+        "id": "zai-org-glm-4.7"
+      },
+      {
+        "id": "venice-uncensored-1-2"
+      },
+      {
+        "id": "venice-uncensored-role-play"
+      },
+      {
+        "id": "qwen-3-8-2-4t-a95b"
+      },
+      {
+        "id": "qwen-3-8-max"
+      },
+      {
+        "id": "qwen-3-8-27b"
+      },
+      {
+        "id": "qwen-3-8-flash"
+      },
+      {
+        "id": "qwen-3-7-max"
+      },
+      {
+        "id": "qwen-3-7-plus"
+      },
+      {
+        "id": "qwen-3-6-plus"
+      },
+      {
+        "id": "qwen3-6-27b"
+      },
+      {
+        "id": "qwen3-6-35b-a3b"
+      },
+      {
+        "id": "qwen3-5-9b"
+      },
+      {
+        "id": "qwen3-5-397b-a17b"
+      },
+      {
+        "id": "qwen3-5-35b-a3b"
+      },
+      {
+        "id": "qwen3-235b-a22b-thinking-2507"
+      },
+      {
+        "id": "qwen3-235b-a22b-instruct-2507"
+      },
+      {
+        "id": "qwen3-next-80b"
+      },
+      {
+        "id": "qwen3-vl-235b-a22b"
+      },
+      {
+        "id": "qwen3-coder-480b-a35b-instruct-turbo"
+      },
+      {
+        "id": "google-gemma-4-26b-a4b-it"
+      },
+      {
+        "id": "google-gemma-4-31b-it"
+      },
+      {
+        "id": "gemma-4-uncensored"
+      },
+      {
+        "id": "google-gemma-3-27b-it"
+      },
+      {
+        "id": "grok-4-3"
+      },
+      {
+        "id": "grok-4-5"
+      },
+      {
+        "id": "grok-4-6"
+      },
+      {
+        "id": "grok-4-7"
+      },
+      {
+        "id": "grok-4-20"
+      },
+      {
+        "id": "grok-4-20-multi-agent"
+      },
+      {
+        "id": "grok-build-0-1"
+      },
+      {
+        "id": "mistral-small-3-2-24b-instruct"
+      },
+      {
+        "id": "hermes-3-llama-3.1-405b"
+      },
+      {
+        "id": "gemini-3-1-pro-preview"
+      },
+      {
+        "id": "gemini-3-5-flash"
+      },
+      {
+        "id": "gemini-3-flash-preview"
+      },
+      {
+        "id": "claude-fable-5"
+      },
+      {
+        "id": "claude-fable-5-1"
+      },
+      {
+        "id": "claude-opus-5"
+      },
+      {
+        "id": "claude-opus-5-fast"
+      },
+      {
+        "id": "claude-opus-5-5"
+      },
+      {
+        "id": "claude-opus-5-5-fast"
+      },
+      {
+        "id": "claude-opus-4-8"
+      },
+      {
+        "id": "claude-opus-4-8-fast"
+      },
+      {
+        "id": "claude-opus-4-7"
+      },
+      {
+        "id": "claude-opus-4-6"
+      },
+      {
+        "id": "claude-opus-4-5"
+      },
+      {
+        "id": "claude-sonnet-5"
+      },
+      {
+        "id": "claude-sonnet-5-5"
+      },
+      {
+        "id": "claude-sonnet-4-6"
+      },
+      {
+        "id": "claude-sonnet-4-5"
+      },
+      {
+        "id": "openai-gpt-oss-120b"
+      },
+      {
+        "id": "kimi-k2-6"
+      },
+      {
+        "id": "kimi-k2-7-code"
+      },
+      {
+        "id": "kimi-k2-5"
+      },
+      {
+        "id": "kimi-k3"
+      },
+      {
+        "id": "inkling"
+      },
+      {
+        "id": "xiaomi-mimo-v2-5"
+      },
+      {
+        "id": "xiaomi-mimo-v2-6-flash"
+      },
+      {
+        "id": "deepseek-v4-pro"
+      },
+      {
+        "id": "deepseek-v4-flash"
+      },
+      {
+        "id": "deepseek-v4-flash-0731"
+      },
+      {
+        "id": "deepseek-v4-1-flash"
+      },
+      {
+        "id": "deepseek-v3.2"
+      },
+      {
+        "id": "seed-2-1-turbo"
+      },
+      {
+        "id": "deepseek-v4-pro-0813"
+      },
+      {
+        "id": "kimi-k3-fast-api"
+      },
+      {
+        "id": "deepseek-v4-flash-0731-fast"
+      },
+      {
+        "id": "aion-labs-aion-3-0"
+      },
+      {
+        "id": "aion-labs-aion-3-0-mini"
+      },
+      {
+        "id": "aion-labs-aion-3-5"
+      },
+      {
+        "id": "aion-labs-aion-3-5-mini"
+      },
+      {
+        "id": "llama-3.2-3b"
+      },
+      {
+        "id": "llama-3.3-70b"
+      },
+      {
+        "id": "openai-gpt-52"
+      },
+      {
+        "id": "openai-gpt-53-codex"
+      },
+      {
+        "id": "openai-gpt-54"
+      },
+      {
+        "id": "openai-gpt-54-pro"
+      },
+      {
+        "id": "openai-gpt-54-mini"
+      },
+      {
+        "id": "openai-gpt-55"
+      },
+      {
+        "id": "openai-gpt-55-pro"
+      },
+      {
+        "id": "openai-gpt-56-luna"
+      },
+      {
+        "id": "openai-gpt-56-luna-pro"
+      },
+      {
+        "id": "openai-gpt-56-terra"
+      },
+      {
+        "id": "openai-gpt-56-terra-pro"
+      },
+      {
+        "id": "openai-gpt-56-sol"
+      },
+      {
+        "id": "openai-gpt-56-sol-pro"
+      },
+      {
+        "id": "openai-gpt-6-astra"
+      },
+      {
+        "id": "openai-gpt-6-astra-pro"
+      },
+      {
+        "id": "openai-gpt-6-luna"
+      },
+      {
+        "id": "openai-gpt-6-sol"
+      },
+      {
+        "id": "openai-gpt-61-sol"
+      },
+      {
+        "id": "openai-gpt-4o-2024-11-20"
+      },
+      {
+        "id": "openai-gpt-4o-mini-2024-07-18"
+      },
+      {
+        "id": "minimax-m3-preview"
+      },
+      {
+        "id": "minimax-m25"
+      },
+      {
+        "id": "minimax-m27"
+      },
+      {
+        "id": "mercury-2"
+      },
+      {
+        "id": "mercury-2-5"
+      },
+      {
+        "id": "nvidia-nemotron-3-nano-30b-a3b"
+      },
+      {
+        "id": "nvidia-nemotron-3-ultra-550b-a55b"
+      },
+      {
+        "id": "e2ee-gemma-4-26b-a4b-uncensored-p"
+      },
+      {
+        "id": "e2ee-glm-5-2-p"
+      },
+      {
+        "id": "e2ee-glm-5-3-p"
+      },
+      {
+        "id": "e2ee-gpt-oss-120b-p"
+      },
+      {
+        "id": "e2ee-kimi-k3-p"
+      },
+      {
+        "id": "e2ee-qwen-2-5-7b-p"
+      },
+      {
+        "id": "e2ee-qwen3-vl-30b-a3b-p"
+      },
+      {
+        "id": "e2ee-qwen3-6-35b-a3b"
+      },
+      {
+        "id": "e2ee-deepseek-v4-flash"
+      },
+      {
+        "id": "e2ee-glm-5-3-flash"
+      },
+      {
+        "id": "e2ee-qwen3-8-27b"
+      },
+      {
+        "id": "e2ee-kimi-k2-6"
+      }
+    ]
+  },
+  "chat_no_key": {
+    "status": 402,
+    "body": {
+      "x402Version": 2,
+      "error": "Authentication required",
+      "resource": {
+        "url": "https://api.venice.ai/api/v1/chat/completions",
+        "description": "Venice API",
+        "mimeType": "application/json"
+      },
+      "accepts": [
+        {
+          "scheme": "exact",
+          "network": "eip155:8453",
+          "asset": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+          "amount": "10000000",
+          "payTo": "0x2670b922ef37c7df47158725c0cc407b5382293f",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "name": "USD Coin",
+            "version": "2"
+          }
+        },
+        {
+          "scheme": "exact",
+          "network": "solana",
+          "asset": "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v",
+          "amount": "10000000",
+          "payTo": "8qUL23aSj7mDWdoLMXGHFvnVCT9wd7jXcysiekroADEL",
+          "maxTimeoutSeconds": 300,
+          "extra": {
+            "name": "USD Coin",
+            "version": "2",
+            "feePayer": "BFK9TLC3edb13K6v4YyH3DwPb5DSUpkWvb7XnqCL9b4F"
+          }
+        }
+      ],
+      "extensions": {
+        "sign-in-with-x": {
+          "info": {
+            "domain": "api.venice.ai",
+            "uri": "https://api.venice.ai/api/v1/chat/completions",
+            "version": "1",
+            "nonce": "MWlBa02S3aS9OzMyqtaEn",
+            "issuedAt": "2026-09-30T04:20:01.645Z",
+            "expirationTime": "2026-09-30T04:25:01.645Z",
+            "statement": "Sign in to Venice AI"
+          },
+          "supportedChains": [
+            {
+              "chainId": "eip155:8453",
+              "type": "eip191"
+            },
+            {
+              "chainId": "eip155:8453",
+              "type": "eip1271"
+            },
+            {
+              "chainId": "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+              "type": "ed25519"
+            }
+          ]
+        }
+      },
+      "authOptions": {
+        "apiKey": {
+          "header": "Authorization: Bearer YOUR_API_KEY",
+          "getKey": "https://venice.ai/settings/api",
+          "docs": "https://docs.venice.ai/api-reference"
+        },
+        "x402Wallet": {
+          "header": "SIGN-IN-WITH-X",
+          "legacyHeader": "X-Sign-In-With-X",
+          "topUp": "POST /api/v1/x402/top-up",
+          "docs": "https://docs.venice.ai/api-reference/endpoint/x402/top-up"
+        }
+      }
+    }
+  },
+  "chat_bad_key": {
+    "status": 401,
+    "body": {
+      "error": "Authentication failed"
+    }
+  },
+  "probed_at": "2026-09-30T04:20:01+00:00"
+}
