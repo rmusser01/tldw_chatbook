@@ -463,7 +463,8 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   "model-a · llama.cpp · Ready · not tested").
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
   and the reasoning or thinking controls the model takes.
-- Then four closed one-row disclosures: **Sampling** (Top P, Min P, Top K,
+- Then four closed disclosures, one row each (a long Sampling line wraps,
+  below): **Sampling** (Top P, Min P, Top K,
   Seed, Presence penalty, Frequency penalty), **Connection**, **Request
   estimate** and **Your name in this chat**. **Enter** on a title opens it.
   Each closed title already shows its value:
