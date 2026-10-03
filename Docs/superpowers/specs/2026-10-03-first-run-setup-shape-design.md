@@ -2209,6 +2209,8 @@ The files concerned are:
 > - **No silent fallback.** When the user chose the keychain and it fails, the key is not written to config.toml unless the user then chooses that.
 > - **Moves.** Keys move to or from the keychain only on an explicit user action.
 > - **Unchanged.** Console still never accepts or displays a key (the model-configuration redesign's owner ruling, task-33008 AC#4).
+>
+> Rejected: the keychain as the default store for new keys (the owner's ruling), and encryption as a per-key choice at the key field (encryption stays one profile-wide choice under TASK-34100.4's lifecycle; the key field only names it).
 
 ### 12.3 `029-local-private-data-boundary.md` — amendment: the OS keychain as an opt-in location inside the private-data boundary
 
@@ -2235,7 +2237,7 @@ The files concerned are:
 > **Amendment 2026-10-03 (TASK-34100.17, D3).**
 >
 > - **One coordinator.** "Settings saves the changed URL and token … and passes it to one app-level coordinator" applies to every setup surface that binds: Settings, the setup tldw server step, and Ready's "Connect a tldw server…". They call the same coordinator, and none of them writes `[tldw_api]` or the binding itself.
-> - **Rollback.** The coordinator restores the prior `[tldw_api]` values, and removes any token it stored, when the bind fails. "A failed commit leaves every observer on the old binding" therefore holds on disk as well.
+> - **Rollback.** The coordinator restores the prior `[tldw_api]` values, and removes any token it stored, when the bind fails. "A failed commit leaves every observer on the old binding" therefore holds on disk as well. This narrows the Decision's "no cross-file rollback is claimed" (a Settings save retained for retry when the runtime-policy commit fails) for the Settings TOML half of a failed bind.
 > - **The token.** Server-token storage is unchanged: the coordinator stores the token where Settings stores it today. (Revision 2's draft stored it only in a secure keychain; that was withdrawn with the owner's Q3 ruling that keychain storage is optional.)
 > - **Plain mode.** `tldw-cli setup --plain` has no app, so it saves a server for activation at the next launch through the same coordinator (F13b). It never binds by itself.
 > - **Sync.** Binding a server prepares the Sync v2 profile on every surface alike, disclosed before the choice (owner ruling Q5).
