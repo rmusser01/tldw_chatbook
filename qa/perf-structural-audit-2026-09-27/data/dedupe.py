@@ -89,6 +89,9 @@ for g in groups.values():
         'title': rep['title'], 'loc': rep['locs'][0] if rep['locs'] else '', 'cat': rep['cat'],
         'known': sorted({x['known_task'].split(' ')[0].strip('(;,') for x in g if x['known_task'].strip() and x['known_task'].strip().lower() not in ('none', 'related:')})[:4],
         'measured': any(x['cost_basis'] == 'measured' for x in g), 'n': len(g), 'sources': sorted({x['source'] for x in g}),
+        # One finder can contribute several findings to a cluster; corroboration
+        # counts distinct finders, not findings.
+        'agents': len({x['source'] for x in g}),
         'cost': rep['cost'][:400], 'fix': rep['fix'][:500], 'fix_notes': rep['fix_notes'][:300], 'ids': [x['id'] for x in g],
     })
 issues.sort(key=lambda x: (x['pr'], SEV[x['sev']], -x['n']))
