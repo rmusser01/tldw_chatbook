@@ -18,18 +18,18 @@
                               │ Temperature       █ 0.7        Console Behavior   How varied replies are: lower is focused, higher is more varied.                                 │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 2048       Console Behavior   Longest reply the model may write, in tokens.                                                    │                    │
   ▊  Filter visible     ▎     │ Streaming         │ Off ▼  provider           Show the reply as it is generated.                                                                   │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ Select ▼  built-in           Support not verified for this model. blank = provider default · How much extended thinking the …  │                    │
-                              │ Thinking budget   │            built-in           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…  │                    │◂ Inspect
-   New conversation           │  ▼ Sampling · hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity (this       ▃ │                    │
-  Chats                       │  provider does not accept them)                                                                                                                    │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ default ▼  provider           Support not verified for this model. blank = provider default · How much extended thinking the…  │                    │
+                              │ Thinking budget   │            provider           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…  │                    │◂ Inspect
+   New conversation           │  ▼ Sampling · Anthropic does not accept 7 fields (open to list them)                                                                               │                    │
+  Chats                       │ Anthropic does not accept: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity.                     ▂ │                    │
    Chat 1                     │ Top P             │ 0.95       Console Behavior   Sample only from the likeliest tokens whose chances add up to P.                                 │                    │
                               │ Top K             │ 50         Console Behavior   Sample only from the K most likely tokens.                                                       │                    │
  ─────────────────────────────│  ▼ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
  Character · No chats         │                                                                                                                                                    │                    │
- ─────────────────────────────│ ▼ more — scroll for the rest                                                                                                                       │                    │
- Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+ ─────────────────────────────│ No non-billable live connection check is available for this provider.                                                                              │                    │
+ Model                        │ ▼ more — scroll for the rest                                                                                                                       │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                          Esc close Matches saved defaults  Save as model default  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

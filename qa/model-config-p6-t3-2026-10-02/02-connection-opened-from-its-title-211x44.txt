@@ -10,26 +10,26 @@
  ─────────────────────────────────  │                                                                                                                                                                   │
  Workspaces                    ▸    │                                                                                                                                                                   │
  ─────────────────────────────╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                    │
- Conversations                │  Conversation settings                                                                                                                             │                    │
+ Conversations                │  Chat settings · Chat 1                                                                                                                            │                    │
         Archive this chat     │                                                                                                                                                    │                    │
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
-        Search all chats…     │ Use: this conversation only. Defaults: future provider conversations.                                                                              │                    │
-   Chat 1                     │  ▼ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
-                              │ Provider               │ Anthropic                                                                                                                 │                    │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│                        Selected: Anthropic                                                                                                         │                    │
-  ▊  Filter visible     ▎     │ Model                  │ claude-sonnet-4-5                                                                                                       ▇ │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │                        Live catalog unavailable. Showing 16 configured                                                                             │                    │
-                              │                        models.                                                                                                                     │                    │◂ Inspect
-   New conversation           │                        ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎                                                                            │                    │
-  Chats                       │                        ▊ Saved fallback                               ▎                                                                            │                    │
-   Chat 1                     │                        ▊ claude-sonnet-4-5  ● CURRENT                 ▎                                                                            │                    │
-                              │                        ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                            │                    │
- ─────────────────────────────│ Saved fallback                                                                                                                                     │                    │
- Character · No chats         │                           Custom model                                                                                                             │                    │
- ─────────────────────────────│ ▼ more — scroll for the rest                                                                                                                       │                    │
- Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+        Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
+   Chat 1                     │ Streaming         │ Off ▼  provider           Show the reply as it is generated.                                                                   │                    │
+                              │ Thinking          │ default ▼  provider           Support not verified for this model. blank = provider default · How much extended thinking the…  │                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Thinking budget   │            provider           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…  │                    │
+  ▊  Filter visible     ▎     │  ▶ Sampling · Anthropic does not accept 7 fields (open to list them)                                                                               │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │  ▼ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
+                              │                                                                                                                                                    │                    │◂ Inspect
+   New conversation           │ No non-billable live connection check is available for this provider.                                                                              │                    │
+  Chats                       │ Ready · not tested                                                                                                                                 │                    │
+   Chat 1                     │ A send attempt is permitted with these settings.                                                                                                   │                    │
+                              │ Credential · Present — not verified (environment variable)                                                                                         │                    │
+ ─────────────────────────────│ Endpoint · Not tested                                                                                                                              │                    │
+ Character · No chats         │ Model · Selected — not verified at this endpoint                                                                                                   │                    │
+ ─────────────────────────────│ Generation · Not tested                                                                                                                            │                    │
+ Model                        │ ▼ more — scroll for the rest                                                                                                                       │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                                          Esc close   Cancel    Save as generation defaults  Make default for new chats  Use for this conversation  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │
