@@ -32,6 +32,7 @@ import inspect
 import json
 import os
 import sys
+import tempfile
 import threading
 import traceback
 from pathlib import Path
@@ -106,6 +107,29 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
 #: counters above could not see (the census read 0 per key while every key
 #: ran 27-69 guarded ``load_settings`` calls).
 IO_UNITS = ("config_admissions", "storage_admissions", "helper_spawns", "os_opens")
+
+def _census_log_path() -> Path | None:
+    """Where to append this run's census, or None when nobody asked for it.
+
+    ``TLDW_STORAGE_UNIT_CENSUS_LOG`` must name a file inside the runner's
+    temporary directory (``RUNNER_TEMP`` on CI, else the system temporary
+    directory); anything else, including a symlink that resolves outside it,
+    is refused.
+
+    Returns:
+        The validated path, or None when the variable is unset.
+
+    Raises:
+        ValueError: The path lies outside the temporary directory.
+    """
+    requested = os.environ.get("TLDW_STORAGE_UNIT_CENSUS_LOG")
+    if not requested:
+        return None
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    root = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return validate_path(requested, root)
+
 
 #: TASK-33802: who paid each storage admission and helper spawn billed to the
 #: typing burst, so an over-ceiling burst names its caller in the failure.
@@ -647,34 +671,54 @@ async def _census_idle_and_visit(
     async def gc_pass() -> None:
         """Bill one eligible GC interval of the real maintenance loop.
 
-        The loop runs with a 2 s GC interval. Its first pass collects
-        (uncounted) and it parks; the graph epoch is then advanced with no
-        exchange signal, so the interval wake's pass collects and compacts.
-        Only that pass is billed, from its epoch read to its compaction.
+        The loop's first pass collects at once (uncounted); the moment it
+        returns, the GC interval becomes too long to reach, so the loop parks
+        and stays parked. The graph epoch is then advanced with no exchange
+        signal and billing is armed; only then does the interval drop to
+        zero, so the next park poll wakes the loop into exactly one pass that
+        collects and compacts. That pass
+        is billed from its epoch read through compaction; it fails the census
+        if compaction raises or the collection is unusable.
         """
         from tldw_chatbook.Chat import console_runtime as runtime_module
 
         real_owned = runtime_module.run_owned_db_call
-        finished: list[str] = []
-        window = {"armed": False}
+        boot_passes: list[str] = []
+        window: dict[str, Any] = {"armed": False, "started": False, "error": None}
         billed = asyncio.Event()
 
         async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
             name = getattr(operation, "__name__", "")
-            if name == "current_graph_epoch" and window["armed"]:
+            if name == "current_graph_epoch" and window["armed"] and not window["started"]:
+                window["started"] = True
                 for unit in IO_UNITS:
                     counts[unit] = 0
                 counting["on"] = True
             try:
-                return await real_owned(database_, operation, *args, **kwargs)
-            finally:
-                if name == "run_after_gc":
-                    finished.append(name)
-                    if window["armed"]:
-                        counting["on"] = False
-                        window["armed"] = False
-                        phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
-                        billed.set()
+                result = await real_owned(database_, operation, *args, **kwargs)
+            except BaseException as error:
+                if name == "run_after_gc" and window["started"]:
+                    counting["on"] = False
+                    window["error"] = f"run_after_gc raised {type(error).__name__}"
+                    billed.set()
+                raise
+            if name == "run_after_gc":
+                if not window["started"]:
+                    boot_passes.append(name)
+                    # Hold the loop parked until the billed pass is armed.
+                    monkeypatch.setattr(
+                        runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 1e9
+                    )
+                elif not billed.is_set():
+                    counting["on"] = False
+                    # A deferral (e.g. database_threshold on the small census
+                    # database) is a whole pass: all three calls ran. Only a
+                    # pass whose collection was unusable is not.
+                    if getattr(result, "reason_code", "") == "logical_gc_unavailable":
+                        window["error"] = "the billed pass found no usable collection"
+                    phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
+                    billed.set()
+            return result
 
         def advance_graph_epoch() -> None:
             with database.transaction() as cursor:
@@ -688,18 +732,22 @@ async def _census_idle_and_visit(
             runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
         )
         monkeypatch.setattr(
-            runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 2.0
+            runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 0.0
         )
         real_schedule(runtime, database, normalizer_factory)
         try:
             for _ in range(600):
-                if finished:
+                if boot_passes:
                     break
                 await asyncio.sleep(0.05)
-            assert finished, "the maintenance loop never ran its first GC pass"
+            assert boot_passes, "the maintenance loop never ran its first GC pass"
             await real_owned(database, advance_graph_epoch)
             window["armed"] = True
+            monkeypatch.setattr(
+                runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 0.0
+            )
             await asyncio.wait_for(billed.wait(), 60)
+            assert window["error"] is None, window["error"]
         finally:
             task = runtime._legacy_trace_maintenance_task
             if task is not None:
@@ -992,6 +1040,36 @@ MAX_VISIT_STORAGE_UNITS = {
 OS_OPENS_JITTER_SLACK = 1.05
 
 
+def test_the_census_log_stays_inside_the_runner_temp_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33643: the census writes only where the runner's temp dir allows.
+
+    Args:
+        monkeypatch: Sets the runner temp dir and the requested log path.
+        tmp_path: The runner temp dir, and a sibling outside it.
+    """
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    monkeypatch.delenv("TLDW_STORAGE_UNIT_CENSUS_LOG", raising=False)
+    assert _census_log_path() is None
+
+    inside = runner_temp / "census.jsonl"
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(inside))
+    assert _census_log_path() == inside.resolve()
+
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(tmp_path / "outside.jsonl"))
+    with pytest.raises(ValueError):
+        _census_log_path()
+
+    escape = runner_temp / "escape.jsonl"
+    escape.symlink_to(tmp_path / "outside.jsonl")
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(escape))
+    with pytest.raises(ValueError):
+        _census_log_path()
+
+
 @pytest.mark.ui
 @pytest.mark.asyncio
 @pytest.mark.parametrize("known_evidence", [False, True], ids=["untested", "tested"])
@@ -1029,10 +1107,6 @@ async def test_console_storage_units_stay_within_their_ratchets(
         storage_units=True,
         known_evidence=known_evidence,
     )
-    assert (
-        counts["settings_readiness_builds"] / KEYSTROKES
-        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
-    )
     measured = {
         "typing (whole burst)": (
             {unit: counts[unit] for unit in IO_UNITS},
@@ -1061,10 +1135,11 @@ async def test_console_storage_units_stay_within_their_ratchets(
     }
     census = {k: v[0] for k, v in measured.items()}
     request.node.user_properties.append(("storage_units", json.dumps(census)))
-    # TASK-33643: a passing run reports its census too, so CI ceilings can be
-    # pinned from measurements; perf-guard.yml names the file and prints it.
-    census_log = os.environ.get("TLDW_STORAGE_UNIT_CENSUS_LOG")
-    if census_log:
+    # TASK-33643: every run reports its census -- before any assertion, so a
+    # failing run reports too -- and CI ceilings are pinned from those lines;
+    # perf-guard.yml names the file and prints it.
+    census_log = _census_log_path()
+    if census_log is not None:
         with open(census_log, "a", encoding="utf-8") as handle:
             handle.write(
                 json.dumps(
@@ -1073,6 +1148,10 @@ async def test_console_storage_units_stay_within_their_ratchets(
                 )
                 + "\n"
             )
+    assert (
+        counts["settings_readiness_builds"] / KEYSTROKES
+        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
+    )
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
             f"census is blind: the canary (a guarded get_user_data_dir() plus "
