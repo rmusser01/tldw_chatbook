@@ -259,7 +259,7 @@ async def test_generation_happy_path_writes_everything(monkeypatch, tmp_path):
 @pytest.mark.asyncio
 async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     db = _db(tmp_path)
-    watchlist = WatchlistBundleService(db).create(name="Ordered")['id']
+    watchlist = WatchlistBundleService(db).create(name="Ordered")["id"]
     source = _new_source(db, watchlist, "ordered")
     first = _add_article(db, source, "First", age_hours=2)
     second = _add_article(db, source, "Second", queued=True, age_hours=1)
@@ -294,7 +294,9 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
     ).fetchone()[0]
     assert effective_date not in {published, created}
     selection = select_briefing_items(db, watchlist, mode="auto_featured")
-    reply = f"Second first [item {second}], then [item {first}], repeat [item {second}]."
+    reply = (
+        f"Second first [item {second}], then [item {first}], repeat [item {second}]."
+    )
 
     row = await generate_briefing(db, watchlist, chat=_FakeChat(reply=reply))
 
@@ -364,7 +366,7 @@ async def test_generation_writes_ordered_snapshot_provenance(tmp_path):
 @pytest.mark.asyncio
 async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
     db = _db(tmp_path)
-    watchlist = WatchlistBundleService(db).create(name="Atomic")['id']
+    watchlist = WatchlistBundleService(db).create(name="Atomic")["id"]
     source = _new_source(db, watchlist, "atomic")
     item_id = _add_article(db, source, "Atomic item")
     db.conn.execute(
@@ -385,9 +387,13 @@ async def test_provenance_and_complete_publication_roll_back_together(tmp_path):
         "SELECT id, status FROM briefings WHERE watchlist_id = ?", (watchlist,)
     ).fetchone()
     assert briefing["status"] == "generating"
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM briefing_items WHERE briefing_id = ?", (briefing["id"],)
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM briefing_items WHERE briefing_id = ?",
+            (briefing["id"],),
+        ).fetchone()[0]
+        == 0
+    )
 
 
 @pytest.mark.asyncio
@@ -406,7 +412,9 @@ async def test_llm_failure_is_honest_and_loses_nothing(tmp_path):
     prior = db.insert_briefing(watchlist)
     db.update_briefing(prior, status="complete", covers_through_item_id=old_item)
 
-    fresh_ids = [_add_article(db, source, f"Fresh {n}", age_hours=10 - n) for n in range(3)]
+    fresh_ids = [
+        _add_article(db, source, f"Fresh {n}", age_hours=10 - n) for n in range(3)
+    ]
 
     boom = _FakeChat(error=RuntimeError("provider exploded: 503 upstream"))
     failed = await generate_briefing(db, watchlist, chat=boom)
@@ -571,7 +579,9 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
         "content": long_body + tail,
         "content_kind": "article",
     }
-    _system, user = build_briefing_prompt([article], featured_ids=set(), overflow_count=0)
+    _system, user = build_briefing_prompt(
+        [article], featured_ids=set(), overflow_count=0
+    )
 
     assert tail not in user  # the tail was cut, not merely wrapped
     assert long_body[:EXCERPT_CHAR_CAP] in user
@@ -586,7 +596,6 @@ def test_long_article_excerpt_is_capped_in_the_prompt():
     assert len(contribution) <= EXCERPT_CHAR_CAP + len(marker)
     # No overflow -> no overflow note.
     assert "not covered" not in user
-
 
 
 # --- extract_citation_ids (spec #2 phase 2a, Task 6) --------------------
@@ -647,7 +656,9 @@ def test_interrupted_recovery_only_touches_generating_rows(tmp_path):
     other = WatchlistBundleService(db).create(name="Other")["id"]
 
     done = db.insert_briefing(watchlist)
-    db.update_briefing(done, status="complete", body_markdown="body", covers_through_item_id=9)
+    db.update_briefing(
+        done, status="complete", body_markdown="body", covers_through_item_id=9
+    )
     blank = db.insert_briefing(watchlist)
     db.update_briefing(blank, status="empty", covers_through_item_id=9)
     already_failed = db.insert_briefing(watchlist)
@@ -781,7 +792,9 @@ async def test_explicit_provider_and_model_override_the_default(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(tmp_path):
+async def test_a_presets_provider_and_model_are_used_with_no_explicit_override(
+    tmp_path,
+):
     db = _db(tmp_path)
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
@@ -837,7 +850,9 @@ async def test_a_presets_style_notes_are_appended_to_the_system_prompt(tmp_path)
 
 
 @pytest.mark.asyncio
-async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(monkeypatch, tmp_path):
+async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(
+    monkeypatch, tmp_path
+):
     """A preset id that no longer resolves must not brick generation."""
     monkeypatch.setattr(
         briefing_service,
@@ -848,7 +863,9 @@ async def test_a_deleted_preset_id_is_recorded_as_none_and_generation_proceeds(m
     watchlist = WatchlistBundleService(db).create(name="Security")["id"]
     source = _new_source(db, watchlist, "acme")
     _add_article(db, source, "Something Happened")
-    preset_id = db.insert_briefing_preset("Gone", roster_json="[]", provider="anthropic")
+    preset_id = db.insert_briefing_preset(
+        "Gone", roster_json="[]", provider="anthropic"
+    )
     assert db.delete_briefing_preset(preset_id) is True
 
     chat = _FakeChat()
