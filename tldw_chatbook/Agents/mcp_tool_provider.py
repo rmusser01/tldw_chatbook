@@ -68,6 +68,7 @@ from tldw_chatbook.MCP.execution_log import (
     UNRESOLVED_DENIED_DECISION,
 )
 from tldw_chatbook.MCP.hub_tool_catalog import (
+    DIRECT_RUNTIME_UNAVAILABLE_TOOLS,
     HubTool,
     builtin_tools_from_inventory,
     local_tools_from_record,
@@ -647,7 +648,13 @@ class MCPToolProvider:
                 )
                 inventory = None
             if isinstance(inventory, Mapping):
-                builtin_tools = builtin_tools_from_inventory(inventory)
+                # TASK-34100.5: the built-in source runs in the direct runtime,
+                # which always refuses these -- never offer them to the agent.
+                builtin_tools = [
+                    tool
+                    for tool in builtin_tools_from_inventory(inventory)
+                    if tool.name not in DIRECT_RUNTIME_UNAVAILABLE_TOOLS
+                ]
                 if self._builtin_raw_name_exclusions:
                     # task-1337 (plan Task 8): drop the Console-shadowed raw
                     # names from the built-in source ONLY -- same-named tools

@@ -19,6 +19,12 @@ from .builtin_tool_policy import builtin_tool_risk_tags
 _MAX_TAGS = 5
 _RESERVED_EXTERNAL_PROFILE_IDS = frozenset({"__local__", "__virtual_cli__"})
 
+#: Built-in tools the in-process direct runtime always refuses (it cannot
+#: launch a nested LLM chat). The runtime and the agent catalog both read this
+#: one list, so a first Console chat never asks approval for a tool that can
+#: only fail (TASK-34100.5, entry-exit-handoff-24).
+DIRECT_RUNTIME_UNAVAILABLE_TOOLS = frozenset({"chat_with_llm"})
+
 
 @dataclass(frozen=True)
 class HubTool:
