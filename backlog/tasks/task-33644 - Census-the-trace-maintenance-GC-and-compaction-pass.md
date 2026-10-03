@@ -41,6 +41,8 @@ On the census's small database the first compaction defers with `database_thresh
 
 Measured at dev `2612fc56b2` (macOS, three runs, both evidence variants): 0 config / 5 storage / 2 helpers / 34 opens every time. `MAX_TRACE_GC_PASS_STORAGE_UNITS` pins exactly that ("trace GC pass" row in the census).
 
+Re-pinned 34 -> 36 opens on 2026-10-03 before merge, after the rebase onto dev `420b53a63d` read 36 in every run. A per-open trace showed it is exact, not jitter: each of the two helper starts walks the profile directory chain (one `os.open` per component, plus `/` and `/dev/null`), so the count is `2 x (components + 2)`. The 34 came from a scratch `--basetemp` one component shallower. macOS's default pytest temp dir gives 16 components (36); the Linux runner gives 11 (26, the Linux pin). The same rebase run also read 73 once: the trace showed the extra 37 opens were the 1 Hz backup-maintenance probe (`storage_admission._local_pause_requested`, own thread) landing inside the billed window, about one run in ten. `gc_pass` now holds that probe still for the whole phase (the census's convention for wall-clock loops, like the scheduler) and restores it after; 10/10 runs then read exactly 36.
+
 Negative control: one extra guarded `get_user_data_dir()` inside `run_after_gc` fails the ratchet -- config 1 > 0, storage 7 > 5, opens 148 > 34 x 1.05.
 
 File: `Tests/Performance/test_console_keystroke_work_census.py`.

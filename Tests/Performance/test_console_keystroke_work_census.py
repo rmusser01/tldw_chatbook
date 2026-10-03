@@ -108,6 +108,7 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
 #: ran 27-69 guarded ``load_settings`` calls).
 IO_UNITS = ("config_admissions", "storage_admissions", "helper_spawns", "os_opens")
 
+
 def _census_log_path() -> Path | None:
     """Where to append this run's census, or None when nobody asked for it.
 
@@ -129,6 +130,21 @@ def _census_log_path() -> Path | None:
 
     root = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
     return validate_path(requested, root)
+
+
+def _report_census(case: str, census: dict[str, Any]) -> None:
+    """Append one run's census to the requested log (see ``_census_log_path``).
+
+    Args:
+        case: The test case's node name.
+        census: Phase name to its measured storage units.
+    """
+    census_log = _census_log_path()
+    if census_log is None:
+        return
+    line = {"case": case, "platform": sys.platform, "census": census}
+    with open(census_log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, sort_keys=True) + "\n")
 
 
 #: TASK-33802: who paid each storage admission and helper spawn billed to the
@@ -682,11 +698,19 @@ async def _census_idle_and_visit(
         collection pending and the billed pass is the epoch read plus the
         compaction retry -- the steady state of an idle small profile. That pass
         is billed from its epoch read through compaction; it fails the census
-        if compaction raises or the collection is unusable.
+        if compaction raises or the collection is unusable. The 1 Hz backup-
+        maintenance probe is held still for the whole phase: it walks every
+        registered root (~37 opens) on its own thread, and landing inside the
+        short billed window it doubled the pass's opens about one run in ten.
         """
+        from tldw_chatbook.Backup_Recovery import runtime_maintenance
         from tldw_chatbook.Chat import console_runtime as runtime_module
 
         real_owned = runtime_module.run_owned_db_call
+        real_pause_poll = runtime_maintenance._poll_local_pause_requested
+
+        async def held_pause_poll() -> bool:
+            return False
         boot_passes: list[str] = []
         window: dict[str, Any] = {"armed": False, "started": False, "error": None}
         billed = asyncio.Event()
@@ -733,6 +757,11 @@ async def _census_idle_and_visit(
                     " WHERE singleton_id = 1"
                 )
 
+        # Patched before the boot pass, so a probe already in flight has
+        # finished long before billing is armed.
+        monkeypatch.setattr(
+            runtime_maintenance, "_poll_local_pause_requested", held_pause_poll
+        )
         monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
         monkeypatch.setattr(
             runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
@@ -761,6 +790,9 @@ async def _census_idle_and_visit(
                 await asyncio.gather(task, return_exceptions=True)
                 runtime._legacy_trace_maintenance_task = None
             monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
+            monkeypatch.setattr(
+                runtime_maintenance, "_poll_local_pause_requested", real_pause_poll
+            )
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -982,7 +1014,8 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
 #: a live connection (no connect admission, no helper), so these pins are the
 #: observed maxima. ``os_opens`` also jitters UPWARD, in steps of ~37 opens
 #: (one extra path walk) between runs with identical admission counts --
-#: timing-dependent, source not isolated -- so its pins are the observed
+#: timing-dependent; TASK-33644 traced one such walk to the 1 Hz backup-
+#: maintenance probe (``_local_pause_requested``) -- so its pins are the observed
 #: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top; the admission
 #: counts are the exact signal. ``os_opens`` scales with
 #: the depth of the profile path (one open per component): pinned on macOS's
@@ -1037,14 +1070,18 @@ MAX_VISIT_STORAGE_UNITS = {
 #: TASK-33644: one eligible GC interval of the production maintenance loop
 #: after it parked, billed on its own (on the census's small database: the
 #: graph-epoch read and the retried compaction of the pending collection). Pinned
-#: 2026-10-03 at dev 2612fc56b2: 0 / 5 / 2 / 34 in every run (three runs,
-#: both evidence variants) -- three owned database calls, two of them on a
-#: fresh helper.
+#: 2026-10-03 at dev 420b53a63d: 0 / 5 / 2 / 36 -- three owned database calls,
+#: two of them on a fresh helper. ``os_opens`` is exact, not jitter: each
+#: helper start walks the profile directory chain (one open per component,
+#: plus ``/`` and ``/dev/null``), so it is ``2 x (components + 2)``: 36 under
+#: macOS's default pytest temp dir (16 components), 26 on the Linux runner
+#: (11). A deeper ``--basetemp`` adds 2 per component; a helper reused from a
+#: live connection reads 18.
 MAX_TRACE_GC_PASS_STORAGE_UNITS = {
     "config_admissions": 0,
     "storage_admissions": 5,
     "helper_spawns": 2,
-    "os_opens": 34,
+    "os_opens": 36,
 }
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
@@ -1207,16 +1244,7 @@ async def test_console_storage_units_stay_within_their_ratchets(
     # TASK-33643: every run reports its census -- before any assertion, so a
     # failing run reports too -- and CI ceilings are pinned from those lines;
     # perf-guard.yml names the file and prints it.
-    census_log = _census_log_path()
-    if census_log is not None:
-        with open(census_log, "a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps(
-                    {"case": request.node.name, "platform": sys.platform, "census": census},
-                    sort_keys=True,
-                )
-                + "\n"
-            )
+    _report_census(request.node.name, census)
     assert (
         counts["settings_readiness_builds"] / KEYSTROKES
         <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
