@@ -180,6 +180,13 @@ def _disable_model_catalog_refresh(monkeypatch, isolate_test_environment, reques
         # break if the config module is rebound here -- measured, 1 failure.
         "test_research_mode_strip.py",
         "test_first_run_wizard_cancel_route.py",
+        # persona buddy (unpublished-line port): the view suite imports the
+        # app module after selecting a per-test profile; same admission
+        # refusal as the files above, same remedy.
+        "test_persona_buddy_view.py",
+        "test_persona_buddy_app_mount.py",
+        "test_persona_buddy_widget.py",
+        "test_persona_buddy_host.py",
     }:
         # These source-bound consumers must follow this test's newly selected
         # real config, before the fixture lazily imports the application.
