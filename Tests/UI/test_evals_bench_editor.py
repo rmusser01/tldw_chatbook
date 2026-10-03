@@ -28,7 +28,12 @@ from textual.widgets import Button, Checkbox, Input, Select, TextArea
 import tldw_chatbook
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import BenchConfig, PreflightResult, Snippet, Target
+from tldw_chatbook.Evals.word_bench.models import (
+    BenchConfig,
+    PreflightResult,
+    Snippet,
+    Target,
+)
 from tldw_chatbook.Evals.word_bench.storage import (
     BENCH_TYPE,
     create_run_group,
@@ -107,7 +112,9 @@ def evals_app_configured(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
-def _make_model(db: EvalsDB, name: str, *, provider: str = "llama_cpp", model_id: str = "m") -> str:
+def _make_model(
+    db: EvalsDB, name: str, *, provider: str = "llama_cpp", model_id: str = "m"
+) -> str:
     return db.create_model(name=name, provider=provider, model_id=model_id)
 
 
@@ -139,7 +146,9 @@ def bench_with_mixed_readiness(evals_db: EvalsDB) -> tuple[str, dict[str, str]]:
     targets = [
         Target(id=ready_id, name="ready-target", provider="llama_cpp", model_id="m"),
         Target(id=warned_id, name="warned-target", provider="llama_cpp", model_id="m"),
-        Target(id=blocked_id, name="blocked-target", provider="llama_cpp", model_id="m"),
+        Target(
+            id=blocked_id, name="blocked-target", provider="llama_cpp", model_id="m"
+        ),
     ]
     snippets = [Snippet(id="s1", text="The protestors were", group="neutral")]
     preflight = {
@@ -206,9 +215,16 @@ def bench_with_continuation_samples(evals_db: EvalsDB) -> str:
     )
     task_id = save_bench(evals_db, config)
     targets = [
-        Target(id=whitespace_id, name="whitespace-target", provider="llama_cpp", model_id="m"),
+        Target(
+            id=whitespace_id,
+            name="whitespace-target",
+            provider="llama_cpp",
+            model_id="m",
+        ),
         Target(id=hazard_id, name="hazard-target", provider="llama_cpp", model_id="m"),
-        Target(id=newline_id, name="newline-target", provider="llama_cpp", model_id="m"),
+        Target(
+            id=newline_id, name="newline-target", provider="llama_cpp", model_id="m"
+        ),
         Target(id=long_id, name="long-target", provider="llama_cpp", model_id="m"),
         Target(id=empty_id, name="empty-target", provider="llama_cpp", model_id="m"),
     ]
@@ -391,7 +407,9 @@ def classic_task_with_runs(evals_db: EvalsDB) -> str:
         config_data={},
         dataset_id=dataset_id,
     )
-    model_id = _make_model(evals_db, "gpt-4o-mini", provider="openai", model_id="gpt-4o-mini")
+    model_id = _make_model(
+        evals_db, "gpt-4o-mini", provider="openai", model_id="gpt-4o-mini"
+    )
     run_id = evals_db.create_run(name="mmlu run", task_id=task_id, model_id=model_id)
     evals_db.update_run_status(run_id, "completed")
     return task_id
@@ -704,9 +722,7 @@ async def test_continuation_renders_under_its_target_row_with_whitespace_markers
         screen = evals_app.screen
 
         badge = screen.query_one(f"#evals-inspector-target-{index}")
-        continuation = screen.query_one(
-            f"#evals-inspector-target-continuation-{index}"
-        )
+        continuation = screen.query_one(f"#evals-inspector-target-continuation-{index}")
         continuation_text = str(continuation.renderable)
 
         # Names the canary prompt, not a snippet/cell -- see the module
@@ -750,9 +766,7 @@ async def test_markup_hazard_continuation_renders_literally_without_crashing(
         assert pilot.app.is_running, "an unescaped hazard continuation crashed the app"
         screen = evals_app.screen
 
-        continuation = screen.query_one(
-            f"#evals-inspector-target-continuation-{index}"
-        )
+        continuation = screen.query_one(f"#evals-inspector-target-continuation-{index}")
         continuation_text = str(continuation.renderable)
         assert "[/]bold-looking output" in continuation_text
 
@@ -795,9 +809,7 @@ async def test_newline_bearing_continuation_stays_single_line(
         await pilot.pause()
         screen = evals_app.screen
 
-        continuation = screen.query_one(
-            f"#evals-inspector-target-continuation-{index}"
-        )
+        continuation = screen.query_one(f"#evals-inspector-target-continuation-{index}")
         continuation_text = str(continuation.renderable)
         assert "\n" not in continuation_text
         assert "⏎" in continuation_text
@@ -816,9 +828,7 @@ async def test_long_continuation_is_truncated_with_an_ellipsis(
         await pilot.pause()
         screen = evals_app.screen
 
-        continuation = screen.query_one(
-            f"#evals-inspector-target-continuation-{index}"
-        )
+        continuation = screen.query_one(f"#evals-inspector-target-continuation-{index}")
         continuation_text = str(continuation.renderable)
         assert continuation_text.endswith("…")
         expected = (
@@ -829,9 +839,9 @@ async def test_long_continuation_is_truncated_with_an_ellipsis(
         assert continuation_text == expected
         # Genuinely bounded, not merely ending with an ellipsis while still
         # carrying the full 150-character continuation ahead of it.
-        assert len(continuation_text) < len(
-            inspector_module._CONTINUATION_LABEL
-        ) + len(_LONG_CONTINUATION)
+        assert len(continuation_text) < len(inspector_module._CONTINUATION_LABEL) + len(
+            _LONG_CONTINUATION
+        )
 
 
 @pytest.mark.asyncio
@@ -856,9 +866,7 @@ async def test_historical_preflight_without_a_continuation_still_renders_the_rea
             badge = screen.query_one(f"#evals-inspector-target-{index}")
             assert badge.region.width > 0
             assert badge.region.height > 0
-            assert not screen.query(
-                f"#evals-inspector-target-continuation-{index}"
-            )
+            assert not screen.query(f"#evals-inspector-target-continuation-{index}")
 
 
 # ---------------------------------------------------------------------------
@@ -874,11 +882,7 @@ def test_never_run_bench_renders_unpreflighted_state(evals_db, never_run_bench):
         preflight={},
     )
     widgets = list(inspector.compose())
-    targets = [
-        widget
-        for widget in widgets
-        if widget.id == "evals-inspector-target-0"
-    ]
+    targets = [widget for widget in widgets if widget.id == "evals-inspector-target-0"]
 
     assert targets, "expected an un-preflighted status row"
     text = str(targets[0].renderable)
@@ -938,7 +942,9 @@ async def test_preflight_is_resolved_once_per_bench_selection_not_twice(
         evals_app.screen.select(kind="bench", id=task_id)
         await pilot.pause()
 
-    assert call_count == 1, f"expected exactly one preflight resolution, got {call_count}"
+    assert call_count == 1, (
+        f"expected exactly one preflight resolution, got {call_count}"
+    )
 
 
 @pytest.mark.asyncio
@@ -1081,7 +1087,9 @@ async def test_estimate_reflects_doubled_calls_when_capture_continuations_is_on_
     e.g. 120 could not slip past a bare substring check."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
-        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_on_raw)
+        evals_app.screen.select(
+            kind="bench", id=bench_with_capture_continuations_on_raw
+        )
         await pilot.pause()
         screen = evals_app.screen
 
@@ -1099,7 +1107,9 @@ async def test_estimate_is_unchanged_when_capture_continuations_is_off_in_raw_mo
     shape, flag off: 20 calls, not 40."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
-        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_off_raw)
+        evals_app.screen.select(
+            kind="bench", id=bench_with_capture_continuations_off_raw
+        )
         await pilot.pause()
         screen = evals_app.screen
 
@@ -1120,7 +1130,9 @@ async def test_estimate_is_unchanged_when_capture_continuations_is_on_in_chat_mo
     about a cost they will never actually pay."""
     async with evals_app.run_test() as pilot:
         await pilot.pause()
-        evals_app.screen.select(kind="bench", id=bench_with_capture_continuations_on_chat)
+        evals_app.screen.select(
+            kind="bench", id=bench_with_capture_continuations_on_chat
+        )
         await pilot.pause()
         screen = evals_app.screen
 
@@ -1173,7 +1185,7 @@ async def test_estimate_cost_is_unknown_when_all_targets_are_unresolvable(
 async def test_estimate_cost_is_unknown_when_any_target_is_unresolvable(
     evals_app, bench_with_one_deleted_and_one_live_local_target
 ):
-    """"Any target unresolvable" -- not "every target unresolvable" -- is
+    """ "Any target unresolvable" -- not "every target unresolvable" -- is
     the bar: one resolvable LOCAL target must not make the cost line read
     "local · no cost" while a sibling target's provider is genuinely
     unknown."""
@@ -1294,7 +1306,9 @@ async def test_benches_section_header_counts_word_benches_and_classic_tasks_toge
 
 
 @pytest.mark.asyncio
-async def test_classic_task_selection_has_no_run_control(evals_app, classic_task_with_runs):
+async def test_classic_task_selection_has_no_run_control(
+    evals_app, classic_task_with_runs
+):
     async with evals_app.run_test() as pilot:
         await pilot.pause()
         evals_app.screen.select(kind="classic", id=classic_task_with_runs)
@@ -1399,7 +1413,9 @@ async def test_bench_with_duplicate_target_id_composes_without_raising(
 
         inspector_pane = screen.query_one("#evals-inspector-pane")
         readiness_rows = inspector_pane.query(".evals-status-unchecked")
-        assert len(readiness_rows) == 2, "both duplicate-id readiness rows should compose"
+        assert len(readiness_rows) == 2, (
+            "both duplicate-id readiness rows should compose"
+        )
         for row in readiness_rows:
             assert row.region.width > 0
             assert row.region.height > 0
@@ -1464,7 +1480,9 @@ async def test_save_persists_every_field_and_reselects_the_bench(
         assert screen._selection.id == task_id
         assert screen.query_one("#evals-bench-name", Input).value == "loaded-nouns v2"
         assert screen.query_one("#evals-bench-prompt-mode", Select).value == "chat"
-        assert screen.query_one("#evals-bench-probes", TextArea).text == " Sure\n No way"
+        assert (
+            screen.query_one("#evals-bench-probes", TextArea).text == " Sure\n No way"
+        )
 
 
 @pytest.mark.asyncio
@@ -2125,7 +2143,10 @@ async def test_staged_target_edits_survive_unsaved_name_and_probe_text(
         await pilot.pause()
 
         assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
-        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        assert (
+            screen.query_one("#evals-bench-probes", TextArea).text
+            == "unsaved probe line"
+        )
         # Also proves the SAME widget instances survived, not merely
         # matching values from a rebuilt pair -- a recompose would have
         # replaced both with fresh instances reading the last-SAVED
@@ -2143,7 +2164,10 @@ async def test_staged_target_edits_survive_unsaved_name_and_probe_text(
         await pilot.pause()
 
         assert screen.query_one("#evals-bench-name", Input).value == "typed-not-saved"
-        assert screen.query_one("#evals-bench-probes", TextArea).text == "unsaved probe line"
+        assert (
+            screen.query_one("#evals-bench-probes", TextArea).text
+            == "unsaved probe line"
+        )
         assert screen.query_one("#evals-bench-name", Input) is name_input
         assert screen.query_one("#evals-bench-probes", TextArea) is probes_area
         assert screen.query_one("#evals-bench-targets-empty")
@@ -2303,15 +2327,22 @@ async def test_mode_flip_swaps_the_steering_field_and_preserves_typed_state(
         assert screen.query_one("#evals-target-system-prompt", Input)
 
         # Outer fields, entirely outside the rebuilt section, are untouched.
-        assert screen.query_one("#evals-bench-name", Input).value == "typed-but-unsaved-name"
+        assert (
+            screen.query_one("#evals-bench-name", Input).value
+            == "typed-but-unsaved-name"
+        )
         assert screen.query_one("#evals-bench-probes", TextArea).text == "typed probe"
         # The mini-form's own Name Input survives the swap too.
-        assert screen.query_one("#evals-target-name", Input).value == "typed-target-name"
+        assert (
+            screen.query_one("#evals-target-name", Input).value == "typed-target-name"
+        )
         # A fresh chat-mode field starts blank -- the raw-mode prefix text
         # does not leak into an unrelated field.
         assert screen.query_one("#evals-target-system-prompt", Input).value == ""
 
-        screen.query_one("#evals-target-system-prompt", Input).value = "typed-system-prompt"
+        screen.query_one(
+            "#evals-target-system-prompt", Input
+        ).value = "typed-system-prompt"
 
         # Flip back: the ORIGINAL raw-mode prefix text reappears, carried
         # independently of the chat-mode text just typed.
@@ -2319,7 +2350,9 @@ async def test_mode_flip_swaps_the_steering_field_and_preserves_typed_state(
         await pilot.pause()
 
         assert screen.query_one("#evals-target-prefix", Input).value == "typed-prefix"
-        assert screen.query_one("#evals-target-name", Input).value == "typed-target-name"
+        assert (
+            screen.query_one("#evals-target-name", Input).value == "typed-target-name"
+        )
 
 
 @pytest.mark.asyncio
@@ -2355,7 +2388,9 @@ async def test_blank_target_name_auto_names_uniquely_across_repeated_creates(
         assert len(models) == 2, "two blank-name creates should mint two distinct rows"
         names = {m["name"] for m in models}
         assert len(names) == 2, f"auto-named rows collided: {names!r}"
-        assert all(name.startswith(sample_bench.BENCH_EDITOR_TARGET_NAME) for name in names)
+        assert all(
+            name.startswith(sample_bench.BENCH_EDITOR_TARGET_NAME) for name in names
+        )
         assert screen.query_one("#evals-bench-target-0")
         assert screen.query_one("#evals-bench-target-1")
 
@@ -2659,9 +2694,9 @@ async def test_is_dirty_stays_true_for_a_pending_steering_value_after_a_mode_fli
 
         prompt_mode.value = "chat"
         await pilot.pause()
-        screen.query_one("#evals-target-system-prompt", Input).value = (
-            "typed-system-prompt"
-        )
+        screen.query_one(
+            "#evals-target-system-prompt", Input
+        ).value = "typed-system-prompt"
 
         prompt_mode.value = "raw"
         await pilot.pause()
@@ -2802,7 +2837,9 @@ async def test_is_dirty_flips_true_on_a_staged_target_add(
                     editor = candidate
                     break
             if asyncio.get_running_loop().time() >= deadline:
-                raise AssertionError("Bench editor never reached its clean mounted state")
+                raise AssertionError(
+                    "Bench editor never reached its clean mounted state"
+                )
             await pilot.pause(0.02)
         assert editor.is_dirty() is False
 

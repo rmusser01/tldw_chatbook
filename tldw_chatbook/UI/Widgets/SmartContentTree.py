@@ -201,9 +201,7 @@ class SmartContentTree(Container):
                 ContentType.CHARACTER: root.add("👤 Characters", expand=True),
                 ContentType.MEDIA: root.add("🎬 Media", expand=False),
                 ContentType.PROMPT: root.add("💡 Prompts", expand=False),
-                ContentType.KEPT_BRIEFING: root.add(
-                    "📰 Kept Briefings", expand=False
-                ),
+                ContentType.KEPT_BRIEFING: root.add("📰 Kept Briefings", expand=False),
             }
 
             # Add content nodes

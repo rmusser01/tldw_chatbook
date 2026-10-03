@@ -27,7 +27,12 @@ from __future__ import annotations
 import pytest
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
-from tldw_chatbook.Evals.word_bench.models import CellCapture, PreflightResult, Target, TokenProb
+from tldw_chatbook.Evals.word_bench.models import (
+    CellCapture,
+    PreflightResult,
+    Target,
+    TokenProb,
+)
 from tldw_chatbook.UI.Evals import inspector as inspector_module
 from tldw_chatbook.UI.Evals.library_rail import LibraryRail
 from tldw_chatbook.UI.Evals.snippet_editor import dataset_snippets
@@ -75,7 +80,9 @@ class _ContinuationCaptureClient:
 
     async def preflight(self, target: Target, mode: str, top_k: int) -> PreflightResult:
         return PreflightResult(
-            state="ok", k_returned=3, canary="degenerate",
+            state="ok",
+            k_returned=3,
+            canary="degenerate",
             continuation=_UAT_CONTINUATION,
         )
 
@@ -83,9 +90,13 @@ class _ContinuationCaptureClient:
         self, snippet: str, target: Target, mode: str, top_k: int
     ) -> CellCapture:
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
-            canary="unchecked", captured_at="2026-07-31T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-31T00:00:00Z",
         )
 
 
@@ -105,7 +116,9 @@ def continuation_app(evals_db: EvalsDB) -> EvalsHarness:
     return EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     """Mirrors the sibling authoring/steering E2E files' own helper --
     polls until a background worker's completion becomes visible (a
     selection change), since ``run_worker`` schedules real async work that
@@ -129,9 +142,7 @@ def _assert_continuation_row_renders(screen, index: int) -> None:
     ``markup=False``. Mirrors ``test_evals_results_grid.py``'s and
     ``test_evals_bench_editor.py``'s identical rationale/pattern.
     """
-    continuation = screen.query_one(
-        f"#evals-inspector-target-continuation-{index}"
-    )
+    continuation = screen.query_one(f"#evals-inspector-target-continuation-{index}")
     text = continuation.visual.plain
     assert text == inspector_module._CONTINUATION_LABEL + _UAT_CONTINUATION_MARKED, text
     # Belt: the two markers this assertion exists to prove, spelled out

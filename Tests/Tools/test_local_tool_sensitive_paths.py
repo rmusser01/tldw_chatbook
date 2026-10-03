@@ -101,7 +101,8 @@ def test_fs_read_refuses_denylisted_credential_path():
     """
     key = _plant_ssh_key()
     message = _refused(
-        lambda: read_file(".ssh/id_rsa", workspace_root=_home()), "fs_read(~/.ssh/id_rsa)"
+        lambda: read_file(".ssh/id_rsa", workspace_root=_home()),
+        "fs_read(~/.ssh/id_rsa)",
     )
     assert "protected path" in message
     assert SSH_KEY_MARKER not in message
@@ -443,7 +444,9 @@ def test_both_file_tool_families_refuse_the_same_denylisted_paths(monkeypatch):
         assert "synthetic-19551" not in fs_message, label
 
         # Family B: read_file, sandbox root set to the same directory.
-        monkeypatch.setattr(fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve())
+        monkeypatch.setattr(
+            fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve()
+        )
         legacy = asyncio.run(fot.ReadFileTool().execute(file_path=path.name))
         assert "error" in legacy, label
         assert "synthetic-19551" not in str(legacy), label
@@ -543,7 +546,9 @@ def test_every_workspace_rooted_function_uses_the_choke_point():
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
         )
         if takes_root:
-            modules.append(importlib.import_module(f"tldw_chatbook.Tools.{source.stem}"))
+            modules.append(
+                importlib.import_module(f"tldw_chatbook.Tools.{source.stem}")
+            )
 
     # The three known members must be present; discovery may only ADD.
     discovered = {m.__name__.rsplit(".", 1)[-1] for m in modules}
@@ -710,7 +715,9 @@ def test_fs_family_never_creates_directories_on_the_agents_behalf():
             f"{module.__name__} now creates directories -- it must consult "
             "Utils.sensitive_paths.refuses_new_directory_chain first"
         )
-        assert "makedirs" not in attr_calls, f"{module.__name__} now creates directories"
+        assert "makedirs" not in attr_calls, (
+            f"{module.__name__} now creates directories"
+        )
 
 
 def test_resolve_workspace_path_still_confines_and_still_allows_hidden(tmp_path):
@@ -755,7 +762,7 @@ def test_fs_write_refuses_rewriting_git_config(tmp_path):
     message = _refused(
         lambda: write_file(
             ".git/config",
-            "[remote \"--force\"]\n\turl = https://example.invalid/x.git\n",
+            '[remote "--force"]\n\turl = https://example.invalid/x.git\n',
             workspace_root=root,
         ),
         "fs_write(.git/config)",
@@ -890,7 +897,9 @@ def test_fs_write_refuses_a_case_variant_of_git(tmp_path):
     before = (root / ".git" / "config").read_text()
     for spelling in (".GIT/config", ".Git/config", ".gIt/HEAD"):
         _refused(
-            lambda s=spelling: write_file(s, "[remote \"--force\"]\n", workspace_root=root),
+            lambda s=spelling: write_file(
+                s, '[remote "--force"]\n', workspace_root=root
+            ),
             f"fs_write({spelling})",
         )
     assert (root / ".git" / "config").read_text() == before
@@ -944,7 +953,7 @@ def test_is_sensitive_path_matches_a_case_variant_of_a_denied_file():
 
     real = app_config._get_effective_config_path()
     real.parent.mkdir(parents=True, exist_ok=True)
-    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    real.write_text('[API]\nopenai_api_key = "SYNTHETIC-19800"\n')
     variant = real.parent.parent / real.parent.name.upper() / real.name
     assert is_sensitive_path(real)
     assert is_sensitive_path(variant), (
@@ -959,7 +968,7 @@ def test_fs_read_refuses_a_case_variant_of_this_apps_config():
 
     real = app_config._get_effective_config_path()
     real.parent.mkdir(parents=True, exist_ok=True)
-    real.write_text("[API]\nopenai_api_key = \"SYNTHETIC-19800\"\n")
+    real.write_text('[API]\nopenai_api_key = "SYNTHETIC-19800"\n')
     root = real.parent.parent
     message = _refused(
         lambda: read_file(
@@ -1180,7 +1189,9 @@ def test_both_families_refuse_the_TASK_19633_credential_paths(monkeypatch):
         assert CREDENTIAL_MARKER not in message, label
 
         # Family B: file_operation_tools, sandbox root = the same directory.
-        monkeypatch.setattr(fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve())
+        monkeypatch.setattr(
+            fot, "_tool_sandbox_root", lambda p=path: p.parent.resolve()
+        )
         legacy = asyncio.run(fot.ReadFileTool().execute(file_path=path.name))
         assert "error" in legacy, label
         assert "protected path" in legacy["error"], label

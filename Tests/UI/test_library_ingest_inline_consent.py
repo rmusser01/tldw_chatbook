@@ -141,19 +141,13 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
             lambda *a, **k: screen._server_binding_is_shipped_placeholder(*a, **k)
         ),
         sync_library_emergency_guard_presentation=(
-            lambda *a, **k: screen._sync_library_emergency_guard_presentation(
-                *a, **k
-            )
+            lambda *a, **k: screen._sync_library_emergency_guard_presentation(*a, **k)
         ),
         sync_library_landing_lifecycle_presentation=(
-            lambda *a, **k: screen._sync_library_landing_lifecycle_presentation(
-                *a, **k
-            )
+            lambda *a, **k: screen._sync_library_landing_lifecycle_presentation(*a, **k)
         ),
         library_selected_row_id_accessor=lambda: screen._library_selected_row_id,
-        transcribe_cpp_configured_accessor=(
-            lambda: screen._transcribe_cpp_configured
-        ),
+        transcribe_cpp_configured_accessor=(lambda: screen._transcribe_cpp_configured),
         footer_shortcut_registration_accessor=(
             lambda: screen._footer_shortcut_registration
         ),
@@ -165,9 +159,7 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
             lambda: screen._library_landing_attention_signature
         ),
         set_library_landing_attention_signature=(
-            lambda value: setattr(
-                screen, "_library_landing_attention_signature", value
-            )
+            lambda value: setattr(screen, "_library_landing_attention_signature", value)
         ),
         library_canvas_projection_depth_accessor=(
             lambda: screen._library_canvas_projection_depth
@@ -178,9 +170,7 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
         set_library_canvas_resync_pending=(
             lambda value: setattr(screen, "_library_canvas_resync_pending", value)
         ),
-        library_screen_suspended_accessor=(
-            lambda: screen._library_screen_suspended
-        ),
+        library_screen_suspended_accessor=(lambda: screen._library_screen_suspended),
         library_ingest_analyze_outcomes_accessor=(
             lambda: screen._library_ingest_analyze_outcomes
         ),
@@ -188,16 +178,12 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
             lambda: screen._library_ingest_suspended_activity
         ),
         set_library_ingest_suspended_activity=(
-            lambda value: setattr(
-                screen, "_library_ingest_suspended_activity", value
-            )
+            lambda value: setattr(screen, "_library_ingest_suspended_activity", value)
         ),
         build_ingest_options_snapshot=(
             lambda *a, **k: screen._build_ingest_options_snapshot(*a, **k)
         ),
-        build_library_ingest_state=(
-            lambda: screen._build_library_ingest_state()
-        ),
+        build_library_ingest_state=(lambda: screen._build_library_ingest_state()),
         do_submit_ingest=lambda *a, **k: screen._do_submit_ingest(*a, **k),
         library_ingest_browse_location=(
             lambda *a, **k: screen._library_ingest_browse_location(*a, **k)
@@ -214,9 +200,7 @@ def _wire_bypass_ingest_controller(screen: LibraryScreen) -> None:
         refresh_library_ingest_canvas_preserving_context=(
             lambda: screen._refresh_library_ingest_canvas_preserving_context()
         ),
-        resolve_ingest_source=(
-            lambda *a, **k: screen._resolve_ingest_source(*a, **k)
-        ),
+        resolve_ingest_source=(lambda *a, **k: screen._resolve_ingest_source(*a, **k)),
         run_debounced_library_ingest_preflight=(
             lambda *a, **k: screen._run_debounced_library_ingest_preflight(*a, **k)
         ),
@@ -360,11 +344,14 @@ def _stage_warned_external_audio(screen: LibraryScreen, tmp_path) -> str:
 def test_active_ingest_confirm_copy_is_exact(
     active_files, is_folder, tooling_files, expected
 ):
-    assert active_ingest_start_confirm_line(
-        active_source_count=active_files,
-        is_folder=is_folder,
-        tooling_affected_count=tooling_files,
-    ) == expected
+    assert (
+        active_ingest_start_confirm_line(
+            active_source_count=active_files,
+            is_folder=is_folder,
+            tooling_affected_count=tooling_files,
+        )
+        == expected
+    )
     assert len(expected) <= 48
 
 
@@ -412,9 +399,7 @@ def test_tooling_only_consent_cannot_override_late_duplicate(tmp_path):
     screen._submit_library_ingest_form()
 
     screen.app_instance.submit_library_ingest_job.assert_not_called()
-    assert screen._ingest_state.start_consent.active_job_ids == (
-        duplicate.job_id,
-    )
+    assert screen._ingest_state.start_consent.active_job_ids == (duplicate.job_id,)
 
 
 def test_active_duplicate_second_press_passes_one_shot_override(tmp_path):
@@ -448,9 +433,7 @@ def test_active_duplicate_second_press_passes_one_shot_override(tmp_path):
         ),
     ],
 )
-def test_request_mutation_changes_active_consent_fingerprint(
-    mutation, tmp_path
-):
+def test_request_mutation_changes_active_consent_fingerprint(mutation, tmp_path):
     screen = _minimal_library_screen()
     source = _stage_plain_file(screen, tmp_path)
     screen.app_instance.library_ingest_jobs.submit(source_path=source)
@@ -556,11 +539,14 @@ def test_folder_preview_counts_distinct_active_files(tmp_path):
 
     assert screen._ingest_state.start_consent.active_source_count == 2
     consent = screen._ingest_state.start_consent
-    assert active_ingest_start_confirm_line(
-        active_source_count=consent.active_source_count,
-        is_folder=consent.is_folder,
-        tooling_affected_count=consent.tooling_affected_count,
-    ) == "2 active files. Start again to queue all."
+    assert (
+        active_ingest_start_confirm_line(
+            active_source_count=consent.active_source_count,
+            is_folder=consent.is_folder,
+            tooling_affected_count=consent.tooling_affected_count,
+        )
+        == "2 active files. Start again to queue all."
+    )
 
 
 def test_combined_tooling_and_active_warning_takes_two_presses(tmp_path):
@@ -570,11 +556,14 @@ def test_combined_tooling_and_active_warning_takes_two_presses(tmp_path):
 
     screen._submit_library_ingest_form()
     consent = screen._ingest_state.start_consent
-    assert active_ingest_start_confirm_line(
-        active_source_count=consent.active_source_count,
-        is_folder=consent.is_folder,
-        tooling_affected_count=consent.tooling_affected_count,
-    ) == "Import active; 1 may fail. Start again to queue."
+    assert (
+        active_ingest_start_confirm_line(
+            active_source_count=consent.active_source_count,
+            is_folder=consent.is_folder,
+            tooling_affected_count=consent.tooling_affected_count,
+        )
+        == "Import active; 1 may fail. Start again to queue."
+    )
     screen._ingest_state.start_confirm_armed_at -= 1.0
     screen._submit_library_ingest_form()
 
@@ -868,11 +857,7 @@ def test_authoritative_fallback_matching_membership_change_requires_new_consent(
         assert replacement.job_id != matched.job_id
         screen.app_instance.submit_library_ingest_job.side_effect = [
             ActiveIngestSubmissionRefused(
-                (
-                    ActiveIngestJobRef(
-                        replacement.job_id, IngestJobState.QUEUED
-                    ),
-                )
+                (ActiveIngestJobRef(replacement.job_id, IngestJobState.QUEUED),)
             )
         ]
 
@@ -1015,9 +1000,7 @@ def test_submit_without_warnings_is_a_single_press(tmp_path):
     screen = _minimal_library_screen()
     form = screen._ingest_state.form
     form.path = str(txt)
-    form.preflight = _preflight(
-        type_groups={"generic": [str(txt)]}, total_files=1
-    )
+    form.preflight = _preflight(type_groups={"generic": [str(txt)]}, total_files=1)
 
     mock_app = MagicMock()
     with patch.object(
@@ -1042,9 +1025,7 @@ def test_submit_clears_the_stale_preflight_summary(tmp_path):
     form = screen._ingest_state.form
     form.path = str(txt)
     form.title = "Some title"
-    form.preflight = _preflight(
-        type_groups={"generic": [str(txt)]}, total_files=1
-    )
+    form.preflight = _preflight(type_groups={"generic": [str(txt)]}, total_files=1)
 
     mock_app = MagicMock()
     with patch.object(
@@ -1184,9 +1165,7 @@ def _warned_state(*, armed: bool, files: list[str] | None = None):
         warnings=[dict(_WARNING)],
         total_files=len(files),
     )
-    return build_library_ingest_state(
-        (), form=form, start_confirm_armed=armed
-    )
+    return build_library_ingest_state((), form=form, start_confirm_armed=armed)
 
 
 def test_armed_state_converts_the_gate_line_into_the_confirm_copy():
@@ -1196,8 +1175,7 @@ def test_armed_state_converts_the_gate_line_into_the_confirm_copy():
     # so this file cannot import at all -- "may fail" understated a
     # certainty the forecast beside it now states outright.
     assert state.start_quiet_line == (
-        "⚠ Press Start again to import anyway — 1 file will fail without "
-        "more tooling."
+        "⚠ Press Start again to import anyway — 1 file will fail without more tooling."
     )
     # The gate itself stays open: the second press must be possible.
     assert state.start_enabled is True
@@ -1232,9 +1210,7 @@ def test_armed_flag_without_warnings_never_paints_confirm_copy():
     """A stale armed flag with no active warnings must not manufacture a
     consent state the forecast doesn't justify."""
     form = LibraryIngestFormState(path="/tmp/a.txt")
-    form.preflight = _preflight(
-        type_groups={"generic": ["/tmp/a.txt"]}, total_files=1
-    )
+    form.preflight = _preflight(type_groups={"generic": ["/tmp/a.txt"]}, total_files=1)
     state = build_library_ingest_state((), form=form, start_confirm_armed=True)
     assert state.start_confirm_armed is False
     assert "Press Start again" not in state.start_quiet_line
@@ -1279,8 +1255,10 @@ async def _warned_ingest_screen(host, pilot, monkeypatch, tmp_path):
     screen._trigger_library_ingest_preflight(str(source))
     await _wait_for_condition(
         pilot,
-        lambda: screen._ingest_state.form.preflight is not None
-        and bool(screen._ingest_state.form.preflight.warnings),
+        lambda: (
+            screen._ingest_state.form.preflight is not None
+            and bool(screen._ingest_state.form.preflight.warnings)
+        ),
         message="warned pre-flight never landed",
     )
     await pilot.pause()
@@ -1347,9 +1325,7 @@ async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
         # in-place hot path with object identity (task-2042 discipline).
         screen._update_library_ingest_dynamic_regions()
         await pilot.pause()
-        assert (
-            screen.query_one("#library-ingest-start-quiet-line", Static) is quiet
-        )
+        assert screen.query_one("#library-ingest-start-quiet-line", Static) is quiet
         assert "Press Start again" in str(quiet.renderable)
 
         # Second Enter (past the dead zone) submits.
@@ -1360,16 +1336,12 @@ async def test_enter_enter_two_press_flow_renders_confirm_then_submits(
         assert [k.get("source_path") for k in submitted] == [source]
         assert screen._ingest_state.start_consent is None
         # The gate line left the confirm treatment with the submit.
-        quiet_after = screen.query_one(
-            "#library-ingest-start-quiet-line", Static
-        )
+        quiet_after = screen.query_one("#library-ingest-start-quiet-line", Static)
         assert not quiet_after.has_class("-ingest-start-confirm")
 
 
 @pytest.mark.asyncio
-async def test_escape_declines_the_pending_confirm_and_stays(
-    monkeypatch, tmp_path
-):
+async def test_escape_declines_the_pending_confirm_and_stays(monkeypatch, tmp_path):
     """AC#4 rendered: Esc while armed clears the confirm copy and stays on
     the Ingest canvas."""
     app = _pilot_app()
@@ -1403,9 +1375,7 @@ async def test_escape_declines_the_pending_confirm_and_stays(
 
 
 @pytest.mark.asyncio
-async def test_editing_the_path_resets_the_pending_confirm(
-    monkeypatch, tmp_path
-):
+async def test_editing_the_path_resets_the_pending_confirm(monkeypatch, tmp_path):
     """AC#4: editing the form (a genuine path change) invalidates the
     forecast the consent was armed against."""
     app = _pilot_app()
@@ -1565,6 +1535,5 @@ async def test_browse_picking_a_new_file_disarms_the_pending_confirm(
 
         assert screen._ingest_state.form.path == str(other)
         assert screen._ingest_state.start_consent is None, (
-            "a consent armed against "
-            f"{source} still covers the newly picked {other}"
+            f"a consent armed against {source} still covers the newly picked {other}"
         )

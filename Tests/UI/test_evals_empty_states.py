@@ -24,7 +24,12 @@ from textual.widgets import Button, DataTable, Input
 
 from tldw_chatbook.DB.Evals_DB import EvalsDB
 from tldw_chatbook.Evals.word_bench.capture_client import NEUTRAL_SAMPLER
-from tldw_chatbook.Evals.word_bench.models import BenchConfig, CellCapture, PreflightResult, TokenProb
+from tldw_chatbook.Evals.word_bench.models import (
+    BenchConfig,
+    CellCapture,
+    PreflightResult,
+    TokenProb,
+)
 from tldw_chatbook.Evals.word_bench.storage import load_grid, save_bench
 from tldw_chatbook.Third_Party.textual_fspicker import FileOpen, FileSave
 from tldw_chatbook.UI.Evals import sample_bench
@@ -46,6 +51,7 @@ from .test_evals_screen import seeded_bench as seeded_bench  # noqa: F401 -- fix
 from .test_evals_results_grid import _select_run_group
 from .test_evals_results_grid import evals_db as evals_db  # noqa: F401 -- fixture re-export
 from .test_evals_results_grid import mixed_run_group as mixed_run_group  # noqa: F401
+
 #: The suite imports UI.Evals (config getters bind at collection);
 #: the per-test env redirect trips config-participant admission
 #: (TASK-32628). Keep the hermetic bootstrap profile (TASK-32873
@@ -94,7 +100,11 @@ def test_provider_configured_when_llama_cpp_url_is_set(view_model):
 
 
 def test_resolve_sample_target_creates_a_real_eval_models_row(db, view_model):
-    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080", "model": "m"}}}
+    app_config = {
+        "api_settings": {
+            "llama_cpp": {"api_url": "http://localhost:8080", "model": "m"}
+        }
+    }
     target = sample_bench.resolve_sample_target(view_model, app_config, create=True)
     assert target is not None
     assert target["provider"] == "llama_cpp"
@@ -214,12 +224,16 @@ def test_configured_llama_cpp_url_normalizes_to_the_root_the_client_needs(
     assert sample_bench.configured_llama_cpp_url(app_config) == expected
 
 
-def test_configured_llama_cpp_url_is_the_url_the_real_client_is_built_with(db, view_model):
+def test_configured_llama_cpp_url_is_the_url_the_real_client_is_built_with(
+    db, view_model
+):
     """The normalisation has to reach the CLIENT, not just the getter --
     pins the production factory (``client_factory=None``) against a
     path-carrying config, since that is the seam every sample-bench cell
     actually goes through."""
-    app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}}
+    app_config = {
+        "api_settings": {"llama_cpp": {"api_url": "http://localhost:8080/completion"}}
+    }
     factory = sample_bench._default_client_factory(app_config)
     client = factory(None)
     url, _payload = client._build_request(
@@ -240,23 +254,23 @@ def test_configured_llama_cpp_api_key_prefers_the_env_var_over_config(monkeypatc
     (or a CI override) is silently ignored in favour of a stale key
     checked into a shared config file."""
     monkeypatch.setenv("LLAMA_CPP_API_KEY", "env-key-value")
-    app_config = {
-        "api_settings": {"llama_cpp": {"api_key": "config-key-value"}}
-    }
+    app_config = {"api_settings": {"llama_cpp": {"api_key": "config-key-value"}}}
     assert sample_bench._configured_llama_cpp_api_key(app_config) == "env-key-value"
 
 
-def test_configured_llama_cpp_api_key_falls_back_to_config_when_env_is_absent(monkeypatch):
+def test_configured_llama_cpp_api_key_falls_back_to_config_when_env_is_absent(
+    monkeypatch,
+):
     """The config value is still honoured -- it is a fallback, not dead
     code -- when the environment variable is not set at all."""
     monkeypatch.delenv("LLAMA_CPP_API_KEY", raising=False)
-    app_config = {
-        "api_settings": {"llama_cpp": {"api_key": "config-key-value"}}
-    }
+    app_config = {"api_settings": {"llama_cpp": {"api_key": "config-key-value"}}}
     assert sample_bench._configured_llama_cpp_api_key(app_config) == "config-key-value"
 
 
-def test_creating_the_sample_bench_twice_does_not_collide_on_unique_names(db, view_model):
+def test_creating_the_sample_bench_twice_does_not_collide_on_unique_names(
+    db, view_model
+):
     """eval_tasks.name and eval_datasets.name are UNIQUE with no
     deleted_at exemption (Evals_DB.py's schema) -- a bare literal name
     would raise sqlite3.IntegrityError on a second creation. Exercised
@@ -266,12 +280,16 @@ def test_creating_the_sample_bench_twice_does_not_collide_on_unique_names(db, vi
     second = sample_bench._unique_name(sample_bench.SAMPLE_BENCH_NAME)
     assert first != second
     db.create_task(
-        name=first, task_type="logprob", config_format="custom",
+        name=first,
+        task_type="logprob",
+        config_format="custom",
         config_data={"bench_type": "word_bench"},
     )
     # Must not raise -- a distinct generated name.
     db.create_task(
-        name=second, task_type="logprob", config_format="custom",
+        name=second,
+        task_type="logprob",
+        config_format="custom",
         config_data={"bench_type": "word_bench"},
     )
 
@@ -293,9 +311,13 @@ class _FakeCaptureClient:
     async def capture(self, snippet, target, mode, top_k):
         self._calls.append((snippet, target.name))
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
-            canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-26T00:00:00Z",
         )
 
 
@@ -340,7 +362,8 @@ async def test_create_and_run_sample_bench_reports_progress(db, view_model):
     calls: list = []
     progress_calls: list[tuple[int, int]] = []
     await sample_bench.create_and_run_sample_bench(
-        view_model, app_config,
+        view_model,
+        app_config,
         client_factory=lambda t: _FakeCaptureClient(calls),
         progress=lambda done, total: progress_calls.append((done, total)),
     )
@@ -362,7 +385,8 @@ async def test_create_and_run_sample_bench_honors_a_pre_cancelled_token(db, view
     token.cancel()
     calls: list = []
     await sample_bench.create_and_run_sample_bench(
-        view_model, app_config,
+        view_model,
+        app_config,
         client_factory=lambda t: _FakeCaptureClient(calls),
         cancel_token=token,
     )
@@ -401,7 +425,8 @@ async def test_a_hard_cancellation_marks_its_run_rows_cancelled_not_abandoned(
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
     with pytest.raises(asyncio.CancelledError):
         await sample_bench.create_and_run_sample_bench(
-            view_model, app_config,
+            view_model,
+            app_config,
             client_factory=lambda t: _CancellingCaptureClient(),
         )
     runs = db.list_runs(limit=100)
@@ -475,8 +500,11 @@ def _seed_classic_task(evals_db: EvalsDB) -> None:
         name="mmlu-500", format="custom", source_path="inline:mmlu-500"
     )
     evals_db.create_task(
-        name="mmlu-subset", task_type="question_answer", config_format="custom",
-        config_data={}, dataset_id=dataset_id,
+        name="mmlu-subset",
+        task_type="question_answer",
+        config_format="custom",
+        config_data={},
+        dataset_id=dataset_id,
     )
 
 
@@ -565,7 +593,9 @@ async def test_opening_the_evals_screen_creates_no_eval_models_row(evals_db: Eva
 
 
 @pytest.mark.asyncio
-async def test_clicking_create_sample_bench_does_create_the_target_row(configured_app, evals_db):
+async def test_clicking_create_sample_bench_does_create_the_target_row(
+    configured_app, evals_db
+):
     """The other half of C1: creation moved to the click path, so it must
     still happen there. Without this, the C1 fix could pass by never
     creating a target at all."""
@@ -818,7 +848,9 @@ async def test_importing_a_probe_file_selects_the_read_only_probe_set_detail(
     from tldw_chatbook.UI.Evals.snippet_editor import SnippetEditor
 
     probe_file = tmp_path / "starter.txt"
-    probe_file.write_text("What do you think about lying?\n---\nAnd to protect someone?")
+    probe_file.write_text(
+        "What do you think about lying?\n---\nAnd to protect someone?"
+    )
 
     async with evals_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -962,8 +994,7 @@ async def test_the_probe_set_detail_stays_hit_testable_at_realistic_sizes(
             except Exception:  # NoWidget -- treated as "not reachable" below
                 hit = None
             assert hit is widget, (
-                f"{widget_id} not hit-testable at {size} -- landed on "
-                f"{hit!r} instead"
+                f"{widget_id} not hit-testable at {size} -- landed on {hit!r} instead"
             )
 
 
@@ -1046,7 +1077,9 @@ def configured_app(evals_db: EvalsDB) -> EvalsHarness:
 # test and the click-driven Textual test below).
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     for _ in range(tries):
         if predicate():
             return
@@ -1079,7 +1112,9 @@ async def test_first_run_marks_the_sample_bench_as_the_recommended_first_step(
         # ".evals-rail-empty-copy" text ("No datasets yet."/"No runs
         # yet.") -- the hint replaces only the Benches section's version of
         # that wording, not the whole rail's.
-        assert not screen.query("#evals-rail-section-body-benches .evals-rail-empty-copy")
+        assert not screen.query(
+            "#evals-rail-section-body-benches .evals-rail-empty-copy"
+        )
         # The recommended action itself is still exactly where it always
         # was -- this only adds a signal ahead of it, never a replacement
         # for the real control.
@@ -1174,9 +1209,13 @@ class _PausableFakeCaptureClient:
         await self._release_event.wait()
         self._calls.append((snippet, target.name))
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
-            canary="unchecked", captured_at="2026-07-26T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-26T00:00:00Z",
         )
 
 
@@ -1287,7 +1326,9 @@ async def test_the_sample_bench_worker_is_dispatched_as_a_callable_not_a_corouti
 
 
 @pytest.mark.asyncio
-async def test_sample_bench_offer_is_hidden_with_no_provider_configured(no_provider_app):
+async def test_sample_bench_offer_is_hidden_with_no_provider_configured(
+    no_provider_app,
+):
     async with no_provider_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
         assert not pilot.app.screen.query("#evals-create-sample-bench")
@@ -1401,7 +1442,9 @@ async def test_sample_bench_offer_stays_reachable_once_a_bench_already_exists(
         # The empty-state copy is genuinely gone -- a real bench exists,
         # so "No benches yet."/the first-run hint would be a false claim.
         assert not screen.query("#evals-rail-first-run-hint")
-        assert not screen.query("#evals-rail-section-body-benches .evals-rail-empty-copy")
+        assert not screen.query(
+            "#evals-rail-section-body-benches .evals-rail-empty-copy"
+        )
 
 
 @pytest.mark.asyncio
@@ -1427,7 +1470,9 @@ async def test_dataset_actions_stay_reachable_once_a_dataset_already_exists(
 
         dataset_row = screen.query_one("#evals-rail-row-datasets-0")
         assert "already-here" in str(dataset_row.label)
-        assert not screen.query("#evals-rail-section-body-datasets .evals-rail-empty-copy")
+        assert not screen.query(
+            "#evals-rail-section-body-datasets .evals-rail-empty-copy"
+        )
 
         # And the button still works exactly as it does in the empty case.
         await pilot.click("#evals-rail-new-dataset")
@@ -1687,7 +1732,10 @@ async def test_new_bench_toasts_the_dataset_name_and_never_parses_it_as_markup(
         name="loud [/] name", format="custom", source_path="inline:loud"
     )
     app_instance = _FakeAppInstance(
-        evals_db, app_config={"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
+        evals_db,
+        app_config={
+            "api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}
+        },
     )
     app = EvalsHarness(app_instance)
     async with app.run_test(size=(160, 45)) as pilot:
@@ -1713,9 +1761,7 @@ async def test_new_bench_save_failure_notifies_and_does_not_select(
     def _raise(*args, **kwargs):
         raise RuntimeError("boom")
 
-    monkeypatch.setattr(
-        "tldw_chatbook.UI.Evals.library_rail.save_bench", _raise
-    )
+    monkeypatch.setattr("tldw_chatbook.UI.Evals.library_rail.save_bench", _raise)
 
     async with configured_app.run_test(size=(160, 45)) as pilot:
         await pilot.pause()
@@ -1866,7 +1912,9 @@ async def test_export_key_pushes_a_file_save_dialog_with_both_formats_offered(
 
 
 @pytest.mark.asyncio
-async def test_csv_export_reflects_the_active_lens(export_app, mixed_run_group, tmp_path):
+async def test_csv_export_reflects_the_active_lens(
+    export_app, mixed_run_group, tmp_path
+):
     """Switches lens to Coverage, then exports -- the CSV body must show
     Coverage's own percentages (and match the on-screen DataTable's own
     stored cell values cell-for-cell), never a different/hardcoded lens.
@@ -1893,7 +1941,9 @@ async def test_csv_export_reflects_the_active_lens(export_app, mixed_run_group, 
         # Coverage renders as a bare percentage (e.g. "12%") -- never the
         # Top-1 lens's quoted-token format -- independent confirmation
         # this really is Coverage's own output.
-        body_cells = [cell for row in rows[1:] for cell in row[1:] if cell and cell != "—"]
+        body_cells = [
+            cell for row in rows[1:] for cell in row[1:] if cell and cell != "—"
+        ]
         assert body_cells, "no coverage cells were exported"
         assert all(cell.endswith("%") for cell in body_cells)
 
@@ -2026,16 +2076,22 @@ def test_run_group_row_label_glyphs_are_single_cell_width():
         row = {"task_name": "x", "created_at": "2026-07-30 14:02:00", **row}
         label = _run_group_row_label(row)
         assert label.startswith(glyph), label
-        assert cell_len(glyph) == 1, f"{row['status']} glyph {glyph!r} is not single-width"
+        assert cell_len(glyph) == 1, (
+            f"{row['status']} glyph {glyph!r} is not single-width"
+        )
 
     all_failed_row = {
-        "task_name": "x", "created_at": "2026-07-30 14:02:00",
-        "status": "completed", "all_cells_failed": True,
+        "task_name": "x",
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+        "all_cells_failed": True,
     }
     all_failed_label = _run_group_row_label(all_failed_row)
     assert all_failed_label.startswith("✓✗ "), all_failed_label
     assert cell_len("✓") == 1 and cell_len("✗") == 1
-    assert cell_len("✓✗") == 2, "the combined glyph must be two single-width cells, not one double-width one"
+    assert cell_len("✓✗") == 2, (
+        "the combined glyph must be two single-width cells, not one double-width one"
+    )
 
 
 def test_run_group_row_time_falls_back_to_the_raw_string_on_parse_failure():
@@ -2141,7 +2197,11 @@ def test_run_group_row_label_unrecognised_status_degrades_to_the_completed_branc
 
 
 def test_run_group_row_label_missing_task_name_falls_back_to_untitled_run():
-    row = {"task_name": None, "created_at": "2026-07-30 14:02:00", "status": "completed"}
+    row = {
+        "task_name": None,
+        "created_at": "2026-07-30 14:02:00",
+        "status": "completed",
+    }
     assert _run_group_row_label(row) == "✓ 14:02 · Untitled run"
 
 
@@ -2318,13 +2378,17 @@ async def test_skills_present_steers_the_empty_rail_to_skill_eval(
     from tldw_chatbook.UI.Screens import evals_screen as screen_mod
 
     async def _skills(_app_config):
-        return ([{"name": "csv-cleaner", "trust_status": "trusted"}],
-                frozenset({"csv-cleaner"}))
+        return (
+            [{"name": "csv-cleaner", "trust_status": "trusted"}],
+            frozenset({"csv-cleaner"}),
+        )
 
     monkeypatch.setattr(screen_mod, "store_skill_names", _skills)
     async with configured_app.run_test(size=(160, 45)) as pilot:
         screen = pilot.app.screen
-        await _wait_until(pilot, lambda: bool(screen.query("#evals-rail-skill-eval-hint")))
+        await _wait_until(
+            pilot, lambda: bool(screen.query("#evals-rail-skill-eval-hint"))
+        )
         hint = screen.query_one("#evals-rail-skill-eval-hint")
         assert "skill eval" in str(hint.renderable)
         assert not screen.query("#evals-rail-first-run-hint")
@@ -2359,17 +2423,17 @@ async def test_disabled_reason_hints_sit_under_their_own_buttons(
 
         screen = pilot.app.screen
         body = screen.query_one("#evals-rail-section-body-benches")
-        ids = [
-            w.id
-            for w in body.query("Button, Static")
-            if w.id
-        ]
-        assert ids.index("evals-rail-new-bench") < ids.index(
-            "evals-rail-new-bench-hint"
-        ) < ids.index("evals-rail-new-character-bench")
-        assert ids.index("evals-rail-new-character-bench") < ids.index(
-            "evals-rail-new-character-bench-hint"
-        ) < ids.index("evals-rail-new-skill-eval")
+        ids = [w.id for w in body.query("Button, Static") if w.id]
+        assert (
+            ids.index("evals-rail-new-bench")
+            < ids.index("evals-rail-new-bench-hint")
+            < ids.index("evals-rail-new-character-bench")
+        )
+        assert (
+            ids.index("evals-rail-new-character-bench")
+            < ids.index("evals-rail-new-character-bench-hint")
+            < ids.index("evals-rail-new-skill-eval")
+        )
 
 
 @pytest.mark.asyncio
@@ -2396,5 +2460,3 @@ async def test_skills_steering_survives_without_a_provider(evals_db):
         hint = pilot.app.screen.query_one("#evals-rail-skill-eval-hint")
         assert "skills installed" in str(hint.renderable)
         assert not pilot.app.screen.query("#evals-rail-first-run-hint")
-
-

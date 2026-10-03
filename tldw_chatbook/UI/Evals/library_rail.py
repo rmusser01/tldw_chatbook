@@ -245,7 +245,9 @@ def _run_group_row_glyph(row: dict[str, Any]) -> str:
     status = row.get("status")
     if status in _RUN_STATUS_GLYPHS:
         return _RUN_STATUS_GLYPHS[status]
-    return _COMPLETED_ALL_FAILED_GLYPH if row.get("all_cells_failed") else _COMPLETED_GLYPH
+    return (
+        _COMPLETED_ALL_FAILED_GLYPH if row.get("all_cells_failed") else _COMPLETED_GLYPH
+    )
 
 
 def _run_group_row_time(created_at: Any) -> str:
@@ -469,9 +471,7 @@ class LibraryRail(NotifyMixin, Vertical):
         # of the three sections independently re-querying the same rows.
         datasets = self.view_model.datasets()
         run_groups = self.view_model.run_groups()
-        yield from self._benches_section(
-            is_first_run=not datasets and not run_groups
-        )
+        yield from self._benches_section(is_first_run=not datasets and not run_groups)
         yield from self._section(
             section_id="datasets",
             title="Datasets",
@@ -564,7 +564,7 @@ class LibraryRail(NotifyMixin, Vertical):
         )
 
     def _new_bench_actions(self) -> ComposeResult:
-        """"+ New bench" / "+ New character bench": create a draft bench,
+        """ "+ New bench" / "+ New character bench": create a draft bench,
         in-widget for the word-bench case (no worker -- a draft bench is a
         plain DB write, exactly like ``_create_new_dataset``), routed
         through ``EvalsScreen`` for the character-bench case (see
@@ -627,12 +627,14 @@ class LibraryRail(NotifyMixin, Vertical):
                 ),
             ),
             *(
-                (Static(
-                    "Create or import a dataset first.",
-                    id="evals-rail-new-bench-hint",
-                    classes="evals-rail-new-bench-hint",
-                    markup=False,
-                ),)
+                (
+                    Static(
+                        "Create or import a dataset first.",
+                        id="evals-rail-new-bench-hint",
+                        classes="evals-rail-new-bench-hint",
+                        markup=False,
+                    ),
+                )
                 if not has_dataset
                 else ()
             ),
@@ -649,12 +651,14 @@ class LibraryRail(NotifyMixin, Vertical):
                 ),
             ),
             *(
-                (Static(
-                    "Import or create a probe set first.",
-                    id="evals-rail-new-character-bench-hint",
-                    classes="evals-rail-new-bench-hint",
-                    markup=False,
-                ),)
+                (
+                    Static(
+                        "Import or create a probe set first.",
+                        id="evals-rail-new-character-bench-hint",
+                        classes="evals-rail-new-bench-hint",
+                        markup=False,
+                    ),
+                )
                 if not has_probe_set
                 else ()
             ),
@@ -1003,9 +1007,7 @@ class LibraryRail(NotifyMixin, Vertical):
         yield Horizontal(
             Button("+ New dataset", id="evals-rail-new-dataset", compact=True),
             Button("Import…", id="evals-rail-import-dataset", compact=True),
-            Button(
-                "Import probes…", id="evals-rail-import-probes", compact=True
-            ),
+            Button("Import probes…", id="evals-rail-import-probes", compact=True),
             classes="evals-rail-empty-actions",
         )
 
@@ -1260,9 +1262,7 @@ class LibraryRail(NotifyMixin, Vertical):
         try:
             probe_set = parse_probe_text(text)
         except ValueError as exc:
-            self._notify(
-                f"That file is not a valid probe set: {exc}", severity="error"
-            )
+            self._notify(f"That file is not a valid probe set: {exc}", severity="error")
             return
 
         dataset_name = f"{file_path.stem or 'Imported probes'} {uuid.uuid4().hex[:8]}"

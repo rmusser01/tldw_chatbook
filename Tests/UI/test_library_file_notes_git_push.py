@@ -457,9 +457,7 @@ async def test_push_panel_availability_is_a_separate_stable_list_action() -> Non
     availability = _push_availability_projection()
 
     async with _PanelHarness(panel).run_test() as pilot:
-        panel.render_status(
-            _status(_row("owned", group_id=1, unstage_eligible=True))
-        )
+        panel.render_status(_status(_row("owned", group_id=1, unstage_eligible=True)))
         panel.render_push_availability(availability)
         await pilot.pause()
 
@@ -532,8 +530,9 @@ async def test_push_panel_review_action_emits_exact_owner_projection() -> None:
 
 
 @pytest.mark.asyncio
-async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details(
-) -> None:
+async def test_push_authorization_dialog_is_safe_explicit_and_has_endpoint_details() -> (
+    None
+):
     """A generic confirmation or hidden endpoint detail must fail this test."""
     availability = _push_availability_projection()
     destination = _push_destination_projection()
@@ -714,8 +713,7 @@ async def test_push_authorization_actions_use_their_real_available_width(
 
 
 @pytest.mark.asyncio
-async def test_push_authorization_dialog_affirmative_is_authorize_and_check(
-) -> None:
+async def test_push_authorization_dialog_affirmative_is_authorize_and_check() -> None:
     """A generic confirm action must not satisfy destination authorization."""
     dialog_type = git_panel_module.PushDestinationAuthorizationDialog
     dialog = dialog_type(
@@ -769,10 +767,7 @@ async def test_push_authorization_dialog_brackets_ipv6_endpoint_summary() -> Non
     async with _DialogHarness(dialog).run_test() as pilot:
         await pilot.pause()
         copy = _text(dialog.query_one("#file-notes-push-auth-copy", Label))
-        assert (
-            "Endpoint: ssh · git@[2001:db8::1]:22 · /team/notes.git"
-            in copy
-        )
+        assert "Endpoint: ssh · git@[2001:db8::1]:22 · /team/notes.git" in copy
         assert "strict snapshotted host trust" in copy
         assert "existing SSH agent only" in copy
         assert "identity files are disabled" in copy
@@ -797,23 +792,24 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         body = panel.query_one("#file-notes-git-push-body", VerticalScroll)
         assert body.styles.overflow_y == "auto"
         for section in ("what", "where", "impact", "recovery"):
-            assert _text(
-                panel.query_one(
-                    f"#file-notes-git-push-review-{section}-heading"
-                )
-            ) == section.title()
+            assert (
+                _text(panel.query_one(f"#file-notes-git-push-review-{section}-heading"))
+                == section.title()
+            )
         assert _text(panel.query_one("#file-notes-git-push-review-lead")) == (
             "Pushes 1 reviewed commit created from 2 session notes."
         )
         assert _text(panel.query_one("#file-notes-git-push-review-subject")) == (
             "Commit subject: Publish exact session notes"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-destination")
-        ) == "origin/session-notes"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-repository")
-        ) == "Local repository: /canonical/repository"
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-destination"))
+            == "origin/session-notes"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-repository"))
+            == "Local repository: /canonical/repository"
+        )
         assert _text(panel.query_one("#file-notes-git-push-review-counts")) == (
             "2 session notes: New 1 · Modified 1"
         )
@@ -857,9 +853,7 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
         assert _text(panel.query_one("#file-notes-git-push-review-transport")) == (
             "Transport: HTTPS with certificate verification"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-authentication")
-        ) == (
+        assert _text(panel.query_one("#file-notes-git-push-review-authentication")) == (
             "Authentication: existing noninteractive credentials only; "
             "terminal prompts disabled"
         )
@@ -870,9 +864,7 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "Git publishes the reviewed commit and required Git objects; this "
             "list is provenance, not a separate note-transfer selection"
         )
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-recovery")
-        ) == (
+        assert _text(panel.query_one("#file-notes-git-push-review-recovery")) == (
             "Back leaves this review without pushing. If the result is "
             "uncertain, Check remote again never pushes."
         )
@@ -892,22 +884,27 @@ async def test_push_review_is_complete_immutable_and_keyboard_safe() -> None:
             "#file-notes-git-push-review-details",
         ):
             assert technical not in panel.query_one(selector).ancestors
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-refspec-audit")
-        ) == f"Exact refspec: {'d' * 40}:refs/heads/session-notes"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-git-directory")
-        ) == "Git directory: /canonical/repository/.git · identity 1:2"
-        assert _text(
-            panel.query_one("#file-notes-git-push-review-git-common-directory")
-        ) == "Git common directory: /canonical/repository/.git · identity 1:2"
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-refspec-audit"))
+            == f"Exact refspec: {'d' * 40}:refs/heads/session-notes"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-git-directory"))
+            == "Git directory: /canonical/repository/.git · identity 1:2"
+        )
+        assert (
+            _text(panel.query_one("#file-notes-git-push-review-git-common-directory"))
+            == "Git common directory: /canonical/repository/.git · identity 1:2"
+        )
 
         details = panel.query_one("#file-notes-git-push-review-details", Button)
         back = panel.query_one("#file-notes-git-push-back", Button)
         push = panel.query_one("#file-notes-git-push-confirm", Button)
         await _until(pilot, lambda: back.has_focus, "push Back did not receive focus")
         assert not push.has_focus
-        assert tuple(button.id for button in back.parent.query(Button) if button.display) == (
+        assert tuple(
+            button.id for button in back.parent.query(Button) if button.display
+        ) == (
             "file-notes-git-push-back",
             "file-notes-git-push-confirm",
         )
@@ -989,9 +986,7 @@ async def test_push_panel_progress_is_compact_and_phase_safe(
         panel.render_push_progress(phase, operation_id=operation_id)
         await pilot.pause()
         assert panel.push_phase == phase
-        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (
-            copy
-        )
+        assert _text(panel.query_one("#file-notes-git-push-progress-copy")) == (copy)
         assert _text(panel.query_one("#file-notes-git-push-progress-detail")) == (
             detail
         )
@@ -1037,7 +1032,15 @@ async def test_push_panel_progress_is_compact_and_phase_safe(
         "primary_label",
     ),
     (
-        ("review", "", None, True, None, "file-notes-git-push-confirm", "Push 1 commit"),
+        (
+            "review",
+            "",
+            None,
+            True,
+            None,
+            "file-notes-git-push-confirm",
+            "Push 1 commit",
+        ),
         (
             "success",
             "Succeeded",
@@ -1136,9 +1139,7 @@ async def test_push_panel_compact_review_and_result_matrix_is_keyboard_safe(
             button.id for button in footer.query(Button) if button.display
         )
         expected_buttons = (
-            (back_id,)
-            if primary_id == back_id
-            else (back_id, primary_id)
+            (back_id,) if primary_id == back_id else (back_id, primary_id)
         )
         assert visible_buttons == expected_buttons
         await _until(
@@ -1305,9 +1306,7 @@ async def test_push_result_footer_uses_widest_equal_column_boundary(
         await pilot.pause()
 
         footer = panel.query_one("#file-notes-git-push-footer", Widget)
-        buttons = tuple(
-            button for button in footer.query(Button) if button.display
-        )
+        buttons = tuple(button for button in footer.query(Button) if button.display)
         assert footer.region.height == (2 if stacked else 1)
         for button in buttons:
             required = len(str(button.label)) + button.styles.padding.width
@@ -1317,8 +1316,7 @@ async def test_push_result_footer_uses_widest_equal_column_boundary(
 
 
 @pytest.mark.asyncio
-async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation(
-) -> None:
+async def test_push_focus_repair_and_buffered_enter_cannot_cross_operation() -> None:
     """A stale checking callback must never focus or activate Push."""
     panel = git_panel_module.LibraryFileNotesGitPanel()
     panel.styles.display = "block"
@@ -1423,8 +1421,7 @@ async def test_workspace_push_review_adopts_operations_and_restores_endpoint_det
         ).press()
         await _until(
             pilot,
-            lambda: service.authorize_and_check_calls
-            == [(binding, local_operation)],
+            lambda: service.authorize_and_check_calls == [(binding, local_operation)],
             "authorization did not use the exact local-proof operation",
         )
         preflight_operation = service.retained_push_operation(binding)
@@ -1547,9 +1544,10 @@ async def test_workspace_local_proof_rechecks_candidate_after_trust_aba(
         )
         assert workspace._push_authorization_projection is None
         assert workspace._git_panel_widget.push_phase == "result"
-        assert _text(
-            workspace.query_one("#file-notes-git-push-result-title")
-        ) == "Push review expired"
+        assert (
+            _text(workspace.query_one("#file-notes-git-push-result-title"))
+            == "Push review expired"
+        )
         assert workspace.query_one(
             "#file-notes-git-push-result-copy",
             TextArea,
@@ -1634,9 +1632,10 @@ async def test_workspace_preflight_review_rechecks_candidate_after_trust_aba(
         assert workspace._push_review_handle is None
         assert workspace._push_review_projection is None
         assert workspace._git_panel_widget.push_phase == "result"
-        assert _text(
-            workspace.query_one("#file-notes-git-push-result-title")
-        ) == "Push review expired"
+        assert (
+            _text(workspace.query_one("#file-notes-git-push-result-title"))
+            == "Push review expired"
+        )
         assert workspace.query_one(
             "#file-notes-git-push-result-copy",
             TextArea,
@@ -1837,8 +1836,7 @@ async def test_workspace_push_keyboard_happy_path_reaches_succeeded_result(
         await pilot.press("enter")
         await _until(
             pilot,
-            lambda: service.authorize_and_check_calls
-            == [(binding, local_operation)],
+            lambda: service.authorize_and_check_calls == [(binding, local_operation)],
             "authorization did not admit the exact preflight",
         )
         assert workspace._git_panel_widget.push_phase == "checking_remote"
@@ -1942,8 +1940,7 @@ async def test_workspace_accepted_push_cancel_ignores_late_local_proof(
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "local proof did not render",
         )
         observer = workspace._push_observer_task
@@ -2009,8 +2006,7 @@ async def test_workspace_accepted_cancel_allows_new_candidate_review(
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "candidate A proof did not render",
         )
         observer_a = workspace._push_observer_task
@@ -2125,8 +2121,7 @@ async def test_workspace_old_cancelled_replay_cannot_strand_new_candidate(
         workspace._rehydrate_git_presentation()
         await _until(
             pilot,
-            lambda: workspace._git_panel_widget.push_phase
-            == "checking_candidate",
+            lambda: workspace._git_panel_widget.push_phase == "checking_candidate",
             "candidate A proof did not render",
         )
         observer_a = workspace._push_observer_task
@@ -2464,10 +2459,13 @@ async def test_workspace_push_child_boundary_hides_cancel_and_keeps_observer(
         )
         assert service.push_calls == [binding]
         assert workspace._push_observer_task is observer
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == push_result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == push_result.outcome.message
+        )
         check = workspace.query_one(
             "#file-notes-git-push-check-remote",
             Button,
@@ -2631,9 +2629,7 @@ async def test_workspace_push_recovery_authorizes_then_queries_retained_endpoint
             lambda: len(service.push_query_calls) == 2,
             "authorized recovery did not start the query-only check",
         )
-        assert service.recovery_authorization_calls == [
-            (binding, original_operation)
-        ]
+        assert service.recovery_authorization_calls == [(binding, original_operation)]
         assert service.recovery_operations == [
             original_operation,
             original_operation,
@@ -2813,10 +2809,13 @@ async def test_workspace_reopens_original_uncertain_push_without_new_work(
         assert workspace._push_observer_task is observer
         assert workspace._push_result is result
         assert workspace._push_result_projection == projection
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == result.outcome.message
+        )
         assert workspace.query_one(
             "#file-notes-git-push-check-remote",
             Button,
@@ -2863,9 +2862,7 @@ async def test_workspace_push_recovery_failure_replaces_stale_action(
             current_binding: SessionBinding,
             operation: RetainedPushOperation,
         ) -> bool:
-            service.recovery_authorization_calls.append(
-                (current_binding, operation)
-            )
+            service.recovery_authorization_calls.append((current_binding, operation))
             return False
 
         monkeypatch.setattr(
@@ -2937,9 +2934,7 @@ async def test_workspace_push_recovery_failure_replaces_stale_action(
         assert service.push_query_calls == [binding]
         assert service.recovery_operations == [original_operation]
         assert service.recovery_authorization_calls == (
-            [(binding, original_operation)]
-            if failure_mode == "authorization"
-            else []
+            [(binding, original_operation)] if failure_mode == "authorization" else []
         )
         assert service.push_calls == []
         assert workspace._push_phase == "needs_attention"
@@ -3714,10 +3709,13 @@ async def test_workspace_rehydrate_hidden_settlement_without_duplicate_work(
         )
         assert workspace._push_observer_task is observer
         assert workspace._push_operation is operation
-        assert workspace.query_one(
-            "#file-notes-git-push-result-copy",
-            TextArea,
-        ).text == result.outcome.message
+        assert (
+            workspace.query_one(
+                "#file-notes-git-push-result-copy",
+                TextArea,
+            ).text
+            == result.outcome.message
+        )
         if size == (40, 20):
             assert workspace.query_one("#file-notes-navigator").display
             assert not workspace.query_one("#file-notes-editor-pane").display
@@ -3910,8 +3908,9 @@ async def test_workspace_back_to_files_keeps_push_publication_and_attention(
         )
         await _until(
             pilot,
-            lambda: "Pushing" in str(
-                workspace.query_one("#file-notes-session-changes").label
+            lambda: (
+                "Pushing"
+                in str(workspace.query_one("#file-notes-session-changes").label)
             ),
             "actual child start did not publish Pushing",
         )
