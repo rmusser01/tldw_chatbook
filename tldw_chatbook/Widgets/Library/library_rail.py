@@ -11,11 +11,14 @@ from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
 from textual.css.query import NoMatches
 from textual.css.scalar import Scalar
-from textual.events import DescendantFocus, Focus, Key, MouseDown, Resize
+from textual.events import DescendantFocus, Resize
 from textual.message import Message
 from textual.widget import Widget
-from textual.widgets import Button, Input, Static
+from textual.widgets import Button, Static
 
+# SelectAllOnFocusingClickInput is re-exported: library_search_rag_panel.py
+# imports it from here, and Tests/Widgets/Library/test_library_rail.py pins that
+# both names are one object.
 from tldw_chatbook.Library.library_rail_state import (
     LibraryLifecycle,
     LibraryRailPreferences,
@@ -32,6 +35,8 @@ from tldw_chatbook.Utils.library_rail_width import (
     LIBRARY_MIN_WIDTH,
     OrdinaryRailStyleContract,
 )
+
+from tldw_chatbook.Widgets.adaptive_pane_shell import SelectAllOnFocusingClickInput
 from tldw_chatbook.Widgets.destination_rail import (
     RAIL_SECTION_TOGGLE_PREFIX,
     DestinationRailHandle,
@@ -377,81 +382,6 @@ def _visible_row_title(title: str, budget: int = _MAX_LIBRARY_CANVAS_ROW_TITLE) 
     return escape_markup(_truncate_row_title(title, budget))
 
 
-class SelectAllOnFocusingClickInput(Input):
-    """An ``Input`` whose FIRST click (the one that also focuses it) selects
-    all text instead of just positioning the cursor there (LIB-17).
-
-    Textual's ``Input`` already defaults ``select_on_focus=True`` (its own
-    ``_on_focus`` sets ``Selection(0, len(value))``), but ``Input.
-    _on_mouse_down`` ALWAYS repositions the cursor to the click offset --
-    and ``Screen._forward_event`` calls ``set_focus()`` *synchronously*,
-    before the click is even forwarded to this widget, so ``self.has_focus``
-    already reads ``True`` by the time ``_on_mouse_down`` runs regardless of
-    whether THIS click is the one that focused the box. Checking
-    ``has_focus`` there cannot distinguish the two cases; the ``Focus``
-    event (posted by ``set_focus``) and this ``MouseDown`` (posted right
-    after, by the same click) are instead queued back-to-back on THIS
-    widget's own message pump and processed in that order, so ``_on_focus``
-    marks a one-shot "a focusing click may still be inbound" flag that
-    ``_on_mouse_down`` consumes if it is the very next thing processed --
-    the same-gesture window this whole mechanism depends on.
-
-    A second Textual quirk this override must also account for: message
-    dispatch (``MessagePump._get_dispatch_methods``) walks the class's
-    entire MRO and invokes EVERY class's own ``_on_mouse_down`` in turn
-    (most-derived first) -- calling ``super()`` is not what wires this up,
-    and NOT calling it does not skip it either. Without
-    ``event.prevent_default()`` in the select-all branch below, ``Input.
-    _on_mouse_down`` (the base class, further up the MRO) still runs
-    immediately afterward and silently overwrites the select-all with its
-    own ``Selection.cursor(click_offset)`` -- ``prevent_default()`` is the
-    documented mechanism (checked at the top of that MRO walk) that stops
-    it, the exact same seam this class's own ``_on_key`` already leans on
-    for the "/" re-arm.
-
-    Without this fix, a plain mouse click on a not-yet-focused Input
-    silently wins the race and undoes ``select_on_focus``'s "replace me"
-    framing entirely, regardless of where in the box the click lands. For a
-    prefilled query box this means the box's stale text survives the very
-    interaction (click, then type) a user relies on to replace it:
-    live-reproduced by a click landing near the start of "quokka" and
-    typing a character, which PREPENDED instead of replacing ("Zquokka").
-
-    Scoped to the focusing click only: once the box already has focus (no
-    new ``Focus`` event, so the flag is never armed), a click positions the
-    cursor precisely as normal -- expected mid-text editing is unaffected.
-    The flag also self-clears shortly after arming (``call_after_refresh``)
-    so a LATER, unrelated click on an already-focused box (e.g. after a
-    Tab-focus with no immediately-following click) never inherits a stale
-    "select all" from an earlier, unconsumed focus event.
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        self._select_all_pending_click = False
-
-    def _on_focus(self, event: Focus) -> None:
-        self._select_all_pending_click = True
-        self.call_after_refresh(self._clear_select_all_pending_click)
-
-    def _clear_select_all_pending_click(self) -> None:
-        self._select_all_pending_click = False
-
-    async def _on_mouse_down(self, event: MouseDown) -> None:
-        if self._select_all_pending_click:
-            self._select_all_pending_click = False
-            self._pause_blink(visible=True)
-            self.select_all()
-            self._selecting = True
-            self.capture_mouse()
-            # See the class docstring: stops Textual's own MRO walk from
-            # ALSO invoking Input._on_mouse_down for this event, which
-            # would otherwise overwrite the select-all above.
-            event.prevent_default()
-            return
-        await super()._on_mouse_down(event)
-
-
 class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     """Rail search box where a second "/" re-arms the query instead of typing.
 
@@ -476,6 +406,11 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
     NOT focused (the screen-level handler already gates that); once
     focused, a box with the swallow disabled treats "/" like any other
     character.
+
+    Roleplay frame B0: the "/" re-arm itself moved into the shared
+    ``SelectAllOnFocusingClickInput`` (``Widgets/adaptive_pane_shell.py``),
+    where it is off by default; this subclass only keeps the rail search
+    box's default ON, so every Library construction behaves as before.
     """
 
     def __init__(
@@ -493,20 +428,7 @@ class LibraryRailSearchInput(SelectAllOnFocusingClickInput):
                 once the box already has focus.
             **kwargs: Keyword arguments forwarded to ``Input.__init__``.
         """
-        super().__init__(*args, **kwargs)
-        self._swallow_slash_on_focus = swallow_slash_on_focus
-
-    async def _on_key(self, event: Key) -> None:
-        # Same slash representations the screen-level handler accepts --
-        # some platforms/layouts emit key="slash" without character="/".
-        if self._swallow_slash_on_focus and (
-            event.key in {"/", "slash"} or event.character == "/"
-        ):
-            self.select_all()
-            event.stop()
-            event.prevent_default()
-            return
-        await super()._on_key(event)
+        super().__init__(*args, swallow_slash_on_focus=swallow_slash_on_focus, **kwargs)
 
 
 class LibraryRailRowButton(Button):

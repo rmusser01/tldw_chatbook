@@ -78,7 +78,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-083](083-console-edge-rails-and-workspace-tree-ownership.md) | Accepted; superseded in part by ADR-210 | Make Console rails application-edge owners, use per-section Context ceilings with ordinary outer scrolling, and partition named-workspace conversations into a native Tree. |
 | [ADR-084](084-change-review-consent-and-asynchronous-finalization.md) | Accepted | Make Change Review explicit per workspace, asynchronous after Console completion, durably published, and conservatively bounded before tool dispatch. |
 | [ADR-084](084-mcp-profile-driven-rag-search-contract.md) | Accepted | Keep MCP RAG search media-only while default requests follow the active profile through the shared runtime with truthful score and reranking provenance. |
-| [ADR-086](086-library-adaptive-reader-shell.md) | Accepted | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
+| [ADR-084](084-library-media-reader-ia.md) | Accepted; amended by ADR-212 | Make Library Media an adaptive reader with a permanent Reader: an independently collapsible Library rail and Items list, five-column grips, and preferred-versus-responsive pane state. |
+| [ADR-086](086-library-adaptive-reader-shell.md) | Accepted; amended by ADR-212 | Share one structural adaptive reader shell inside Library while keeping Media, Conversations, Notes, Prompts, and Skills behavior destination-owned. |
 | [ADR-087](087-console-read-only-next-send-estimate-projection.md) | Superseded by ADR-088 | Original read-only projection decision; replaced after review found it still passed historical media through provider base64 serialization on the composer sync path. |
 | [ADR-088](088-console-lightweight-next-send-history-projection.md) | Accepted | Share a lightweight pre-serialization Console history projection so next-send pricing observes admitted text/media without database writes or base64 encoding. |
 | [ADR-089](089-console-per-turn-change-review-ownership.md) | Accepted | Make agent-turn cards and Change Review the Console file-change owners, add guarded per-turn Undo All, and retire the redundant Inspector projection. |
@@ -138,6 +139,7 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-163](163-expanded-console-hook-runtime.md) | Accepted | Extend shared hooks with explicit lifecycle events, structured effects, permission-gated MCP calls and bounded scheduler continuations. |
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 | [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
+| [ADR-212](212-shared-adaptive-pane-shell.md) | Accepted | Share the adaptive pane shell (grips, messages, rail rows, compact search input) between the Library and Roleplay through destination classes, neutral resolver aliases and an opt-in Tab region. |
 
 ## Historical Decision Material
 

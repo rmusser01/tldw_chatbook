@@ -486,10 +486,10 @@ def test_j_and_k_are_bound_and_do_not_collide_with_any_ancestor_bindings():
     assert "j" in screen_keys, "j must be bound on WatchlistsCollectionsScreen"
     assert "k" in screen_keys, "k must be bound on WatchlistsCollectionsScreen"
 
-    # `BaseAppScreen` defines no `BINDINGS` of its own, so this resolves
-    # through the MRO to Textual's `Screen.BINDINGS` (tab/shift+tab/copy at
-    # the time of writing) -- checking the resolved attribute, not assuming
-    # BaseAppScreen is empty, is the point of the audit.
+    # `BaseAppScreen` re-declares Screen's tab/shift+tab/copy keys (the shared
+    # adaptive-pane-shell ADR: tab/shift+tab become the opt-in region actions,
+    # copy is re-spread from `Screen.BINDINGS`) -- checking the resolved
+    # attribute, not assuming its contents, is the point of the audit.
     ancestor_keys = _keys(BaseAppScreen.BINDINGS)
     ancestor_keys |= _keys(TldwCli.BINDINGS)
     ancestor_keys |= _keys(DataTable.BINDINGS)

@@ -381,6 +381,12 @@
         }
       },
       "note": "ADR-161 task 12 (2026-09-13, spec 3.10 Python side): the one-dimensional tokenized replacements for legacy runtime `.styles.<dimension> = <literal>` assignments. Values trace to the $ds-size-N / $ds-space-* / $ds-width-* / $ds-height-* scales; utilities load last in the bundle so they win equal-specificity ties, but a site that must override an id-scoped rule uses the `set_styles(...)` inline escape hatch instead. Not every $ds-size-N step is a class: w-/h-N classes exist only where the Python migration consumed them (w-0, h-0..h-3 at pin time); grow the set one entry at a time as new consumers appear."
+    },
+    "panes": {
+      "owning_sheet": "features/_library.tcss",
+      "widget_contract": "AdaptivePaneShell + AdaptivePaneGrip + DestinationRailRowButton (Widgets/adaptive_pane_shell.py): every rule is keyed to a destination's own AdaptivePaneClasses and lives in that destination's lazy split sheet; no neutral public classes (the shared adaptive-pane-shell ADR)",
+      "classes": {},
+      "note": "Roleplay frame B0 (the shared adaptive-pane-shell ADR in backlog/decisions/). A neutral class in a selector has no split owner, so build_css would pin its rule to the boot bundle; destination classes keep every rule lazy. Library: LIBRARY_ADAPTIVE_READER_CLASSES, rules in features/_library.tcss. Roleplay: its own prefixed copy in features/_roleplay.tcss (B1), pinned equal to the Library set by B1's parity test."
     }
   },
   "deprecated": {
