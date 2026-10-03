@@ -1604,6 +1604,10 @@ class ConsoleDispatchRepository:
                     or acceptance.continuation_receipt is not None
                 )
             )
+            or (
+                acceptance.origin == "agent_chat_start"
+                and acceptance.continuation_receipt is not None
+            )
             or type(acceptance.user_root_fork) is not bool
             or (acceptance.user_root_fork and acceptance.parent_message_id is not None)
         ):

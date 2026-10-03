@@ -5710,6 +5710,7 @@ class ConsoleChatController:
         self._parked_chat_create_payloads: dict[str, dict[str, Any]] = {}
         self._chat_create_session_grants: dict[str, set[object]] = {}
         self._chat_creation_records: dict[object, dict[str, Any]] = {}
+        self._chat_creation_revoked_runs: set[str] = set()
         #: UI-thread callback that pushes/clears the pending chat-create
         #: confirm payload into the owning screen's state. Invoked through
         #: self.app.call_from_thread from request_chat_create_confirm.
@@ -18932,6 +18933,10 @@ class ConsoleChatController:
         """
         revoked: list[tuple[str, str | None]] = []
         with self._pending_chat_create_lock:
+            self._chat_creation_revoked_runs.add(run_id)
+            for token, record in list(self._chat_creation_records.items()):
+                if record["payload"].get("source_run_id") == run_id:
+                    self._chat_creation_records.pop(token, None)
             for request_id, state in list(self._pending_chat_create_rounds.items()):
                 if state.get("run_id") != run_id:
                     continue
@@ -19510,31 +19515,60 @@ class ConsoleChatController:
         return enriched
 
     def _chat_creation_source_live(self, payload: Mapping[str, Any]) -> bool:
-        """Require live primary execution and this exact source object lifetime."""
+        """Require the captured primary or child execution and source lifetime."""
         session = self.store._sessions.get(str(payload.get("session_id") or ""))
         run_id = payload.get("source_run_id")
         bridge = self._agent_bridge
-        if self._disposed or session is None or not run_id or bridge is None:
+        if (
+            self._disposed
+            or session is None
+            or not run_id
+            or bridge is None
+            or run_id in self._chat_creation_revoked_runs
+        ):
             return False
         if (
             payload.get("source_incarnation", session.incarnation_id)
             != session.incarnation_id
         ):
             return False
-        cancel = self._active_cancel_events.get(session.id)
-        if cancel is None or cancel.is_set():
-            return False
-        if self._active_assistant_message_ids.get(session.id) != payload.get(
-            "source_message_id"
-        ):
-            return False
         try:
-            if bridge.live_primary_run_id(session.persisted_conversation_id) != run_id:
-                return False
             row = bridge.runs_db.get_run(run_id)
+            if not row or row["conversation_id"] != session.persisted_conversation_id:
+                return False
+            if payload.get("source_agent_kind") == "subagent":
+                # TASK32531 children may survive their parent's turn. Bind to
+                # the trusted child actor, never the session's next primary.
+                actor = current_run_actor()
+                parent_id = payload.get("source_parent_run_id")
+                parent = bridge.runs_db.get_run(parent_id) if parent_id else None
+                cancel = self._active_cancel_events.get(session.id)
+                owns_parent_turn = self._active_assistant_message_ids.get(
+                    session.id
+                ) == payload.get("source_message_id")
+                return bool(
+                    (
+                        not owns_parent_turn
+                        or (cancel is not None and not cancel.is_set())
+                    )
+                    and actor is not None
+                    and actor.kind == row["agent_kind"] == "subagent"
+                    and actor.run_id == run_id
+                    and actor.parent_run_id == row.get("parent_run_id") == parent_id
+                    and row["status"] == "running"
+                    and parent
+                    and parent["conversation_id"] == session.persisted_conversation_id
+                    and payload.get("destination") == "same_workspace"
+                    and payload.get("mode") == "draft"
+                )
+            cancel = self._active_cancel_events.get(session.id)
             return bool(
-                row
-                and row["conversation_id"] == session.persisted_conversation_id
+                cancel is not None
+                and not cancel.is_set()
+                and self._active_assistant_message_ids.get(session.id)
+                == payload.get("source_message_id")
+                and bridge.live_primary_run_id(session.persisted_conversation_id)
+                == run_id
                 and row["agent_kind"] == "primary"
                 and row["status"] not in {"done", "error", "cancelled", "abandoned"}
             )
@@ -19632,6 +19666,20 @@ class ConsoleChatController:
         from .console_session_settings import blank_console_session_settings
 
         public = validate_new_chat_arguments(payload)
+        actor = current_run_actor()
+        child = actor is not None and actor.kind == "subagent"
+        # Children retain draft creation in the parent's workspace only;
+        # destination selection and bounded starts remain primary authority.
+        if child and (
+            public["destination"] != "same_workspace" or public["mode"] != "draft"
+        ):
+            raise PermissionError("primary_creation_authority_required")
+        payload = {
+            **payload,
+            **public,
+            "source_agent_kind": "subagent" if child else "primary",
+            "source_parent_run_id": actor.parent_run_id if child else None,
+        }
         if not self._chat_creation_source_live(
             payload
         ) or current_run_id() != payload.get("source_run_id"):
@@ -19677,6 +19725,8 @@ class ConsoleChatController:
             "tool": "new_chat",
             "session_id": source.id,
             "source_run_id": payload["source_run_id"],
+            "source_agent_kind": payload["source_agent_kind"],
+            "source_parent_run_id": payload["source_parent_run_id"],
             "source_message_id": payload["source_message_id"],
             "source_incarnation": source.incarnation_id,
             "source_workspace_id": source.workspace_id,
@@ -19691,6 +19741,8 @@ class ConsoleChatController:
             "instructions": public["instructions"],
         }
         with self._pending_chat_create_lock:
+            if payload["source_run_id"] in self._chat_creation_revoked_runs:
+                raise PermissionError("source_unavailable")
             if len(self._chat_creation_records) >= 64:
                 raise PermissionError("creation_capacity")
             token = _ChatCreationToken(self)
@@ -19698,8 +19750,15 @@ class ConsoleChatController:
             self._chat_creation_records[token] = {
                 "payload": dict(prepared),
                 "startup": startup,
-                "approved": grant
-                in self._chat_create_session_grants.get(source.id, set()),
+                "source_cancel_event": (
+                    self._active_cancel_events.get(source.id)
+                    if child
+                    and self._active_assistant_message_ids.get(source.id)
+                    == payload["source_message_id"]
+                    else None
+                ),
+                "approved": not child
+                and grant in self._chat_create_session_grants.get(source.id, set()),
             }
         return prepared
 
@@ -19715,6 +19774,10 @@ class ConsoleChatController:
             source = self.store._sessions.get(record["payload"]["session_id"])
             if (
                 not self._chat_creation_source_live(record["payload"])
+                or (
+                    record.get("source_cancel_event") is not None
+                    and record["source_cancel_event"].is_set()
+                )
                 or source is None
                 or source.workspace_id != record["payload"]["source_workspace_id"]
             ):
@@ -20050,6 +20113,13 @@ class ConsoleChatController:
         # Arm-time cancel binding, identical to the sibling bridges' -- see
         # `_bind_round_cancel_signal`.
         round_cancel_event = self._bind_round_cancel_signal(session_id)
+        if (
+            record is not None
+            and requesting_kind == "subagent"
+            and self._active_assistant_message_ids.get(owning_session_id)
+            != record["payload"]["source_message_id"]
+        ):
+            round_cancel_event = None
         # The visit's teardown Event, captured at ARM time for the same
         # reason the run's cancel event is -- see `_bind_visit_cancel_signal`.
         visit_cancel_event = self._bind_visit_cancel_signal()
@@ -20069,6 +20139,12 @@ class ConsoleChatController:
         with self._pending_chat_create_lock:
             # Enrichment can finish after Close has swept the standalone rounds.
             if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
+            if record is not None and (
+                true_run_id in self._chat_creation_revoked_runs
+                or self._chat_creation_records.get(payload["_creation_token"])
+                is not record
+            ):
                 return {"allow": False, "remember": False}
             self._pending_chat_create_rounds[request_id] = chat_create_round_state
 
@@ -20132,7 +20208,9 @@ class ConsoleChatController:
                 ):
                     return {"allow": False, "remember": False}
                 allow = bool(decision.get("allow", False))
-                remember = bool(decision.get("remember", False))
+                remember = requesting_kind == AGENT_KIND_PRIMARY and bool(
+                    decision.get("remember", False)
+                )
                 # Decide and remember atomically with the Close/revocation sweep.
                 # A remembered deny must never become a standing grant.
                 if allow and tool == "new_chat":
