@@ -77,6 +77,11 @@ class WelcomeStep(SetupStep):
     def get_step_data(self) -> Dict[str, Any]:
         return {"track": self.chosen_track()}
 
+    def busy_label(self) -> str:
+        """What a slow Next from Welcome is doing (TASK-34100.1)."""
+        full = self.chosen_track() == wizard_state.TRACK_FULL
+        return f"Preparing the {'Full' if full else 'Quick'} setup…"
+
     def chosen_track(self) -> str:
         try:
             full = self.query_one("#setup-track-full", RadioButton).value

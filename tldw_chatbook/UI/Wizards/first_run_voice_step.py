@@ -1043,6 +1043,10 @@ class VoiceSetupStep(SetupStep):
     def receive_stts_settings_runtime_result(self, result: object) -> None:
         self._receive_save_result(result)
 
+    def busy_label(self) -> str:
+        """What a slow Next from Voice is doing: the save can take 30 s."""
+        return "Saving voice settings…"
+
     def get_step_data(self) -> Dict[str, Any]:
         values: Dict[str, Any] = {
             "preset": self._preset,

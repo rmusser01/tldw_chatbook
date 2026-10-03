@@ -2426,8 +2426,13 @@ class ProviderStep(SetupStep):
         self._credential_revision = revision
         self._last_credential_decision = credential_decision
         discovery_key = self._model_discovery_key(provider_draft)
+        # TASK-34100.1 (cross-cutting-14): a settled discovery is reused for
+        # the same provider identity, whatever it returned. A failure used to
+        # restart here on every Next, each one up to the 8 s guard. Changing
+        # the key or endpoint makes a new identity; Model's Retry asks again.
         if discovery_key != self._selected_discovery_key or (
-            self._selected_discovery_state not in {"in_progress", "complete"}
+            self._selected_discovery_state
+            not in {"in_progress", "complete", "failed"}
         ):
             self._begin_selected_provider_discovery(provider_draft)
         self._last_committed_provider_value = self.provider_value_for_chat_defaults
@@ -2444,6 +2449,14 @@ class ProviderStep(SetupStep):
         # form here so this step's commit and the live Console apply path
         # never disagree about what chat_defaults.provider means.
         return provider_key
+
+    def busy_label(self) -> str:
+        """What a slow Next from Provider is doing (TASK-34100.1)."""
+        from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+        key = self.selected_provider_key
+        display = provider_display_name(key) if key else ""
+        return f"Saving the {display} connection…" if display else ""
 
     def get_step_data(self) -> Dict[str, Any]:
         return {

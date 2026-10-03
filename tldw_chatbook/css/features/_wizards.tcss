@@ -164,6 +164,25 @@
     opacity: 0.5;
 }
 
+/* TASK-34100.1 (cross-cutting-14): a disabled first-run nav button changed
+   colour only (#a2a5a6 against #e0e0e0 for Back and Exit), and reviewers read
+   it as enabled while Next was fenced. The dim attribute is a terminal-level
+   cue that survives any palette, including monochrome. */
+.setup-navigation Button:disabled {
+    text-style: dim;
+}
+
+/* TASK-34100.1 (cross-cutting-14): the line that names a slow Next's work
+   ("Saving voice settings… 3 s"), just above the nav bar. Shown only past
+   ~400 ms, so a quick Next never flickers. */
+.setup-busy-status {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+    padding: $ds-space-0 $ds-space-2;
+}
+.setup-busy-status.hidden { display: none; }
+
 /* Content Type Selection */
 
 
