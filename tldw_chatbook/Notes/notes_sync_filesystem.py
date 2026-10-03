@@ -154,6 +154,57 @@ def _parse_supported_text(payload: bytes) -> tuple[str, bool, str, bool]:
     return logical, bom, newline, final_newline
 
 
+def represented_text(text: str, profile: NotesSyncSerializationProfile) -> str:
+    """Return the logical text a file holds once ``text`` is written under ``profile``.
+
+    TASK-34000.2: this is what ``observe(...).text`` reads back after
+    :meth:`PosixNotesSyncFilesystem.serialize` writes ``text``. A note and its
+    file are in step when this equals the file's text -- NOT when the raw note
+    equals it. The profile keeps the file's own final-newline convention, so a
+    note typed past its last newline (Ctrl+End, then a word) is written as
+    ``"...word\\n"`` while the note itself still reads ``"...word"``.
+    Comparing the raw note with the file therefore failed for every correctly
+    written file and fenced the whole sync folder at ``postcondition_failed``.
+
+    Args:
+        text: Note-side content, with any newline spelling.
+        profile: The file representation the write applies.
+
+    Returns:
+        The LF-normalized text with the profile's final-newline rule applied.
+
+    Raises:
+        TypeError: If ``text`` is not a string.
+    """
+
+    if type(text) is not str:
+        raise TypeError("text must be a string.")
+    logical = text.replace("\r\n", "\n").replace("\r", "\n")
+    if profile.final_newline and not logical.endswith("\n"):
+        logical += "\n"
+    elif not profile.final_newline:
+        logical = logical.rstrip("\n")
+    return logical
+
+
+def represented_digest(text: str, profile: NotesSyncSerializationProfile) -> str:
+    """Return the content digest a file would carry after writing ``text``.
+
+    The binding keeps ONE content digest as the baseline for both sides
+    (``notes_sync_runtime.observe_root``); a note is compared against it in
+    this form, so a note and the file it was written to share one digest.
+
+    Args:
+        text: Note-side content.
+        profile: The file representation the binding records.
+
+    Returns:
+        The SHA-256 of :func:`represented_text`, as the file side computes it.
+    """
+
+    return hashlib.sha256(represented_text(text, profile).encode("utf-8")).hexdigest()
+
+
 class PosixNotesSyncFilesystem:
     """Writable POSIX adapter composed from one descriptor-pinned root."""
 
@@ -253,13 +304,7 @@ class PosixNotesSyncFilesystem:
     def serialize(text: str, profile: NotesSyncSerializationProfile) -> bytes:
         """Apply one captured profile after normalizing note-side newlines."""
 
-        if type(text) is not str:
-            raise TypeError("text must be a string.")
-        logical = text.replace("\r\n", "\n").replace("\r", "\n")
-        if profile.final_newline and not logical.endswith("\n"):
-            logical += "\n"
-        elif not profile.final_newline:
-            logical = logical.rstrip("\n")
+        logical = represented_text(text, profile)
         represented = (
             logical.replace("\n", "\r\n") if profile.newline == "crlf" else logical
         )
@@ -649,5 +694,7 @@ __all__ = [
     "PosixNotesSyncFilesystem",
     "WindowsNotesSyncObservationFilesystem",
     "WindowsNotesSyncObservation",
+    "represented_digest",
+    "represented_text",
     "validate_sync_root_admission",
 ]

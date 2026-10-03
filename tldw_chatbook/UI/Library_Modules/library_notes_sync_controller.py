@@ -1531,15 +1531,14 @@ class LibraryNotesSyncController:
             return
         if not self._lifecycle_is_current(root_id, epoch):
             return
-        # Fix round 1: `_CHECK_FAILURE_ROW` sends a recovery refusal here, so
-        # this is exactly the route whose success has to drop the overlay --
-        # otherwise the row keeps saying "Next: Resolve recovery" beside a
-        # status line reporting the recovery was reviewed.
+        # Fix round 1: this route's success drops the refusal overlay. TASK-34000.2:
+        # Recovery now settles the entry and re-checks the folder, whose row
+        # then names the outcome -- the line claims no status that can go stale.
         self._clear_root_failure(root_id)
         self._state = replace(
             self._state,
             phase="roots",
-            status_line="Recovery reviewed. Check changes before the next mutation.",
+            status_line="Recovery finished; the folder was checked again.",
         )
         self.refresh_roots()
 

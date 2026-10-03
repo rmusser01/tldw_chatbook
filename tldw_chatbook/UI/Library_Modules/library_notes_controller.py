@@ -502,10 +502,8 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
-import os
 import re
 from collections.abc import Awaitable, Callable, Mapping
-from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any, Literal, TYPE_CHECKING
@@ -599,6 +597,10 @@ from ...Widgets.Library.library_notes_sync_roots_canvas import (
 )
 from .canvas_sync import _sync_library_canvas
 from .library_notes_state import LibraryNotesState, notes_state_shim_attr
+from .library_notes_sync_attention import (
+    load_library_note_location,
+    schedule_library_notes_sync_attention,
+)
 from .library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -644,7 +646,8 @@ class LibraryNotesController:
     notes series 3/N) prunes the ones nothing external reaches.
     """
 
-    #: task-32640: where the open note lives, as ``(path, written)``.
+    #: task-32640: where the open note lives, as ``(path, written,
+    #: attention)`` -- TASK-34000.2 added whether its sync folder is held.
     #: ``_begin_library_note_load`` re-seeds it per note, but the editor's
     #: presentation state is also built on paths that never ran that load
     #: (creating a note, then discarding it), where an instance attribute
@@ -653,7 +656,7 @@ class LibraryNotesController:
     #: attribute '_library_note_location'`` ->
     #: "This screen failed to load." in
     #: ``test_a_whitespace_only_title_then_escape_shows_the_discard_receipt``.
-    _library_note_location: tuple[str, str] = ("", "")
+    _library_note_location: tuple[str, str, bool] = ("", "", False)
 
     def __init__(
         self,
@@ -1525,6 +1528,7 @@ class LibraryNotesController:
             # task-32640: resolved live by ``_load_library_note_location``.
             location_path=self._library_note_location[0],
             location_written=self._library_note_location[1],
+            location_attention=self._library_note_location[2],
             # task-32548: resolved by ``_library_notes_canvas_kwargs`` from
             # the same projection the list rows are drawn from.
             title_suffix=self._notes_state.open_note_title_suffix,
@@ -3451,7 +3455,7 @@ class LibraryNotesController:
         self._library_note_editor_armed = False
         self._library_notes_backlinks = ()
         self._library_notes_backlinks_status = "loading"
-        self._library_note_location = ("", "")
+        self._library_note_location = ("", "", False)
         self._apply_library_notes_stage_visibility()
         self.run_worker(
             self._refresh_library_note_detail(
@@ -3522,81 +3526,17 @@ class LibraryNotesController:
         )
         self._library_notes_backlinks_status = status
         self._apply_library_note_presentation_state()
-    async def _load_library_note_location(self, note_id: str) -> None:
-        """Answer "where does this note live?" for the header (task-32640).
+    async def _load_library_note_location(
+        self, note_id: str, *, after_save: bool = False
+    ) -> None:
+        """Answer "where does this note live, and is it in step?" (task-32640).
 
-        Its own worker, like the backlink lookup beside it: the detail load
-        owns how fast the editor appears, and one binding read plus one
-        ``stat`` has no business delaying that.
-
-        Both facts are read LIVE every time this runs -- the binding from
-        the sync runtime, the write time from the file itself -- rather than
-        being carried on the note record, which is what a note looked like
-        when it was opened.
-
-        It is re-run when a save settles
-        (``_apply_library_note_saved_presentation``), but that re-read RACES
-        the write: a save only ``schedule_hint``s the root (task-32604), and
-        the file is written by a later background pass. So right after your
-        own save the row usually still names the PREVIOUS write time, and
-        nothing re-runs it until the note is reopened or saved again. That
-        is accurate -- the file really has not been written yet -- and it is
-        the honest half of what this row exists to show; it is not "fresh
-        after every save", and the task notes and guide say so in those
-        words. Re-running on the sync pass itself is task-32633's ground.
-
-        A runtime that is absent, inert or not yet started answers ""; the
-        header then says the note is in the Library database only, which is
-        what "no root is keeping this note in a file" means.
-
-        Args:
-            note_id: The note whose file, if any, to name.
+        Its own worker, like the backlink lookup beside it. The body lives in
+        ``library_notes_sync_attention`` (TASK-34000.2), which also says when
+        the note's sync folder is held for attention and, after a save, waits
+        for the pass that save hinted before it re-reads.
         """
-        if not note_id:
-            return
-        runtime = getattr(self.app_instance, "notes_sync_runtime_owner", None)
-        locate = getattr(runtime, "note_file_location", None)
-        path = ""
-        if callable(locate):
-            try:
-                path = str(await locate(note_id) or "")
-            except Exception as error:  # noqa: BLE001 - one header row
-                # Metadata only: this line is about a file path, and a path
-                # is exactly what must not reach a log.
-                logger.debug(
-                    "library_note_location_failed", error_type=type(error).__name__
-                )
-                path = ""
-        written = await asyncio.to_thread(self._note_file_written_label, path)
-        if note_id != self._selected_note_id or self._library_notes_view != "editor":
-            return
-        self._library_note_location = (path, written)
-        self._apply_library_note_presentation_state()
-
-    @staticmethod
-    def _note_file_written_label(path: str) -> str:
-        """Local "when the file was last written", or "" if it cannot be read.
-
-        The file's own mtime, not a record of our writes: a vault edited in
-        Obsidian and a note saved here are the same question to the reader,
-        and only the filesystem answers both.
-        """
-        if not path:
-            return ""
-        try:
-            modified = os.stat(path).st_mtime
-        except OSError:
-            return ""
-        # Local time in the codebase's established absolute-timestamp
-        # spelling -- the same one ``_absolute_local_label`` gives Info's
-        # Created/Modified rows, so the header and Info cannot disagree
-        # about which clock they are on. Built tz-aware, then localised,
-        # rather than through a naive ``fromtimestamp``.
-        return (
-            datetime.fromtimestamp(modified, tz=UTC)
-            .astimezone()
-            .strftime("%Y-%m-%d %H:%M")
-        )
+        await load_library_note_location(self, note_id, after_save=after_save)
 
     @on(Button.Pressed, ".library-note-backlink")
     async def handle_library_note_backlink(self, event: Button.Pressed) -> None:
@@ -3929,7 +3869,9 @@ class LibraryNotesController:
             # the one that reaches disk.
             if self.is_mounted:
                 self.run_worker(
-                    self._load_library_note_location(snapshot.note_id),
+                    self._load_library_note_location(
+                        snapshot.note_id, after_save=True
+                    ),
                     exclusive=True,
                     group="library_note_location",
                 )
@@ -5047,6 +4989,9 @@ class LibraryNotesController:
         self._library_notes_lasting_sync_snapshot = snapshot
         if self.is_mounted:
             self._apply_library_notes_footer_context()
+            # TASK-34000.2: a Check, Recovery or conflict choice can hold or
+            # release a folder; the tree, list and editor follow it.
+            schedule_library_notes_sync_attention(self)
         if (
             self.is_mounted
             and self._library_notes_source == LIBRARY_NOTES_SOURCE_DATABASE

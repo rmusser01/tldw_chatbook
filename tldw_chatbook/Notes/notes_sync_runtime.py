@@ -75,6 +75,7 @@ from tldw_chatbook.Notes.notes_sync_executor import (
     CONFLICT_RECOVERY_RETENTION_NS,
     MAX_SYNC_KEYWORD_LENGTH,
     MAX_SYNC_TITLE_LENGTH,
+    NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS,
     NotesSyncDirectionOverride,
     NotesSyncExecutionRequest,
     NotesSyncExecutionResult,
@@ -87,6 +88,7 @@ from tldw_chatbook.Notes.notes_sync_filesystem import (
     NotesSyncFileSnapshot,
     NotesSyncFilesystemError,
     PosixNotesSyncFilesystem,
+    represented_digest,
 )
 from tldw_chatbook.Notes.notes_sync_legacy import (
     persist_legacy_notes_sync_migration,
@@ -125,6 +127,12 @@ _DURABLE_BLOCKED_STATUS = MappingProxyType(
         "unsupported": ("unsupported", "review_settings"),
     }
 )
+
+#: TASK-34000.2: root statuses under which a folder is NOT syncing until the
+#: user acts -- an open entry, a conflict or deletion to review, a failed or
+#: partial pass. The tree, the Notes list and the editor say "Needs
+#: attention" for these, and that outranks any healthy wording.
+NOTES_SYNC_ATTENTION_STATUSES = frozenset({"failed", "needs_attention", "partial"})
 
 _RUNTIME_STATUSES = frozenset(
     {
@@ -1016,7 +1024,16 @@ class _ProductionRuntimeAdapter:
             if file is not None:
                 claimed_paths.add(file.observation.relative_path)
             file_digest = file.observation.content_digest if file else None
+            # TASK-34000.2: one baseline digest serves both sides, so the note
+            # is also measured the way the file would carry it -- a note typed
+            # past its last newline is not a change the file has to catch up
+            # with. Either form matching the baseline means "unchanged" (older
+            # and migrated baselines kept the raw form).
             note_digest = note.content_digest if note else None
+            if note and note_digest != binding.content_digest:
+                represented = represented_digest(note.content, binding.serialization)
+                if represented == binding.content_digest:
+                    note_digest = represented
             file_identity = (
                 NotesSyncExecutor.stable_identity_digest(file) if file else None
             )
@@ -3042,10 +3059,15 @@ class NotesSyncRuntimeOwner:
             state = getattr(result, "state", None)
             if state is NotesSyncOperationState.NEEDS_ATTENTION:
                 self._blocked_roots.add(root.root_id)
+                recoverable = getattr(result, "recovery_required", False) and (
+                    getattr(getattr(request, "action_kind", None), "value", None)
+                    in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+                )
                 await self._publish(
                     root.root_id,
                     "needs_attention",
-                    "review_changes",
+                    # TASK-34000.2: see ``_classify_incomplete_block``.
+                    "resolve_cleanup" if recoverable else "review_changes",
                     action_id=(
                         getattr(result, "operation_id", None)
                         if getattr(result, "recovery_required", False)
@@ -3093,11 +3115,15 @@ class NotesSyncRuntimeOwner:
         if operation.state is NotesSyncOperationState.NEEDS_ATTENTION:
             if operation.kind == "undo_resolution" and not block_pending:
                 return False
+            # TASK-34000.2: an automatic update in attention is one Recovery
+            # settles, so the row's next action is that control -- not
+            # "Review", whose check refuses the very same open entry.
             status, action = (
                 "needs_attention",
                 (
                     "resolve_cleanup"
                     if operation.reason_code == "replacement_cleanup_pending"
+                    or operation.kind in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
                     else "review_changes"
                 ),
             )
@@ -3304,6 +3330,72 @@ class NotesSyncRuntimeOwner:
         root_path = self._root_paths.get(root_id)
         return "" if not root_path else str(Path(root_path) / relative_path)
 
+    @producer_call
+    async def attention_folder_ids(self) -> frozenset[str]:
+        """Return the Notes folders whose sync root is held for attention.
+
+        TASK-34000.2: a root fenced on an open entry (or a conflict, or a
+        failed pass) stops syncing BOTH ways, yet the tree kept painting its
+        folder "⇄ Sync managed" and the list "Ready". The answer is read live
+        from the statuses this runtime publishes -- the same ones Manage sync
+        folders shows -- so the three surfaces cannot disagree with it.
+
+        Returns:
+            The logical folder ids of every root whose current status is one
+            of ``NOTES_SYNC_ATTENTION_STATUSES``.
+        """
+
+        held = tuple(
+            root_id
+            for root_id, current in self._root_status.items()
+            if current.status in NOTES_SYNC_ATTENTION_STATUSES
+        )
+        if self._closing or not held:
+            return frozenset()
+
+        def read() -> frozenset[str]:
+            folders: set[str] = set()
+            for root_id in held:
+                try:
+                    folder_id = self._store.get_root(root_id).logical_folder_id
+                except Exception:  # noqa: BLE001 - a vanished root holds nothing
+                    continue
+                if folder_id:
+                    folders.add(folder_id)
+            return frozenset(folders)
+
+        return await self._maintenance_offload(read)
+
+    @producer_call
+    async def note_sync_needs_attention(self, note_id: str) -> bool:
+        """Whether the root keeping this note in a file is held for attention.
+
+        TASK-34000.2: the editor of a note in a wedged folder said "Saved"
+        and "In a synced folder" while nothing reached the file. Read live,
+        per ask, like :meth:`note_file_location`.
+
+        Args:
+            note_id: The open note.
+
+        Returns:
+            ``True`` only when an active binding claims the note and its root's
+            current status is one of ``NOTES_SYNC_ATTENTION_STATUSES``.
+
+        Raises:
+            ValueError: If ``note_id`` is not a bounded opaque identifier.
+        """
+
+        validate_notes_sync_opaque_id(note_id, field_name="note_id")
+        if self._closing:
+            return False
+        binding = await self._maintenance_offload(
+            self._store.active_binding_path_for_note, note_id
+        )
+        if binding is None:
+            return False
+        current = self._root_status.get(binding[0])
+        return current is not None and current.status in NOTES_SYNC_ATTENTION_STATUSES
+
     def folder_is_sync_root(self, folder: str | Path) -> bool:
         """Is this folder already covered by a lasting-sync root (task-32641)?
 
@@ -3413,7 +3505,25 @@ class NotesSyncRuntimeOwner:
 
     @producer_call
     async def resolve_cleanup(self, root_id: str, operation_id: str) -> object:
-        """Resolve one explicit durable cleanup action under root authority."""
+        """Resolve one root's open recovery (the Recovery action) under root authority.
+
+        A pending private filesystem cleanup is resolved first, as before.
+        TASK-34000.2: an automatic update still fenced at attention is then
+        SETTLED -- closed at the baseline its authorities prove, mutating
+        neither side (``NotesSyncExecutor.settle_attention``) -- and the root
+        takes one automatic pass, so a one-sided remainder syncs and a change
+        on both sides surfaces as an ordinary conflict review. Before this,
+        Recovery on such an entry raised ``recovery_authority_changed`` and
+        the row read "Recovery failed — RuntimeError" next to a Check that
+        refused the same entry: a loop with no way out.
+
+        Args:
+            root_id: The sync folder.
+            operation_id: The open entry the root row names.
+
+        Returns:
+            The executor's last result for the entry.
+        """
 
         task = self._admit_task(root_id)
         try:
@@ -3430,9 +3540,33 @@ class NotesSyncRuntimeOwner:
                 root,
                 after_stage=lambda _state: self._require_authority(root_id, "write"),
             )
-            result = await executor.resolve_filesystem_cleanup(operation_id)
-            self._require_authority(root_id, "write")
-            if getattr(result, "state", None) is NotesSyncOperationState.COMPLETED:
+            pending = getattr(executor, "cleanup_pending", None)
+            settle = getattr(executor, "settle_attention", None)
+            result: object = None
+            if not callable(pending) or await self._maintenance_offload(
+                pending, operation_id
+            ):
+                result = await executor.resolve_filesystem_cleanup(operation_id)
+                self._require_authority(root_id, "write")
+            settled = (
+                callable(settle)
+                and callable(pending)
+                and getattr(result, "state", None)
+                is not NotesSyncOperationState.COMPLETED
+                and operation.kind in NOTES_SYNC_SETTLEABLE_ATTENTION_KINDS
+                and not await self._maintenance_offload(pending, operation_id)
+            )
+            if settled:
+                async with self._mutation_lock(root_id):
+                    self._require_authority(root_id, "write")
+                    result = await settle(operation_id)
+                    self._require_authority(root_id, "write")
+            if (
+                settled
+                and getattr(result, "state", None) is NotesSyncOperationState.COMPLETED
+            ):
+                await self._run_settled_pass(root_id)
+            elif getattr(result, "state", None) is NotesSyncOperationState.COMPLETED:
                 self._blocked_roots.discard(root_id)
                 await self._publish(root_id, "up_to_date", "sync_now")
             else:
@@ -3446,6 +3580,30 @@ class NotesSyncRuntimeOwner:
             return result
         finally:
             self._finish_task(root_id, task)
+
+    async def _run_settled_pass(self, root_id: str) -> None:
+        """Re-plan a root whose open entry Recovery just settled (TASK-34000.2).
+
+        The same automatic pass a hint runs, with the same gates and the same
+        publication: the settled baseline is what the planner measures from,
+        so a note edit typed after the wedge is written now, and two-sided
+        drift becomes a conflict row instead of a silent overwrite.
+        """
+
+        self._blocked_roots.discard(root_id)
+        self._durably_blocked_roots.discard(root_id)
+        try:
+            root = await self._maintenance_offload(self._store.get_root, root_id)
+            await self._reconcile(root, automatic=True)
+        except RuntimeError as error:
+            self._blocked_roots.add(root_id)
+            if str(error) == "root_lease_required":
+                await self._publish(root_id, "offline", "reconnect_folder")
+            else:
+                await self._publish(root_id, "failed", "review_changes")
+        except Exception:
+            self._blocked_roots.add(root_id)
+            await self._publish(root_id, "failed", "review_changes")
 
     @producer_call
     async def resume_root(self, root_id: str) -> NotesSyncControlResult:
@@ -4004,6 +4162,7 @@ def build_notes_sync_legacy_migrator(
 
 __all__ = [
     "CUTOVER_MARKER",
+    "NOTES_SYNC_ATTENTION_STATUSES",
     "NotesSyncControlResult",
     "NotesSyncRootRuntimeSnapshot",
     "NotesSyncRootSetup",

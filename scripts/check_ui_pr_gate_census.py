@@ -81,7 +81,12 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # the DB before exit; a refused save keeps the typist in place and Ctrl+Q asks.
 # The other quit variants live in test_library_quit_guard_extended.py,
 # outside this lane, because the lane is near its 20-minute cap (TASK-34000.47).
-MINIMUM_FILES = 123
+# TASK-34000.2 raised it to 124: Tests/UI/test_library_notes_sync_attention.py
+# is one real-app boot (about 15 s of call time locally) over a real lasting-
+# sync root wedged the way review finding N-02 left it: the tree row, the Notes
+# list and the editor say "needs attention", and the real Recovery button
+# heals the folder with no "RuntimeError".
+MINIMUM_FILES = 124
 
 
 def read_census(path: Path) -> list[str]:

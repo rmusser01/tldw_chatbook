@@ -119,6 +119,7 @@ jobs:
             Tests/Chat/test_console_viewless_hooks.py \
             Tests/Agents/test_install_skill_runtime_tool.py \
             Tests/Chat/test_console_chat_create_integration.py \
+            Tests/Notes/test_notes_sync_tail_edit.py \
             --timeout=300 \
             --tb=short
 

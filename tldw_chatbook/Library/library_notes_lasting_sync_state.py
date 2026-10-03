@@ -1114,6 +1114,22 @@ _CHECK_REFUSAL_COPY: dict[str, str] = {
     "root_observation_mismatch": (
         "The folder changed while it was being checked. Check again."
     ),
+    # TASK-34000.2: what Recovery on an open sync entry can refuse with.
+    # Before these the row fell back to the exception class ("Recovery failed
+    # — RuntimeError") and sent the reader to Check changes, whose check
+    # refuses the very same open entry: a loop with no way out.
+    "postcondition_failed": (
+        "A sync write could not be confirmed on disk. Use Recovery to look again."
+    ),
+    "stale_observation": (
+        "The note or its file changed while sync was working. Use Recovery again."
+    ),
+    "operation_needs_attention": (
+        "A leftover temporary file still needs cleaning up. Use Recovery again."
+    ),
+    "binding_authority_changed": (
+        "This note's sync record changed during recovery. Check again."
+    ),
 }
 
 #: task-32534 AC#1: reason code -> (row phrase, the root row's next action).
@@ -1132,6 +1148,14 @@ _CHECK_FAILURE_ROW: dict[str, tuple[str, str]] = {
         "another Chatbook owns this profile",
         "close_other_process_and_restart",
     ),
+    # TASK-34000.2: Recovery refusals that Recovery itself can move forward.
+    "postcondition_failed": ("a sync write wasn't confirmed", "resolve_cleanup"),
+    "stale_observation": ("the note or file changed meanwhile", "resolve_cleanup"),
+    "operation_needs_attention": (
+        "a temporary file still needs cleanup",
+        "resolve_cleanup",
+    ),
+    "binding_authority_changed": ("the sync record changed", "sync_now"),
 }
 
 

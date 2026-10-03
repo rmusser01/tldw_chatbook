@@ -901,7 +901,7 @@ async def test_manual_sync_now_and_operation_recovery_use_existing_runtime_metho
 
     assert ("request_sync_now", "root-1") in runtime.calls
     assert ("resolve_cleanup", "root-1", "operation-1") in runtime.calls
-    assert "Recovery reviewed" in controller.snapshot.status_line
+    assert "Recovery finished" in controller.snapshot.status_line
 
 
 async def test_not_configured_runtime_offers_lasting_setup() -> None:

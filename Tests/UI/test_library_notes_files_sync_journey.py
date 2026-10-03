@@ -1505,7 +1505,7 @@ async def test_lasting_review_activation_receipt_and_remount_recovery_journey(
         )
         await _wait_for_condition(
             pilot,
-            lambda: "Recovery reviewed" in _painted_text(restarted),
+            lambda: "Recovery finished" in _painted_text(restarted),
             message="recovery status did not reach the compositor",
         )
         assert runtime.roots[0].status == "up_to_date"

@@ -2976,10 +2976,17 @@
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
-      "call_count": 13,
-      "diagnostic_digest": "318ba3dc102546ca8844",
+      "call_count": 12,
+      "diagnostic_digest": "54d9aaab79b70689ed97",
       "owner": "TASK-494",
       "path": "tldw_chatbook/UI/Library_Modules/library_notes_controller.py",
+      "reason": "remaining Chatbook production diagnostic owner"
+    },
+    {
+      "call_count": 1,
+      "diagnostic_digest": "be3725f7f9097eb1cbcf",
+      "owner": "TASK-494",
+      "path": "tldw_chatbook/UI/Library_Modules/library_notes_sync_attention.py",
       "reason": "remaining Chatbook production diagnostic owner"
     },
     {
