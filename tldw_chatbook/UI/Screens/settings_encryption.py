@@ -177,9 +177,7 @@ def run_change(change: PasswordChange) -> EncryptionActionOutcome:
     config = _config()
     if not config.verify_config_encryption_password(change.current):
         enabled, unlocked = _current_state(assumed_enabled=True)
-        return EncryptionActionOutcome(
-            RESULT_WRONG_PASSWORD, False, enabled, unlocked
-        )
+        return EncryptionActionOutcome(RESULT_WRONG_PASSWORD, False, enabled, unlocked)
     succeeded = bool(config.change_encryption_password(change.current, change.new))
     enabled, unlocked = _current_state(assumed_enabled=True)
     if succeeded:
@@ -199,9 +197,7 @@ def run_disable(password: str) -> EncryptionActionOutcome:
     config = _config()
     if not config.verify_config_encryption_password(password):
         enabled, unlocked = _current_state(assumed_enabled=True)
-        return EncryptionActionOutcome(
-            RESULT_WRONG_PASSWORD, False, enabled, unlocked
-        )
+        return EncryptionActionOutcome(RESULT_WRONG_PASSWORD, False, enabled, unlocked)
     succeeded = bool(config.disable_config_encryption(password))
     enabled, unlocked = _current_state(assumed_enabled=not succeeded)
     if succeeded:
@@ -361,9 +357,7 @@ class EncryptionSettingsCard(Vertical):
             exit_on_error=False,
         )
 
-    def _run_job(
-        self, action: str, job: Callable[[], EncryptionActionOutcome]
-    ) -> None:
+    def _run_job(self, action: str, job: Callable[[], EncryptionActionOutcome]) -> None:
         try:
             outcome = job()
         except Exception as error:

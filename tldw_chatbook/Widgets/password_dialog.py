@@ -31,6 +31,7 @@ class PasswordChange:
     current: str = dataclass_field(repr=False)
     new: str = dataclass_field(repr=False)
 
+
 #: Shown wherever a user is about to enable config encryption for the first
 #: time. Encrypting rewrites config.toml through a TOML parse/serialize
 #: round-trip (tomllib.load + toml.dumps), which preserves every value and

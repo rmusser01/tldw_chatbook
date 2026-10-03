@@ -125,7 +125,9 @@ def test_snapshot_backed_handlers_refuse_ciphertext(
     module = importlib.import_module(module_name)
     monkeypatch.setattr(module, "get_runtime_config_snapshot", _snapshot(provider))
 
-    error = _outcome(lambda: getattr(module, function_name)(MESSAGES, api_key=None, model="m"))
+    error = _outcome(
+        lambda: getattr(module, function_name)(MESSAGES, api_key=None, model="m")
+    )
 
     _assert_missing_key_refusal(error, sent)
 
@@ -145,7 +147,9 @@ def test_openai_refuses_ciphertext_from_either_config_table(monkeypatch, sent):
         },
     )
 
-    error = _outcome(lambda: LLM_API_Calls.chat_with_openai.__wrapped__(MESSAGES, api_key=None))
+    error = _outcome(
+        lambda: LLM_API_Calls.chat_with_openai.__wrapped__(MESSAGES, api_key=None)
+    )
 
     _assert_missing_key_refusal(error, sent)
 
@@ -159,7 +163,9 @@ def test_anthropic_refuses_ciphertext(monkeypatch, sent):
         lambda: {"anthropic_api": {"api_key": CIPHERTEXT}},
     )
 
-    error = _outcome(lambda: LLM_API_Calls.chat_with_anthropic(MESSAGES, api_key=None, model="m"))
+    error = _outcome(
+        lambda: LLM_API_Calls.chat_with_anthropic(MESSAGES, api_key=None, model="m")
+    )
 
     _assert_missing_key_refusal(error, sent)
 
@@ -182,7 +188,9 @@ def test_huggingface_sends_no_ciphertext(monkeypatch, sent):
         },
     )
 
-    _outcome(lambda: LLM_API_Calls.chat_with_huggingface(MESSAGES, api_key=None, model="m"))
+    _outcome(
+        lambda: LLM_API_Calls.chat_with_huggingface(MESSAGES, api_key=None, model="m")
+    )
 
     assert sent, "the handler never reached its transport"
     assert not _ciphertext_credentials(sent)
@@ -285,7 +293,9 @@ def test_custom_openai_2_refuses_ciphertext(monkeypatch, sent):
         lambda **kwargs: forwarded.append(kwargs.get("api_key")) or "captured",
     )
 
-    error = _outcome(lambda: local.chat_with_custom_openai_2(MESSAGES, api_key=None, model="m"))
+    error = _outcome(
+        lambda: local.chat_with_custom_openai_2(MESSAGES, api_key=None, model="m")
+    )
 
     assert not forwarded, "ciphertext forwarded to the request builder"
     _assert_missing_key_refusal(error, sent)
@@ -409,9 +419,7 @@ def test_chat_api_call_drops_a_ciphertext_api_key(monkeypatch):
 
     monkeypatch.setitem(Chat_Functions.API_CALL_HANDLERS, "openai", capture)
 
-    assert (
-        Chat_Functions.chat_api_call("openai", MESSAGES, api_key=CIPHERTEXT) == "ok"
-    )
+    assert Chat_Functions.chat_api_call("openai", MESSAGES, api_key=CIPHERTEXT) == "ok"
     assert received.get("api_key") is None
 
 

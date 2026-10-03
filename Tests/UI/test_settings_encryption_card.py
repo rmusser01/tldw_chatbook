@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Static
 
 import tldw_chatbook.app  # noqa: F401 -- bind the app to the session profile at
+
 # collection; Tests/UI/conftest.py's autouse fixture patches TldwCli and would
 # otherwise import it under this test's per-test profile.
 from Tests.Backup_Recovery.config_test_support import install_config_source
@@ -137,8 +138,9 @@ async def test_encrypt_change_and_turn_off_from_the_card(cfg) -> None:
         await _settle(
             pilot,
             app,
-            lambda: _text(app, "#settings-encryption-result")
-            == card_module.RESULT_CHANGED,
+            lambda: (
+                _text(app, "#settings-encryption-result") == card_module.RESULT_CHANGED
+            ),
         )
         assert cfg.verify_config_encryption_password(PASSWORD_B) is True
         assert cfg.verify_config_encryption_password(PASSWORD_A) is False
@@ -151,8 +153,10 @@ async def test_encrypt_change_and_turn_off_from_the_card(cfg) -> None:
         await _settle(
             pilot,
             app,
-            lambda: _text(app, "#settings-encryption-result")
-            == card_module.RESULT_WRONG_PASSWORD,
+            lambda: (
+                _text(app, "#settings-encryption-result")
+                == card_module.RESULT_WRONG_PASSWORD
+            ),
         )
         assert path.read_bytes() == before
         assert "On —" in _text(app, "#settings-encryption-state")
@@ -164,8 +168,9 @@ async def test_encrypt_change_and_turn_off_from_the_card(cfg) -> None:
         await _settle(
             pilot,
             app,
-            lambda: _text(app, "#settings-encryption-result")
-            == card_module.RESULT_DISABLED,
+            lambda: (
+                _text(app, "#settings-encryption-result") == card_module.RESULT_DISABLED
+            ),
         )
         assert "Off" in _text(app, "#settings-encryption-state")
         restored = tomllib.loads(path.read_text())

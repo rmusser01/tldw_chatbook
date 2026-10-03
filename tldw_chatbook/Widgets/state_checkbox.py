@@ -32,7 +32,9 @@ class StateCheckbox(Checkbox):
         # before the parent property renders so it shadows the class value.
         if self.value:
             self.BUTTON_INNER = (
-                STATE_CHECKBOX_ON_ASCII if ascii_glyph_mode() else STATE_CHECKBOX_ON_GLYPH
+                STATE_CHECKBOX_ON_ASCII
+                if ascii_glyph_mode()
+                else STATE_CHECKBOX_ON_GLYPH
             )
         else:
             self.BUTTON_INNER = " "

@@ -52,8 +52,8 @@ def cfg(tmp_path, monkeypatch):
     path = tmp_path / "profile" / "config.toml"
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
     path.write_text(
-        "[general]\nusers_name = \"lifecycle\"\n\n"
-        f"[api_settings.openai]\napi_key = \"{PLAINTEXT_KEY}\"\nmodel = \"gpt-4o\"\n"
+        '[general]\nusers_name = "lifecycle"\n\n'
+        f'[api_settings.openai]\napi_key = "{PLAINTEXT_KEY}"\nmodel = "gpt-4o"\n'
     )
     path.chmod(0o600)
     monkeypatch.setenv("TLDW_CONFIG_PATH", str(path))
@@ -95,7 +95,9 @@ def _stranded_document() -> dict:
     }
 
 
-def test_second_enable_with_another_password_is_refused_byte_identical(cfg, config_path):
+def test_second_enable_with_another_password_is_refused_byte_identical(
+    cfg, config_path
+):
     assert cfg.enable_config_encryption(PASSWORD_A) is True
     encrypted_bytes = config_path.read_bytes()
 
@@ -108,9 +110,7 @@ def test_second_enable_with_another_password_is_refused_byte_identical(cfg, conf
     assert decrypted["api_settings"]["openai"]["api_key"] == PLAINTEXT_KEY
 
 
-def test_second_enable_with_the_same_password_is_an_idempotent_no_op(
-    cfg, config_path
-):
+def test_second_enable_with_the_same_password_is_an_idempotent_no_op(cfg, config_path):
     # Review round 2 (R2-F4): re-entering the SAME password after a successful
     # enable (the pre-fix wizard reopens its dialog on Enter) used to return
     # False, and the wizard then claimed the keys were "unchanged (plain
@@ -397,16 +397,12 @@ def test_rekey_repairs_a_missing_verifier(cfg, config_path):
 
     assert cfg.rekey_encryption_verifier(PASSWORD_A) is True
 
-    verifier = tomllib.loads(config_path.read_text())["encryption"][
-        "password_verifier"
-    ]
+    verifier = tomllib.loads(config_path.read_text())["encryption"]["password_verifier"]
     assert ConfigEncryption().verify_password(PASSWORD_A, verifier) is True
 
 
 @pytest.mark.parametrize("password", [PASSWORD_B, "not-any-password"])
-def test_rekey_refuses_a_password_that_cannot_read_the_keys(
-    cfg, config_path, password
-):
+def test_rekey_refuses_a_password_that_cannot_read_the_keys(cfg, config_path, password):
     config_path.write_text(toml.dumps(_stranded_document()))
     before = config_path.read_bytes()
 
@@ -534,7 +530,11 @@ def test_a_deliberately_keyless_provider_ignores_a_stranded_saved_key():
     ciphertext = ConfigEncryption().encrypt_value(PLAINTEXT_KEY, PASSWORD_A)
     readiness = get_provider_readiness(
         "llama_cpp",
-        {"api_settings": {"llama_cpp": {"api_key": ciphertext, "credential_source": "none"}}},
+        {
+            "api_settings": {
+                "llama_cpp": {"api_key": ciphertext, "credential_source": "none"}
+            }
+        },
         environ={},
     )
 

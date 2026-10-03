@@ -52,7 +52,9 @@ FIRST_FIELD = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("host", [_Host, _NoAutoFocusHost], ids=["app-default", "no-app-autofocus"])
+@pytest.mark.parametrize(
+    "host", [_Host, _NoAutoFocusHost], ids=["app-default", "no-app-autofocus"]
+)
 @pytest.mark.parametrize("mode", ["setup", "unlock", "change"])
 async def test_typing_without_tab_fills_the_first_password_field(mode, host) -> None:
     app = host(mode)
@@ -111,7 +113,9 @@ async def test_change_mode_returns_current_and_new_password() -> None:
         dialog = app.screen
         message = str(dialog.query_one(".dialog-message", Static).render())
         assert "current master password" in message
-        await _fill_change(pilot, dialog, "old-password", "new-password", "new-password")
+        await _fill_change(
+            pilot, dialog, "old-password", "new-password", "new-password"
+        )
         assert app.result == PasswordChange(current="old-password", new="new-password")
         assert "old-password" not in repr(app.result)
 
@@ -126,7 +130,9 @@ async def test_change_mode_returns_current_and_new_password() -> None:
         ("old-password", "short", "short", "at least 8"),
     ],
 )
-async def test_change_mode_rejects_bad_input_inline(current, new, confirm, error) -> None:
+async def test_change_mode_rejects_bad_input_inline(
+    current, new, confirm, error
+) -> None:
     app = _Host("change")
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause(0.1)

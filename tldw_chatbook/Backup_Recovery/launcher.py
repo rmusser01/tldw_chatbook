@@ -104,6 +104,7 @@ def take_startup_unlock() -> tuple[str | None, bool]:
         return None, False
     return slot[0], slot[0] is None
 
+
 #: Opening a profile hands the terminal to it; a browser session has none.
 PROFILE_OPEN_NEEDS_TERMINAL = (
     "Opening a profile needs chatbook running in a terminal; it can't be "
