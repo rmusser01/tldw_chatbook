@@ -1117,7 +1117,11 @@ def chat_with_kobold(
             timeout=timeout,
             allow_redirects=False,
         )
-        if response.is_redirect:
+        # Every 3xx, not just ``response.is_redirect`` (which needs a
+        # ``Location`` header and one of 301/302/303/307/308): a 300/304
+        # or a Location-less 3xx would otherwise pass ``raise_for_status``
+        # and have its body parsed as a generation.
+        if 300 <= response.status_code < 400:
             # Close the refused response so its connection is not leaked,
             # then fail loudly WITHOUT echoing the attacker-controlled
             # ``Location`` value (TASK-19321/19552/19557 exception rule).
