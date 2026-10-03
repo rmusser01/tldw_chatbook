@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  paper-retrieval-practice                                                                 │
+│   a  │  ‹ Items  Note · Notes — paper-retrieval… ·  1 of 2 ▾  │  o  file:///Users/you/Papers/paper-retrieval-practice.pdf                                    │
+│   v  │ Saved 20:12 · ctrl+s save                              │  t    Find  Read later  Use in Console  Note  More                                           │
+│      │                                                        │  e    Read (selected)  Analysis  Highlights  Info                                            │
+│      │   Edit  Preview  Info (selected)                Save   │      Rendered (selected) |      Raw                                        ¶12 of 31  Quote  │
+│      │ ┌────────────────────────────────────────────────────┐ │     ┌──────────────────────────────────────────────────────────────────────────────────────┐ │
+│      │ │Properties                                          │ │     │   Discussion. Effects held across subject areas.                                     │ │
+│      │ │Keywords                                            │ │     │                                                                                      │ │
+│      │ │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
+│      │ │▊ retrieval, study                                 ▎│ │     │                                                                                      │ │
+│      │ │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │Created   2026-10-02 20:04 · 8m ago                 │ │     │   Discussion. Effects held across subject areas.                                  ▄▄ │ │
+│ ---> │ │Modified  2026-10-02 20:12 · just now               │ │     │                                                                                      │ │
+│      │ │Folder    Reading notes                             │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
+│      │ │Words     61 words                                  │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │Sources (2)                                         │ │     │                                                                                      │ │
+│      │ │  paper-retrieval-practice ↗    · pdf               │ │<--- │   Discussion. Effects held across subject areas.                                     │ │
+│      │ │ Spaced repetition, explained · In Trash ·┃ Restore │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
+│      │ │Linked from (0) — no notes link here yet            │ │     │                                                                                      │ │
+│      │ │Reuse & Export                                      │ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │  Copy                                              │ │     │                                                                                      │ │
+│ ---> │ │  Export Markdown                                   │ │     │   Discussion. Effects held across subject areas.                                     │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.   ▃▃ │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Discussion. Effects held across subject areas.                                     │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │                                                    │ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ └────────────────────────────────────────────────────┘ │     └──────────────────────────────────────────────────────────────────────────────────────┘ │
+│      └────────────────────────────────────────────────────────┘                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  enter restore source | esc back to reader | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

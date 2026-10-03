@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌────────────────────────────────────────────────────────┐  N  A field guide to Markdown tables                                                         │
+│   a  │  ‹ Items  Note                                         │  o  Docs team                                                                                │
+│   v  │                                                        │  t    Find  Read later  Use in Console  Note  More                                           │
+│      │ No note yet · n to start one                           │  e    Read (selected)  Analysis  Highlights  Info                                            │
+│      │   Start a note                                         │                                                                              ¶1 of 5  Quote  │
+│      │                                                        │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
+│      │                                                        │     ┃ █ Several open problems remain, especially around evaluation. Practical guidance     ┃ │
+│      │                                                        │     ┃ █ often lags behind the evidence. Researchers disagree about the main drivers.       ┃ │
+│      │                                                        │     ┃ █ Markdown tables has changed significantly over the past decade. Readers should     ┃ │
+│      │                                                        │     ┃ █ treat early results with caution.                                                  ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃   Several open problems remain, especially around evaluation. Researchers disagree   ┃ │
+│      │                                                        │     ┃   about the main drivers. Practical guidance often lags behind the evidence.         ┃ │
+│ ---> │                                                        │     ┃   Markdown tables has changed significantly over the past decade. This section       ┃ │
+│      │                                                        │     ┃   summarises the most cited findings.                                                ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃   Practical guidance often lags behind the evidence. Researchers disagree about the  ┃ │
+│      │                                                        │     ┃   main drivers. Markdown tables has changed significantly over the past decade.      ┃ │
+│      │                                                        │<--- ┃   Several open problems remain, especially around evaluation. Readers should treat   ┃ │
+│      │                                                        │     ┃   early results with caution.                                                        ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃   Researchers disagree about the main drivers. Practical guidance often lags behind  ┃ │
+│      │                                                        │     ┃   the evidence. Several open problems remain, especially around evaluation. Readers  ┃ │
+│      │                                                        │     ┃   should treat early results with caution. Markdown tables has changed               ┃ │
+│ ---> │                                                        │     ┃   significantly over the past decade.                                                ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃   Researchers disagree about the main drivers. Several open problems remain,         ┃ │
+│      │                                                        │     ┃   especially around evaluation. Readers should treat early results with caution.     ┃ │
+│      │                                                        │     ┃   This section summarises the most cited findings. Markdown tables has changed       ┃ │
+│      │                                                        │     ┃   significantly over the past decade.                                                ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┃                                                                                      ┃ │
+│      │                                                        │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
+│      └────────────────────────────────────────────────────────┘                                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  n start a note | q quote | j/k paragraph | ]/[ next item | esc close desk | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
