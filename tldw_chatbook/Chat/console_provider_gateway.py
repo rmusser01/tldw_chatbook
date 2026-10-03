@@ -1486,7 +1486,11 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
         category = "provider unavailable"
-    if isinstance(exc, ChatBadRequestError) and getattr(exc, "status_code", None) == 404:
+    if getattr(exc, "status_code", None) == 404 and not isinstance(
+        exc, (ChatAuthenticationError, ChatRateLimitError)
+    ):
+        # TASK-34100.5 AC#4: a 404 is the model, whichever class carried it
+        # (live: Gemini's retired-model 404 arrived as a provider error).
         category = "model or endpoint not found"
     # The catalog name the user sees elsewhere ("NVIDIA NIM", not "nvidia");
     # an unmapped or custom-endpoint id stays as given (TASK-33002.14).

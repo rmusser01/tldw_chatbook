@@ -177,3 +177,49 @@ def test_plain_provider_unavailable_copy_is_unchanged_without_a_body() -> None:
         safe_provider_error_copy("openai", ChatProviderError(status_code=503))
         == "Provider error from OpenAI: provider unavailable. Status: 503."
     )
+
+
+def test_a_404_reads_model_not_found_whatever_error_class_carries_it() -> None:
+    """Live (fresh profile, Gemini, gemini-2.0-flash, 2026-10-03): the 404
+    reached Console as a provider error and read 'provider unavailable.
+    Status: 404.' -- an outage -- although Google said the model is retired."""
+    exc = _raised_from_http(
+        ChatProviderError(
+            provider="google",
+            message="Error from google (Status 404).",
+            status_code=404,
+        ),
+        404,
+        GEMINI_RETIRED_MODEL_404,
+    )
+
+    copy = safe_provider_error_copy("google", exc)
+
+    assert "model or endpoint not found" in copy
+    assert "provider unavailable" not in copy
+
+
+def test_the_agent_failure_summary_keeps_the_whole_fix() -> None:
+    """Live: the agent step summary was cut at 500 characters, so the 404
+    copy ended '...choose another model from the.' and lost its Alt+M fix."""
+    from tldw_chatbook.Chat.provider_failures import FAILURE_SUMMARY_MAX_CHARS
+
+    exc = _raised_from_http(
+        ChatProviderError(
+            provider="google",
+            message="Error from google (Status 404).",
+            status_code=404,
+        ),
+        404,
+        GEMINI_RETIRED_MODEL_404,
+    )
+    copy = _provider_error_copy_with_model_recovery(
+        safe_provider_error_copy("google", exc),
+        model="gemini-2.0-flash",
+        status_code=404,
+    )
+    summary = describe_stream_failure(RuntimeError(copy))
+
+    assert len(summary) <= FAILURE_SUMMARY_MAX_CHARS
+    assert "(Alt+M: Switch model)." in summary[:FAILURE_SUMMARY_MAX_CHARS]
+    assert len(summary) > 500, "the old cut would have dropped the fix"

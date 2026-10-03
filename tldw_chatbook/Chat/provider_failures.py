@@ -51,6 +51,12 @@ def _provider_error_body_detail(response: object) -> str:
     return truncate(detail, 240)
 
 
+#: TASK-34100.5 AC#4: the longest failure summary an agent step keeps. The
+#: provider's reason (<= 200 chars) plus the per-category fix overran the old
+#: 500-character cut, which ended a 404 at '...another model from the.'.
+FAILURE_SUMMARY_MAX_CHARS = 1200
+
+
 def describe_stream_failure(exc: BaseException) -> str:
     """Return user-facing copy classifying a provider stream failure.
 

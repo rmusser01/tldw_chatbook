@@ -8736,6 +8736,7 @@ class AgentService:
                 )
             except Exception as exc:  # noqa: BLE001 — a run never raises out
                 from tldw_chatbook.Chat.provider_failures import (
+                    FAILURE_SUMMARY_MAX_CHARS,
                     describe_stream_failure,
                 )
                 from tldw_chatbook.Chat.console_trace_service import (
@@ -8757,7 +8758,8 @@ class AgentService:
                     status=RUN_ERROR,
                     steps=[
                         self._service_error_step(
-                            run_id, describe_stream_failure(exc)[:500]
+                            run_id,
+                            describe_stream_failure(exc)[:FAILURE_SUMMARY_MAX_CHARS],
                         )
                     ],
                 )
