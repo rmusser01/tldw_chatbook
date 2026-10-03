@@ -15359,6 +15359,20 @@ SplashScreen.hidden {
 }
 
 
+.setup-navigation Button:disabled {
+    text-style: dim;
+}
+
+
+.setup-busy-status {
+    height: auto;
+    color: $text-muted;
+    text-style: italic;
+    padding: $ds-space-0 $ds-space-2;
+}
+.setup-busy-status.hidden { display: none; }
+
+
 
 
 .content-type-card {

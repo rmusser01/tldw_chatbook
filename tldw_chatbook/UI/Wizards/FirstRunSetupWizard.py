@@ -56,6 +56,10 @@ from tldw_chatbook.UI.Wizards.first_run_setup_widgets import (
     ProviderChoiceOption,
 )
 from tldw_chatbook.UI.Wizards.first_run_appearance_step import AppearanceStep
+from tldw_chatbook.UI.Wizards.first_run_busy_status import (
+    SetupBusyStatus,
+    busy_label_for,
+)
 from tldw_chatbook.UI.Wizards.first_run_model_step import ModelStep
 from tldw_chatbook.UI.Wizards.first_run_notes_step import NotesSyncStep
 from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
@@ -1033,6 +1037,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             classes="setup-step-error hidden",
             markup=False,
         )
+        # TASK-34100.1 (cross-cutting-14): a slow Next names its work here.
+        yield SetupBusyStatus(id="setup-busy-status", classes="setup-busy-status")
         # TASK-21140 (UAT W/G findings): the one step-error surface, pinned
         # between the scrollable step body and the nav bar so a refused Next
         # is always explained on screen. Steps' show_step_error() renders
@@ -2053,7 +2059,11 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 if prompt:
                     self._push_advance_confirmation(prompt)
                     return
-        self._set_advancing(True)
+        try:
+            label = busy_label_for(self.steps[self.current_step])
+        except IndexError:
+            label = ""
+        self._set_advancing(True, label)
         run_wizard_worker(
             self, self._advance(), exclusive=True, group="setup-wizard-advance"
         )
@@ -2117,11 +2127,23 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         strip.update("")
         strip.add_class("hidden")
 
-    def _set_advancing(self, active: bool) -> None:
-        """Fence navigation while a step's config handoff is settling."""
+    def _set_advancing(self, active: bool, label: str = "") -> None:
+        """Fence navigation while a step's config handoff is settling.
+
+        TASK-34100.1: also run the busy line, which names ``label`` once the
+        Next has taken longer than about 400 ms.
+        """
 
         self._advancing = active
         self._sync_action_controls()
+        try:
+            busy = self.query_one("#setup-busy-status", SetupBusyStatus)
+        except NoMatches:
+            return
+        if active:
+            busy.start(label)
+        else:
+            busy.stop()
 
     async def _advance(self) -> None:
         started_at = self.current_step  # TASK-33621.14: did a failed Next move?

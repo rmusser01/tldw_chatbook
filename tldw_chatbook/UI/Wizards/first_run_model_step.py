@@ -1004,5 +1004,9 @@ class ModelStep(SetupStep):
             (True, "") if ok else (False, "Saving the provider and model setup failed.")
         )
 
+    def busy_label(self) -> str:
+        """What a slow Next from Model is doing (TASK-34100.1)."""
+        return "Saving the provider and model…"
+
     def get_step_data(self) -> Dict[str, Any]:
         return {"model_id": self._effective_model_id()}
