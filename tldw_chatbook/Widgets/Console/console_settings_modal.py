@@ -3155,13 +3155,12 @@ class ConsoleSettingsModal(
         if block.display:
             body = self.query_one("#console-settings-body", ScrollableContainer)
             focused = self.app.focused
-            if focused is not None and body in focused.ancestors:
+            # Focus in the body, or on a view tab (a switch opens at the top), keeps the scroll.
+            if focused is not None and (
+                body in focused.ancestors or focused.has_class("console-settings-view-tab")
+            ):
                 return
-            block.scroll_visible(
-                animate=False,
-                immediate=True,
-                force=True,
-            )
+            block.scroll_visible(animate=False, immediate=True, force=True)
 
     async def _request_default_recovery(
         self,
@@ -3300,8 +3299,9 @@ class ConsoleSettingsModal(
     @on(Button.Pressed, "#console-settings-view-model, #console-settings-view-context")
     def _switch_settings_view(self, event: Button.Pressed) -> None:
         event.stop()
-        self._show_settings_view(str(event.button.id).rpartition("-")[2])
-        self.call_after_refresh(self._focus_highest_priority_connection)
+        if not event.button.has_class("console-settings-view-active"):  # the shown view: no-op
+            self._show_settings_view("context" if str(event.button.id).endswith("context") else "model")
+            self.call_after_refresh(self._focus_highest_priority_connection)
 
     @on(Button.Pressed, f"#{MODEL_CHANGE_ID}")
     def _change_pressed(self, event: Button.Pressed) -> None:

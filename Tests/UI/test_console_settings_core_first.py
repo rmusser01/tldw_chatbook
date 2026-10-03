@@ -100,6 +100,10 @@ def _modal(app: CoreFirstHarness, settings: ConsoleSessionSettings, **kwargs):
 
 async def _open(pilot, app, modal) -> None:
     await app.push_screen(modal)
+    await _settle(pilot)
+
+
+async def _settle(pilot) -> None:
     for _ in range(4):
         await pilot.pause()
 
@@ -573,15 +577,14 @@ async def test_a_view_switch_opens_the_new_view_at_its_top(
         body = modal.query_one("#console-settings-body", ScrollableContainer)
         if scrolled == "context":
             await pilot.click("#console-settings-view-context")
-            await _open(pilot, app, modal)
-        await _open(pilot, app, modal)
+        await _settle(pilot)
         body.scroll_end(animate=False, immediate=True)
-        await _open(pilot, app, modal)
+        await _settle(pilot)
         assert body.scroll_y > 0, "precondition: the view scrolled"
 
         await pilot.click(f"#console-settings-view-{opened}")
         await pilot.pause(0.2)  # the modal's focus reveal settles on a timer
-        await _open(pilot, app, modal)
+        await _settle(pilot)
 
         viewport = body.content_region
         section = (
@@ -606,8 +609,68 @@ async def test_a_view_switch_to_a_blocked_model_view_focuses_its_fix() -> None:
         await _open(pilot, app, modal)
         await pilot.click("#console-settings-view-model")
         await pilot.pause(0.2)
-        await _open(pilot, app, modal)
+        await _settle(pilot)
         focused = app.focused
         assert focused is not None and focused.id == MODEL_CHANGE_ID
         body = modal.query_one("#console-settings-body", ScrollableContainer)
         assert body.content_region.contains_region(focused.region)
+
+
+def _missing_key_modal(app: CoreFirstHarness, **kwargs) -> ConsoleSettingsModal:
+    app.app_config["api_settings"]["openai"] = {}
+    return _modal(app, _settings("openai", "gpt-5", temperature=0.7), **kwargs)
+
+
+@pytest.mark.parametrize("size", FULL_SCREEN_SIZES)
+@pytest.mark.asyncio
+async def test_a_view_switch_to_a_missing_key_chat_lands_as_open_does(size) -> None:
+    """TASK-33006.7 review: a missing key's Model view opens with the Model
+    row first and Configure credential focused below the tuning rows. A
+    switch used to leave focus on the tab while the new-chat default block
+    (shown for a blocked chat) pulled the body to its end; the fix then
+    scrolled to the top of the viewport, with the Model row above the fold
+    at both sizes. The Context view scrolls only at 211x44."""
+    app = CoreFirstHarness()
+    modal = _missing_key_modal(app, focus_context=True)
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        body = modal.query_one("#console-settings-body", ScrollableContainer)
+        body.scroll_end(animate=False, immediate=True)
+        await _settle(pilot)
+
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause(0.2)  # the modal's focus reveal settles on a timer
+        await _settle(pilot)
+
+        assert modal.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible).collapsed is False
+        credential = modal.query_one("#console-settings-configure-credential", Button)
+        assert app.focused is credential
+        viewport = body.content_region
+        row = modal.query_one("#console-settings-model-row")
+        assert body.scroll_y == 0, (body.scroll_y, row.region)
+        assert viewport.contains_region(row.region)
+        assert "gpt-5 · OpenAI" in _painted(app.screen)[row.region.y]
+        assert viewport.contains_region(credential.region)
+
+
+@pytest.mark.asyncio
+async def test_pressing_the_shown_views_tab_does_nothing() -> None:
+    """TASK-33006.7 review: re-pressing the shown view's tab is not a switch,
+    so it neither moves focus into the view nor re-opens a Connection
+    disclosure the user closed."""
+    app = CoreFirstHarness()
+    modal = _missing_key_modal(app)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        connection = modal.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible)
+        await pilot.click(f"#{CONNECTION_DISCLOSURE_ID} CollapsibleTitle")
+        await _settle(pilot)
+        assert connection.collapsed is True, "precondition: the user closed it"
+
+        await pilot.click("#console-settings-view-model")
+        await pilot.pause(0.2)
+        await _settle(pilot)
+
+        assert connection.collapsed is True
+        focused = app.focused
+        assert focused is not None and focused.id == "console-settings-view-model"
