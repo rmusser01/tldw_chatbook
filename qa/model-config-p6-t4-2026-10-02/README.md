@@ -5,7 +5,7 @@ Chat settings (Ctrl+O), captured from the real app in this worktree at 211x44 an
 The captures come from two runs:
 
 - **01-07** were retaken on 2026-10-03 in the Phase 6 final fix wave, at commit 5ef85f878d (`git status -- tldw_chatbook` clean). The owner ruling of 2026-10-02 makes the closed Sampling title one row; the earlier 01 and 03 showed it wrapping to two.
-- **08-12** are the TASK-33006.4 review-round-1 run (2026-10-03, at that round's tree). The `/endpoint` flow they show is unchanged by the final fix wave.
+- **08-12** are the TASK-33006.4 review-round-1 run (2026-10-03, at that round's tree). The `/endpoint` flow they show is unchanged by the final fix wave. Chat settings behind them predates the fix wave: 08 and 09 still show the old two-row Sampling title ("▶ Sampling ·" / "provider doe…"), and 11 and 12 show a blank dropdown as "Select" beside "built-in … blank = provider default". Both were fixed at 5ef85f878d; see `qa/model-config-33006-captures/` (01, 02, 07) for the current one-row title and blank rows.
 
 ## Setup
 
