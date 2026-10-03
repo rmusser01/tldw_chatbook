@@ -382,18 +382,13 @@ def _run_module_main() -> None:
 
     _set_launch_cwd()
 
-    # TASK-34100.4: unlock through the SAME pre-TUI startup unlock as
-    # `tldw-cli` (Backup_Recovery.launcher.startup_unlock: strict decrypt,
-    # retry, forgotten-password reset). This path used to run a private
-    # Textual PasswordPromptApp that awaited a wait_for_dismiss push outside a
-    # worker, crashed with NoActiveWorker, printed config frame locals
-    # (including the password verifier) and exited 1 on every encrypted
-    # launch. It runs first, before anything loads or writes config.
-    from tldw_chatbook.Backup_Recovery.launcher import startup_unlock
-
-    stopped = startup_unlock()
-    if stopped is not None:
-        raise SystemExit(stopped)
+    # TASK-34100.4: the master-password unlock is NOT here. app.py's
+    # `__main__` guard runs Backup_Recovery.launcher.startup_unlock (strict
+    # decrypt, retry, forgotten-password reset) right after storage
+    # admission, before app.py imports config -- the same function and the
+    # same point as `tldw-cli`. This body used to run a private Textual
+    # PasswordPromptApp that crashed with NoActiveWorker, printed config frame
+    # locals (including the password verifier) and exited 1.
 
     # Initialize logging first
     early_logging_app = initialize_early_logging()  # noqa: F841 -- verbatim

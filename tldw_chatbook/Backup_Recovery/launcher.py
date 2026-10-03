@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import getpass
 import json
+import os
 import sys
 import tomllib
 import warnings
@@ -16,6 +17,11 @@ from pathlib import Path
 #: reasons. ``startup_unlock`` maps them; they never reach ``minimal_recovery``.
 UNLOCK_QUIT_REASON = "configuration_unlock_quit"
 UNLOCK_RESET_REASON = "configuration_unlock_reset"
+#: Recovery reasons with their own plain sentence (review round 1): a served
+#: (browser) child cannot prompt, and "no private terminal" is no longer the
+#: copy for every unexpected unlock failure.
+UNLOCK_SERVED_REASON = "configuration_unlock_served"
+UNLOCK_NO_TERMINAL_REASON = "configuration_unlock_no_terminal"
 
 #: One name for one password everywhere: "master password" (protect-summary-02
 #: found "Configuration password", "Unlock Configuration" and "master password"
@@ -26,11 +32,24 @@ UNLOCK_INTRO = (
 )
 UNLOCK_PROMPT = "Master password (leave empty if you forgot it): "
 UNLOCK_MISMATCH = "That password didn't match. Try again."
-UNLOCK_GIVE_UP = (
-    "Forgot your master password? Resetting removes the encrypted API keys "
-    "from config.toml and turns encryption off. Chats, notes and documents "
-    "are not affected; you re-enter your API keys afterwards in Settings."
+#: The password matches the verifier, but a saved key was encrypted under a
+#: different one (the stranded state an old second enable left behind). The
+#: user typed the RIGHT password; only a reset gets them past it.
+UNLOCK_STRANDED = (
+    "That password is right, but some saved keys were encrypted with a "
+    "different password and can't be read with it. Leave the prompt empty "
+    "to reset the saved keys."
 )
+UNLOCK_VERIFIER_MISSING = (
+    "config.toml says its API keys are encrypted, but the check for the "
+    "master password is missing, so they can't be unlocked."
+)
+UNLOCK_RESET_EXPLAINED = (
+    "Resetting removes the encrypted API keys from config.toml and turns "
+    "encryption off. Chats, notes and documents are not affected; you "
+    "re-enter your API keys afterwards in Settings."
+)
+UNLOCK_GIVE_UP = "Forgot your master password? " + UNLOCK_RESET_EXPLAINED
 UNLOCK_CHOICE_PROMPT = "[R]eset saved keys or [Q]uit: "
 UNLOCK_RESET_DONE = (
     "Saved keys were reset and encryption is off. Re-enter your API keys in "
@@ -43,15 +62,26 @@ UNLOCK_RESET_FAILED = (
 #: Plain sentences for the recovery host instead of a raw reason code.
 _UNLOCK_RECOVERY_COPY = {
     "configuration_unlock_failed": (
-        "The master password could not be checked: no private terminal was "
-        "available to ask for it, or reading it failed. Quit, then relaunch "
-        "chatbook from a terminal to try again."
+        "Checking the master password failed unexpectedly, so the encrypted "
+        "API keys were not unlocked. Nothing was changed. Quit, then relaunch "
+        "chatbook to try again."
+    ),
+    UNLOCK_NO_TERMINAL_REASON: (
+        "The master password could not be asked for: no private terminal was "
+        "available. Quit, then relaunch chatbook from a terminal window to "
+        "enter it."
     ),
     "configuration_unlock_unavailable": (
         "config.toml says its API keys are encrypted, but the check for its "
-        "master password is missing, so it cannot be unlocked. Quit, then restore "
-        "config.toml from a backup or remove its [encryption] table and "
-        "re-enter your keys."
+        "master password is missing, so they cannot be unlocked. Quit, then "
+        "relaunch chatbook from a terminal window: it offers to reset the "
+        "saved keys. Chats, notes and documents are not affected."
+    ),
+    UNLOCK_SERVED_REASON: (
+        "This browser session can't ask for the master password, so the "
+        "encrypted API keys can't be unlocked here. Run chatbook in a "
+        "terminal instead, or turn encryption off there in Settings > "
+        "Privacy & Security before serving it."
     ),
 }
 
@@ -75,6 +105,30 @@ def _choice(prompt: str) -> str:
     return line
 
 
+def _stdin_is_terminal() -> bool:
+    """Whether a person can answer an echoed question on standard input."""
+    try:
+        return bool(sys.stdin) and sys.stdin.isatty()
+    except (AttributeError, OSError, ValueError):
+        return False
+
+
+def _served_child() -> bool:
+    """Whether this process is a textual-serve (browser) session child.
+
+    Its stdin is the web driver's pipe, and getpass would open the SERVER
+    operator's controlling terminal (textual-serve spawns without setsid), so
+    the browser would hang while the prompt shows on the server's terminal.
+    """
+    return os.environ.get("CHATBOOK_SERVED_CHILD") == "1" or "web_driver" in (
+        os.environ.get("TEXTUAL_DRIVER") or ""
+    )
+
+
+class _PrivatePromptUnavailable(ValueError):
+    """No private terminal is available to ask for a password."""
+
+
 def _secret(prompt: str) -> str:
     """Refuse getpass's echoed fallback when no private terminal is available."""
     with warnings.catch_warnings():
@@ -82,7 +136,9 @@ def _secret(prompt: str) -> str:
         try:
             return getpass.getpass(prompt)
         except getpass.GetPassWarning:
-            raise ValueError("private_password_prompt_unavailable") from None
+            raise _PrivatePromptUnavailable(
+                "private_password_prompt_unavailable"
+            ) from None
 
 
 def startup_preflight() -> tuple[str | None, str | None]:
@@ -112,17 +168,30 @@ def startup_preflight() -> tuple[str | None, str | None]:
             return None, None
         from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 
+        if _served_child():
+            return UNLOCK_SERVED_REASON, None
         verifier = encryption.get("password_verifier")
         if not isinstance(verifier, str) or not verifier:
-            return "configuration_unlock_unavailable", None
+            # No password can unlock this file, but the reset needs none:
+            # offer it where someone can answer (review round 1; the old copy
+            # sent the user to hand-edit config.toml).
+            if not _stdin_is_terminal():
+                return "configuration_unlock_unavailable", None
+            _say(UNLOCK_VERIFIER_MISSING)
+            return _give_up_choice(UNLOCK_RESET_EXPLAINED), None
         return _unlock_interactively(ConfigEncryption(), document, verifier)
+    except KeyboardInterrupt:
+        # Ctrl+C anywhere before the TUI quits; it is not a recovery problem.
+        _say("")
+        return UNLOCK_QUIT_REASON, None
+    except _PrivatePromptUnavailable:
+        return UNLOCK_NO_TERMINAL_REASON, None
     except (
         OSError,
         ValueError,
         RuntimeError,
         ImportError,
         EOFError,
-        KeyboardInterrupt,
     ):
         reason = (
             "configuration_unlock_failed"
@@ -156,28 +225,34 @@ def _unlock_interactively(engine, document, verifier) -> tuple[str | None, str |
             return UNLOCK_QUIT_REASON, None
         if not password:
             return _give_up_choice(), None
-        if engine.verify_password(password, verifier) and _decrypts(
-            engine, document, password
-        ):
+        try:
+            # Ctrl+C after Enter lands here, while scrypt runs: still a quit.
+            verified = engine.verify_password(password, verifier)
+            readable = verified and _decrypts(engine, document, password)
+        except (EOFError, KeyboardInterrupt):
+            _say("")
+            return UNLOCK_QUIT_REASON, None
+        if readable:
             return None, password
         password = None
-        _say(UNLOCK_MISMATCH)
+        _say(UNLOCK_STRANDED if verified else UNLOCK_MISMATCH)
 
 
 def _decrypts(engine, document, password: str) -> bool:
     """Strict decrypt: a password that passes the verifier but cannot read
     every saved key (the stranded state a second enable used to produce) is
-    not an unlock -- the app would otherwise start with ciphertext as keys."""
+    not an unlock -- the app would otherwise start with ciphertext as keys.
+    The failure is reported to the user, so it is not logged as an error."""
     try:
-        engine.decrypt_config_strict(document, password)
+        engine.decrypt_config_strict(document, password, log_failure=False)
     except ValueError:
         return False
     return True
 
 
-def _give_up_choice() -> str:
+def _give_up_choice(intro: str = UNLOCK_GIVE_UP) -> str:
     """Offer the forgotten-password exits until one is chosen."""
-    _say(UNLOCK_GIVE_UP)
+    _say(intro)
     while True:
         try:
             answer = _choice(UNLOCK_CHOICE_PROMPT).strip().lower()

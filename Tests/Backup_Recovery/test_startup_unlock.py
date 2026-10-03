@@ -38,14 +38,29 @@ import toml
 from tldw_chatbook.Utils.config_encryption import ConfigEncryption
 engine = ConfigEncryption()
 verifier = engine.create_password_verifier('unlock-sentinel')
+# 'stranded': the state a second enable used to leave behind -- the verifier
+# is for 'unlock-sentinel', but the saved key is encrypted under another one.
+key_password = 'stranded-sentinel' if condition.startswith('stranded') else 'unlock-sentinel'
+data_root = selector.parent.parent / 'data'
+chats_db = data_root / 'chats-sentinel.db'
+media_db = data_root / 'media-sentinel.db'
+chats_db.write_bytes(b'chats, notes: SQLite sentinel bytes')
+media_db.write_bytes(b'documents: SQLite sentinel bytes')
 document = {
     'general': {'users_name': 'selected'},
+    'database': {'chachanotes_db_path': str(chats_db), 'media_db_path': str(media_db)},
     'api_settings': {'openai': {
-        'api_key': engine.encrypt_value('sentinel-key', 'unlock-sentinel'),
+        'api_key': engine.encrypt_value('sentinel-key', key_password),
         'model': 'gpt-4o',
     }},
     'encryption': {'enabled': True, 'password_verifier': verifier},
 }
+if condition.startswith('no-verifier'):
+    del document['encryption']['password_verifier']
+if condition == 'served':
+    # textual-serve's child: stdin is the web driver's pipe and getpass would
+    # open the SERVER operator's terminal.
+    os.environ['CHATBOOK_SERVED_CHILD'] = '1'
 selector.write_text(toml.dumps(document))
 selector.chmod(0o600)
 before = selector.read_bytes()
@@ -59,9 +74,32 @@ answers = {
     'reset': [''],
     'forced-failure': ['typed-secret-sentinel'],
     'forced-crash': ['typed-secret-sentinel'],
+    'stranded': ['unlock-sentinel', ''],
+    'stranded-reset': ['unlock-sentinel', ''],
+    'interrupt-during-check': ['typed-secret-sentinel'],
+    'no-verifier': [],
+    'no-verifier-headless': [],
+    'served': [],
+    'no-terminal': [],
 }[condition]
-choices = {'wrong-then-quit': ['q'], 'reset': ['r']}.get(condition, [])
-launcher.getpass.getpass = lambda prompt: answers.pop(0)
+choices = {
+    'wrong-then-quit': ['q'],
+    'reset': ['r'],
+    'stranded': ['q'],
+    'stranded-reset': ['r'],
+    'no-verifier': ['r'],
+}.get(condition, [])
+def secret(prompt):
+    if 'CONFIG_IMPORTED_BEFORE_PROMPT' not in seen:
+        seen.add('CONFIG_IMPORTED_BEFORE_PROMPT')
+        print('CONFIG_IMPORTED_BEFORE_PROMPT=' + str('tldw_chatbook.config' in sys.modules))
+    if condition == 'no-terminal':
+        # getpass's echoed fallback when no private terminal is available.
+        raise launcher.getpass.GetPassWarning('Can not control echo on the terminal.')
+    return answers.pop(0)
+seen = set()
+launcher.getpass.getpass = secret
+launcher._stdin_is_terminal = lambda: condition != 'no-verifier-headless'
 launcher._choice = lambda prompt: (sys.stderr.write(prompt), choices.pop(0))[1]
 observed = []
 launcher.minimal_recovery = lambda reason: observed.append(reason) or 17
@@ -73,6 +111,11 @@ if condition == 'forced-crash':
     def crashing(self, password, verifier):
         raise TypeError('unexpected verifier type')
     ConfigEncryption.verify_password = crashing
+if condition == 'interrupt-during-check':
+    # Ctrl+C lands after Enter, while the scrypt check is still running.
+    def interrupted(self, password, verifier):
+        raise KeyboardInterrupt
+    ConfigEncryption.verify_password = interrupted
 class ReachedApplication(Exception):
     pass
 original = builtins.__import__
@@ -106,6 +149,16 @@ text = selector.read_text()
 print('FILE_UNCHANGED=' + str(selector.read_bytes() == before))
 print('FILE_HAS_CIPHERTEXT=' + str('enc:' in text))
 print('FILE_HAS_ENCRYPTION=' + str('[encryption]' in text))
+import tomllib
+database = tomllib.loads(text).get('database', {})
+print('DB_SETTINGS_KEPT=' + str(
+    database.get('chachanotes_db_path') == str(chats_db)
+    and database.get('media_db_path') == str(media_db)
+))
+print('DB_FILES_UNCHANGED=' + str(
+    chats_db.read_bytes() == b'chats, notes: SQLite sentinel bytes'
+    and media_db.read_bytes() == b'documents: SQLite sentinel bytes'
+))
 assert not blocked_attempts(), blocked_attempts()
 """
 
@@ -149,6 +202,7 @@ def _secrets_absent(result: subprocess.CompletedProcess, verifier: str) -> None:
     assert all(body[i : i + 16] not in output for i in range(0, len(body) - 16, 8))
     assert "typed-secret-sentinel" not in output
     assert "unlock-sentinel" not in output
+    assert "stranded-sentinel" not in output
 
 
 @pytest.mark.timeout(240)
@@ -162,6 +216,13 @@ def test_module_entry_unlocks_with_the_right_password(tmp_path):
     assert "RECOVERY=\n" in out
     assert "Enter the master password you set during setup." in result.stderr
     assert "NoActiveWorker" not in result.stderr
+    # Review round 1 (G4-R1-F3): the module path unlocks before app.py
+    # imports config, exactly like tldw-cli -- so config never loads the
+    # still-encrypted file first and no "no password is set" warning prints
+    # above the prompt.
+    above_prompt = result.stderr.split("Your saved API keys are encrypted.", 1)[0]
+    assert "no password is set" not in above_prompt, above_prompt[-2000:]
+    assert "CONFIG_IMPORTED_BEFORE_PROMPT=False" in out
     _secrets_absent(result, verifier)
 
 
@@ -199,6 +260,99 @@ def test_module_entry_reset_strips_encrypted_keys_and_opens_the_app(tmp_path):
     assert "FILE_HAS_CIPHERTEXT=False" in out
     assert "FILE_HAS_ENCRYPTION=False" in out
     assert "Saved keys were reset" in result.stderr
+    # Chats, notes and documents are untouched: the reset writes only the
+    # encrypted values and [encryption] out of config.toml.
+    assert "DB_SETTINGS_KEPT=True" in out
+    assert "DB_FILES_UNCHANGED=True" in out
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_right_password_over_stranded_keys_says_so_and_never_unlocks(tmp_path):
+    # Review round 1 (TASK-34100.4): the verifier is for the typed password,
+    # but a saved key is encrypted under another one -- the state a second
+    # enable used to leave behind. Strict decrypt refuses the unlock; the user
+    # is told the password is RIGHT and that reset is the way out, and no
+    # decrypt error is logged between the prompts.
+    result, verifier = _run_module_entry(tmp_path, "stranded")
+    out = result.stdout
+    assert "EXIT=0" in out, result.stderr[-4000:]
+    assert "REACHED_APPLICATION" not in out
+    assert "RECOVERY=\n" in out
+    assert "FILE_UNCHANGED=True" in out
+    assert "That password is right, but some saved keys" in result.stderr
+    assert "That password didn't match" not in result.stderr
+    assert "Decryption failed" not in result.stderr
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_stranded_keys_can_be_reset_from_the_prompt(tmp_path):
+    result, verifier = _run_module_entry(tmp_path, "stranded-reset")
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "PASSWORD_CLEARED=True" in out
+    assert "FILE_HAS_CIPHERTEXT=False" in out
+    assert "FILE_HAS_ENCRYPTION=False" in out
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_ctrl_c_during_the_password_check_quits_without_recovery(tmp_path):
+    # Review round 1: Ctrl+C after Enter (while scrypt runs) used to open the
+    # recovery host with "no private terminal ... or reading it failed".
+    result, verifier = _run_module_entry(tmp_path, "interrupt-during-check")
+    out = result.stdout
+    assert "EXIT=0" in out, result.stderr[-4000:]
+    assert "RECOVERY=\n" in out
+    assert "FILE_UNCHANGED=True" in out
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_missing_verifier_offers_the_reset_in_a_terminal(tmp_path):
+    # Review round 1: encryption on but no verifier used to send the user to
+    # hand-edit config.toml; the same safe reset is offered instead.
+    result, verifier = _run_module_entry(tmp_path, "no-verifier")
+    out = result.stdout
+    assert "REACHED_APPLICATION" in out, result.stderr[-4000:]
+    assert "RECOVERY=\n" in out
+    assert "check for the master password is missing" in result.stderr
+    assert "[R]eset saved keys or [Q]uit" in result.stderr
+    assert "FILE_HAS_CIPHERTEXT=False" in out
+    assert "FILE_HAS_ENCRYPTION=False" in out
+    assert "DB_FILES_UNCHANGED=True" in out
+
+
+@pytest.mark.timeout(240)
+def test_missing_verifier_without_a_terminal_opens_the_recovery_host(tmp_path):
+    result, _verifier = _run_module_entry(tmp_path, "no-verifier-headless")
+    assert "EXIT=17" in result.stdout, result.stderr[-4000:]
+    assert "RECOVERY=configuration_unlock_unavailable" in result.stdout
+    assert "FILE_UNCHANGED=True" in result.stdout
+
+
+@pytest.mark.timeout(240)
+def test_served_child_never_prompts_on_the_server_terminal(tmp_path):
+    # Review round 1: `tldw-cli --serve` spawns `python -m tldw_chatbook.app`
+    # per browser session. getpass would open the server operator's terminal
+    # and hang the browser; the child shows the recovery host (rendered in
+    # the browser) with a plain sentence instead.
+    result, verifier = _run_module_entry(tmp_path, "served")
+    out = result.stdout
+    assert "EXIT=17" in out, result.stderr[-4000:]
+    assert "RECOVERY=configuration_unlock_served" in out
+    assert "Master password" not in result.stderr
+    assert "FILE_UNCHANGED=True" in out
+    _secrets_absent(result, verifier)
+
+
+@pytest.mark.timeout(240)
+def test_no_private_terminal_has_its_own_reason(tmp_path):
+    result, verifier = _run_module_entry(tmp_path, "no-terminal")
+    assert "EXIT=17" in result.stdout, result.stderr[-4000:]
+    assert "RECOVERY=configuration_unlock_no_terminal" in result.stdout
+    assert "FILE_UNCHANGED=True" in result.stdout
     _secrets_absent(result, verifier)
 
 
@@ -219,7 +373,13 @@ def test_unexpected_unlock_crash_prints_no_secret(tmp_path):
 
 
 @pytest.mark.parametrize(
-    "reason", ["configuration_unlock_failed", "configuration_unlock_unavailable"]
+    "reason",
+    [
+        "configuration_unlock_failed",
+        "configuration_unlock_unavailable",
+        "configuration_unlock_no_terminal",
+        "configuration_unlock_served",
+    ],
 )
 async def test_recovery_host_explains_unlock_problems_without_backup_restore(reason):
     from textual.widgets import Static
@@ -234,6 +394,12 @@ async def test_recovery_host_explains_unlock_problems_without_backup_restore(rea
         text = str(app.query_one("#minimal-recovery-reason", Static).render())
         assert "master password" in text
         assert reason not in text
+        # Review round 1: no unlock copy sends the user to hand-edit
+        # config.toml, and the generic failure no longer blames a missing
+        # terminal it never checked for.
+        assert "remove its [encryption] table" not in text
+        if reason != "configuration_unlock_no_terminal":
+            assert "no private terminal" not in text
         await pilot.click("#minimal-recovery-open")
         await pilot.pause()
         assert isinstance(app.screen, BackupRestoreScreen)
