@@ -293,7 +293,14 @@ class AdaptivePaneGrip(Button):
 
     @on(Button.Pressed)
     def request_toggle(self, event: Button.Pressed) -> None:
-        """Translate native Button activation into the shell message."""
+        """Translate native Button activation into the shell message.
+
+        Args:
+            event: The ``Button.Pressed`` message. It bubbles up from any
+                button below this grip, so it is acted on only when this grip
+                is the button that was pressed; presses from other buttons
+                are ignored and left to bubble on to their own handlers.
+        """
         if event.button is not self:
             return
         event.stop()

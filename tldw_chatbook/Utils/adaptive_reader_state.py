@@ -113,12 +113,19 @@ class AdaptiveReaderLayoutPreferences:
 
         A property, never a field: fields drive equality, ``astuple`` and
         ``replace``, which the golden grid pins.
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
         """
         return self.library_open
 
     @property
     def nav_width(self) -> int:
-        """Neutral read-only name for ``library_width`` (Roleplay frame B0)."""
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
         return self.library_width
 
 
@@ -166,12 +173,20 @@ class AdaptiveReaderEffectiveLayout:
 
     @property
     def nav_open(self) -> bool:
-        """Neutral read-only name for ``library_open`` (Roleplay frame B0)."""
+        """Neutral read-only name for ``library_open`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_open`` value, under a destination-neutral name.
+        """
         return self.library_open
 
     @property
     def nav_width(self) -> int:
-        """Neutral read-only name for ``library_width`` (Roleplay frame B0)."""
+        """Neutral read-only name for ``library_width`` (Roleplay frame B0).
+
+        Returns:
+            The ``library_width`` value, under a destination-neutral name.
+        """
         return self.library_width
 
 
