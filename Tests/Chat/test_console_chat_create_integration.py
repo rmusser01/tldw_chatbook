@@ -26,6 +26,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp
 
 
+#: Event waits and worker joins share the existing bounded race-test deadline.
+_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
+
+
 class _FakeConfirm:
     def __init__(self, decisions):
         self.decisions = list(decisions)
@@ -792,7 +796,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         """
         if close_at == "durable-create":
             entered.set()
-            assert release.wait(5)
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
         conversation_id = original_create(**kwargs)
         created.append(conversation_id)
         return conversation_id
@@ -811,7 +815,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
         if close_at.startswith("ui-handoff") and threading.current_thread() is worker:
             queued.append((callback, args, kwargs))
             entered.set()
-            assert release.wait(5)
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
             if close_at == "ui-handoff-error":
                 raise RuntimeError("App is not running")
             return result["ui_result"]
@@ -834,7 +838,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
     worker = threading.Thread(target=execute)
     worker.start()
     try:
-        assert entered.wait(5)
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
         ticket = controller.begin_session_close(
             source.id,
             expected_revision=controller.lifecycle_impact(
@@ -848,7 +852,7 @@ def test_inflight_create_cannot_publish_after_its_source_closes(
             result["ui_result"] = callback(*args, **kwargs)
     finally:
         release.set()
-        worker.join(timeout=5)
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not worker.is_alive()
     assert _live_conversation_count(db) == before
     assert "error" not in result

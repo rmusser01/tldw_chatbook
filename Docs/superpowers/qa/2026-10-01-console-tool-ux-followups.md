@@ -776,3 +776,13 @@ storage variants. Fresh full artifact preflight and zero-new Ruff34 pass.
 Code anchor:c0c459d5654c59481a88e685593210efb059d02d.
 Original grouped17-journey,147-case and native27/29 receipts retain their original head/byte identities. All grouped Console test source pins and production/runtime pins retain bytes across this rebase. The inherited Roleplay quit behavior is not claimed as a new native or mounted Roleplay replay here; its upstream files are exact and the expanded shared quit architecture/37 mounted and startup guards pass. No budget, snapshot, counter, canary, tick, deadline, authority or global CI changes; no full sweep. Final published-head CI/Qodo and current dev remain required.
 QA roleplay_quit_base_final_followup records the exact source manifest and limits.
+
+
+Qodo chat-create synchronization deadline naming (4ae8306e, 2026-10-03 UTC)
+
+The existing five-second event/worker deadline is now named by one private
+constant in each of the two Chat test modules. All16 related waits/joins use
+the same value. Both complete modules pass56 cases, zero failures/errors/skips.
+Range format, zero-new Ruff34 and full artifact preflight pass.
+Only two test-module source pins change; all235 other source pins, production/runtime, grouped UI fixtures and helper owners retain bytes. Whole affected module executable ASTs are identical after replacing the private names with5 and removing their assignments. Current56-case receipts qualify real workers/SQLite in both complete modules; original42/147/native/grouped17 receipts keep recorded identities with this mechanical equivalence proof. Deadlines remain5s/180s/20m; no full suite, new abstraction/dependency or CI/budget change. Fresh published-head review/all four checks/latest dev required before normal merge.
+QA chat_create_timeout_review_followup records current237pins, receipts and limits.

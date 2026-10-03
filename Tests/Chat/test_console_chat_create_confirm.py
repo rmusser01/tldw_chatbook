@@ -11,6 +11,10 @@ from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until  # reuse fakes
 
 
+#: Event waits and worker joins share the existing bounded race-test deadline.
+_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
+
+
 @pytest.fixture
 def make_controller():
     made = []
@@ -41,7 +45,7 @@ def test_allow_round_trip(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert result["decision"] == {"allow": True, "remember": False}
 
 
@@ -53,7 +57,7 @@ def test_deny_round_trip(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(False, False, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert result["decision"] == {"allow": False, "remember": False}
 
 
@@ -77,7 +81,7 @@ def test_remember_grants_session_scope(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(True, True, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
 
     # Second call in the same session: no card, straight allow. ("s1" is
     # not the store's active session, so round 1 PARKED -- it never
@@ -101,7 +105,7 @@ def test_remember_grants_session_scope(make_controller):
     t2.start()
     _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
-    t2.join(timeout=5)
+    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert results[-1] == {"allow": True, "remember": False}
 
 
@@ -136,7 +140,7 @@ def test_revoking_a_run_denies_its_chat_create_confirm(make_controller):
 
     assert controller.revoke_approval_rounds_for_run("run-chat-a") == 1
 
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not t.is_alive(), "the revoked confirm never released its thread"
     assert results["decision"] == {"allow": False, "remember": False}
     assert controller.pending_chat_create_ids() == []  # torn down, not armed
@@ -208,7 +212,7 @@ def _arm_and_capture(controller, payload, session_id):
     controller.resolve_pending_chat_create(
         False, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not t.is_alive(), "the confirm round never released its thread"
     return card, result["decision"]
 
@@ -322,7 +326,7 @@ def test_confirm_payload_run_id_is_the_true_run(make_controller):
     controller.resolve_pending_chat_create(
         True, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t2.join(timeout=5)
+    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     payload = controller.pending_chat_create_payloads[0]
     assert payload["run_id"] == "run-TRUE-1"
 
@@ -366,7 +370,7 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
     controller.resolve_pending_chat_create(
         True, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     # No silent grant ride: a card was armed (round existed) and decided.
     assert decisions == [{"allow": True, "remember": False}]
     assert payload_seen["agent_kind"] == "subagent"
@@ -431,7 +435,7 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
             # A protected write must finish before Close's cancellation sweep;
             # waiting for Close while holding its lock would deadlock the test.
             if not protected:
-                assert release.wait(5)
+                assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
             return super().setdefault(key, default)
 
     controller._chat_create_session_grants = PausedGrants()
@@ -448,9 +452,9 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
         controller.resolve_pending_chat_create(
             True, True, request_id=controller.pending_chat_create_ids()[0]
         )
-        assert entered.wait(5)
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
         if results["protected_write"]:
-            worker.join(timeout=5)
+            worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
             assert not worker.is_alive()
         ticket = controller.begin_session_close(
             session.id,
@@ -462,7 +466,7 @@ def test_close_cannot_resurrect_a_remembered_chat_create_grant(make_controller):
         assert not any(s.id == session.id for s in controller.store.sessions())
     finally:
         release.set()
-        worker.join(timeout=5)
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not worker.is_alive()
     assert results["decision"] == {"allow": True, "remember": True}
     assert session.id not in controller._chat_create_session_grants

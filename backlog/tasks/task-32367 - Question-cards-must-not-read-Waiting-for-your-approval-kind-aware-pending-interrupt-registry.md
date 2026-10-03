@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-02 20:22'
+updated_date: '2026-10-03 02:36'
 labels:
   - console
   - approvals
@@ -67,6 +67,8 @@ Reason: Suppress late cancellation output at the existing synchronous UI handoff
 12. Reproduce both new_chat/fork_chat with real SQLite creation paused after entry and with completion queued across actual Close. Assert refused outcome, no UI completion and no live orphan, explicitly distinguishing soft-delete from physical rollback.
 13. Recheck source currentness after worker I/O and at the UI-thread completion gate; on refusal discard the just-created conversation using the existing worker-side orphan helper. Keep UI callbacks/DB work outside pending-round locks and do not wait on a worker from the UI. Resolve the current view sink at handoff, preserving live-source durable results across view detachment. Distinguish pre-admission dispatch failure from an already-admitted completion exception, so cleanup never deletes a chat already placed in the store.
 14. Add the test helper Returns docs, run affected regressions/consent/Close/UI and ordinary performance/preflight/lint guards, peer review and fresh native replay; require fresh final-head Qodo/all four CI gates before normal merge.
+
+Qodo4ae8306e final-head maintainability follow-up: name the existing five-second chat-create synchronization deadline per test module and use it for related event waits/worker joins. Preserve exact value and all executable module AST after constant substitution. Run both complete affected Chat test modules against real SQLite/worker seams, zero-new lint/range format and artifact preflight. No production, timeout/cap, budget, interface or authority changes. ADR required: no. ADR path: N/A (mechanical test-only refactor preserving contracts). Require refreshed final-head review/all four gates/latest dev before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -95,4 +97,6 @@ Final-head Qodo finding ece44de5-bd8f-4ef5-97a1-77cebdc2e262 is fixed at the exi
 Reopened for fresh exact-head Qodo59151d44-d74b-48d8-9844-aeeb441d6079: an executor already past entry can outlive bounded Close and queue a late created-chat completion. Existing orphan cleanup is best-effort soft-delete, not physical rollback; acceptance remains no live created chat/no late UI handoff. Helper Returns rulee7e76a0b-b7b4-476b-9ea5-665267b9629c will be corrected.
 
 In-flight Qodo59151d44 and helper-doc rulee7e76a0 are fixed at the existing shared completion boundary: qualify source ownership after worker I/O and synchronously on UI, resolve the current sink, and reuse worker-side best-effort orphan soft-delete when Close wins. Track local UI admission so later retirement never deletes an already-placed chat or masks its original exception. No lock/transaction spans UI handoff; detached live views preserve durable results. Seven interleaving cases reproduced the prior failures; all nine race/view cases pass in the final combined verification. Rebased onto devbb865f5cfe (Resend preserved, combined census124). 78 unique affected/Resend/ordinary-storage checks pass with zero failures/errors/skips; artifact preflight and edited-range formatting pass;25 changed Python files add zero Ruff diagnostics; independent source/integration reviews clear. Native approval24 passes9 journeys and Close27 six real worker closes plus short-terminal geometry; source pins stable, apps/PTYs/sockets clean, no egress and real profiles unchanged. Terminal AX unqualified; native scope excludes the forced race and broader provider/hooks/plugins/MCP coverage. User guide/incident lesson/QA updated. Existing ADR094/150 apply; no new owner or rollback contract. Fresh published-head Qodo/all four CI gates and verified normal merge remain required in PR2953.
+
+Qodo4ae8306e names the existing5s chat-create synchronization timeout in each affected test module;16 related event waits/joins retain exact limits. Whole executable module ASTs unchanged after private constant substitution/removal;235 other pins exact (237 current). Both complete Chat modules pass56 cases, zero failures/errors/skips, real worker/SQLite seams retained. Range format, zero-new Ruff34/full preflight pass. Production/groupedUI/helper owners unchanged; original42/147/native/grouped17 receipts retain identities with mechanical equivalence. No ADR required: test-only refactor, no boundary/dependency/budget/CI/cap changes. QA chat_create_timeout_review_followup records proof. Final published-head review/all four gates/current dev still required for normal merge.
 <!-- SECTION:NOTES:END -->
