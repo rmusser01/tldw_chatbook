@@ -1297,8 +1297,12 @@ actions, each gated by a password dialog that opens with its field focused:
 Each action runs in the background and reports its result on the card ("Done:
 …", "That password didn't match. Nothing was changed.", or a failure line). A
 failed action never leaves config.toml half-written: the previous file is
-restored. Startup unlock, the forgotten-password reset and what happens with a
-wrong password are described in
+restored. If restoring it fails too, the card says config.toml may have changed
+and the state line shows what the file holds now. **Encrypt keys…** also
+refuses when encryption is off but a saved key is still encrypted with an
+earlier password; the card names that setting so you can re-enter or clear the
+key in Providers & Models first. Startup unlock, the forgotten-password reset
+and what happens with a wrong password are described in
 [First-Run Setup](First_Run_Setup.md#starting-chatbook-when-your-keys-are-encrypted).
 
 Below it is a read-out of your privacy posture: whether redaction is active,

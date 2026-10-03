@@ -131,17 +131,30 @@ Master password (leave empty if you forgot it):
 
 - **A wrong password** prints "That password didn't match. Try again." and
   asks again. There is no limit on attempts.
+- **The right password, but a key encrypted with a different one** (left
+  behind by an older version that let you set a second password) prints
+  "That password is right, but some saved keys were encrypted with a
+  different password and can't be read with it." The app does not open with
+  keys it cannot read; leave the prompt empty to reset them.
 - **Forgot it?** Press Enter on an empty prompt. chatbook explains what a
   reset does and offers `[R]eset saved keys or [Q]uit`. **Reset** removes
   every encrypted value from config.toml and turns encryption off, then opens
   the app; chats, notes and documents are not touched, and you re-enter your
   API keys in Settings ▸ Providers & Models. **Quit** leaves everything as it
   was.
-- **Ctrl+C or Ctrl+D** at the prompt quits without changing anything.
+- **Ctrl+C or Ctrl+D** at the prompt, or while the password is being
+  checked, quits without changing anything.
+- **config.toml says encryption is on but its password check is missing**:
+  chatbook says so and offers the same `[R]eset saved keys or [Q]uit` choice.
 - If chatbook cannot ask privately (no terminal attached), it opens a small
   recovery window that says so in plain words; relaunch from a terminal to try
   again. Backup & Restore stays one button away there but no longer opens on
   its own.
+- **Browser sessions (`tldw-cli --serve`) cannot ask for the master
+  password.** Each browser session shows that recovery window instead of
+  prompting on the server's terminal. To serve chatbook in a browser, turn
+  encryption off first (from a terminal launch, in Settings ▸ Privacy &
+  Security ▸ Encryption).
 
 A saved key that is still encrypted is never treated as a usable key: if a
 key cannot be decrypted, its provider shows as not set up rather than ready.
