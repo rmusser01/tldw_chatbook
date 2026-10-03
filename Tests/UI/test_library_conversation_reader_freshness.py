@@ -55,6 +55,9 @@ class _ScriptedDetailService(_StaticLibraryConversationDetailService):
 
     ``recheck_gate``, when set, holds every one-message, one-character read
     (the re-check's shape) on a worker thread until the test releases it.
+    ``page_gate``, when set, holds every other read the same way, but only
+    after the response is built: a released page carries the transcript as
+    saved when it was read, as a slow storage read does.
     """
 
     def __init__(self, conversations: list[dict[str, Any]]) -> None:
@@ -64,6 +67,8 @@ class _ScriptedDetailService(_StaticLibraryConversationDetailService):
         self.recheck_gate: threading.Event | None = None
         self.recheck_started = threading.Event()
         self.recheck_error: Exception | None = None
+        self.page_gate: threading.Event | None = None
+        self.page_started = threading.Event()
 
     def set_saved_count(self, conversation_id: str, count: int) -> None:
         self._records[conversation_id] = {
@@ -83,6 +88,9 @@ class _ScriptedDetailService(_StaticLibraryConversationDetailService):
         response = super().get_library_conversation_messages(conversation_id, **kwargs)
         if response is not None and conversation_id in self.epochs:
             response["message_epoch"] = self.epochs[conversation_id]
+        if not _is_recheck(kwargs) and self.page_gate is not None:
+            self.page_started.set()
+            assert self.page_gate.wait(timeout=10)
         return response
 
 
@@ -118,10 +126,14 @@ async def _open_alpha(
     return screen, host.app_instance.local_chat_conversation_service
 
 
-def _harness(service: _ScriptedDetailService | None = None) -> LibraryHarness:
+def _harness(
+    service: _ScriptedDetailService | None = None,
+    records: list[dict[str, Any]] | None = None,
+) -> LibraryHarness:
+    records = records or _records()
     app = _build_test_app()
-    _seed_conversations(app, _records())
-    app.local_chat_conversation_service = service or _ScriptedDetailService(_records())
+    _seed_conversations(app, records)
+    app.local_chat_conversation_service = service or _ScriptedDetailService(records)
     screen = LibraryScreen(app)
     screen.restore_state({"library_selected_row_id": LIBRARY_ROW_BROWSE_CONVERSATIONS})
     return LibraryHarness(app, screen=screen)
@@ -356,6 +368,73 @@ async def test_recheck_superseded_by_another_selection_never_reloads_it() -> Non
         assert (state.selected_id, state.loaded_id) == ("chat-b", "chat-b")
         assert state.loaded_actions_eligible
         assert _page_reads(service, "chat-a") == alpha_reads
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("beta_versioned", [True, False], ids=["versioned", "bootstrap"])
+async def test_load_pending_across_a_list_read_is_rechecked_once_it_settles(
+    monkeypatch: pytest.MonkeyPatch, beta_versioned: bool
+) -> None:
+    """A load in flight when the list re-reads may settle a pre-write page.
+
+    Beta's page is read before the write but lands after the return visit's
+    list read, which found the reader busy and could not re-check it then.
+    The re-check runs once that load settles and reloads the moved transcript.
+    A list record without a version loads through the version bootstrap,
+    which selects once more before it settles the same pre-write page.
+    """
+    records = _records()
+    if not beta_versioned:
+        del records[1]["version"]
+    service = _ScriptedDetailService(records)
+    host = _harness(service, records)
+    async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
+        screen, _ = await _open_alpha(pilot, host)
+        await screen.workers.wait_for_complete()
+        controller = screen._conversation_reader_controller
+        ensure = controller._ensure_library_conversation_reader_selection
+        ensured_after_apply: list[int] = []
+
+        def _recording_ensure() -> None:
+            ensure()
+            if not screen._conversations_state.loading:
+                ensured_after_apply.append(
+                    screen._conversations_state.request_generation
+                )
+
+        monkeypatch.setattr(
+            controller, "_ensure_library_conversation_reader_selection", _recording_ensure
+        )
+        service.page_gate = threading.Event()
+        try:
+            screen.query_one("#library-conversation-row-1", Button).press()
+            await asyncio.to_thread(service.page_started.wait, 10)
+            service.set_saved_count("chat-b", 2)
+            list_read = screen._conversations_state.request_generation
+
+            await _leave_and_return(host, pilot)
+            # The return visit's list read has applied and asked the reader.
+            await _wait_for_condition(
+                pilot,
+                lambda: any(read > list_read for read in ensured_after_apply),
+                message=lambda: (ensured_after_apply, screen._conversations_state),
+            )
+            pending = screen._conversations_state.reader_state
+            assert (pending.selected_id, pending.loading) == ("chat-b", True)
+        finally:
+            service.page_gate.set()
+            service.page_gate = None
+
+        await _wait_for_condition(
+            pilot,
+            lambda: (
+                screen._conversations_state.reader_state.message_total == 2
+                and screen._conversations_state.reader_state.loaded_actions_eligible
+            ),
+            message=lambda: screen._conversations_state.reader_state,
+        )
+        assert screen._conversations_state.reader_state.loaded_id == "chat-b"
+        assert len(_rechecks(service)) == 1
 
 
 @pytest.mark.asyncio
