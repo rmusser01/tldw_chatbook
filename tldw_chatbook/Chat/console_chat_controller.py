@@ -24239,8 +24239,11 @@ class ConsoleChatController:
         assistant_message_id: str,
         visible_copy: str,
     ) -> ConsoleSubmitResult:
+        from tldw_chatbook.Chat.console_capacity_refusal import is_repeat_of_last_row
+
         # TASK-33621.3: copy first; a durable accepted turn fails closed below.
-        self._append_failure_system_row(session_id, visible_copy)
+        if not is_repeat_of_last_row(self.store, session_id, visible_copy):
+            self._append_failure_system_row(session_id, visible_copy)
         self._set_run_state(
             ConsoleRunState.blocked(visible_copy), session_id=session_id
         )
