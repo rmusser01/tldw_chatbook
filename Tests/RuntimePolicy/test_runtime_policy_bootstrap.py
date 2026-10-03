@@ -908,9 +908,7 @@ class TestRuntimePolicyPathIsolation:
             "profile's local/server mode overwrites the other's"
         )
 
-    def test_the_default_location_is_unchanged_without_an_override(
-        self, monkeypatch
-    ):
+    def test_the_default_location_is_unchanged_without_an_override(self, monkeypatch):
         """No override must mean exactly the historical path, or existing
         installs silently lose the mode they had persisted."""
         from tldw_chatbook.config import DEFAULT_CONFIG_PATH
