@@ -14152,6 +14152,10 @@ class ChatScreen(BaseAppScreen):
                 and task_approval.get("phase") == "finishing"
             ):
                 return 0
+            if isinstance(task_approval, dict):
+                owner = task_approval.get("session_id")
+                if owner and owner != store.active_session_id:
+                    return 0
             return 1
 
         explicit_count = getattr(

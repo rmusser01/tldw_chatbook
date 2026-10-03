@@ -17956,3 +17956,16 @@ Keep the original polling budget and real Pilot clicks, focus/geometry
 assertions and private-profile wrapper caps. Focus and selector readiness
 do not establish paint readiness; adding sleeps or weakening geometry
 assertions would conceal the timing gap instead of verifying the interface.
+
+
+## Resolve controls before committing layout state (Console PR #2953, 2026-10-03)
+
+Qodo flagged the screen's resize dispatch reaching an approval card before
+its controls composed. A real-card regression reproduced NoMatches for
+`#approval-batch-actions` with `approval-compact` already set: the class
+was also the next reflow's applied-state guard. Resolve all controls before
+committing that class, and leave it unapplied when composition is pending.
+The RED boundary case and unchanged mounted width/height/focus journeys
+prove both retry readiness and normal painted controls. An uncomposed-widget
+check alone is not evidence of native visibility; pair it with those mounted
+journeys and retain each source identity.

@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-03 20:02'
+updated_date: '2026-10-03 20:49'
 labels:
   - console
   - approvals
@@ -33,6 +33,7 @@ Source: approval-card / MCP-permissions fix wave 2026-09-10/11 (plan `Docs/super
 - [x] #6 A question arriving after its session commits Close returns cancelled without a retained card or wait; existing sibling questions stay answerable.
 - [x] #7 A delayed chat-create confirmation from a closed or no-longer-viewed session cannot replace the active session decision; a live sibling confirmation remains answerable.
 - [x] #8 A visible legacy no-session tool-approval card contributes one pending approval when no registered approvals exist; finishing cards and unrelated broad app metadata do not, and positive queued registry counts remain exact.
+- [x] #9 An approval card owned by another session contributes zero to the active tab count while its projection is stale; matching owners and genuinely unscoped legacy cards still count, and positive registry counts remain exact.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -101,6 +102,16 @@ Reason: Share the existing approval-kind scalar across its related pending-round
 2. Name the unchanged approval kind in the existing shared models module; reuse its value in related registration/count/detached-notification defaults, kind fallback/classification, shared pending copy and Close consequence table. Prove whole-module AST equality after only exact scalar substitution/new declaration-import removal and new test annotation removal.
 3. Run complete affected confirmation/approval/routing contract modules plus pending/lifetime neighbors, fresh artifact preflight/zero-new lint and correct explicit changed-range format. Retain initial fixture failures and exact-dev controls if needed; do not bypass config admission or raise caps/budgets.
 4. Keep both tasks In Progress. Refresh latest-dev safe publication, resolve only fixed findings and require fresh exact-head clean/resolved Qodo/all four hosted gates, then final task-metadata-head checks/review before protected normal merge.
+
+Qodo final review: approval count ownership
+
+ADR required: no
+ADR path: N/A; existing ADR-043/067/094 apply
+Reason: routine correction using the approval payload's existing session_id; no new owner, state field, module or permission contract.
+1. Extend the existing literal count table with matching/different/absent/empty session ownership and retain finishing/positive-registry controls; observe the wrong-other-tab count before production changes.
+2. Filter only the zero-registry legacy card fallback using its existing session owner. Preserve unscoped compatibility, registry counts and all permission/decision routing.
+3. Run complete affected count/widget contracts and the real mounted pending/layout journeys, targeted perf/derived guards, zero-new lint/changed-range format and source pin proofs. Keep prior controlled config failures under their explicit source identities.
+4. Keep all selected tasks In Progress pending fresh exact-head Qodo/all four gates, final task metadata-head checks/review and protected normal merge. Auto-merge off.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -163,4 +174,6 @@ Latest dev9b inherited guard integrated unchanged:48 Console patches preserved;3
 Latest deva560 perf-only integration (PR2969) preserves production/UI/guard/fixtures/paint readiness and260 prior source pins.47 patches exact; two surrounding-context adjustments proven (whole prior lesson restores after upstream section removal; census equals exact dev after only the same four approved settlement blocks removed). Upstream workflow/ceilings/first completed GC/log contracts retained, no own CI delta. Both exact hosted storage variants plus platform/log controls pass4 cases; first GC0 config/9 storage/3 helpers/54 opens in each variant at normal-depth private roots, all ceilings/caps unchanged. Fresh preflight 162.75s/zero-new Ruff35/Backlog/diff and public-test signature audit pass on262 stable pins. Prior22 startup/13 latency/mounted/SQLite/native receipts retain exact identities, no broad/native/full-suite replay. QA oct03_gc_census_dev_integration; no newADR, existing ADR097/125/126 apply. Keep all selected tasks In Progress until exact clean/resolved Qodo/all four gates, final Done-metadata-head review/checks and verified protected normal merge.
 
 Backlog-only dev af138397408d596a1c72c1e8e9987ea95d497b94 rebase preserves all50 PR patches exactly and262 source pins. Whole tree delta only unimplemented upstreamTASK-34117, separate trace-GC maintenance scope. Fresh Backlog ID/readability checks pass; exact production/test/guard/fixture/CI/derived-artifact sources retain prior QA identities. No repeated broad/preflight/native sweep or newADR. QA oct03_gc_followup_task_dev_rebase; keep In Progress until exact clean/resolved Qodo/all four hosted gates, final Done metadata-head checks/review and normal verified merge. Auto-merge off.
+
+Qodo ownership/pre-compose review:13 RED cases11 pass/two valid failures, then widget1/combined13 GREEN. Count fallback uses existing payload session_id, excludes stale foreign approvals and preserves unscoped/matching/finishing/positive-registry controls. Reflow resolves all controls before compact class mutation; only NoMatches returns retryably. Complete47 affected UI and22 startup/13 latency/four storage controls plus preflight 180.27s pass. After import-only alias order correction, whole-module normalized AST is exact and complete45 final collection cases pass; remaining mounted/perf/runtime/fixture inputs retain exact identities. Only two production methods change, all258 other pins/profile guard/fixture/worker/cap bodies exact; zero-new Ruff35/format/public-signature/Backlog/UI-census/diff checks pass on262 final pins. QA oct03_review_session_count_and_precompose_resize; no newADR, existing ADR043/067/094/150. No broad/native sweep; retain older config failure controls. All selected tasks stay In Progress pending exact fresh clean/resolved Qodo/all four gates, final Done-metadata-head review/checks and normal verified merge. Auto-merge off.
 <!-- SECTION:NOTES:END -->

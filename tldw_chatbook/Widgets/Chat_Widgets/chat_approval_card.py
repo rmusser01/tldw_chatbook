@@ -808,11 +808,15 @@ class ChatApprovalCard(Container):
         )
         if compact == self.has_class(_COMPACT_APPROVAL_CLASS):
             return
+        try:
+            actions = self.query_one("#approval-batch-actions", Horizontal)
+            approve = actions.query_one("#approval-approve-all", Button)
+            deny = actions.query_one("#approval-deny-all", Button)
+            submit = actions.query_one("#approval-submit", Button)
+        except NoMatches:
+            # Screen resize can arrive before this card finishes composing.
+            return
         self.set_class(compact, _COMPACT_APPROVAL_CLASS)
-        actions = self.query_one("#approval-batch-actions", Horizontal)
-        approve = actions.query_one("#approval-approve-all", Button)
-        deny = actions.query_one("#approval-deny-all", Button)
-        submit = actions.query_one("#approval-submit", Button)
         if compact:
             actions.move_child(deny, before=approve)
         else:

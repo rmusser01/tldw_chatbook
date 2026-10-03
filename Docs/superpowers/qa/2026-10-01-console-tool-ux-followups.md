@@ -1319,3 +1319,39 @@ normal protected merge. Auto-merge stays off.
 Backlog-only dev rebase (2026-10-03 UTC)
 
 Dev af138397408d596a1c72c1e8e9987ea95d497b94 adds only unimplemented TASK-34117, a separate trace-GC maintenance follow-up. All50 preceding PR patches are exact; whole old/new tree delta is only that inherited task. All262 qualified source pins, every production/test/fixture/guard/CI/derived-artifact source and existing passing evidence retain exact identities. Fresh Backlog ID/readability checks pass on the only changed input. No repeat full preflight/performance/mounted/native/full-suite claim. QA oct03_gc_followup_task_dev_rebase records complete range/tree proof. No new ADR: documentation-only integration. All three selected tasks stay In Progress; fresh exact-head clean/resolved Qodo and all four hosted gates, final Done metadata-head review/checks and protected normal merge remain required. Auto-merge off.
+
+
+Final review: approval ownership and pre-composition resize (2026-10-03 UTC)
+
+The13-case RED records11 passes and two failures: a stale other-session
+approval counted as1, and a real uncomposed ChatApprovalCard raised NoMatches
+after setting its compact class. Approval payloads already carry session_id;
+use that owner only in the zero-registry fallback, preserving true unscoped,
+matching, finishing and positive registry controls. Reflow now resolves all
+existing controls before changing the compact class, returning only on the
+existing NoMatches so a later normal resize can retry. No new owner or state
+field, permission/decision path, token, import edge, budget or cap change.
+
+Widget-only GREEN1, combined GREEN13, the complete47 affected UI cases
+(347.34s),22 startup,13 latency and four
+storage/platform/log controls all pass on stable source identities. Full
+artifact preflight passes (180.27s). After those commands
+finish, only the new test import alias is reordered to resolve its Ruff I001;
+whole-module normalized AST equality proves all bodies/assertions exact.
+The complete45 affected collection cases then pass on final262 pins
+(52.57s); the pending/layout mounted
+receipts and all runtime/fixture/targeted performance inputs stay exact.
+There is no new whole47/39/preflight/native/full-suite claim after that
+import-only correction. QA oct03_review_session_count_and_precompose_resize records separate exact sources/receipts.
+
+Full production modules restore preceding AST after only the two targeted
+methods are restored; test modules after only the six ownership rows and
+one real-card regression/import are removed. All258 other source pins,
+profile guards, fixtures, worker owners and existing caps are unchanged.
+Zero-new Ruff35, changed-range format, final UI census/Backlog/diff checks
+and the new/changed public signature audit pass. Existing ADR-043/067/094/150
+apply, no new ADR. TASK-32367 AC9 and TASK-33625.2 AC6 are verified; all three
+selected tasks remain In Progress until fresh exact-head Qodo/all four
+hosted gates and final Done metadata-head review/checks precede normal merge.
+Auto-merge stays off; prior scoped raw config failures/native/provider/Close
+receipts remain under their explicit earlier identities.

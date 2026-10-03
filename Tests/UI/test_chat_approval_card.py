@@ -12,6 +12,7 @@ import pytest
 from Tests.private_profile import private_profile_test
 from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
     _DECISION_OPTIONS,
+    ChatApprovalCard,
     _default_decision_for_row,
     _format_row_header,
     _is_raw_shell_row,
@@ -21,6 +22,13 @@ from tldw_chatbook.Widgets.Chat_Widgets.chat_approval_card import (
 
 # Widget imports bind config at collection; retain that private source.
 pytestmark = pytest.mark.bootstrap_profile
+
+
+def test_card_resize_before_composition_keeps_layout_retryable() -> None:
+    """A premature resize must leave the real card ready for its later reflow."""
+    card = ChatApprovalCard()
+    card._sync_control_layout()
+    assert not card.has_class("approval-compact")
 
 
 def test_fast_decision_control_copy_has_one_named_source():
