@@ -93,7 +93,11 @@ class _FakeAppInstance:
         self.chachanotes_db: Any = chachanotes_db
 
     def notify(
-        self, message: str, *, severity: str = "information", markup: bool = True,
+        self,
+        message: str,
+        *,
+        severity: str = "information",
+        markup: bool = True,
         **kwargs,
     ) -> None:
         """A pure recorder, except for one deliberate exception: when
@@ -144,8 +148,7 @@ class EvalsHarness(ConsolidatedCSSApp):
 
     CSS_PATH = [
         _BUNDLED_CSS_PATH,
-        str(Path(tldw_chatbook.__file__).parent / "css"
-            / "screen_feature_evals.tcss"),
+        str(Path(tldw_chatbook.__file__).parent / "css" / "screen_feature_evals.tcss"),
     ]
 
     def __init__(self, app_instance: _FakeAppInstance) -> None:
@@ -252,9 +255,7 @@ def character_bench_id(
 
 
 @pytest.fixture
-def character_bench_app(
-    evals_db: EvalsDB, chachanotes_db
-) -> EvalsHarness:
+def character_bench_app(evals_db: EvalsDB, chachanotes_db) -> EvalsHarness:
     """Mirrors ``evals_app``, plus a real ``chachanotes_db`` wired the same
     way the real app's ``TldwCli.chachanotes_db`` is -- needed by any test
     that must see a real character card rendered inside the routed
@@ -432,7 +433,10 @@ async def test_every_pane_descendant_stays_within_its_pane(evals_app, seeded_ben
             for descendant in pane.walk_children(Widget):
                 if descendant.region.width == 0 or descendant.region.height == 0:
                     continue  # not actually rendered (e.g. a collapsed rail section)
-                if targets_section is not None and targets_section in descendant.ancestors_with_self:
+                if (
+                    targets_section is not None
+                    and targets_section in descendant.ancestors_with_self
+                ):
                     continue
                 assert pane.region.contains_region(descendant.region), (
                     f"{descendant!r} at {descendant.region} escapes "
@@ -583,9 +587,7 @@ async def test_target_rows_stay_reachable_at_4_and_8_targets(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(160, 45), (120, 40)], ids=["160x45", "120x40"])
-async def test_blocked_save_remedies_stay_reachable_on_short_terminals(
-    evals_db, size
-):
+async def test_blocked_save_remedies_stay_reachable_on_short_terminals(evals_db, size):
     """Whole-branch review, IMPORTANT. A tall `#evals-bench-form-error`
     callout (this task's own reworded mode-revalidation copy, which wraps
     to 5+ lines at a realistic 160x45/120x40 terminal) is composed ABOVE
@@ -832,9 +834,7 @@ async def test_primary_action_reason_is_visible_without_hovering(evals_app):
         status = screen.query_one("#evals-primary-action-status")
         assert str(status.renderable) == "Run Bench: Blocked"
         reason = screen.query_one("#evals-primary-action-reason")
-        assert "Select a bench in the Catalog rail to run it." in str(
-            reason.renderable
-        )
+        assert "Select a bench in the Catalog rail to run it." in str(reason.renderable)
         # Both sit in the inspector pane, ahead of the button itself --
         # never silently mounted somewhere the user would not see them
         # alongside the control they explain.
@@ -901,8 +901,11 @@ async def test_primary_action_state_stays_disabled_for_a_target_less_bench(
         name="ds", format="custom", source_path="inline:ds"
     )
     config = BenchConfig(
-        name="draft bench", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(),
+        name="draft bench",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(),
     )
     task_id = save_bench(evals_db, config)
 
@@ -920,8 +923,7 @@ async def test_primary_action_state_stays_disabled_for_a_target_less_bench(
         # staged one but not yet saved would otherwise read this tooltip
         # as stale/wrong while it still claims "no targets yet".
         assert tooltip == (
-            "This bench has no targets yet; add one in the bench editor "
-            "and Save."
+            "This bench has no targets yet; add one in the bench editor and Save."
         )
 
 
@@ -959,8 +961,11 @@ async def test_primary_action_state_stays_disabled_for_a_completed_run_group(
         name="rg-ds", format="custom", source_path="inline:rg-ds"
     )
     config = BenchConfig(
-        name="rg bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="rg bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
     )
     task_id = save_bench(evals_db, config)
     target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
@@ -1009,9 +1014,13 @@ class _FakeCaptureClient:
     async def capture(self, snippet, target, mode, top_k):
         self._calls.append((snippet, target.name))
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
-            canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-30T00:00:00Z",
         )
 
 
@@ -1032,13 +1041,19 @@ class _PausableFakeCaptureClient:
         await self._release_event.wait()
         self._calls.append((snippet, target.name))
         return CellCapture(
-            prompt_mode=mode, k_requested=top_k, k_returned=1, content_offset=0,
+            prompt_mode=mode,
+            k_requested=top_k,
+            k_returned=1,
+            content_offset=0,
             top_k=(TokenProb(token=" a", logprob=-0.3, token_id=1),),
-            canary="unchecked", captured_at="2026-07-30T00:00:00Z",
+            canary="unchecked",
+            captured_at="2026-07-30T00:00:00Z",
         )
 
 
-async def _wait_until(pilot, predicate, *, tries: int = 300, interval: float = 0.02) -> None:
+async def _wait_until(
+    pilot, predicate, *, tries: int = 300, interval: float = 0.02
+) -> None:
     for _ in range(tries):
         if predicate():
             return
@@ -1065,8 +1080,11 @@ def runnable_bench(evals_db: EvalsDB) -> str:
         [{"id": "s1", "text": "The protestors were", "group": "neutral", "note": None}],
     )
     config = BenchConfig(
-        name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-        dataset_id=dataset_id, target_ids=(base_model_id,),
+        name="loaded-nouns v1",
+        prompt_mode="raw",
+        top_k=20,
+        dataset_id=dataset_id,
+        target_ids=(base_model_id,),
         probes=(" Sure", " I"),
     )
     return save_bench(evals_db, config)
@@ -1263,9 +1281,7 @@ async def test_action_buttons_stay_disabled_across_a_mid_run_recompose(
         action_button = screen.query_one("#evals-primary-action", Button)
         assert action_button.disabled is True
 
-        sample_bench_button = screen.query_one(
-            "#evals-create-sample-bench", Button
-        )
+        sample_bench_button = screen.query_one("#evals-create-sample-bench", Button)
         assert sample_bench_button.disabled is True
 
         release.set()
@@ -1353,7 +1369,9 @@ async def test_inspector_reports_an_unexpected_load_bench_failure_instead_of_goi
     monkeypatch.setattr(inspector_module, "load_bench", _raise_operational_error)
 
     records: list[dict] = []
-    sink_id = loguru_logger.add(lambda message: records.append(message.record), level="ERROR")
+    sink_id = loguru_logger.add(
+        lambda message: records.append(message.record), level="ERROR"
+    )
     try:
         async with evals_app.run_test(size=(160, 45)) as pilot:
             await pilot.pause()
@@ -1473,9 +1491,7 @@ async def test_no_rendered_copy_says_library_rail_or_uses_ascii_double_dash(
         await pilot.pause()
         screen = evals_app.screen
 
-        empty_library_text = str(
-            screen.query_one("#evals-detail-empty").renderable
-        )
+        empty_library_text = str(screen.query_one("#evals-detail-empty").renderable)
         assert "library rail" not in empty_library_text
         assert " -- " not in empty_library_text
 
@@ -1552,8 +1568,11 @@ async def test_inspector_pane_widens_at_a_wide_terminal_instead_of_staying_fixed
         bench_id = save_bench(
             app.app_instance.evaluation_orchestrator.db,
             BenchConfig(
-                name="loaded-nouns v1", prompt_mode="raw", top_k=20,
-                dataset_id=dataset_id, target_ids=(base_model_id,),
+                name="loaded-nouns v1",
+                prompt_mode="raw",
+                top_k=20,
+                dataset_id=dataset_id,
+                target_ids=(base_model_id,),
                 probes=(" Sure", " I"),
             ),
         )
@@ -2034,7 +2053,9 @@ async def test_bench_run_completion_does_not_yank_a_dirty_bench_editor(
         assert screen._selection.kind == "bench"
         assert screen._selection.id == runnable_bench
         assert screen.query_one("#evals-bench-name", Input) is name_input
-        assert screen.query_one("#evals-bench-name", Input).value == "typed-while-running"
+        assert (
+            screen.query_one("#evals-bench-name", Input).value == "typed-while-running"
+        )
         message, severity = evals_app.app_instance.notifications[-1]
         assert severity == "information"
         assert message == "Bench run finished — see the Runs section."
@@ -2079,7 +2100,9 @@ async def test_bench_run_completion_does_not_yank_a_bench_editor_with_unsaved_mi
         assert screen._selection.kind == "bench"
         assert screen._selection.id == runnable_bench
         assert screen.query_one("#evals-target-name", Input) is name_input
-        assert screen.query_one("#evals-target-name", Input).value == "typed-while-running"
+        assert (
+            screen.query_one("#evals-target-name", Input).value == "typed-while-running"
+        )
         message, severity = evals_app.app_instance.notifications[-1]
         assert severity == "information"
         assert message == "Bench run finished — see the Runs section."
@@ -2203,8 +2226,11 @@ async def test_duplicate_and_delete_buttons_render_only_for_a_resolved_bench(
     )
     base_id = evals_db.create_model(name="rg-base", provider="llama_cpp", model_id="m")
     rg_config = BenchConfig(
-        name="rg bench", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="rg bench",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
     )
     rg_task_id = save_bench(evals_db, rg_config)
     target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
@@ -2339,8 +2365,11 @@ async def test_delete_confirmed_removes_from_rail_selection_none_runs_remain(
         name="del-ds", format="custom", source_path="inline:del-ds"
     )
     config = BenchConfig(
-        name="to delete", prompt_mode="raw", top_k=5,
-        dataset_id=dataset_id, target_ids=(base_id,),
+        name="to delete",
+        prompt_mode="raw",
+        top_k=5,
+        dataset_id=dataset_id,
+        target_ids=(base_id,),
     )
     task_id = save_bench(evals_db, config)
     target = Target(id=base_id, name="base", provider="llama_cpp", model_id="m")
@@ -2428,8 +2457,12 @@ async def test_delete_confirm_dialog_message_contains_the_escaped_bench_name(
         task_type="logprob",
         config_format="custom",
         config_data={
-            "bench_type": "word_bench", "prompt_mode": "raw", "top_k": 5,
-            "probes": [], "target_ids": [target_id], "concurrency": 1,
+            "bench_type": "word_bench",
+            "prompt_mode": "raw",
+            "top_k": 5,
+            "probes": [],
+            "target_ids": [target_id],
+            "concurrency": 1,
         },
         dataset_id=dataset_id,
     )
@@ -2456,7 +2489,9 @@ async def test_delete_confirm_dialog_message_contains_the_escaped_bench_name(
         # dismissed dialog reached through the real UI path, not just
         # through `_apply_bench_deletion(False, ...)` directly.
         await pilot.click("#cancel-button")
-        await _wait_until(pilot, lambda: len(evals_app.screen_stack) == stack_depth_before)
+        await _wait_until(
+            pilot, lambda: len(evals_app.screen_stack) == stack_depth_before
+        )
         await pilot.pause()
 
         assert screen._selection.kind == "bench"
@@ -2614,7 +2649,9 @@ async def test_two_queued_delete_presses_push_exactly_one_confirmation_dialog(
         await pilot.pause()
         await pilot.pause()
 
-        dialogs = [s for s in evals_app.screen_stack if isinstance(s, ConfirmationDialog)]
+        dialogs = [
+            s for s in evals_app.screen_stack if isinstance(s, ConfirmationDialog)
+        ]
         assert len(dialogs) == 1, (
             f"expected exactly one ConfirmationDialog, found "
             f"{len(dialogs)} (screen stack depth "
@@ -2638,9 +2675,7 @@ async def test_inspector_pane_buttons_compose_in_the_spec_order(
         await pilot.pause()
 
         inspector_pane = screen.query_one("#evals-inspector-pane")
-        button_ids = [
-            button.id for button in inspector_pane.query(Button) if button.id
-        ]
+        button_ids = [button.id for button in inspector_pane.query(Button) if button.id]
         assert button_ids == [
             "evals-primary-action",
             "evals-duplicate-bench",
@@ -2718,7 +2753,9 @@ def bench_with_multiple_continuations(evals_db: EvalsDB) -> str:
         name="long-target", provider="llama_cpp", model_id="m"
     )
     dataset_id = evals_db.create_dataset(
-        name="loaded-nouns", format="custom", source_path="inline:loaded-nouns",
+        name="loaded-nouns",
+        format="custom",
+        source_path="inline:loaded-nouns",
         metadata={"sample_count": 6},
     )
     config = BenchConfig(
@@ -2732,21 +2769,32 @@ def bench_with_multiple_continuations(evals_db: EvalsDB) -> str:
     task_id = save_bench(evals_db, config)
     targets = [
         Target(id=warned_id, name="warned-target", provider="llama_cpp", model_id="m"),
-        Target(id=unreachable_id, name="unreachable-target", provider="llama_cpp", model_id="m"),
+        Target(
+            id=unreachable_id,
+            name="unreachable-target",
+            provider="llama_cpp",
+            model_id="m",
+        ),
         Target(id=long_id, name="long-target", provider="llama_cpp", model_id="m"),
     ]
     snippets = [Snippet(id="s1", text="The protestors were", group="neutral")]
     preflight = {
         warned_id: PreflightResult(
-            state="ok", k_returned=20, canary="degenerate",
+            state="ok",
+            k_returned=20,
+            canary="degenerate",
             continuation="<|channel><|channel>thought\n<channel|>The sky is **blue",
         ),
         unreachable_id: PreflightResult(
-            state="unreachable", k_returned=None, canary="unchecked",
+            state="unreachable",
+            k_returned=None,
+            canary="unchecked",
             detail="connection refused",
         ),
         long_id: PreflightResult(
-            state="ok", k_returned=20, canary="pass",
+            state="ok",
+            k_returned=20,
+            canary="pass",
             continuation="x" * 150,
         ),
     }
@@ -2787,9 +2835,7 @@ async def test_readiness_rows_with_several_continuations_paint_inside_the_inspec
 
         # Target 0 (warned): continuation sub-line AND recovery callout
         # both paint -- the tallest stacked per-target shape.
-        warned_continuation = screen.query_one(
-            "#evals-inspector-target-continuation-0"
-        )
+        warned_continuation = screen.query_one("#evals-inspector-target-continuation-0")
         assert warned_continuation.region.width > 0
         assert warned_continuation.region.height > 0
         warned_callout = screen.query_one("#evals-inspector-target-callout-0")
@@ -2798,17 +2844,13 @@ async def test_readiness_rows_with_several_continuations_paint_inside_the_inspec
 
         # Target 1 (unreachable): no continuation sub-line at all.
         assert not screen.query("#evals-inspector-target-continuation-1")
-        unreachable_callout = screen.query_one(
-            "#evals-inspector-target-callout-1"
-        )
+        unreachable_callout = screen.query_one("#evals-inspector-target-callout-1")
         assert unreachable_callout.region.width > 0
         assert unreachable_callout.region.height > 0
 
         # Target 2 (long continuation): paints, truncated with an
         # ellipsis.
-        long_continuation = screen.query_one(
-            "#evals-inspector-target-continuation-2"
-        )
+        long_continuation = screen.query_one("#evals-inspector-target-continuation-2")
         assert long_continuation.region.width > 0
         assert long_continuation.region.height > 0
         assert long_continuation.visual.plain.endswith("…")
@@ -3144,9 +3186,9 @@ async def test_new_character_bench_reuses_an_existing_unsteered_target_over_a_ne
             "UPDATE eval_models SET created_at = ? WHERE id = ?",
             ("2030-01-01 00:00:00", steered_id),
         )
-    assert (
-        evals_db.list_models(provider="llama_cpp")[0]["id"] == steered_id
-    ), "sanity: the steered row must be newest"
+    assert evals_db.list_models(provider="llama_cpp")[0]["id"] == steered_id, (
+        "sanity: the steered row must be newest"
+    )
 
     app_config = {"api_settings": {"llama_cpp": {"api_url": "http://localhost:8080"}}}
     app = EvalsHarness(_FakeAppInstance(evals_db, app_config=app_config))

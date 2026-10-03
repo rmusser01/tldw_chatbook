@@ -63,7 +63,12 @@ from ...config import LOCAL_PROVIDERS
 from ...Evals.character_probe.models import ProbeSet
 from ...Evals.character_probe.storage import load_character_bench, load_probe_set
 from ...Evals.word_bench import analysis
-from ...Evals.word_bench.models import BenchConfig, CellCapture, CellError, PreflightResult
+from ...Evals.word_bench.models import (
+    BenchConfig,
+    CellCapture,
+    CellError,
+    PreflightResult,
+)
 from ...Evals.word_bench.storage import load_bench
 from .evals_state import EvalsViewModel
 from .results_grid import degenerate_canary_text, render_probe_reading, render_token
@@ -185,7 +190,10 @@ def _recovery_callout_text(target_label: str, result: PreflightResult) -> str:
         return degenerate_canary_text([target_label])
     problem, next_action = _BLOCKED_COPY.get(
         result.state,
-        (result.detail or "could not be confirmed ready.", "Review this target's configuration."),
+        (
+            result.detail or "could not be confirmed ready.",
+            "Review this target's configuration.",
+        ),
     )
     return (
         f"Owner: {target_label}'s configured provider.\n"
@@ -350,7 +358,9 @@ class EvalsInspector(Vertical):
 
         yield Static("Readiness", classes="destination-section evals-pane-title")
         if not config.target_ids:
-            yield Static("No targets configured yet.", id="evals-inspector-readiness-empty")
+            yield Static(
+                "No targets configured yet.", id="evals-inspector-readiness-empty"
+            )
 
         providers: list[str] = []
         # Index-derived widget ids, not target_id-derived -- same fix, same
@@ -366,7 +376,9 @@ class EvalsInspector(Vertical):
                 providers.append(str(model.get("provider") or ""))
 
             result = preflight.get(target_id)
-            status_text = result.status_label if result is not None else "Not yet checked"
+            status_text = (
+                result.status_label if result is not None else "Not yet checked"
+            )
             yield Static(
                 f"{target_label}: {status_text}",
                 id=f"evals-inspector-target-{index}",
@@ -432,10 +444,10 @@ class EvalsInspector(Vertical):
             # local) is simply unknown, not confirmed local. Any
             # unresolvable target makes the whole cost line unknown, not
             # just the deleted target's own row.
-            cost_text = (
-                "cost unknown — one or more targets could not be resolved"
-            )
-        elif providers and any(not _is_local_provider(provider) for provider in providers):
+            cost_text = "cost unknown — one or more targets could not be resolved"
+        elif providers and any(
+            not _is_local_provider(provider) for provider in providers
+        ):
             cost_text = (
                 "One or more targets are paid providers; this workbench does not "
                 "estimate cost yet."
@@ -509,9 +521,7 @@ class CharacterBenchEstimate(Vertical):
         try:
             config = load_character_bench(db, self._bench_id)
             probe_set = (
-                load_probe_set(db, config.probe_set_id)
-                if config.probe_set_id
-                else None
+                load_probe_set(db, config.probe_set_id) if config.probe_set_id else None
             )
         except Exception:
             # Mirrors `EvalsInspector.compose`'s own broad catch and its
@@ -595,12 +605,9 @@ class EvalsCellInspector(Vertical):
     """
 
     def compose(self) -> ComposeResult:
+        yield Static("Focused cell", classes="destination-section evals-pane-title")
         yield Static(
-            "Focused cell", classes="destination-section evals-pane-title"
-        )
-        yield Static(
-            "Focus a cell in the grid to see its full top-K and probe "
-            "table here.",
+            "Focus a cell in the grid to see its full top-K and probe table here.",
             id="evals-cell-inspector-body",
             markup=False,
         )
