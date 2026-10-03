@@ -17,7 +17,10 @@ existing fenced pipeline reloads it in place, keeping Read/Info and the Find
 query. A load started during this list read is not re-checked: it is already
 current. The mark is ``(list request generation, reader generation)``, and a
 loaded generation at or past the mark's covers loads this module started and
-loads a row press started straight through the reader pipeline alike.
+loads a row press started straight through the reader pipeline alike. A load
+already in flight when the list read applies may have read its pages before
+the write, so the mark is set just past it and ``recheck_settled_load`` (which
+the reader pipeline calls when a load completes) re-checks it once it settles.
 """
 
 from __future__ import annotations
@@ -55,25 +58,66 @@ def ensure_reader_current(controller: Any, conversation_id: str) -> None:
         )
     ):
         checked = controller._library_conversation_reader_checked_read
-        if state.loaded_actions_eligible and not (
+        if state.loading and not (
+            checked is not None
+            and checked[0] == list_read
+            and state.generation >= checked[1]
+        ):
+            # This load predates the list read, so its pages may have been
+            # read before a Console write. ``recheck_settled_load`` re-checks
+            # it when it settles; a version bootstrap selects once more first.
+            controller._library_conversation_reader_checked_read = (
+                list_read,
+                state.generation + (1 if state.selected_version is not None else 2),
+            )
+        elif state.loaded_actions_eligible and not (
             checked is not None
             and checked[0] == list_read
             and state.loaded_generation >= checked[1]
         ):
-            controller._library_conversation_reader_checked_read = (
-                list_read,
-                state.loaded_generation,
-            )
-            controller.run_worker(
-                recheck_loaded_transcript(controller, state),
-                exclusive=True,
-                group=RECHECK_WORKER_GROUP,
-            )
+            _start_recheck(controller, list_read, state)
         return
     controller._start_library_conversation_reader_selection(conversation_id)
     controller._library_conversation_reader_checked_read = (
         list_read,
         controller._library_conversation_reader_state.generation,
+    )
+
+
+def recheck_settled_load(controller: Any) -> None:
+    """Re-check a just-settled load that predates the current list read.
+
+    The reader pipeline calls this when a load completes. Only a load the
+    current list read found already in flight sits below its mark; every
+    other load is at or past it and needs nothing.
+
+    Args:
+        controller: The ``LibraryConversationReaderController``.
+    """
+    state = controller._library_conversation_reader_state
+    checked = controller._library_conversation_reader_checked_read
+    list_read = controller._library_conversation_request_generation
+    if (
+        checked is not None
+        and checked[0] == list_read
+        and state.loaded_actions_eligible
+        and state.loaded_generation < checked[1]
+    ):
+        _start_recheck(controller, list_read, state)
+
+
+def _start_recheck(
+    controller: Any, list_read: int, state: ConversationReaderState
+) -> None:
+    """Mark ``state``'s transcript checked for ``list_read`` and re-check it."""
+    controller._library_conversation_reader_checked_read = (
+        list_read,
+        state.loaded_generation,
+    )
+    controller.run_worker(
+        recheck_loaded_transcript(controller, state),
+        exclusive=True,
+        group=RECHECK_WORKER_GROUP,
     )
 
 

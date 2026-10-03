@@ -755,6 +755,9 @@ class LibraryConversationReaderController:
 
             state = self._library_conversation_reader_state
             if state.complete:
+                from .library_conversation_reader_freshness import recheck_settled_load
+
+                recheck_settled_load(self)
                 return
             next_offset = len(state.messages)
             if next_offset <= request.message_offset:
