@@ -188,8 +188,7 @@ async def test_loading_banner_paints_in_place_without_body_rebuild():
             service.release(backing_b)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._media_state.reader_session.loaded_id
-                == canonical_b,
+                lambda: screen._media_state.reader_session.loaded_id == canonical_b,
                 message="Row B never settled.",
             )
             await _wait_for_condition(
@@ -341,8 +340,7 @@ async def test_stale_failure_after_selection_moved_on_paints_no_error():
             service.release(backing_c)
             await _wait_for_condition(
                 pilot,
-                lambda: screen._media_state.reader_session.loaded_id
-                == canonical_c,
+                lambda: screen._media_state.reader_session.loaded_id == canonical_c,
                 message="Row C never settled after the stale failure.",
             )
             await pilot.pause()

@@ -239,9 +239,7 @@ async def test_slow_canvas_swap_is_not_raced_by_the_media_browse_sync() -> None:
         )
         # Exactly one canvas, i.e. no duplicate-id collision survived.
         assert len(screen.query("#library-media-canvas")) == 1
-        assert isinstance(
-            screen.query_one("#library-media-canvas"), LibraryMediaCanvas
-        )
+        assert isinstance(screen.query_one("#library-media-canvas"), LibraryMediaCanvas)
 
 
 # ---------------------------------------------------------------------------

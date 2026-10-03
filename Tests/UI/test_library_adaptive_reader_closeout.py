@@ -184,8 +184,10 @@ class _CloseoutPagedNotesService(StaticLibraryNotesScopeService):
 
     @staticmethod
     def _folder(parent_id: str | None, index: int) -> NoteFolder:
-        folder_id = "personal" if parent_id is None and index == 0 else (
-            f"root-{index:02d}" if parent_id is None else f"child-{index:02d}"
+        folder_id = (
+            "personal"
+            if parent_id is None and index == 0
+            else (f"root-{index:02d}" if parent_id is None else f"child-{index:02d}")
         )
         name = (
             "00 Personal research with a deliberately identifying long title"
@@ -454,7 +456,9 @@ async def _open_destination(screen, pilot, destination: str):
             str(screen._conversations_state.reader_state.selected_id or "")
             == str(second.conversation_id)
         ),
-        "notes": lambda: str(screen._notes_state.selected_note_id or "") == str(second.note_id),
+        "notes": lambda: (
+            str(screen._notes_state.selected_note_id or "") == str(second.note_id)
+        ),
         "prompts": lambda: str(screen._prompts_state.selected_prompt_id) == expected,
         "skills": lambda: (
             screen._skills_state.editor_state is not None
@@ -607,7 +611,10 @@ def _destination_state(screen, destination: str) -> tuple[object, ...]:
         )
         semantic = (screen._notes_state.selected_note_id, mode)
     elif destination == "prompts":
-        semantic = (screen._prompts_state.selected_prompt_id, screen._prompts_state.editor_mode)
+        semantic = (
+            screen._prompts_state.selected_prompt_id,
+            screen._prompts_state.editor_mode,
+        )
     else:
         semantic = (
             screen._skills_state.editor_state.name,
@@ -962,7 +969,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             shell = None
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                    screen
+                )
                 if preferences.items_open is items_open:
                     continue
                 authority = f"{destination}_items"
@@ -971,7 +980,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
                 await _wait_for_condition(
                     pilot,
                     lambda authority=authority, generation=generation, destination=destination, items_open=items_open: (
-                        operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
+                        operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                            screen
+                        ).items_open
                         is items_open
                         and screen._library_reader_persistence_generations[authority]
                         > generation
@@ -1025,7 +1036,9 @@ async def _exercise_closeout_preferences_restore_in_fresh_screen(
             await _wait_for_library_shell(screen, pilot)
             for destination, items_open in expected.items():
                 shell = await _open_destination(screen, pilot, destination)
-                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen)
+                preferences = operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                    screen
+                )
                 assert preferences.library_open is False
                 assert preferences.items_open is items_open
             facts = _durable_live_oracle(
@@ -1109,7 +1122,9 @@ async def _exercise_closeout_single_app_route_cycle(
                         pilot,
                         lambda: (
                             all(
-                                not operator.attrgetter(contract[3])(screen).library_open
+                                not operator.attrgetter(contract[3])(
+                                    screen
+                                ).library_open
                                 for contract in DESTINATION_CONTRACT.values()
                             )
                             and screen._library_reader_durable_generations["library"]
@@ -1253,7 +1268,9 @@ async def _exercise_closeout_single_app_route_cycle(
                 } == {False}
                 assert not screen._library_reader_durable_preferences["library"]
                 assert (
-                    operator.attrgetter(DESTINATION_CONTRACT[destination][3])(screen).items_open
+                    operator.attrgetter(DESTINATION_CONTRACT[destination][3])(
+                        screen
+                    ).items_open
                     is expected_items[destination]
                 )
                 restored_focus = await _focus_closeout_work_via_f6(
@@ -1366,7 +1383,9 @@ async def test_closeout_single_app_route_cycle(tmp_path: Path) -> None:
 
 
 def _assert_inside_items(items, widget) -> None:
-    assert widget.region.x >= items.region.x and widget.region.right <= items.region.right, (
+    assert (
+        widget.region.x >= items.region.x and widget.region.right <= items.region.right
+    ), (
         widget.id,
         widget.region,
         items.region,
@@ -1420,7 +1439,9 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         _assert_inside_items(items, notes_list)
         for widget in (*screen.query(".library-notes-folder-row"), *initial_pagers):
             _assert_inside_items(items, widget)
-        assert all(widget.region.right <= items.region.right for widget in initial_pagers)
+        assert all(
+            widget.region.right <= items.region.right for widget in initial_pagers
+        )
 
         identifying = next(
             row
@@ -1430,7 +1451,9 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         notes_list.scroll_to_widget(identifying, animate=False, force=True)
         await pilot.pause()
         painted = " ".join(
-            "\n".join(strip.text for strip in screen._compositor.render_strips()).split()
+            "\n".join(
+                strip.text for strip in screen._compositor.render_strips()
+            ).split()
         )
         assert "Long identifying Notes" in painted
         assert identifying.region.right <= items.region.right
@@ -1462,14 +1485,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
         personal.press()
         await _wait_for_condition(
             pilot,
-            lambda: {
-                (pager.content_kind, pager.parent_folder_id, pager.paging_action)
-                for pager in screen.query(".library-notes-tree-pager")
-            }
-            >= {
-                ("folders", "personal", "more"),
-                ("placements", "personal", "more"),
-            },
+            lambda: (
+                {
+                    (pager.content_kind, pager.parent_folder_id, pager.paging_action)
+                    for pager in screen.query(".library-notes-tree-pager")
+                }
+                >= {
+                    ("folders", "personal", "more"),
+                    ("placements", "personal", "more"),
+                }
+            ),
             message=f"Expanded Notes branch controls did not settle at {size}",
         )
         await pilot.pause()
@@ -1526,13 +1551,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             lambda: getattr(screen.focused, "note_id", "") == "note-20",
             message=f"Successful Notes Retry did not focus the first added row at {size}",
         )
-        assert len(
-            [
-                row
-                for row in screen.query(".library-notes-tree-note-row")
-                if getattr(row, "folder_id", None) == "personal"
-            ]
-        ) == 40
+        assert (
+            len(
+                [
+                    row
+                    for row in screen.query(".library-notes-tree-note-row")
+                    if getattr(row, "folder_id", None) == "personal"
+                ]
+            )
+            == 40
+        )
         for widget in screen.query(
             ".library-notes-folder-row, .library-notes-tree-note-row, "
             ".library-notes-tree-pager"
@@ -1557,16 +1585,16 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
             ),
             message=lambda: (
                 f"Library pane did not collapse at {size}: "
-                    f"shell={shell.effective_layout!r}, "
-                    f"prefs={screen._notes_state.reader_preferences!r}, "
-                    f"items_region={items.region!r}, "
-                    f"selected={screen._library_selected_row_id!r}, "
-                    f"view={screen._notes_state.view!r}, "
-                    f"stage={screen._notes_state.stage!r}, "
-                    f"shell_region={shell.region!r}, "
-                    f"durable={screen._library_reader_durable_preferences!r}, "
-                    f"generations={screen._library_reader_persistence_generations!r}"
-                ),
+                f"shell={shell.effective_layout!r}, "
+                f"prefs={screen._notes_state.reader_preferences!r}, "
+                f"items_region={items.region!r}, "
+                f"selected={screen._library_selected_row_id!r}, "
+                f"view={screen._notes_state.view!r}, "
+                f"stage={screen._notes_state.stage!r}, "
+                f"shell_region={shell.region!r}, "
+                f"durable={screen._library_reader_durable_preferences!r}, "
+                f"generations={screen._library_reader_persistence_generations!r}"
+            ),
         )
         assert items.region.width > items_before_library_collapse
 
@@ -1589,7 +1617,9 @@ async def test_notes_branch_paging_is_contained_focusable_and_collapsible_in_pro
 
 
 @pytest.mark.asyncio
-async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle() -> None:
+async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_toggle() -> (
+    None
+):
     """An intentional Items close remains authoritative across later layout work."""
     app = _build_test_app()
     _seed_conversations(app, _conversation_records(), notes=[])
@@ -1600,9 +1630,7 @@ async def test_notes_explicit_items_close_survives_reconcile_resize_and_library_
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        shell = await _wait_for_selector(
-            screen, pilot, ".library-notes-route"
-        )
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(
@@ -1668,9 +1696,7 @@ async def test_notes_explicit_close_never_resolves_against_stale_allocation(
         screen = _active_library_screen(host)
         await _wait_for_library_shell(screen, pilot)
         screen.query_one("#library-row-browse-notes", Button).press()
-        shell = await _wait_for_selector(
-            screen, pilot, ".library-notes-route"
-        )
+        shell = await _wait_for_selector(screen, pilot, ".library-notes-route")
         if not screen._notes_state.reader_layout.library_open:
             shell.library_grip.press()
         await _wait_for_condition(

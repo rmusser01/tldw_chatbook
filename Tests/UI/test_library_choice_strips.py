@@ -24,6 +24,7 @@ chooser, not a cycler, so it loses the ``⇄``.
 from types import SimpleNamespace
 
 import pytest
+
 # Harness apps load the consolidated widget CSS the real app loads
 # (TASK-15450); without it the widgets under test mount unstyled.
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
@@ -186,9 +187,7 @@ async def test_media_type_strip_opens_full_set_marks_active_and_picks():
         assert str(opener.label) == "type: All types"
 
         opener.press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         labels = {str(option.prompt) for option in chooser.options}
         # Full option set on screen, ✓ on the active option only.
@@ -236,11 +235,9 @@ async def test_media_type_strip_escape_closes_without_change():
         # The opener regains focus so Escape round-trips for keyboard users.
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "id", None)
-            == "library-media-type-filter",
+            lambda: getattr(screen.focused, "id", None) == "library-media-type-filter",
             message=(
-                "Escape never refocused the type opener; focused: "
-                f"{screen.focused!r}"
+                f"Escape never refocused the type opener; focused: {screen.focused!r}"
             ),
         )
         assert len(list(screen.query(".library-media-row"))) == 2
@@ -308,8 +305,7 @@ async def test_media_type_strip_keyboard_only_path():
         # Focus lands in the chooser with the active unfiltered option highlighted.
         await _wait_for_condition(
             pilot,
-            lambda: getattr(screen.focused, "id", "")
-            == "library-media-type-choices",
+            lambda: getattr(screen.focused, "id", "") == "library-media-type-choices",
             message=f"Focus never entered the strip; focused: {screen.focused!r}",
         )
         chooser = screen.query_one("#library-media-type-choices", OptionList)
@@ -356,9 +352,7 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         requested_before = controller.requested_scope
 
         screen.query_one("#library-media-type-filter", Button).press()
-        chooser = await _wait_for_selector(
-            screen, pilot, "#library-media-type-choices"
-        )
+        chooser = await _wait_for_selector(screen, pilot, "#library-media-type-choices")
         assert isinstance(chooser, OptionList)
         assert len(screen.query("#library-media-type-choices")) == 1
         assert chooser.option_count == 64
@@ -378,8 +372,10 @@ async def test_media_type_chooser_keeps_complete_facets_in_one_bounded_widget():
         await pilot.press("enter")
         await _wait_for_condition(
             pilot,
-            lambda: controller.applied_scope is not None
-            and controller.applied_scope.media_type == "type-62",
+            lambda: (
+                controller.applied_scope is not None
+                and controller.applied_scope.media_type == "type-62"
+            ),
             message="Keyboard commit never selected the final complete type.",
         )
         assert not screen.query("#library-media-type-choices")
@@ -541,8 +537,7 @@ async def test_skills_sort_strip_opens_and_applies():
         opener.press()
         await _wait_for_selector(screen, pilot, "#library-skills-sort-choices")
         labels = [
-            str(button.label)
-            for button in screen.query(".library-skills-sort-choice")
+            str(button.label) for button in screen.query(".library-skills-sort-choice")
         ]
         assert labels == ["✓ Name", "Status"]
 
