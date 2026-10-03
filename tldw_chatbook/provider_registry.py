@@ -101,6 +101,9 @@ class ProviderRecord:
             flag-off field with a caller-supplied value is a bad request.
         reasoning_effort_key: Payload key for ``reasoning_effort`` when the
             provider spells it differently; ``None`` keeps the standard key.
+        reasoning_effort_values: For a preset that sends ``reasoning_effort``,
+            the levels it accepts; any other level is refused locally (and
+            left out of Settings). ``None`` forwards any level unchanged.
         thinking_toggle_models: For a preset that refuses
             ``reasoning_effort``, model globs (``fnmatch``, case-sensitive)
             whose chat template switches thinking with one boolean
@@ -193,6 +196,7 @@ class ProviderRecord:
         }
     )
     reasoning_effort_key: str | None = None
+    reasoning_effort_values: frozenset[str] | None = None
     thinking_toggle_models: Mapping[str, str] = field(default_factory=dict)
     max_tokens_key: str | None = None
     stream_annotation_key: str | None = None
@@ -356,7 +360,13 @@ FIREWORKS = ProviderRecord(
     api_key_env_candidates=("FIREWORKS_API_KEY",),
     default_base_url="https://api.fireworks.ai/inference/v1",
     native_tools=True,
-    reasoning_effort=False,
+    # docs.fireworks.ai/api-reference/post-chatcompletions (read 2026-09-29):
+    # reasoning_effort takes none/low/medium/high/xhigh (plus max/adaptive,
+    # which Console does not offer); there is no "minimal". Support varies by
+    # model (some always think; DeepSeek V3.1 is off by default) -- not yet
+    # live-verified (TASK-33640).
+    reasoning_effort=True,
+    reasoning_effort_values=frozenset({"none", "low", "medium", "high", "xhigh"}),
     auto_refresh=True,
     settings_defaults={
         "api_key_env_var": "FIREWORKS_API_KEY",
@@ -448,7 +458,11 @@ SAMBANOVA = ProviderRecord(
 # Qwen3.5 thinks by default; its schema (build.nvidia.com/qwen/qwen3.5-397b-
 # a17b, read 2026-09-29) takes no ``reasoning_effort``, only
 # ``chat_template_kwargs: {"enable_thinking": bool}`` -- so effort "none"
-# turns thinking off and any other level leaves it on (TASK-33502).
+# turns thinking off and any other level leaves it on (TASK-33502). Note:
+# the public /v1/models listing (no key, 2026-09-30) names 81 models and no
+# Qwen at all, so whether Qwen3.5 is served at this endpoint needs a keyed
+# capture (TASK-33640); the older qwen3-235b "thinking" kwarg is not added
+# for the same reason.
 NVIDIA = ProviderRecord(
     key="nvidia",
     config_key="NVIDIA",

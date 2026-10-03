@@ -55,7 +55,8 @@ from tldw_chatbook.Chat.console_settings_apply import FULL_MODEL_DEFAULT_FIELDS
         # except a model with a thinking toggle (TASK-33502).
         ("nvidia", "meta/llama-3.3-70b-instruct", "reasoning_effort", "unsupported"),
         ("nvidia", "qwen/qwen3.5-397b-a17b", "reasoning_effort", "supported"),
-        ("fireworks", "accounts/fireworks/models/qwen3p8", "reasoning_effort", "unsupported"),
+        # Fireworks sends reasoning effort; whether a model honours it varies.
+        ("fireworks", "accounts/fireworks/models/qwen3p8", "reasoning_effort", "unknown"),
         ("together", "moonshotai/Kimi-K3", "reasoning_effort", "unsupported"),
         ("cerebras", "gpt-oss-120b", "reasoning_effort", "unsupported"),
         ("anthropic", "claude-sonnet-5", "thinking_effort", "supported"),

@@ -191,6 +191,50 @@ def test_fireworks_tool_turn_reasoning_is_kept_and_replayed(monkeypatch: pytest.
     assert payload["messages"][1]["reasoning_content"] == "PRIVATE"
 
 
+_CONSOLE_LEVELS = ("none", "minimal", "low", "medium", "high", "xhigh")
+
+
+@pytest.mark.parametrize("level", ["none", "low", "high", "xhigh"])
+def test_fireworks_sends_a_documented_reasoning_effort_level(level: str) -> None:
+    """Fireworks takes reasoning_effort as-is, and never a thinking field.
+
+    Args:
+        level: A level Fireworks documents.
+    """
+    payload = _payload(FIREWORKS, "accounts/fireworks/models/deepseek-v3p1", reasoning_effort=level)
+    assert payload["reasoning_effort"] == level
+    assert "thinking" not in payload
+
+
+@pytest.mark.parametrize("level", ["minimal", "max-ish"])
+def test_fireworks_refuses_an_undocumented_level_locally(level: str) -> None:
+    """Fireworks has no "minimal"; an unknown level never reaches the wire.
+
+    Args:
+        level: A level Fireworks does not document.
+    """
+    with pytest.raises(ChatBadRequestError):
+        _payload(FIREWORKS, "accounts/fireworks/models/deepseek-v3p1", reasoning_effort=level)
+
+
+def test_fireworks_settings_and_draft_rebase_follow_its_levels() -> None:
+    """Settings leaves out "minimal" for Fireworks; the rebase carries the level."""
+    from tldw_chatbook.Chat.console_provider_support import (
+        reasoning_effort_values_sent,
+        supported_generation_fields,
+    )
+
+    assert reasoning_effort_values_sent("fireworks", _CONSOLE_LEVELS) == ("none", "low", "medium", "high", "xhigh")
+    assert reasoning_effort_values_sent("openai", _CONSOLE_LEVELS) == _CONSOLE_LEVELS
+    assert "reasoning_effort" in supported_generation_fields("fireworks", "accounts/fireworks/models/qwen3p8")
+
+
+def test_only_fireworks_restricts_reasoning_effort_levels() -> None:
+    """The allowlist is per record, not a new global rule."""
+    restricted = {r.key for r in ALL_RECORDS if r.reasoning_effort_values is not None}
+    assert restricted == {"fireworks"}
+
+
 # --- TASK-33500: Cerebras tools go out without strict ---
 
 
