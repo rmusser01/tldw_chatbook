@@ -74,6 +74,7 @@ Tests/UI/test_library_footer_focus.py
 Tests/UI/test_library_grip_capture.py
 Tests/UI/test_library_notes_work_session.py
 Tests/UI/test_library_prompt_history_controller.py
+Tests/UI/test_library_quit_guard.py
 Tests/UI/test_library_rag_legacy_chunk_report.py
 Tests/UI/test_library_url_ingest_submit.py
 Tests/UI/test_llm_screen_ollama_probe_nonblocking.py

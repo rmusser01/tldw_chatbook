@@ -1,4 +1,4 @@
-"""Library's unsaved work at the edges: quitting, blank-note GC, autosave max-wait.
+"""Library's unsaved work when the app quits, and the blank-note GC.
 
 TASK-34000.1 (review N-01). Ctrl+Q in Library ▸ Notes threw away whatever
 was typed since the last autosave. The app's quit walk asks only the active
@@ -20,18 +20,16 @@ awaited ``flush_pending_work``.
   Stay, leaving the editor open on a deleted note.
 * ``gc_untouched_session_blank_note`` is that GC's one copy, shared with the
   navigation flush (``LibraryScreen._flush_library_note_save``).
-* ``arm_library_note_autosave`` caps the 2 s debounce with a maximum wait
-  measured from the first unsaved keystroke of a burst, so continuous typing
-  (one key every 1.2 s re-armed the debounce forever) is still saved.
 
-This lives outside ``library_screen.py``, which is over its size ratchet, and
-the screen imports it lazily so it stays out of the Library preimport census.
+The autosave policy (its maximum wait, and what a refused autosave may do)
+lives in ``library_note_autosave.py``. This lives outside
+``library_screen.py``, which is over its size ratchet, and the screen imports
+it lazily so it stays out of the Library preimport census.
 """
 
 from __future__ import annotations
 
 import asyncio
-import time
 from typing import TYPE_CHECKING, Any
 
 from loguru import logger
@@ -40,9 +38,7 @@ from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
 from .screen_constants import LIBRARY_NOTE_BLANK_SEED_TITLE
 
 if TYPE_CHECKING:
-    from ...Library.library_notes_state import LibraryNoteSessionSnapshot
     from ..Screens.library_screen import LibraryScreen
-    from .library_notes_state import LibraryNotesState
 
 logger = logger.bind(module="LibraryScreen")
 
@@ -60,90 +56,24 @@ _FILE_UNSAVED_STATES = frozenset({"dirty", "saving", "conflict", "error"})
 _RETAINED_FLUSHES: set[asyncio.Future[Any]] = set()
 
 
-# --- Autosave max-wait ---------------------------------------------------------
-
-
-def library_note_autosave_delay(
-    state: LibraryNotesState,
-    snapshot: LibraryNoteSessionSnapshot,
-    *,
-    debounce: float,
-    max_wait: float,
-    now: float | None = None,
-) -> float:
-    """Return the debounce for this keystroke, capped by the burst's max wait.
-
-    A burst starts at the first unsaved keystroke and is keyed on the note,
-    its session and its saved revision, so a landed save, another note or a
-    reopened session starts a new one. The timer callback ends the burst
-    too (``arm_library_note_autosave``), so a vetoed or failed autosave does
-    not turn every later keystroke into an immediate retry.
-
-    Args:
-        state: The screen's Notes state, which holds the current burst.
-        snapshot: The note session snapshot after the keystroke.
-        debounce: The normal quiet period before an autosave.
-        max_wait: The longest a burst may stay unsaved.
-        now: The monotonic clock reading; defaults to ``time.monotonic()``.
-
-    Returns:
-        Seconds until the autosave should fire: the debounce, or less when
-        the burst's max wait runs out first (never negative).
-    """
-    now = time.monotonic() if now is None else now
-    key = (snapshot.note_id, snapshot.session_generation, snapshot.saved_revision)
-    burst = state.autosave_burst
-    if burst is None or burst[0] != key:
-        burst = (key, now)
-        state.autosave_burst = burst
-    return max(0.0, min(debounce, burst[1] + max_wait - now))
-
-
-def arm_library_note_autosave(
-    screen: LibraryScreen,
-    snapshot: LibraryNoteSessionSnapshot,
-    *,
-    debounce: float,
-    max_wait: float,
-) -> None:
-    """Start the autosave timer for the current burst.
-
-    The caller has already invalidated the previous timer. The two durations
-    are passed in so the screen keeps reading its own module constants,
-    which tests patch to make autosave fast or to turn it off.
-
-    Args:
-        screen: The Library screen that owns the timer.
-        snapshot: The note session snapshot after the keystroke.
-        debounce: ``LIBRARY_NOTES_AUTOSAVE_SECONDS``.
-        max_wait: ``LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS``.
-    """
-    state = screen._notes_state
-    generation = state.autosave_generation
-    delay = library_note_autosave_delay(
-        state, snapshot, debounce=debounce, max_wait=max_wait
-    )
-
-    def _fire() -> None:
-        if generation == state.autosave_generation:
-            state.autosave_burst = None
-        screen._fire_library_note_autosave(generation)
-
-    state.autosave_timer = screen.set_timer(delay, _fire)
-
-
 # --- Untouched blank note GC ---------------------------------------------------
 
 
-async def gc_untouched_session_blank_note(screen: LibraryScreen) -> bool:
+async def gc_untouched_session_blank_note(
+    screen: LibraryScreen, *, discard: bool = True
+) -> bool:
     """Discard this session's new note if the user never really touched it.
 
     Args:
         screen: The Library screen whose open note is checked.
+        discard: False only reports it. The quit flush (review #7) must not
+            save a blank note's spaces -- the whitespace veto would then ask
+            "discard?" about a note navigation discards without asking -- and
+            ``prepare_for_quit`` discards it once the quit is approved.
 
     Returns:
-        True when the open note was this session's untouched blank note and
-        was discarded; False when there was nothing to discard.
+        True when the open note is this session's effectively-empty new note
+        (discarded when ``discard``); False otherwise.
     """
     state = screen._notes_state
     session = screen._library_note_session
@@ -197,8 +127,10 @@ async def gc_untouched_session_blank_note(screen: LibraryScreen) -> bool:
     # that). A title the user actually TYPED -- whitespace,
     # so still blank -- is a different event: keystrokes went
     # in, the row vanished, and nothing said so. Name it.
+    if not discard:
+        return True
     typed_a_blank_title = bool(raw_title) and not raw_title.strip()
-    await screen._gc_pending_blank_note()
+    await screen._notes_controller._gc_pending_blank_note()
     if typed_a_blank_title:
         notify = getattr(screen.app_instance, "notify", None)
         if callable(notify):
@@ -256,7 +188,7 @@ async def _flush_for_quit(screen: LibraryScreen) -> str | None:
         None when everything was persisted; otherwise the sentence the quit
         prompt opens with.
     """
-    task = asyncio.ensure_future(screen.flush_pending_work(gc_untouched_blank=False))
+    task = asyncio.ensure_future(screen.flush_pending_work(quitting=True))
     _retain(task)
     timeout = getattr(
         screen.app, "NAVIGATION_FLUSH_TIMEOUT_SECONDS", _DEFAULT_FLUSH_TIMEOUT_SECONDS

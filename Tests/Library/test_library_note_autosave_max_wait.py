@@ -14,7 +14,7 @@ from types import SimpleNamespace
 import pytest
 
 from tldw_chatbook.UI.Library_Modules.library_notes_state import LibraryNotesState
-from tldw_chatbook.UI.Library_Modules.library_pending_work import (
+from tldw_chatbook.UI.Library_Modules.library_note_autosave import (
     arm_library_note_autosave,
     library_note_autosave_delay,
 )
@@ -84,13 +84,13 @@ class _Screen:
         self._notes_state = LibraryNotesState()
         self.timers: list[tuple[float, object]] = []
         self.fired: list[int] = []
+        self._notes_controller = SimpleNamespace(
+            _fire_library_note_autosave=self.fired.append
+        )
 
     def set_timer(self, delay, callback):
         self.timers.append((delay, callback))
         return SimpleNamespace(stop=lambda: None)
-
-    def _fire_library_note_autosave(self, generation: int) -> None:
-        self.fired.append(generation)
 
 
 def test_the_timer_ends_its_burst_so_a_vetoed_save_is_not_retried_per_key() -> None:

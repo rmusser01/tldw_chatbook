@@ -18,10 +18,11 @@ assertion is about what a relaunch would find, not about widget text.
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
-from textual.widgets import Button, Input, Static, TextArea
+from textual.widgets import Button, Input, Label, Static, TextArea
 
 import tldw_chatbook.UI.Screens.library_screen as library_screen_module
 from Tests.UI.app_factory import _build_test_app
@@ -144,6 +145,19 @@ def _no_autosave(monkeypatch) -> None:
         3600,
         raising=False,
     )
+
+
+def _record_toasts(monkeypatch, app) -> list[str]:
+    """Record every toast the app shows, still showing it."""
+    toasts: list[str] = []
+    real_notify = app.notify
+
+    def _notify(message, *args, **kwargs):
+        toasts.append(str(message))
+        return real_notify(message, *args, **kwargs)
+
+    monkeypatch.setattr(app, "notify", _notify)
+    return toasts
 
 
 async def _library(app, pilot) -> LibraryScreen:
@@ -325,6 +339,39 @@ async def test_ctrl_q_on_an_untouched_new_note_leaves_no_untitled_row(
     profile.db.close_connection()
 
 
+async def test_ctrl_q_on_a_new_note_with_only_a_blank_title_discards_it(
+    tmp_path, monkeypatch
+):
+    """Review finding #7: quit treats a whitespace-only title like navigation.
+
+    Leaving such a note discards it ("Empty note discarded"). Quitting must
+    not first try to save the spaces, hit the whitespace veto and ask.
+    """
+    _no_autosave(monkeypatch)
+    events: list = []
+    app, profile = _library_app(
+        tmp_path, monkeypatch, events, lambda notes: notes.rows()
+    )
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=SIZE) as pilot:
+            screen = await _library(app, pilot)
+            await _new_blank_note(screen, pilot)
+            screen.query_one("#library-note-title", Input).focus()
+            await pilot.pause()
+            await _type(pilot, "  ")
+            assert screen._library_note_session.snapshot.dirty
+
+            assert await _ctrl_q(pilot, app, events) is None, (
+                "a whitespace-only new note asked instead of being discarded"
+            )
+            [(kind, rows)] = events
+            assert kind == "quit"
+            assert sorted(rows) == sorted(
+                [(_TITLE, _BODY), (_OTHER_TITLE, _OTHER_BODY)]
+            ), rows
+    profile.db.close_connection()
+
+
 # --- AC#2: a save that cannot complete asks, and only Discard quits ---------
 
 
@@ -403,23 +450,92 @@ async def test_a_failed_write_asks_instead_of_exiting(tmp_path, monkeypatch):
     profile.db.close_connection()
 
 
+async def test_a_conflicting_save_asks_and_keeps_the_other_version(
+    tmp_path, monkeypatch
+):
+    """AC#2 conflict variant: the note changed elsewhere since it opened."""
+    _no_autosave(monkeypatch)
+    events: list = []
+    app, profile = _library_app(
+        tmp_path, monkeypatch, events, lambda notes: notes.note(notes.note_id)
+    )
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=SIZE) as pilot:
+            screen = await _library(app, pilot)
+            body = await _open_note(screen, pilot, _TITLE, profile.note_id)
+            await _type_at_end(pilot, body, " mine")
+            version = profile.note(profile.note_id)["version"]
+            assert profile.db.update_note(
+                profile.note_id, {"content": "edited elsewhere"}, version
+            )
+
+            prompt = await _ctrl_q(pilot, app, events)
+
+            assert prompt is not None, "a conflicting save quit silently"
+            assert _prompt_title(prompt) == (
+                f'Quit and discard unsaved changes to "{_TITLE}"?'
+            )
+            message = str(prompt.query_one(".dialog-message", Label).renderable)
+            assert "changed elsewhere" in message, message
+            await _keep_editing(pilot, app, screen, prompt)
+            assert body.text == _BODY + " mine"
+            assert screen._library_note_session.snapshot.in_conflict
+
+            prompt = await _ctrl_q(pilot, app, events)
+            assert prompt is not None
+            await pilot.click("#confirm-button")
+            await _until(pilot, lambda: bool(events), "Discard and quit to quit")
+            [(kind, row)] = events
+            assert kind == "quit"
+            assert row["content"] == "edited elsewhere", (
+                "the other version was overwritten"
+            )
+    profile.db.close_connection()
+
+
 # --- AC#4: continuous typing is saved before the typist pauses --------------
 
 
+#: Scaled autosave pair for the burst tests (production: 2 s / 10 s). A key
+#: lands every ``_KEY_GAP`` seconds, well inside the debounce.
+_DEBOUNCE, _MAX_WAIT, _KEY_GAP = 1.0, 2.0, 0.25
+
+
+def _scaled_autosave(monkeypatch) -> None:
+    monkeypatch.setattr(
+        library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", _DEBOUNCE
+    )
+    monkeypatch.setattr(
+        library_screen_module,
+        "LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS",
+        _MAX_WAIT,
+        raising=False,
+    )
+
+
+async def _type_steadily(pilot, keys: str, sample) -> tuple[list[float], list]:
+    """Press ``keys`` one per ``_KEY_GAP``; return the real gaps and samples."""
+    gaps: list[float] = []
+    samples: list = []
+    last = time.monotonic()
+    for char in keys:
+        await pilot.press(char)
+        await pilot.pause(_KEY_GAP)
+        now = time.monotonic()
+        gaps.append(now - last)
+        last = now
+        samples.append(sample())
+    return gaps, samples
+
+
 async def test_continuous_typing_is_saved_within_the_max_wait(tmp_path, monkeypatch):
-    """One key every 0.25 s never lets a 0.5 s debounce fire; the max wait does.
+    """One key every 0.25 s never lets a 1 s debounce fire; the max wait does.
 
     The production pair is 2 s / 10 s; scaled down here so the burst fits a
     test. Every keystroke lands well inside the debounce, so without a
     maximum wait nothing reaches the database until typing stops.
     """
-    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.5)
-    monkeypatch.setattr(
-        library_screen_module,
-        "LIBRARY_NOTES_AUTOSAVE_MAX_WAIT_SECONDS",
-        1.5,
-        raising=False,
-    )
+    _scaled_autosave(monkeypatch)
     events: list = []
     app, profile = _library_app(tmp_path, monkeypatch, events, lambda _notes: None)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
@@ -430,20 +546,121 @@ async def test_continuous_typing_is_saved_within_the_max_wait(tmp_path, monkeypa
             body.move_cursor(body.document.end)
             await pilot.pause()
 
-            persisted: list[str] = []
-            for char in "abcdefghijklmnop":  # 16 keys over ~4 s, no pause >= 0.5 s
-                await pilot.press(char)
-                await pilot.pause(0.25)
-                persisted.append(profile.note(profile.note_id)["content"])
-
-            assert screen._library_note_session.snapshot.dirty, (
-                "the burst must still be unsaved at its end (no debounce fired)"
+            gaps, persisted = await _type_steadily(
+                pilot,
+                "abcdefghijklmnop",  # 16 keys over ~4 s
+                lambda: profile.note(profile.note_id)["content"],
             )
-            mid_burst = [content for content in persisted if content != _BODY]
-            assert mid_burst, (
+
+            first_save = next(
+                (index for index, content in enumerate(persisted) if content != _BODY),
+                None,
+            )
+            assert first_save is not None, (
                 "four seconds of continuous typing never reached the database"
             )
-            assert mid_burst[0].startswith(_BODY + "a"), mid_burst[0]
+            assert persisted[first_save].startswith(_BODY + "a"), persisted[first_save]
+            # Only the max wait can have saved it: no gap before that save
+            # was long enough for the debounce to fire on its own.
+            assert max(gaps[: first_save + 1]) < _DEBOUNCE, (
+                f"a {max(gaps[: first_save + 1]):.2f}s pause let the debounce "
+                "fire; this run cannot tell the max wait from the debounce"
+            )
+    profile.db.close_connection()
+
+
+async def test_a_vetoed_autosave_never_moves_focus_while_typing(
+    tmp_path, monkeypatch
+):
+    """N-07 core guard (TASK-34000.1 review): the max wait fires mid-burst.
+
+    A title the save refuses (a trailing space) vetoes every autosave. If that
+    veto moved focus to the title, the next body keys would land in the
+    title and the next autosave would save body text as the title.
+    """
+    _scaled_autosave(monkeypatch)
+    events: list = []
+    app, profile = _library_app(tmp_path, monkeypatch, events, lambda _notes: None)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=SIZE) as pilot:
+            screen = await _library(app, pilot)
+            body = await _open_note(screen, pilot, _TITLE, profile.note_id)
+            title = screen.query_one("#library-note-title", Input)
+            title.focus()
+            title.cursor_position = len(title.value)
+            await _type(pilot, " ")  # the save refuses a trailing space
+            body.focus()
+            body.move_cursor(body.document.end)
+            await pilot.pause()
+
+            keys = "abcdefghijklmnop"
+            _gaps, states = await _type_steadily(
+                pilot,
+                keys,
+                lambda: (
+                    screen._notes_state.autosave_state,
+                    screen._library_note_session.snapshot.status_message,
+                    screen.focused,
+                ),
+            )
+
+            vetoed = [status for state, status, _focused in states if state == "validation"]
+            assert vetoed, (
+                "no autosave was vetoed during the burst; the guard was never "
+                "exercised"
+            )
+            # The reason is reported in the save status instead of by moving.
+            assert all("whitespace" in status for status in vetoed), vetoed
+            assert all(focused is body for _state, _status, focused in states), (
+                "a vetoed autosave moved focus off the body mid-typing: "
+                f"{[getattr(focused, 'id', None) for *_rest, focused in states]}"
+            )
+            assert body.text == _BODY + keys
+            assert title.value == _TITLE + " "
+            row = profile.note(profile.note_id)
+            assert (row["title"], row["content"]) == (_TITLE, _BODY)
+    profile.db.close_connection()
+
+
+async def test_keys_typed_while_a_save_is_in_flight_are_saved(tmp_path, monkeypatch):
+    """Review finding #5: keys that land during a slow save still persist.
+
+    ``_schedule_library_note_autosave`` arms nothing while the session is
+    saving; the coordinator's save loop picks those keys up instead.
+    """
+    monkeypatch.setattr(library_screen_module, "LIBRARY_NOTES_AUTOSAVE_SECONDS", 0.2)
+    events: list = []
+    app, profile = _library_app(tmp_path, monkeypatch, events, lambda _notes: None)
+    original_save = profile.scope_service.save_note
+    in_flight: list[bool] = []
+
+    async def _slow_save(**kwargs):
+        in_flight.append(True)
+        await asyncio.sleep(0.8)
+        return await original_save(**kwargs)
+
+    monkeypatch.setattr(profile.scope_service, "save_note", _slow_save)
+    with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
+        async with app.run_test(size=SIZE) as pilot:
+            screen = await _library(app, pilot)
+            body = await _open_note(screen, pilot, _TITLE, profile.note_id)
+            await _type_at_end(pilot, body, "a")
+            await _until(
+                pilot,
+                lambda: bool(screen._library_note_session.snapshot.saving),
+                "the autosave to start its slow save",
+                timeout=10.0,
+            )
+            await _type(pilot, "bcd")  # typed while that save is in flight
+            assert screen._library_note_session.snapshot.saving
+
+            await _until(
+                pilot,
+                lambda: profile.note(profile.note_id)["content"] == _BODY + "abcd",
+                "the keys typed during the save to reach the database",
+                timeout=15.0,
+            )
+            assert not screen._library_note_session.snapshot.dirty
     profile.db.close_connection()
 
 
@@ -469,6 +686,7 @@ async def test_ctrl_q_with_a_dirty_prompt_draft_asks_and_keeps_it(
     app.prompt_scope_service = PromptScopeService(
         local_service=LocalPromptService(prompts_db), server_service=None
     )
+    toasts = _record_toasts(monkeypatch, app)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
@@ -485,10 +703,13 @@ async def test_ctrl_q_with_a_dirty_prompt_draft_asks_and_keeps_it(
             await pilot.press("!")
             await _until(pilot, lambda: screen._prompts_state.dirty, "a dirty prompt")
             typed = name.value
+            toasts.clear()
 
             prompt = await _ctrl_q(pilot, app, events)
 
             assert prompt is not None, "Ctrl+Q quit past a dirty prompt draft"
+            # Review finding #6: the prompt says it; no veto toast behind it.
+            assert not [t for t in toasts if "Unsaved Prompt" in t], toasts
             assert _prompt_title(prompt) == (
                 'Quit and discard unsaved changes to "Summarize"?'
             )
@@ -503,6 +724,7 @@ async def test_ctrl_q_with_a_dirty_skill_draft_asks(tmp_path, monkeypatch):
     app, _ = _library_app(
         tmp_path, monkeypatch, events, lambda _notes: None, notes=False
     )
+    toasts = _record_toasts(monkeypatch, app)
     with patch_app_global("get_cli_setting", side_effect=_settings_without_splash):
         async with app.run_test(size=SIZE) as pilot:
             screen = await _library(app, pilot)
@@ -514,10 +736,12 @@ async def test_ctrl_q_with_a_dirty_skill_draft_asks(tmp_path, monkeypatch):
             name.focus()
             await _type(pilot, "dirty-demo")
             await _until(pilot, lambda: screen._skills_state.dirty, "a dirty skill")
+            toasts.clear()
 
             prompt = await _ctrl_q(pilot, app, events)
 
             assert prompt is not None, "Ctrl+Q quit past a dirty skill draft"
+            assert not [t for t in toasts if "Unsaved skill" in t], toasts
             assert _prompt_title(prompt) == (
                 'Quit and discard unsaved changes to "new skill"?'
             )

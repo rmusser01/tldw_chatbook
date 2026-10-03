@@ -31,19 +31,24 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 
 #: Screens that defined ``flush_pending_work`` without ``confirm_quit`` on
-#: 2026-10-03 (TASK-34000.1). Each still drops its pending work on Ctrl+Q;
-#: their flushes push their own prompts through ``push_screen_wait``, which
-#: the quit flow may not do (TASK-33622.10), so each needs its own fix.
+#: 2026-10-03 (TASK-34000.1). Each still drops its pending work on Ctrl+Q,
+#: and each has its own task. Two of them prompt from their flush through
+#: ``push_screen_wait``, which a quit hook may not do (TASK-33622.10, use
+#: ``await_quit_prompt``). The third pushes nothing at all.
 _KNOWN_GAPS: dict[str, str] = {
     "tldw_chatbook/UI/Screens/research_workspace_screen.py:ResearchWorkspaceScreen": (
-        "quick-note draft; its flush asks through push_screen_wait"
+        "TASK-34000.44: quick-note draft; its flush asks through "
+        "push_screen_wait (ResearchNoteSwitchRecoveryModal, in a worker)"
     ),
     "tldw_chatbook/UI/Screens/stts_screen.py:STTSScreen": (
-        "Studio preference draft; its flush asks through its own dialog"
+        "TASK-34000.45: Studio preference draft; its flush asks through "
+        "push_screen_wait (StudioTTSLeaveModal)"
     ),
     "tldw_chatbook/UI/Screens/workflows_screen.py:WorkflowsScreen": (
-        "the app's workflow-authoring owner is flushed by the quit flow; "
-        "the controller-only draft path is not"
+        "TASK-34000.46: its flush pushes nothing; it flushes the drafts and "
+        "vetoes on DraftWriteFailed. The quit flow calls the app's "
+        "workflow-authoring owner's prepare_quit; the controller-only "
+        "draft path has no quit hook"
     ),
 }
 

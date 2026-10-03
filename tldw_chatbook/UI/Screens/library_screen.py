@@ -11107,7 +11107,7 @@ class LibraryScreen(BaseAppScreen):
             return False
         return self._acquire_file_notes_transition("screen")
 
-    async def flush_pending_work(self, *, gc_untouched_blank: bool = True) -> bool:
+    async def flush_pending_work(self, *, quitting: bool = False) -> bool:
         """Persist pending note edits before the app navigates away or quits.
 
         The app awaits this from ``handle_screen_navigation`` before
@@ -11117,8 +11117,9 @@ class LibraryScreen(BaseAppScreen):
         tabs mid-edit. ``confirm_quit`` awaits it too (TASK-34000.1).
 
         Args:
-            gc_untouched_blank: False defers the untouched-blank-note GC; the
-                quit runs it from ``prepare_for_quit`` once every prompt said yes.
+            quitting: The quit hook asks its own question, so the veto toasts
+                stay quiet, and an untouched new note waits for
+                ``prepare_for_quit`` (after every quit prompt said yes).
 
         Returns:
             True only for the coordinator's typed ``PERMITTED`` result and
@@ -11130,15 +11131,15 @@ class LibraryScreen(BaseAppScreen):
             return False
         file_notes_flush_allowed = await self._flush_active_file_notes()
         note_flush = await (
-            self._flush_library_note_save()
-            if gc_untouched_blank
-            else self._flush_library_note_save(gc_untouched_blank=False)
+            self._flush_library_note_save(gc_untouched_blank=False)
+            if quitting
+            else self._flush_library_note_save()
         )
         prompt_flush_allowed = await self._flush_library_prompt_save()
         skill_flush_allowed = await self._flush_library_skill_save()
-        if not prompt_flush_allowed:
+        if not prompt_flush_allowed and not quitting:
             self._notify_prompt_dirty_veto()
-        if not skill_flush_allowed:
+        if not skill_flush_allowed and not quitting:
             # task-449: the app-level navigation veto only logs, so tell
             # the user why the tab switch was refused -- same toast as the
             # in-screen Back / row-switch / rail-switch vetoes. Notes show
@@ -20762,7 +20763,7 @@ class LibraryScreen(BaseAppScreen):
             return
         self._notes_state.autosave_state = "idle"
         self._invalidate_library_note_autosave()
-        from ..Library_Modules.library_pending_work import arm_library_note_autosave
+        from ..Library_Modules.library_note_autosave import arm_library_note_autosave
 
         arm_library_note_autosave(  # TASK-34000.1: debounce capped by a max wait
             self,
@@ -20786,9 +20787,6 @@ class LibraryScreen(BaseAppScreen):
     @on(Input.Changed, '#library-note-context-keywords')
     def handle_library_note_context_keywords_changed(self, event: Input.Changed) -> None:
         return self._notes_controller.handle_library_note_context_keywords_changed(event)
-
-    def _fire_library_note_autosave(self, generation: int) -> None:
-        return self._notes_controller._fire_library_note_autosave(generation)
 
     @on(Button.Pressed, '#library-note-save')
     def handle_library_note_save(self, event: Button.Pressed) -> None:
@@ -20974,7 +20972,11 @@ class LibraryScreen(BaseAppScreen):
         ):
             return
         outcome = await self._library_note_session.request_save(explicit=explicit)
-        self._apply_library_note_save_outcome(outcome)
+        from ..Library_Modules.library_note_autosave import keep_autosave_veto_in_place
+
+        # TASK-34000.1 (N-07): a refused AUTOSAVE never moves a typing user.
+        if explicit or not keep_autosave_veto_in_place(self, outcome):
+            self._apply_library_note_save_outcome(outcome)
 
     async def _flush_library_note_save(
         self, *, gc_untouched_blank: bool = True
@@ -20982,15 +20984,15 @@ class LibraryScreen(BaseAppScreen):
         """Cross the coordinator's pending-work barrier before navigation.
 
         Args:
-            gc_untouched_blank: False keeps this session's untouched new note
-                (the quit discards it later, in ``prepare_for_quit``).
+            gc_untouched_blank: False keeps this session's untouched new note,
+                unsaved (the quit discards it later, in ``prepare_for_quit``).
         """
         self._invalidate_library_note_autosave()
         from ..Library_Modules.library_pending_work import (
             gc_untouched_session_blank_note,
         )
 
-        if gc_untouched_blank and await gc_untouched_session_blank_note(self):
+        if await gc_untouched_session_blank_note(self, discard=gc_untouched_blank):
             return NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
         before = self._library_note_session.snapshot
         before_saved_revision = before.saved_revision if before is not None else None
@@ -21034,9 +21036,6 @@ class LibraryScreen(BaseAppScreen):
         if validation_field:
             self._focus_library_note_validation_field(validation_field)
         return outcome
-
-    async def _gc_pending_blank_note(self) -> None:
-        return await self._notes_controller._gc_pending_blank_note()
 
     @on(Button.Pressed, '#library-note-conflict-overwrite')
     def handle_library_note_conflict_overwrite(self, event: Button.Pressed) -> None:

@@ -75,7 +75,11 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # TASK-33661 raised it to 121: Tests/UI/test_console_turn_resend_ui.py pins
 # the Resend action row, its `r` key, the in-flight guard, and a real-Console
 # click and keypress through both Resend paths.
-MINIMUM_FILES = 121
+# TASK-34000.1 raised it to 123: the census already held 122 files, and
+# Tests/UI/test_library_quit_guard.py (real-app Ctrl+Q over unsaved Library
+# Notes / prompt / skill / Folder files work, asserted against the DB and the
+# file on disk) joins it.
+MINIMUM_FILES = 123
 
 
 def read_census(path: Path) -> list[str]:

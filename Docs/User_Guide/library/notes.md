@@ -479,10 +479,14 @@ works.
 **Autosave** runs about two seconds after you stop typing; the meta line
 flips to "saving…" and back to "saved". If you keep typing without a
 two-second pause, it still saves at least every ten seconds, so a long
-burst of steady typing is never held back until you stop. If the same note
-was changed somewhere else while you were editing, a banner appears: "This
-note changed elsewhere — Overwrite saves your text; Reload discards it." —
-pick **Overwrite** or **Reload**.
+burst of steady typing is never held back until you stop. If an autosave is
+refused — a title with a leading or trailing space, unsafe markup, a
+duplicate keyword — or the write fails, the status line says why, and your
+cursor stays in the field you are typing in. Nothing jumps to another field
+or pane mid-sentence; pressing **Save** takes you to the field that needs
+fixing. If the same note was changed somewhere else while you were editing,
+a banner appears: "This note changed elsewhere — Overwrite saves your text;
+Reload discards it." — pick **Overwrite** or **Reload**.
 
 **Quitting with unsaved changes.** **Ctrl+Q** saves the open note before
 Chatbook exits, so text typed in the last moments is kept, and a new note
@@ -613,7 +617,8 @@ anything, or quit Chatbook, the blank note is quietly discarded rather than
 left behind as a stray "Untitled" row.
 Pressing "Save" keeps it, and so does typing anything **that is not only
 whitespace** — a title of nothing but spaces, with an empty body and no
-keywords, still counts as blank and is discarded on the way out. Because
+keywords, still counts as blank and is discarded on the way out, quitting
+included (Chatbook does not ask about it). Because
 you did type something there, that discard is not silent: leaving says
 "Empty note discarded", and the note's row leaves the list at once rather
 than lingering as an "Untitled · now" row for a note that is already gone.

@@ -1,0 +1,25 @@
+# Fix round 1 (N-07 core), 160x45: title made 'Ideas inbox ' (trailing space -> every save vetoed),
+# body focused, 'a' typed, then one key every 1.2 s into the BODY (b..w, ~26 s, well past the 10 s cap).
+# Per key: t(s) key | DB title+version | body's last line on screen | status line
+1 b | [Ideas inbox] v1 | ┃ ab ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+3 c | [Ideas inbox] v1 | ┃ abc ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+4 d | [Ideas inbox] v1 | ┃ abcd ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+5 e | [Ideas inbox] v1 | ┃ abcde ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+6 f | [Ideas inbox] v1 | ┃ abcdef ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+8 g | [Ideas inbox] v1 | ┃ abcdefg ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+9 h | [Ideas inbox] v1 | ┃ abcdefgh ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+10 i | [Ideas inbox] v1 | ┃ abcdefghi ┃ |  Title begins or ends with whitespace — remove it to save. · Next
+11 j | [Ideas inbox] v1 | ┃ abcdefghij ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+13 k | [Ideas inbox] v1 | ┃ abcdefghijk ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+14 l | [Ideas inbox] v1 | ┃ abcdefghijkl ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+15 m | [Ideas inbox] v1 | ┃ abcdefghijklm ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+17 n | [Ideas inbox] v1 | ┃ abcdefghijklmn ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+18 o | [Ideas inbox] v1 | ┃ abcdefghijklmno ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+19 p | [Ideas inbox] v1 | ┃ abcdefghijklmnop ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+20 q | [Ideas inbox] v1 | ┃ abcdefghijklmnopq ┃ |  Title begins or ends with whitespace — remove it to save. · Next
+22 r | [Ideas inbox] v1 | ┃ abcdefghijklmnopqr ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+23 s | [Ideas inbox] v1 | ┃ abcdefghijklmnopqrs ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+24 t | [Ideas inbox] v1 | ┃ abcdefghijklmnopqrst ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+25 u | [Ideas inbox] v1 | ┃ abcdefghijklmnopqrstu ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+27 v | [Ideas inbox] v1 | ┃ abcdefghijklmnopqrstuv ┃ |  Unsaved changes · Next: Keep editing; changes save automatically
+28 w | [Ideas inbox] v1 | ┃ abcdefghijklmnopqrstuvw ┃ |  Unsaved changes · Next: Keep editing; changes save automatically

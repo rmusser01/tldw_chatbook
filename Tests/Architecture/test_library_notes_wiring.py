@@ -316,10 +316,16 @@ def test_the_four_member_list_entry_focus_family_stays_screen_owned() -> None:
 #: + 4 ``action_*``) are exempt from the census outright; SS4's third member,
 #: ``on_<message>`` NAME dispatch, contributes ZERO for notes and
 #: ``test_no_notes_handler_is_name_dispatched_by_textual`` keeps that proven.
-#: 26 of 185 = 14.05%.
+#: 26 of 185 = 14.05%. **28**: TASK-34000.1 pruned two more,
+#: ``_fire_library_note_autosave`` and ``_gc_pending_blank_note``. Their only
+#: screen-side callers moved into ``Library_Modules/library_note_autosave.py``
+#: and ``library_pending_work.py``, which call the controller directly. That
+#: offsets the screen's two new quit hooks in its method budget.
 _NOTES_CLUSTER_SCREEN_DELEGATOR_PRUNED: frozenset[str] = frozenset(
     (
         "_apply_library_note_saved_presentation",
+        "_fire_library_note_autosave",
+        "_gc_pending_blank_note",
         "_apply_library_notes_operation_state",
         "_defer_library_notes_settled_focus_restore",
         "_exit_library_notes_lasting_sync",
