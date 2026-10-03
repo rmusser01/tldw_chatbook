@@ -9,6 +9,10 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from Tests import real_profile_guard as _real_profile_guard
+
+_real_profile_guard.install()  # TASK-33665
+
 _TEST_CONFIG_ROOT_ENV = "TLDW_TEST_CONFIG_ROOT"
 _TEST_CONFIG_OWNER_ENV = "TLDW_TEST_CONFIG_ROOT_OWNER"
 _existing_test_config_root = os.environ.get(_TEST_CONFIG_ROOT_ENV)
@@ -33,6 +37,12 @@ else:
 _BOOTSTRAP_CONFIG_PATH = _BOOTSTRAP_CONFIG_ROOT / "config" / "config.toml"
 _BOOTSTRAP_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
 os.environ["TLDW_CONFIG_PATH"] = str(_BOOTSTRAP_CONFIG_PATH)
+# TASK-33665: config.py freezes its default path from HOME at first import, so a
+# run rooted here must not leave the real HOME in place before tldw imports.
+_BOOTSTRAP_HOME = _BOOTSTRAP_CONFIG_ROOT / "home"
+if not os.environ.get("HOME", "").startswith(str(_BOOTSTRAP_CONFIG_ROOT)):
+    _BOOTSTRAP_HOME.mkdir(parents=True, exist_ok=True)
+    os.environ["HOME"] = os.environ["USERPROFILE"] = str(_BOOTSTRAP_HOME)
 
 import pytest  # noqa: E402
 import pytest_asyncio  # noqa: E402
@@ -44,7 +54,10 @@ from textual.widget import Widget  # noqa: E402
 
 # Import test utilities (fixture re-exports for this nested pytest root).
 from Tests.textual_test_utils import app_pilot, widget_pilot  # noqa: F401,E402
-from Tests.conftest import isolate_test_environment  # noqa: F401,E402
+from Tests.conftest import (  # noqa: F401,E402
+    isolate_test_environment,
+    refuse_real_profile_writes,
+)
 from Tests.textual_test_harness import (  # noqa: F401,E402
     IsolatedWidgetTestApp,
     TestApp,
@@ -64,15 +77,15 @@ A = TypeVar("A", bound=App)
 
 
 def pytest_sessionfinish(session, exitstatus):
-    """Remove the module-load config sandbox created by this conftest."""
-    if not _OWNS_BOOTSTRAP_CONFIG_ROOT:
-        return
-    if os.environ.get("TLDW_CONFIG_PATH") == str(_BOOTSTRAP_CONFIG_PATH):
-        os.environ.pop("TLDW_CONFIG_PATH", None)
-    if os.environ.get(_TEST_CONFIG_ROOT_ENV) == str(_BOOTSTRAP_CONFIG_ROOT):
-        os.environ.pop(_TEST_CONFIG_ROOT_ENV, None)
-        os.environ.pop(_TEST_CONFIG_OWNER_ENV, None)
-    shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
+    """Fail the run on unclaimed real-profile refusals; remove an owned sandbox.
+
+    The sandbox variables stay set, so late writers land in the dead sandbox
+    rather than the real profile; see the root conftest's
+    ``pytest_sessionfinish`` (TASK-33665).
+    """
+    _real_profile_guard.session_end_check(session)
+    if _OWNS_BOOTSTRAP_CONFIG_ROOT:
+        shutil.rmtree(_BOOTSTRAP_CONFIG_ROOT, ignore_errors=True)
 
 
 @pytest.fixture(scope="session")
