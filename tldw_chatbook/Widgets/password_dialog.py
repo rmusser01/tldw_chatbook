@@ -6,7 +6,7 @@ Provides modal dialogs for entering master password for config file encryption.
 Supports both initial password setup and password entry for decryption.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field as dataclass_field
 from typing import Optional, Callable, Literal
 from textual import on
 from textual.app import ComposeResult
@@ -28,8 +28,8 @@ class PasswordChange:
     change mode had one field plus a confirm. ``repr`` hides both values.
     """
 
-    current: str = field(repr=False)
-    new: str = field(repr=False)
+    current: str = dataclass_field(repr=False)
+    new: str = dataclass_field(repr=False)
 
 #: Shown wherever a user is about to enable config encryption for the first
 #: time. Encrypting rewrites config.toml through a TOML parse/serialize
@@ -294,7 +294,7 @@ class PasswordDialog(ModalScreen):
 
     @on(StateCheckbox.Changed, "#show-password-toggle")
     def on_show_password_toggled(self, event: StateCheckbox.Changed) -> None:
-        """Reveal or mask both password fields (UAT K-6)."""
+        """Reveal or mask every password field (UAT K-6)."""
         for field in self.query(".password-input").results(Input):
             field.password = not event.value
 
