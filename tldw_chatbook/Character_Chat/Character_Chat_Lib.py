@@ -3461,7 +3461,16 @@ def load_chat_history_from_file_and_save_to_db(
             f"Created new conversation (ID: {new_conv_id}) for imported chat with '{actual_char_name_from_db}'."
         )
 
-        with db.transaction():
+        # IMMEDIATE (task-22501): this outer unit's first statement is
+        # add_message's conversation-existence SELECT, and the manager only
+        # honours `immediate` at depth 0 -- a DEFERRED begin here silently
+        # neutralizes every inner writer's IMMEDIATE and re-opens the exact
+        # snapshot-upgrade window task-21100 closed: one backfill chunk (or
+        # any concurrent committer) landing between the read and the first
+        # INSERT kills the whole user-facing import with an instant,
+        # busy-handler-bypassing `database is locked`. See
+        # Tests/DB/test_chachanotes_conversation_writer_collision.py.
+        with db.transaction(immediate=True):
             for user_msg_str, char_msg_str in history_pairs:
                 log_user_name = (
                     chat_data_dict.get("user_name") or user_name_for_placeholders
