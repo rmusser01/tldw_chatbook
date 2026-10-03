@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 06:59'
+updated_date: '2026-10-03 09:35'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -139,6 +139,19 @@ Reason: mechanical preserving integration of the landed label-sizing/layout repa
 3. Run the actual incoming Tests/UI/test_console_prompt_queue.py consumers unchanged, including all17 new/changed painted-label cases and original recovery/admission neighbors. Reproduce all12 CSS bundles, task-ID/path/readability, diagnostic/worker and targeted fatal/added-line checks; disclose inherited lint/format/size/AST/profile debt and any non-green evidence. Obtain an independent immutable source/lesson/CSS/runtime-contract review. Incoming Done is shipped status, not a new live-capture/physical-key certification.
 4. After functional/review/artifact work settles, run ORIGINAL five storage/import/UI-ready/boot-CSS cases unchanged with exact REPO_ROOT cwd/PYTHONPATH. No pins/ceilings/counts/warmup/timeouts/measured-work changes. Qualify actual results and limitations, then recheck/close AC3 through CLI; four-owned-Markdown closure preserves the approved source manifest.
 5. Publish once with EXACT observed cf50848faffcc62ed41d594e686b88a165d6e5db lease. Fresh-head Qodo/no actionable threads, all FOUR jobs and actual strict protection precede normal --match-head-commit merge. Verify MERGED parents/tree/concurrent changes and pause heartbeat. No full suite, live provider, Roleplay/relaunch or wider release qualification is added.
+
+## Strict-base provider copy and Fireworks preservation — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/179-generic-hosted-provider-engine-and-preset-registry.md; existing ADR031/062/063/097/199 remain applicable.
+Reason: mechanically preserve incoming PR2970/TASK33922 provider display-name/404 copy and Fireworks level mapping alongside the existing structured model-unavailable classification and orchestration boundaries; no new owner, permission, schema, dependency, provider protocol, gate or ceiling.
+
+1. All FOUR published f8bcd94f jobs passed and edited exact-head Qodo remains clear before this update. Actual remote dev420b53a63df54d97e774a4f3bfa3b09df9d32e93 is CONFLICTING/DIRTY under freshly verified strict protection enforced for administrators. Reopen existing TASK33664 AC3 via CLI. Capture all214 approved Git/disk hashes, 23 incoming hashes, prior tree/modes/blob IDs and capture_cloud.py deletion before rebase.
+2. Rebase the feature range once onto exact420b. Preserve all211 prior non-overlap hashes and20 incoming non-overlap paths exactly. Two gateway/test overlaps equal authenticated clean three-way composition. Resolve only hosted_chat's actual HTTP-error conflict by retaining the exact existing structured400/404 model_unavailable_error block before incoming _raise_http_error(..., label=label). Preserve every remaining original/incoming byte and incoming task status. No new production repair is planned.
+3. Qualify unchanged actual new transport error-copy and Fireworks reasoning modules; affected gateway redaction/error/model-unavailable and orchestration neighbors; Console support/catalog/tool-error, actual new modal provider-switch and picker-cap consumers. Preserve raw positive/NON-GREEN results. If the original incoming HTTP double fails solely because it lacks requests.Response.json needed by the retained structured-error path, authenticate that failure and repair only the double's real response contract without deleting/assertion/marker/config/runtime masking; otherwise do not change tests.
+4. Authenticate full tracked tree, all non-overlap/three-way source hashes, unchanged SQL/refund/nonreplay/hooks/recovery/schema/authority/custody and original guards. Reproduce affected source artifacts/static/task-ID/path/readability/whitespace checks proportionately; retain inherited lint/format/size/AST/profile debt and all earlier evidence. Obtain focused independent immutable source and functional evidence review.
+5. After functional/review/artifact work settles, run ORIGINAL five storage/app-import/UI-ready/boot-CSS cases unchanged with exact REPO_ROOT cwd/PYTHONPATH; retain original sources/counts/limits/warnings. Recheck/close AC3 through CLI only after qualification. Documentation-only closure preserves approved source hashes and deletion.
+6. Publish once with EXACT observed f8bcd94f6b50249e8e07356b9a4320483362406e lease, update concise PR body and verify actual refs/current-head Qodo/no actionable threads/ALL FOUR fresh jobs. Never rebase while those jobs run. Merge normally with --match-head-commit only after actual strict protection is satisfied; verify MERGED parents/tree/concurrency then pause heartbeat. No live providers, user keys, physical CtrlQ/relaunch, full suite, Windows, wider audit or installed/package/index/native release certification is added.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
