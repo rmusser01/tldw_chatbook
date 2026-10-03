@@ -19864,7 +19864,14 @@ class LibraryScreen(BaseAppScreen):
         task-21116's canvas-scoped seam still applies: rail selection +
         canvas-child swap, never a whole-screen rebuild for a per-click
         section "Export…" action.
+
+        Because it is deferred, the user can pick another Library
+        destination before it runs; projecting then would put the Export
+        canvas over that later selection, so it only projects while Export
+        is still the selected destination.
         """
+        if self._library_selected_row_id != LIBRARY_ROW_INGEST_EXPORT:
+            return
         await self._apply_library_open_item_surface(
             lambda: LibraryExportCanvas(
                 self._build_library_export_state(),

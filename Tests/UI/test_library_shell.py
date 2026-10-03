@@ -20050,6 +20050,62 @@ async def test_library_export_canvas_propagates_non_conflict_flush_veto(monkeypa
     assert screen._library_selected_row_id == LIBRARY_ROW_BROWSE_NOTES
 
 
+@pytest.mark.asyncio
+async def test_library_export_projection_skips_when_destination_moved_on():
+    """The deferred Export projection must not replace a later selection's canvas."""
+    apply_surface = AsyncMock()
+    start_counts = Mock()
+    screen = SimpleNamespace(
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _apply_library_open_item_surface=apply_surface,
+        _start_library_export_counts_worker=start_counts,
+    )
+
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_not_awaited()
+    start_counts.assert_not_called()
+
+    screen._library_selected_row_id = LIBRARY_ROW_INGEST_EXPORT
+    await LibraryScreen._project_library_export_canvas(screen)
+
+    apply_surface.assert_awaited_once()
+    start_counts.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_library_export_repeat_press_keeps_the_first_origin():
+    """A second "Export…" press before the deferred projection lands must not
+    record Export as its own origin (Escape could then never leave it)."""
+    from tldw_chatbook.UI.Library_Modules.library_export_controller import (
+        LibraryExportController,
+    )
+
+    controller = SimpleNamespace(
+        _library_prompts_mutation_in_flight=False,
+        _library_export_is_server_mode=lambda: False,
+        _flush_library_note_save=AsyncMock(
+            return_value=NoteFlushOutcome(NoteFlushOutcomeKind.PERMITTED)
+        ),
+        _library_selected_row_id=LIBRARY_ROW_BROWSE_MEDIA,
+        _library_export_origin_row_id="",
+        _reset_library_export_transient_state=Mock(),
+        _project_library_export_canvas=Mock(),
+        call_after_refresh=Mock(),
+    )
+    controller._set_library_destination_with_conversation_fence = lambda row_id: (
+        setattr(controller, "_library_selected_row_id", row_id)
+    )
+
+    for _ in range(2):
+        await LibraryExportController._open_library_export_canvas(
+            controller, ExportScope(kind="media")
+        )
+
+    assert controller._library_selected_row_id == LIBRARY_ROW_INGEST_EXPORT
+    assert controller._library_export_origin_row_id == LIBRARY_ROW_BROWSE_MEDIA
+
+
 def test_library_conflict_handlers_do_not_cancel_the_token_owner(monkeypatch):
     """Duplicate conflict actions must not create exclusive cancelling workers."""
     screen = LibraryScreen(_build_test_app())
