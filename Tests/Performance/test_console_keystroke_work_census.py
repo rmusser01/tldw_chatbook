@@ -150,6 +150,9 @@ def _report_census(case: str, census: dict[str, Any]) -> None:
 #: TASK-33802: who paid each storage admission and helper spawn billed to the
 #: typing burst, so an over-ceiling burst names its caller in the failure.
 _TYPING_BURST_CALLERS: list[str] = []
+#: TASK-33644: why the GC census pass failed. The pass records rather than
+#: asserts, so the census is still reported before the test fails on it.
+_GC_PASS_FAILURES: list[str] = []
 #: The app package's own frames (not the venv's, whose path also names the
 #: repository).
 _APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
@@ -712,6 +715,7 @@ async def _census_idle_and_visit(
             probe_held.set()
             return False
 
+        _GC_PASS_FAILURES.clear()
         window: dict[str, Any] = {"calls": [], "error": None}
         billed = asyncio.Event()
         # Owned calls run in worker threads that cancelling the loop does not
@@ -788,12 +792,19 @@ async def _census_idle_and_visit(
             for name, call in orphaned
             if call.done() and not call.cancelled() and call.exception() is not None
         ]
-        assert window["error"] is None and not late, "; ".join(
-            filter(None, [window["error"], *late])
-        )
-        assert window["calls"] == ["current_graph_epoch", "collect", "run_after_gc"], (
-            f"the billed GC pass ran {window['calls']}"
-        )
+        failure = "; ".join(filter(None, [window["error"], *late]))
+        if not failure and window["calls"] != [
+            "current_graph_epoch",
+            "collect",
+            "run_after_gc",
+        ]:
+            failure = f"the billed GC pass ran {window['calls']}"
+        if failure:
+            _GC_PASS_FAILURES.append(failure)
+            # Unmeasured (never over a ceiling); the test fails on the
+            # recorded failure once the census is reported.
+            for unit in IO_UNITS:
+                phases.setdefault(f"gc:{unit}", -1)
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -1098,6 +1109,10 @@ OS_OPENS_JITTER_SLACK = 1.05
 #: maintenance 16.5-23.125 per tick, trace GC pass 26, visit 1,913-1,926.
 #: The GC-pass row was re-pinned 26 -> 39 when the census started billing
 #: the first pass (collection included): 3 helpers x (11 components + 2).
+#: Every row assumes the runner's default pytest temp dir (11 path components
+#: to the census profile): each directory walk opens one file per component,
+#: so a run under a deeper ``--basetemp`` reads higher on every row by design.
+#: The gate is for that CI layout, not for arbitrary local temp roots.
 LINUX_OS_OPENS_CEILINGS = {
     "typing (whole burst)": 81,
     "typing pause": 206,
@@ -1245,12 +1260,15 @@ async def test_console_storage_units_stay_within_their_ratchets(
             MAX_VISIT_STORAGE_UNITS,
         ),
     }
-    census = {k: v[0] for k, v in measured.items()}
+    census: dict[str, Any] = {k: v[0] for k, v in measured.items()}
     request.node.user_properties.append(("storage_units", json.dumps(census)))
     # TASK-33643: every run reports its census -- before any assertion, so a
     # failing run reports too -- and CI ceilings are pinned from those lines;
     # perf-guard.yml names the file and prints it.
+    if _GC_PASS_FAILURES:
+        census["trace GC pass failure"] = _GC_PASS_FAILURES[0]
     _report_census(request.node.name, census)
+    assert not _GC_PASS_FAILURES, _GC_PASS_FAILURES[0]
     assert (
         counts["settings_readiness_builds"] / KEYSTROKES
         <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
