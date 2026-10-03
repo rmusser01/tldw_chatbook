@@ -91,13 +91,19 @@ class ConfigEncryption:
         # Return with prefix
         return f"{self.ENCRYPTION_PREFIX}{encrypted_b64}"
 
-    def decrypt_value(self, encrypted_value: str, password: str) -> str:
+    def decrypt_value(
+        self, encrypted_value: str, password: str, *, log_failure: bool = True
+    ) -> str:
         """
         Decrypt an encrypted string value with authentication.
 
         Args:
             encrypted_value: The encrypted string (with or without prefix)
             password: The password to use for decryption
+            log_failure: Log a failed decrypt at ERROR. ``verify_password``
+                passes False: a wrong password is an expected answer there,
+                and the startup prompt must not print an error between tries
+                (TASK-34100.4).
 
         Returns:
             The decrypted string
@@ -143,7 +149,8 @@ class ConfigEncryption:
             return plaintext.decode("utf-8")
 
         except Exception as e:
-            logger.error(f"Decryption failed: {type(e).__name__}")
+            if log_failure:
+                logger.error(f"Decryption failed: {type(e).__name__}")
             raise ValueError(
                 "Failed to decrypt value. Invalid password or corrupted data."
             )
@@ -276,7 +283,7 @@ class ConfigEncryption:
             True if password is correct, False otherwise
         """
         try:
-            decrypted = self.decrypt_value(verifier, password)
+            decrypted = self.decrypt_value(verifier, password, log_failure=False)
             # Check if it's a valid verification token
             return decrypted.startswith("PASSWORD_VERIFICATION_TOKEN_")
         except ValueError:
