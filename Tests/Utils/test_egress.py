@@ -46,7 +46,12 @@ def test_public_url_allowed():
 
 
 def test_non_http_schemes_blocked():
-    for url in ("file:///etc/passwd", "ftp://example.com/x", "gopher://x", "data:text/html,hi"):
+    for url in (
+        "file:///etc/passwd",
+        "ftp://example.com/x",
+        "gopher://x",
+        "data:text/html,hi",
+    ):
         d = evaluate_url_policy(url)
         assert not d.allowed and d.reason == "scheme", url
 
@@ -154,9 +159,9 @@ def test_allowlist_overrides_metadata(monkeypatch):
     monkeypatch.setattr(
         egress,
         "get_cli_setting",
-        lambda s, k=None, d=None: ["metadata.google.internal"]
-        if k == "allowed_hosts"
-        else d,
+        lambda s, k=None, d=None: (
+            ["metadata.google.internal"] if k == "allowed_hosts" else d
+        ),
     )
     d = evaluate_url_policy("http://metadata.google.internal/")
     assert d.allowed
@@ -229,6 +234,7 @@ def test_disabled_egress_log_redacts_url_credentials(monkeypatch):
 # ---------------------------------------------------------------------------
 # _log_origin: credential-free URL label for transport logs (TASK-1722)
 # ---------------------------------------------------------------------------
+
 
 def test_log_origin_strips_userinfo_query_and_fragment():
     """_log_origin renders scheme://host[:port] only -- no userinfo/path/query/fragment."""
@@ -342,6 +348,7 @@ def test_check_url_or_raise_raises_with_remedy(monkeypatch):
 # message is redacted.
 # ---------------------------------------------------------------------------
 
+
 def test_egress_blocked_error_message_omits_query_marker():
     marker = "SECRET-TOKEN-MARKER"
     url = f"https://user:pw@example.test:8443/models/f.gguf?sig={marker}#frag"
@@ -389,6 +396,7 @@ async def test_async_variant_same_policy(monkeypatch):
 # ---------------------------------------------------------------------------
 # Safe host extraction helpers
 # ---------------------------------------------------------------------------
+
 
 def test_host_of_valid_url():
     """host_of returns lowercase hostname for a valid URL."""
@@ -542,7 +550,13 @@ def _transport(routes, seen):
 
 def test_httpx_basic_fetch_returns_guarded_response():
     seen = []
-    routes = {"https://example.com/": (200, {"content-type": "text/html; charset=utf-8"}, b"<html>ok</html>")}
+    routes = {
+        "https://example.com/": (
+            200,
+            {"content-type": "text/html; charset=utf-8"},
+            b"<html>ok</html>",
+        )
+    }
     with httpx.Client(transport=_transport(routes, seen)) as client:
         resp = guarded_fetch_httpx(
             "https://example.com/page", client=client, max_bytes=1024
@@ -732,14 +746,18 @@ def test_httpx_byte_cap_aborts():
     routes = {"https://example.com/": (200, {}, b"x" * 2048)}
     with httpx.Client(transport=_transport(routes, seen)) as client:
         with pytest.raises(EgressFetchError, match="exceeds"):
-            guarded_fetch_httpx("https://example.com/big", client=client, max_bytes=1024)
+            guarded_fetch_httpx(
+                "https://example.com/big", client=client, max_bytes=1024
+            )
 
 
 def test_httpx_304_passes_through_without_raise():
     seen = []
     routes = {"https://example.com/": (304, {"etag": "abc"}, b"")}
     with httpx.Client(transport=_transport(routes, seen)) as client:
-        resp = guarded_fetch_httpx("https://example.com/feed", client=client, max_bytes=64)
+        resp = guarded_fetch_httpx(
+            "https://example.com/feed", client=client, max_bytes=64
+        )
     assert resp.status_code == 304
 
 
@@ -872,9 +890,7 @@ def test_requests_basic_fetch_preloads_content():
     sess, adapter = _session_with(
         {"https://example.com/": (200, {"content-type": "text/html"}, b"<p>hi</p>")}
     )
-    resp = guarded_fetch_requests(
-        "https://example.com/p", session=sess, max_bytes=1024
-    )
+    resp = guarded_fetch_requests("https://example.com/p", session=sess, max_bytes=1024)
     assert resp.status_code == 200
     assert resp.content == b"<p>hi</p>"
     assert resp.text == "<p>hi</p>"
@@ -928,14 +944,16 @@ def test_requests_session_auth_suppressed_same_host_different_port():
     (task-568)."""
     sess, adapter = _session_with(
         {
-            "http://h.example:8000/": (302, {"location": "http://h.example:9000/n"}, b""),
+            "http://h.example:8000/": (
+                302,
+                {"location": "http://h.example:9000/n"},
+                b"",
+            ),
             "http://h.example:9000/": (200, {}, b"fin"),
         }
     )
     sess.auth = ("user", "pw")
-    resp = guarded_fetch_requests(
-        "http://h.example:8000/s", session=sess, max_bytes=64
-    )
+    resp = guarded_fetch_requests("http://h.example:8000/s", session=sess, max_bytes=64)
     assert resp.content == b"fin"
     assert "Authorization" in adapter.seen[0].headers
     assert "Authorization" not in adapter.seen[1].headers
@@ -1200,7 +1218,9 @@ async def test_aiohttp_basic_fetch_capped():
 
     big = _FakeAiohttpSession({"https://example.com/": (200, {}, b"q" * 4096)})
     with pytest.raises(EgressFetchError, match="exceeds"):
-        await guarded_fetch_aiohttp("https://example.com/b", session=big, max_bytes=1024)
+        await guarded_fetch_aiohttp(
+            "https://example.com/b", session=big, max_bytes=1024
+        )
 
 
 @pytest.mark.asyncio
@@ -1215,7 +1235,13 @@ async def test_aiohttp_headers_case_insensitive_access():
 
     # Create a session with lowercase content-type header (mimicking real aiohttp)
     # We construct the fake response with CIMultiDict to mimic real aiohttp behavior
-    routes = {"https://example.com/": (200, CIMultiDict({"content-type": "text/html; charset=utf-8"}), b"<html>test</html>")}
+    routes = {
+        "https://example.com/": (
+            200,
+            CIMultiDict({"content-type": "text/html; charset=utf-8"}),
+            b"<html>test</html>",
+        )
+    }
     session = _FakeAiohttpSession(routes)
 
     resp = await guarded_fetch_aiohttp(
@@ -1260,9 +1286,7 @@ def test_validate_navigation_chain_blocks_internal_hop(monkeypatch):
 
     monkeypatch.setattr(egress, "_resolve", fake_resolve)
     with pytest.raises(EgressBlockedError):
-        validate_navigation_chain(
-            ["https://ok.example/", "http://meta.example/x"]
-        )
+        validate_navigation_chain(["https://ok.example/", "http://meta.example/x"])
     validate_navigation_chain(["https://ok.example/"])  # no raise
 
 
@@ -1315,18 +1339,28 @@ def test_hop_headers_keeps_x_goog_api_key_same_origin():
 # (the autouse fixture above neutralizes both anyway). Used by the deep-search
 # relevance phase to refuse pre-fetch before Playwright ever navigates.
 
+
 def test_is_public_http_url_blocks_private_and_metadata(monkeypatch):
     from tldw_chatbook.Utils import egress
-    for bad in ("http://127.0.0.1/", "http://10.0.0.5/x", "http://169.254.169.254/latest",
-                "http://[::1]/", "ftp://x/", "not a url"):
+
+    for bad in (
+        "http://127.0.0.1/",
+        "http://10.0.0.5/x",
+        "http://169.254.169.254/latest",
+        "http://[::1]/",
+        "ftp://x/",
+        "not a url",
+    ):
         assert egress.is_public_http_url(bad) is False
 
 
 def test_is_public_http_url_allows_public(monkeypatch):
     import socket
     from tldw_chatbook.Utils import egress
-    monkeypatch.setattr(socket, "getaddrinfo",
-                        lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))])
+
+    monkeypatch.setattr(
+        socket, "getaddrinfo", lambda *a, **k: [(2, 1, 6, "", ("93.184.216.34", 80))]
+    )
     assert egress.is_public_http_url("https://example.com/page") is True
 
 
@@ -1336,5 +1370,6 @@ def test_is_public_http_url_blocks_multicast(monkeypatch):
     # through both _classify_ip's public/private split and this function.
     # 239.255.255.250 is a real SSDP/UPnP discovery address.
     from tldw_chatbook.Utils import egress
+
     for bad in ("http://224.0.0.1/", "http://239.255.255.250:1900/description.xml"):
         assert egress.is_public_http_url(bad) is False, bad

@@ -273,9 +273,7 @@ def test_scan_resolves_aliased_and_attribute_style_imports() -> None:
     `egress.check_url_or_raise(...)`).
     """
     aliased_opener = (
-        "import urllib.request as req\n"
-        "def f(u):\n"
-        "    return req.urlopen(u)\n"
+        "import urllib.request as req\ndef f(u):\n    return req.urlopen(u)\n"
     )
     openers, egress = _analyze_source(aliased_opener)
     assert openers == frozenset({"urllib.request.urlopen"})
@@ -400,7 +398,9 @@ def test_census_rediscovers_the_original_two_seams_when_their_egress_calls_are_r
         "update the literal strings above to match"
     )
     vp_openers, vp_egress = _analyze_source(vp_mutated)
-    assert vp_openers, "the un-fixed module must still be detected as opening a URL (yt_dlp.YoutubeDL)"
+    assert vp_openers, (
+        "the un-fixed module must still be detected as opening a URL (yt_dlp.YoutubeDL)"
+    )
     assert vp_egress == frozenset(), (
         "the un-fixed module must be rediscovered as NOT consulting the "
         f"policy, but the census still found: {sorted(vp_egress)}"

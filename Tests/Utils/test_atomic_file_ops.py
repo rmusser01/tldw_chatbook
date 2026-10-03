@@ -32,9 +32,7 @@ def test_preserve_existing_mode_keeps_restrictive_permissions(tmp_path):
     target.write_text("a = 1\n")
     target.chmod(0o600)
 
-    atomic_write_text(
-        target, "a = 2\n", mode=0o644, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 2\n", mode=0o644, preserve_existing_mode=True)
 
     assert _mode(target) == 0o600
     assert target.read_text() == "a = 2\n"
@@ -48,9 +46,7 @@ def test_preserve_existing_mode_keeps_permissive_permissions(tmp_path):
     target.write_text("a = 1\n")
     target.chmod(0o644)
 
-    atomic_write_text(
-        target, "a = 2\n", mode=0o600, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 2\n", mode=0o600, preserve_existing_mode=True)
 
     assert _mode(target) == 0o644
 
@@ -62,9 +58,7 @@ def test_preserve_existing_mode_uses_fallback_mode_for_new_file(tmp_path):
     target = tmp_path / "new_secrets.toml"
     assert not target.exists()
 
-    atomic_write_text(
-        target, "a = 1\n", mode=0o600, preserve_existing_mode=True
-    )
+    atomic_write_text(target, "a = 1\n", mode=0o600, preserve_existing_mode=True)
 
     assert _mode(target) == 0o600
 
