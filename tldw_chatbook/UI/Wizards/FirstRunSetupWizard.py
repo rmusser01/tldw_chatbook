@@ -1819,14 +1819,14 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             or self._provider_dismiss_pending
         )
         try:
-            if blocked:
+            if blocked:  # disabling blurs: hold focus for when the fence lifts
+                step_guard.hold_fenced_focus(self)
                 for selector in ("#wizard-back", "#wizard-next", "#wizard-cancel"):
                     self.query_one(selector, Button).disabled = True
             else:
                 self.update_progress()
-                self.query_one(
-                    ".wizard-navigation", WizardNavigation
-                ).update_button_states()
+                nav = self.query_one(".wizard-navigation", WizardNavigation)
+                nav.update_button_states()
                 self.query_one("#wizard-cancel", Button).disabled = False
         except NoMatches:
             pass
@@ -1852,6 +1852,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             except NoMatches:
                 pass
         self._sync_exit_controls()
+        if not blocked:
+            step_guard.restore_fenced_focus(self)
 
     async def _checkpoint_required_failure(
         self, action: _SetupFailureAction
@@ -2128,11 +2130,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         strip.add_class("hidden")
 
     def _set_advancing(self, active: bool, label: str = "") -> None:
-        """Fence navigation while a step's config handoff is settling.
-
-        TASK-34100.1: also run the busy line, which names ``label`` once the
-        Next has taken longer than about 400 ms.
-        """
+        """Fence navigation while a step's config handoff settles, and run the
+        busy line, which names ``label`` after about 400 ms (TASK-34100.1)."""
 
         self._advancing = active
         self._sync_action_controls()
