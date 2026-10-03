@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 05:08'
+updated_date: '2026-10-03 05:20'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -153,4 +153,16 @@ Independent final review approves all131 hashes,129 unchanged entries and test/l
 
 Required Roleplay/capture preservation is independently approved at immutable79b2f251865ddc16aae052e723d5f6078ec0f5a1 on actual devacc45cdc2e7ec90157e478a0e4b499084830edf9. All177 prior/incoming hashes and the incoming deletion are authenticated; package/native/Performance bytes remain exact against approveddaf2. Existing ADR031/097/199 apply; no new ADR/source repair/owner/gate/ceiling. The original five guards PASS107.713s, exit0, zerofail/error/skip at681/686imports and1033/1033UI-ready, exact incoming guard sources/cwd/PYTHONPATH/limits/work and original warnings. Incoming capture/preset modules145PASS/51retainedSKIP5.432s, loopback/offline only. Static93/10/added-line/whitespace pass with1794 inherited whole-file findings;4794 tasks unique/readable; exact diagnostic/CSS/worker reproduction remains valid.
 Roleplay original editor and bare-navigation setup failures reproduce on exact incoming dev; seven architecture/size and three existing global-quit cases pass, while new Roleplay behavior and remaining bare neighbors stay unqualified/unexecuted. The rejected readiness adapter was neither created nor executed. Canonical review retains raw interrupted/NON-GREEN/baseline evidence and no deterministic timing/load cause. Incoming TASK33622.14 Done and TASK33640 In Progress/uncheckedAC5 remain exact; no live-provider/physicalCtrlQ/full-suite/Windows/aggregate-resource/release/wider-audit certification. All earlier evidence and separate programs remain. RecheckAC3/Done follows guards and independent approval; documentation closure preserves177 hashes before exact637 lease publication and fresh-head Qodo/fourCI/strict protected merge.
+
+## Roleplay frame documentation preservation qualification — October 2
+
+All FOUR exact published231d30d jobs completed successfully and edited Qodo remained clear with four resolved threads before the required update. Actual remote dev1d566b9d92b655168e743c96b8f14e69bec3f86d (PR2960) created BEHIND under live strict up-to-date protection enforced for admins. TASK33664 AC3 was reopened/planned through CLI before the clean39-commit rebase; no preemptive update occurred while CI ran.
+
+Immutable source b306302e340dc1ece408b75c414314cdfaa4bfe2 preserves all177 prior approved Git/disk hashes plus31 exact incoming Markdown additions (208 total), with the capture_cloud.py deletion unchanged. The incoming spec, review and29 TASK33910 records remain byte-exact against actual1d; every incoming task stays shipped To Do/unchecked. Of26459 prior tracked paths, only the two owned plan/task qualification records differ; the new tree has26490 paths. All tldw_chatbook/native/packages/Packaging/Tests/Performance/scripts/.github trees, modes and blob IDs remain exact against231. No Roleplay-frame implementation or future slice completion is claimed.
+
+Actual task-ID/path/readability guards pass all4823 task files; whitespace passes against exact1d. Independent immutable Git/disk/source/evidence review is Ready with no findings, authenticating proportional documentation preservation. Proofs are /private/tmp/pr2918-frame-{pre-rebase-manifest,reviewed-source-manifest,composition-proof}.json and reports are pr2918-frame-independent-review.{md,json}; actual task guard logs are pr2918-frame-task-{ids,files}.log. Existing ADR031/097/199 apply to unchanged shipped code; no new ADR, owner, authority, schema, dependency, source repair, gate or ceiling.
+
+The original five budget result5/5 in107.713s, 681/686 imports and1033/1033 UI-ready, capture145PASS/51SKIP, source-derived diagnostic/CSS/worker checks and original static qualification carry forward by exact source identity. No new runtime/performance measurement was performed for this documentation-only addition. Original Roleplay editor/bare-profile setup failures reproduced on exact incoming dev, interrupted selections, remaining unexecuted neighbors, rejected uncreated/unexecuted readiness adapter, PERF07 config-retarget failure/baseline and cold-worker positive/NON-GREEN/negative-control evidence remain retained. New Roleplay behavior/physicalCtrlQ/relaunch remain unqualified. All prior inherited lint/format/size/AST/profile debt, typing flake, optional pydub warning, snapshot drift/stale cleanup warnings and zero UI headroom remain; selections overlap and are not summed. No full-suite/live-provider/Windows/aggregate-resource/package/index/installed/native-release/wider-audit certification follows. Separate task states, including TASK33640 In Progress/uncheckedAC5 and TASK33648/33662 To Do, remain unchanged.
+
+TASK33664 AC3 is rechecked/closed through CLI only after guards and independent approval; all16 scoped tasks return Done/checked. The four-owned-Markdown closure preserves all208 approved hashes and deletion. Publish once with EXACT observed231d30d810d17c41030bc9fe6813bd03761852b4 lease; fresh current-head Qodo/no actionable threads, all FOUR jobs and actual live strict protection precede normal --match-head-commit merge. Verify MERGED parents/tree/concurrent changes and pause heartbeat. No merge is claimed.
 <!-- SECTION:NOTES:END -->
