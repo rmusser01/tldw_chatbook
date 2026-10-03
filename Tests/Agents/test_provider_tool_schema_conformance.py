@@ -728,7 +728,7 @@ def test_tool_rejection_copy_gives_advice_that_fits_the_tool_source(
     )
 
     copy = _provider_error_copy_with_model_recovery(
-        "Provider error from openai: bad request. Status: 400.",
+        "Provider error from OpenAI: bad request. Status: 400.",
         model="gpt-4.1-mini",
         status_code=400,
         provider_message=f"Invalid schema for function '{name}': bad",
@@ -748,7 +748,7 @@ def test_a_non_tool_bad_request_keeps_the_model_recovery_copy():
         _provider_error_copy_with_model_recovery,
     )
 
-    base = "Provider error from anthropic: bad request. Status: 400."
+    base = "Provider error from Anthropic: bad request. Status: 400."
     model_copy = _provider_error_copy_with_model_recovery(
         base,
         model="claude-3-opus",

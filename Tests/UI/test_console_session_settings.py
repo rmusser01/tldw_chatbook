@@ -17084,3 +17084,64 @@ async def test_generation_timeout_discloses_provider_work_may_continue_and_bill(
             "Generation test timed out. Already-started provider work may continue "
             "and may still be billed."
         )
+
+
+@pytest.mark.asyncio
+async def test_console_settings_modal_carries_minimal_to_fireworks_and_the_request_sends_low() -> (
+    None
+):
+    """Qodo #2970: a level chosen in Console survives a switch to Fireworks.
+
+    Fireworks has no "minimal"; its record maps it to "low", so the switch
+    keeps the control and the choice, and the saved level reaches the wire.
+    """
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import (
+        HostedProviderResolution,
+        build_hosted_chat_payload,
+    )
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    fireworks_model = "accounts/fireworks/models/deepseek-v3p1"
+    app = ModalHarness()
+    app.app_config = {"api_settings": {"fireworks": {"api_key": "test-key"}}}
+    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
+
+    async with app.run_test(size=(120, 60)) as pilot:
+        await app.push_screen(
+            _basic_modal(
+                settings,
+                app,
+                providers_models={"openai": ["gpt-4.1"], "fireworks": [fireworks_model]},
+            ),
+            callback=app.capture_saved_settings,
+        )
+        await pilot.pause()
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
+        reasoning.value = "minimal"
+        await pilot.pause()
+
+        app.screen.query_one("#console-settings-provider", Select).value = "fireworks"
+        await pilot.pause()
+
+        reasoning = app.screen.query_one("#console-settings-reasoning-effort", Select)
+        assert reasoning.parent is not None and reasoning.parent.display is True
+        assert "minimal" in [value for _label, value in reasoning._options]
+        assert reasoning.value == "minimal"
+        await pilot.click("#console-settings-save")
+
+    assert app.saved_settings is not None
+    assert app.saved_settings.provider == "fireworks"
+    assert app.saved_settings.reasoning_effort == "minimal"
+    record = RECORDS_BY_KEY["fireworks"]
+    payload = build_hosted_chat_payload(
+        record,
+        resolution=HostedProviderResolution(
+            provider="fireworks", model=fireworks_model, api_key="secret",
+            base_url=record.default_base_url, timeout=10.0, retries=0,
+            retry_delay=0.0, streaming=False,
+        ),
+        messages_payload=[{"role": "user", "content": "hi"}],
+        streaming=False,
+        reasoning_effort=app.saved_settings.reasoning_effort,
+    )
+    assert payload["reasoning_effort"] == "low"

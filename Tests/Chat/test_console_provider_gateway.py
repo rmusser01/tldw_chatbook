@@ -5451,7 +5451,7 @@ def test_safe_provider_error_copy_redacts_secret_like_values() -> None:
     assert "user:secret@" not in copy
     assert "hunter2" not in copy
     assert "abc123" not in copy
-    assert "openai" in copy
+    assert "OpenAI" in copy  # TASK-33002.14: the catalog name, on purpose
 
 
 def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
@@ -5466,7 +5466,7 @@ def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
 
     for exc, category in cases:
         copy = safe_provider_error_copy("openai", exc)
-        assert f"Provider error from openai: {category}." in copy
+        assert f"Provider error from OpenAI: {category}." in copy
         status_code = getattr(exc, "status_code", None)
         if status_code is not None:
             assert f"Status: {status_code}." in copy
@@ -5477,7 +5477,7 @@ def test_safe_provider_error_copy_classifies_provider_exceptions() -> None:
 def test_safe_provider_error_copy_includes_status_code_when_available() -> None:
     copy = safe_provider_error_copy("openai", ChatProviderError(status_code=503))
 
-    assert copy == "Provider error from openai: provider unavailable. Status: 503."
+    assert copy == "Provider error from OpenAI: provider unavailable. Status: 503."
 
 
 def test_provider_error_diagnostic_omits_credential_provider_and_model() -> None:
@@ -5488,7 +5488,7 @@ def test_provider_error_diagnostic_omits_credential_provider_and_model() -> None
         ChatProviderError("ignored", status_code=400),
     )
     model_copy = gateway_module._provider_error_copy_with_model_recovery(
-        "Provider error from openai: bad request. Status: 400.",
+        "Provider error from OpenAI: bad request. Status: 400.",
         model=credential,
         status_code=400,
     )
@@ -5661,7 +5661,7 @@ async def test_stream_chat_generic_provider_error_raises_sanitized_exception() -
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -5697,7 +5697,7 @@ async def test_stream_bad_request_names_model_and_offers_picker_recovery() -> No
         ]
 
     message = str(exc_info.value)
-    assert "Provider error from anthropic" in message
+    assert "Provider error from Anthropic" in message
     assert "claude-3-haiku-20240307" in message
     assert "Confirm the model is still available" in message
     assert "choose another model from the model picker" in message
@@ -5727,7 +5727,7 @@ async def test_stream_chat_generic_sse_error_raises_sanitized_exception() -> Non
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 
@@ -5754,7 +5754,7 @@ async def test_stream_chat_generic_sse_byte_error_raises_sanitized_exception() -
         ]
 
     message = str(exc_info.value)
-    assert message == "Provider error from openai: unexpected provider error."
+    assert message == "Provider error from OpenAI: unexpected provider error."
     assert "sk-1234567890abcdef" not in message
     assert "Bearer" not in message
 

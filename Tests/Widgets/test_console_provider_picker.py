@@ -267,18 +267,23 @@ async def test_leaving_picker_restores_committed_provider_copy() -> None:
 
 
 @pytest.mark.asyncio
-async def test_picker_caps_visible_providers_at_thirty() -> None:
-    """A large configured provider map must not turn the modal into an unbounded list."""
+async def test_picker_caps_visible_providers_at_its_limit() -> None:
+    """A large configured provider map must not turn the modal into an unbounded list.
+
+    Asserted through ``MAX_RESULTS`` (raised to 40 when the ADR-179 presets
+    grew the catalog), with more options than the cap (TASK-33002.16).
+    """
+    cap = ConsoleProviderPicker.MAX_RESULTS
     options = tuple(
         ConsoleSettingsOption(f"unknown-{index}", f"unknown-{index}")
-        for index in range(35)
+        for index in range(cap + 5)
     )
     app = ProviderPickerApp(options, current_provider=None)
 
     async with app.run_test() as pilot:
         app.query_one(ConsoleProviderPicker).focus_input()
         await pilot.pause()
-        assert len(app.query_one(ConsoleProviderPicker).visible_provider_ids()) == 30
+        assert len(app.query_one(ConsoleProviderPicker).visible_provider_ids()) == cap
 
 
 @pytest.mark.asyncio

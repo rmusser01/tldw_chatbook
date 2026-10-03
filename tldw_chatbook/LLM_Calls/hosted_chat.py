@@ -142,6 +142,10 @@ class HostedHTTPTransportConfig:
     # construct without the field and keep the byte-identical ``"bearer"``
     # default.
     auth_scheme: str = "bearer"
+    # The name user-facing error copy uses ("NVIDIA NIM authentication
+    # failed"); ``provider`` stays the error's identity key. Unset keeps the
+    # key in the copy, as legacy adapters always had (TASK-33002.14).
+    display_name: str | None = field(default=None, compare=False)
 
 
 @dataclass(frozen=True)
@@ -680,8 +684,13 @@ def owned_json_post(
         ChatBadRequestError: For other client request failures.
         ChatProviderError: For network, service, or malformed response failures.
     """
+    label = (
+        config.display_name
+        if isinstance(config.display_name, str) and config.display_name.strip()
+        else config.provider
+    )
     if route not in {"chat/completions", "responses"}:
-        raise _transport_error(config.provider, "request route is invalid")
+        raise _transport_error(config.provider, "request route is invalid", label=label)
     try:
         base_url = normalize_hosted_chat_base_url(
             config.base_url,
@@ -691,6 +700,7 @@ def owned_json_post(
         raise _transport_error(
             config.provider,
             "transport configuration is invalid",
+            label=label,
         ) from None
     if (
         not isinstance(config.provider, str)
@@ -719,7 +729,7 @@ def owned_json_post(
             for name, value in config.extra_headers.items()
         )
     ):
-        raise _transport_error(config.provider, "transport configuration is invalid")
+        raise _transport_error(config.provider, "transport configuration is invalid", label=label)
 
     retries = llm_retry_count(max(0, config.retries))
     url = f"{base_url}/{route}"
@@ -783,7 +793,7 @@ def owned_json_post(
                         time.sleep(delay)
                     continue
                 if status >= 400:
-                    _raise_http_error(config.provider, status)
+                    _raise_http_error(config.provider, status, label=label)
                 if streaming:
                     stream = OwnedSSEStream(response=response, session=session)
                     response = None
@@ -793,11 +803,11 @@ def owned_json_post(
                     result = response.json()
                 except Exception:
                     raise _transport_error(
-                        config.provider, "returned malformed provider JSON"
+                        config.provider, "returned malformed provider JSON", label=label
                     ) from None
                 if not isinstance(result, Mapping):
                     raise _transport_error(
-                        config.provider, "response envelope must be an object"
+                        config.provider, "response envelope must be an object", label=label
                     )
                 return deepcopy(dict(result))
             except (ChatAuthenticationError, ChatRateLimitError, ChatBadRequestError):
@@ -817,10 +827,11 @@ def owned_json_post(
                     config.provider,
                     "network request failed",
                     status_code=504 if isinstance(exc, RequestsTimeout) else 502,
+                    label=label,
                 ) from None
             except RequestException:
                 raise _transport_error(
-                    config.provider, "network request failed"
+                    config.provider, "network request failed", label=label
                 ) from None
             finally:
                 if response is not None:
@@ -829,7 +840,7 @@ def owned_json_post(
     finally:
         if not stream_owns_session:
             _best_effort_close(session)
-    raise _transport_error(config.provider, "request attempts were exhausted")
+    raise _transport_error(config.provider, "request attempts were exhausted", label=label)
 
 
 def _json_shape_is_safe(value: object) -> bool:
@@ -1378,34 +1389,49 @@ def _transport_error(
     detail: str,
     *,
     status_code: int = 502,
+    label: str | None = None,
 ) -> ChatProviderError:
     return ChatProviderError(
         provider=provider,
-        message=f"{provider} {detail}.",
+        message=f"{label or provider} {detail}.",
         status_code=status_code,
     )
 
 
-def _raise_http_error(provider: str, status: int) -> Never:
+def _raise_http_error(provider: str, status: int, *, label: str | None = None) -> Never:
+    name = label or provider
     if status in {401, 403}:
         raise ChatAuthenticationError(
             provider=provider,
-            message=f"{provider} authentication failed. Check the API key.",
+            message=f"{name} authentication failed. Check the API key.",
         ) from None
     if status == 429:
         raise ChatRateLimitError(
             provider=provider,
-            message=f"{provider} rate limit exceeded. Retry later.",
+            message=f"{name} rate limit exceeded. Retry later.",
+        ) from None
+    if status == 404:
+        # Usually an unknown model, or one this key cannot use: Fireworks,
+        # SambaNova, Nous and GMI check the model before the key (probed
+        # 2026-09-30, TASK-33640).
+        raise ChatBadRequestError(
+            provider=provider,
+            message=(
+                f"{name} could not find that model or endpoint (status 404). "
+                "Check the model name and that your key can use it."
+            ),
+            status_code=404,
         ) from None
     if 400 <= status < 500:
         raise ChatBadRequestError(
             provider=provider,
-            message=f"{provider} rejected the request (status {status}).",
+            message=f"{name} rejected the request (status {status}).",
         ) from None
     raise _transport_error(
         provider,
         f"service failed (status {status})",
         status_code=status,
+        label=label,
     ) from None
 
 
