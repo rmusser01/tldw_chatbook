@@ -9689,7 +9689,23 @@ async def test_model_step_discovery_timeout_keeps_manual_entry_and_retry(monkeyp
     async with app.run_test(size=(120, 40)) as pilot:
         await pilot.pause()
         step.on_show()
-        await pilot.pause(0.3)
+
+        # Wait on the condition, not one fixed 0.3 s pause, which flaked under
+        # load (TASK-34100.1 review round 2, as the owner-timeout test above).
+        def timeout_rendered() -> bool:
+            rows = list(step.query_one("#setup-model-choice", RadioSet).query(RadioButton))
+            retry = step.query_one("#setup-model-retry", Button)
+            return (
+                len(rows) == 1
+                and "timeout" in str(rows[0].label)
+                and not retry.has_class("hidden")
+            )
+
+        deadline = asyncio_module.get_running_loop().time() + 10
+        while asyncio_module.get_running_loop().time() < deadline:
+            if timeout_rendered():
+                break
+            await pilot.pause(0.05)
         radio_set = step.query_one("#setup-model-choice", RadioSet)
         [status] = list(radio_set.query(RadioButton))
         assert status.disabled
