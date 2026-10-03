@@ -435,6 +435,9 @@ def admission_selection(system: str) -> tuple[tuple[str, ...], tuple[str, ...]]:
             *shared,
             *cold,
             "Tests/Backup_Recovery/test_admission_amortization_native.py::test_windows_cold_acquisition_rederives_and_refuses_changed_current_control",
+            "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_guarded_json_publication_requires_positive_native_retirement",
+            "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_windows_warm_json_refuses_changed_current_control",
+            "Tests/Backup_Recovery/test_mcp_source_lifetimes.py::test_windows_warm_json_refuses_shared_writable_parent",
         )
     native = (
         "Tests/Backup_Recovery/test_admission_closed_gate.py::test_uncancellable_busy_gate_wait_uses_native_blocking_lock",

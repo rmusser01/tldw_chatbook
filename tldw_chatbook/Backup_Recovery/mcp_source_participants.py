@@ -264,8 +264,12 @@ def _json_holds_current(state, holds):
 
 
 def _json_context(state, policy):
-    """Current selection outside the mutex; surviving Hold identity inside it."""
-    if os.name == "nt" or state.participant is None or not state.pinned:
+    """Use native pinned Holds after fresh reads, including cold Windows admission.
+
+    Selection stays outside the mutex; surviving Hold identity stays inside it.
+    Parsed observations never authorize storage admission or replace its barriers.
+    """
+    if state.participant is None or not state.pinned:
         return None
     source = state.source
     selected = binding(source)

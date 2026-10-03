@@ -1,6 +1,7 @@
 """Actual MCP durable-source lifetime regressions, isolated from transports."""
 
 import json
+import sys
 import time
 
 import pytest
@@ -844,6 +845,213 @@ def test_installed_history_private_posture_demotion_refuses_before_read(
 
 
 @pytest.mark.parametrize("index", range(4))
+def test_guarded_json_publication_requires_positive_native_retirement(
+    mcp_sources, monkeypatch, index
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+    from tldw_chatbook.Backup_Recovery import raw_participants as raw
+    from tldw_chatbook.Backup_Recovery.admission import Admission
+    from tldw_chatbook.Utils.platform_files import os as native_os
+
+    source = mcp_sources[index]
+    storage.admit_startup()
+    payload = source.load() if index == 3 else {"schema_version": 4, "profiles": []}
+    payload["cache_probe"] = {"nested": ["held"]}
+    source.path.write_text(json.dumps(payload))
+    read = source.load if index == 3 else source._read_payload
+    original_reader, original_complete = shared.reader, shared.complete
+    original_parse, original_scope = json.loads, storage._scope
+    original_barrier = Admission._current_hold
+    states, handles, parses, scopes, barriers = [], [], [], [], []
+
+    @contextmanager
+    def reader(current):
+        with original_reader(current) as handle:
+            if current is source:
+                operation, state = shared._operation(current)
+                assert state.participant is not None and state.pinned  # nosec B101
+                assert state.active and raw._states[operation] is state  # nosec B101
+                assert state.holds and all(  # nosec B101
+                    isinstance(hold, storage._Hold)
+                    and storage._holds.get(hold.key) is hold
+                    and hold.native_context is not None
+                    for hold in state.holds
+                )
+                states.append((operation, state))
+                handles.append(handle)
+            yield handle
+
+    def complete(state):
+        if state.source is source:
+            assert not state.active and not state.uncertain  # nosec B101
+            assert not state.files and not state.descriptors and not state.pins  # nosec B101
+            assert all(lease not in storage._live_leases for lease in state.leases)  # nosec B101
+            assert handles[-1].closed  # nosec B101
+        return original_complete(state)
+
+    def parse(value, *args, **kwargs):
+        result = original_parse(value, *args, **kwargs)
+        if isinstance(result, dict) and "cache_probe" in result:
+            parses.append(value)
+        return result
+
+    def scope(*args, **kwargs):
+        scopes.append(True)
+        return original_scope(*args, **kwargs)
+
+    @contextmanager
+    def barrier(self, *args, **kwargs):
+        with original_barrier(self, *args, **kwargs) as observed:
+            barriers.append(self)
+            yield observed
+
+    monkeypatch.setattr(shared, "reader", reader)
+    monkeypatch.setattr(shared, "complete", complete)
+    monkeypatch.setattr(json, "loads", parse)
+    monkeypatch.setattr(storage, "_scope", scope)
+    monkeypatch.setattr(Admission, "_current_hold", barrier)
+    first = read()
+    assert len(states) == 1 and handles[0].closed  # nosec B101
+    operation, state = states[0]
+    assert operation not in raw._states and operation not in storage._raw_operations  # nosec B101
+    assert any(key[0]() is source for hold in state.holds for key in hold.json_evidence)  # nosec B101
+    first["cache_probe"]["nested"].append("caller")
+    before_scopes, before_barriers = len(scopes), len(barriers)
+    assert read()["cache_probe"] == {"nested": ["held"]}  # nosec B101
+    assert len(parses) == 1 and len(states) == 2  # nosec B101
+    assert all(handle.closed for handle in handles)  # nosec B101
+    assert all(operation not in raw._states for operation, _ in states)  # nosec B101
+    assert len(barriers) > before_barriers  # nosec B101
+    if native_os.name == "nt":
+        assert len(scopes) > before_scopes  # nosec B101
+        assert all(not hold.evidence and not hold.path_evidence for hold in state.holds)  # nosec B101
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="actual Windows native guards")
+@pytest.mark.parametrize("change", ["registry", "pending_intent"])
+def test_windows_warm_json_refuses_changed_current_control(
+    mcp_sources, monkeypatch, change
+):
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    source.path.write_text('{"cache_probe":true}')
+    assert source._read_payload()["cache_probe"] is True  # nosec B101
+    holds = tuple(storage._holds.values())
+    assert any(key[0]() is source for hold in holds for key in hold.json_evidence)  # nosec B101
+    assert all(not hold.evidence and not hold.path_evidence for hold in holds)  # nosec B101
+    control = holds[0].authority.control_root
+    registry = control / "registry.json"
+    before = registry.read_bytes()
+    intent = control / "registry.pending.json"
+    assert not intent.exists()  # nosec B101
+    original_reader, reads = shared.reader, []
+
+    @contextmanager
+    def reader(current):
+        if current is source:
+            reads.append(current)
+        with original_reader(current) as handle:
+            yield handle
+
+    monkeypatch.setattr(shared, "reader", reader)
+    selected_bytes = source.path.read_bytes()
+    try:
+        if change == "registry":
+            registry.write_bytes(b"{" + b" " * (len(before) - 1))
+        else:
+            record = json.loads(before)
+            intent.write_text(
+                json.dumps(
+                    {
+                        "version": 1,
+                        "write_id": "a" * 32,
+                        "before": record,
+                        "after": record,
+                    }
+                )
+            )
+            intent.chmod(0o600)
+        with pytest.raises((bootstrap.RecoveryRequired, ValueError, OSError)):
+            source._read_payload()
+        assert not reads  # nosec B101
+        assert source.path.read_bytes() == selected_bytes  # nosec B101
+    finally:
+        if change == "registry":
+            registry.write_bytes(before)
+        else:
+            intent.unlink()
+    assert registry.read_bytes() == before and not intent.exists()  # nosec B101
+    assert source._read_payload()["cache_probe"] is True  # nosec B101
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="actual Windows parent DACL")
+def test_windows_warm_json_refuses_shared_writable_parent(mcp_sources, monkeypatch):
+    import subprocess  # nosec B404
+    from contextlib import contextmanager
+
+    from Tests.Backup_Recovery.windows_acl_fixture import preserve_windows_dacl
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
+    from tldw_chatbook.Utils.platform_files import os as native_os
+
+    source = mcp_sources[0]
+    storage.admit_startup()
+    parent = source.path.parent
+    foreign = parent / "foreign.txt"
+    foreign.write_bytes(b"foreign fixture bytes")
+    foreign.chmod(0o600)
+    before_files = {
+        path: path.read_bytes() for path in parent.iterdir() if path.is_file()
+    }
+    with preserve_windows_dacl(parent):
+        before = native_os.stat(parent)
+        source.path.write_text('{"cache_probe":true}')
+        assert source._read_payload()["cache_probe"] is True  # nosec B101
+        assert any(  # nosec B101
+            key[0]() is source
+            for hold in storage._holds.values()
+            for key in hold.json_evidence
+        )
+        selected_bytes = source.path.read_bytes()
+        original_reader, reads = shared.reader, []
+
+        @contextmanager
+        def reader(current):
+            if current is source:
+                reads.append(current)
+            with original_reader(current) as handle:
+                yield handle
+
+        monkeypatch.setattr(shared, "reader", reader)
+        # Fixed native fixture ACL tool and arguments.
+        subprocess.run(  # nosec B603, B607
+            ["icacls", str(parent), "/grant", "*S-1-1-0:(W)"],
+            check=True,
+            capture_output=True,
+        )
+        assert native_os.stat(parent).st_mode & 0o022  # nosec B101
+        with pytest.raises(bootstrap.RecoveryRequired):
+            source._read_payload()
+        assert not reads and source.path.read_bytes() == selected_bytes  # nosec B101
+        assert foreign.read_bytes() == b"foreign fixture bytes"  # nosec B101
+    after = native_os.stat(parent)
+    assert (before.st_dev, before.st_ino, before.st_mode) == (  # nosec B101
+        after.st_dev,
+        after.st_ino,
+        after.st_mode,
+    )
+    assert {  # nosec B101
+        path: path.read_bytes() for path in before_files if path != source.path
+    } == {path: value for path, value in before_files.items() if path != source.path}
+    assert source._read_payload()["cache_probe"] is True  # nosec B101
+
+
+@pytest.mark.parametrize("index", range(4))
 def test_guarded_json_reuses_parse_but_reads_current_bytes(
     mcp_sources, monkeypatch, index
 ):
@@ -915,7 +1123,13 @@ def test_guarded_json_same_metadata_bytes_and_nested_returns(mcp_sources, index)
 
 
 @pytest.mark.parametrize("change", ["missing", "corrupt", "unreadable"])
-def test_warm_permission_parse_never_supplies_last_good_policy(mcp_sources, change):
+def test_warm_permission_parse_never_supplies_last_good_policy(
+    mcp_sources, monkeypatch, change
+):
+    import errno
+    from contextlib import contextmanager
+
+    from tldw_chatbook.Backup_Recovery import mcp_source_participants as shared
     from tldw_chatbook.MCP.permission_store import PermissionStoreSnapshotError
 
     source = mcp_sources[3]
@@ -935,16 +1149,29 @@ def test_warm_permission_parse_never_supplies_last_good_policy(mcp_sources, chan
                 source.read_snapshot_strict()
             assert source.path.read_bytes().startswith(b'{"kill_switch"')
         else:
-            source.path.chmod(0)
-            with pytest.raises(OSError):
-                source.load()
-            with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
-                source.read_snapshot_strict()
-            assert source._load_for_raw_getter()["kill_switch"] is True
+            original_reader = shared.reader
+            attempts, handles = [], []
+
+            @contextmanager
+            def unreadable(current):
+                with original_reader(current) as handle:
+                    if current is source:
+                        attempts.append(current)
+                        handles.append(handle)
+                        raise PermissionError(errno.EACCES, "synthetic read failure")
+                    yield handle
+
+            with monkeypatch.context() as fault:
+                fault.setattr(shared, "reader", unreadable)
+                with pytest.raises(OSError):
+                    source.load()
+                with pytest.raises(PermissionStoreSnapshotError, match="io_error"):
+                    source.read_snapshot_strict()
+                assert source._load_for_raw_getter()["kill_switch"] is True  # nosec B101
+            assert len(attempts) == 3 and all(handle.closed for handle in handles)  # nosec B101
+            assert source.path.read_bytes() == before  # nosec B101
         assert not source.path.with_suffix(".json.bak").exists()
     finally:
-        if source.path.exists():
-            source.path.chmod(0o600)
         source.path.write_bytes(before)
     assert source.load()["kill_switch"] is False
 
@@ -1185,20 +1412,30 @@ def test_guarded_json_replacement_after_read_refuses_detached_bytes(
     read = source.load if index == 3 else source._read_payload
     assert read()["cache_probe"] == "old"
     original_reader = shared.reader
+    replaced = []
 
     @contextmanager
     def reader(current):
         with original_reader(current) as handle:
             yield handle
-            if current is source:
-                replacement = source.path.with_name("replacement.json")
-                payload["cache_probe"] = "new"
-                replacement.write_text(json.dumps(payload))
-                replacement.replace(source.path)
+        if current is source:
+            assert handle.closed  # nosec B101
+            from tldw_chatbook.Utils.platform_files import os as native_os
+
+            before = native_os.stat(source.path)
+            replacement = source.path.with_name("replacement.json")
+            payload["cache_probe"] = "new"
+            replacement.write_text(json.dumps(payload))
+            replacement.replace(source.path)
+            after = native_os.stat(source.path)
+            assert (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino)  # nosec B101
+            assert source.path.read_text() == json.dumps(payload)  # nosec B101
+            replaced.append(True)
 
     monkeypatch.setattr(shared, "reader", reader)
     with pytest.raises(bootstrap.RecoveryRequired, match="raw_entry_identity_changed"):
         read()
+    assert replaced == [True]  # nosec B101
     assert not any(
         key[0]() is source
         for hold in storage._holds.values()

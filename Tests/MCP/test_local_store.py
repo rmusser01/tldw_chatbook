@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -756,12 +757,12 @@ def test_literal_endpoint_query_survives_reopen_and_changes_invalidate_discovery
     assert reopened.get_discovery_snapshot("query") is None
 
 
-def _owned_record():
+def _owned_record(root: Path):
     return {
         "profile_id": "plugin-test",
         "command": "/usr/bin/true",
         "args": ["", " padded "],
-        "cwd": "/tmp",
+        "cwd": str(root.resolve()),
         "plugin_owner": {
             "installation_id": "installation",
             "revision_digest": "a" * 64,
@@ -780,7 +781,7 @@ def _owned_record():
     [("args", "text"), ("args", [1]), ("cwd", "relative"), ("command", 1)],
 )
 def test_malformed_owned_profile_preserves_source_bytes(tmp_path, field, value):
-    record = _owned_record()
+    record = _owned_record(tmp_path)
     record[field] = value
     path = tmp_path / "owned.json"
     raw = json.dumps({"schema_version": 4, "profiles": [record]})
@@ -793,7 +794,7 @@ def test_malformed_owned_profile_preserves_source_bytes(tmp_path, field, value):
 @pytest.mark.parametrize("version", [1, 2, 3])
 def test_legacy_schema_cannot_import_owned_authority(tmp_path, version):
     path = tmp_path / "legacy.json"
-    raw = json.dumps({"schema_version": version, "profiles": [_owned_record()]})
+    raw = json.dumps({"schema_version": version, "profiles": [_owned_record(tmp_path)]})
     path.write_text(raw)
     with pytest.raises(LocalMCPStoreLoadError):
         LocalMCPStore(path).load()
@@ -802,7 +803,7 @@ def test_legacy_schema_cannot_import_owned_authority(tmp_path, version):
 
 def test_owned_profile_roundtrip_preserves_literal_argv(tmp_path):
     store = LocalMCPStore(tmp_path / "owned.json")
-    store.save_profile(LocalExternalMCPProfile.from_input_dict(_owned_record()))
+    store.save_profile(LocalExternalMCPProfile.from_input_dict(_owned_record(tmp_path)))
     assert store.get_profile("plugin-test").args == ("", " padded ")
 
 
@@ -810,7 +811,7 @@ def test_owned_profile_roundtrip_preserves_literal_argv(tmp_path):
     "headers", [{"X-Dup": "a", "x-dup": "b"}, {"Bad Name": "a"}, {"X-Test": "a\nb"}]
 )
 def test_malformed_owned_literal_headers_preserve_source(tmp_path, headers):
-    record = _owned_record()
+    record = _owned_record(tmp_path)
     record["plugin_owner"]["literal_headers"] = headers
     path = tmp_path / "headers.json"
     raw = json.dumps({"schema_version": 4, "profiles": [record]})
