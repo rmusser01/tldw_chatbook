@@ -359,6 +359,9 @@ async def test_library_grip_builds_its_own_destination_class_and_nav_name() -> N
         grip = app.query_one("#bare-grip", library_shell.LibraryAdaptiveReaderPaneGrip)
         assert grip.has_class("library-adaptive-reader-pane-grip")
         assert grip.painted_names == {"Library": "Nav"}
+        # A one-cell grip cannot hold the four-cell "<---": it paints the
+        # single-cell guillemet instead of a truncated "<".
+        assert str(grip.label) == "‹"
 
 
 #: Naming-convention handler names for the aliased messages, in both
