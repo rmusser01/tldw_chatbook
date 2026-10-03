@@ -17873,3 +17873,19 @@ a clean `origin/dev` worktree and on the branch and diff the failing ids (about 
 ratchet rows are already red on `dev`, so only the difference means anything); search
 the test suite's string literals for text the reformat removed from a source line; and
 grep `Tests/` for doubles of the changed method, then run those files on both trees.
+
+## A `git archive` base is not a paired arm for git-archaeology tests
+
+**TASK-34100.1, 2026-10-03.** To compare 42 wizard-referencing test files on
+the branch against base `1d8fe87659`, the base was extracted with `git archive`
+into scratch, so no other worktree was touched. The paired run reported 126
+fixed and exactly two "new" failures:
+`test_persistent_diagnostic_inventory.py::test_task_15743_*`. Both name only
+`Chat/console_agent_bridge.py`, `Chat/console_fleet_wake.py` and
+`UI/Screens/library_screen.py`, files the branch never touched. Those tests
+branch on `_task_15743_archaeology_available()`. With `.git` present, the
+worktree arm runs the historical-commit path and fails on dev's current
+source. The archive arm has no `.git`, so it silently takes the fallback path
+and passes. Before calling a paired failure new, check whether the test shells
+out to `git`. If it does, rerun that test in a real checkout of the base, or
+show that every failing row names a file the diff does not touch.
