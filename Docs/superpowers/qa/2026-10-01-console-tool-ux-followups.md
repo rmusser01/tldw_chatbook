@@ -1041,3 +1041,32 @@ QA oct03_runtime_dev_integration records exact pins, patch equivalence, gate
 cause, both fixture modes and fresh receipts. TASK-32367 stays In Progress
 until exact published-head review and all four hosted gates pass; then final
 metadata-head checks/review and verified protected normal merge remain required.
+
+
+Provider-validation latest-dev integration (2026-10-03 UTC)
+
+The prepublication guard caught dev advancing from 3c439d606e to e355b58c1e.
+Rebase all 42 patches unchanged. The four inherited provider-error files match
+dev exactly and retain identical import ASTs; only one preceding pin changes.
+Three inherited production files and the new regression join the source pins
+(253 total). No own implementation, test, fixture, CI, timeout or budget change;
+no new ADR is required for this patch-equivalent integration.
+
+The full targeted gateway/validation/Resend command has 447 passes and 17
+failures. An exact latest-dev source-only control runs the same 464 cases in
+the same order and produces the same 17 failing nodes with identical messages:
+existing provider assertions and mixed-profile setup. The 16 new validation
+and coupled Resend UI cases pass. No broader-green claim or suppression of
+those 17 failures. The temporary control changes no branch or checkout.
+
+All 37 exact Perf Guards, fresh full artifact preflight, zero-new Ruff across
+35 modified Python files and diff/backlog/UI-census checks pass on this final
+combination. All 253 source pins remain stable. Previous full mounted 24,
+host/consent/relaunch 170 and conditionally qualified 130 receipts retain
+their original 3c source/fixture identities; no fresh full replay of them,
+native or queue work is claimed for the provider-error delta.
+
+QA oct03_provider_validation_dev_integration pins current sources, passing
+subsets, exact baseline failures and fresh guard receipts. TASK-32367 remains
+In Progress until published-head Qodo and all four hosted gates pass, followed
+by final task-metadata-head checks/review and verified protected normal merge.
