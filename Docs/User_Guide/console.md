@@ -74,7 +74,7 @@ Top to bottom:
   **Sources**, the retrieval scope row ("Scope: everything" until you
   narrow it), a run status line, groups such as **Run**, **Tools**,
   **Approvals**, and **Artifacts**, the **"Live work sources"** card
-  (ask Library sources before sending), and the **Session Settings**
+  (ask Library sources before sending), and the **Chat settings**
   summary.
 - **Staged-evidence strip** — appears at the top of the control deck,
   directly under the conversation pane and above the status chip strip,
@@ -267,7 +267,7 @@ unlocks after setup". Behind the card, the workbench dims under a still
 field of scattered snow glyphs — a purely decorative backdrop that holds
 one frame (it re-scatters only when the window resizes) and costs nothing
 while the card waits. Its button follows the current step (**Set up
-provider**, then **Choose model**) and opens the Console Settings modal.
+provider**, then **Choose model**) and opens **Chat settings**.
 The composer stays locked until a provider and model are configured; once
 they are, the empty transcript reads "Ready — type a message to begin."
 
@@ -337,7 +337,7 @@ composer-level strip below shows once setup completes.
 | Control | What it does |
 |---|---|
 | **New tab** | Creates a Console tab — see [Sessions, tabs & workspaces](console/sessions-tabs-workspaces.md). |
-| **Settings** | Opens the "Console Settings" modal (provider, model, tools, and generation). |
+| **Settings** | Opens **Chat settings** (provider, model, generation, and context and memory). |
 | **Context rail** | Opens the "Console context" rail (source staging is done from Library) — see [Context & RAG](console/context-and-rag.md). |
 | **Search Library** | Runs a user-initiated **Manual Search Library** request before sending; it remains available regardless of the conversation's automatic or assistant policy — see [Context & RAG](console/context-and-rag.md#per-conversation-library-controls). |
 | **Save as Chatbook** (composer **Menu**) | Saves this run as a Chatbook — see [Artifacts](artifacts.md). |
@@ -455,8 +455,8 @@ during a run); **Esc** expands it and returns the caret to your draft.
 **Chat settings** is the one place provider, model, and generation settings
 for one chat live. Open it with **Ctrl+O** from anywhere in
 Console, `/settings`, the palette's "Console: Chat settings…", the control
-bar's **Settings** button, or the **Session Settings** action in the
-Inspector. Its title names the chat and counts your unsaved edits ("Chat
+bar's **Settings** button, or the action on the Inspector's **Chat
+settings** card. Its title names the chat and counts your unsaved edits ("Chat
 settings · Refactor plan · 2 unsaved edits"), and the line under the tabs
 says what it changes: "Applies to this chat only · saved with the
 conversation · defaults live in Settings ▸ Providers & Models (F4)". It is

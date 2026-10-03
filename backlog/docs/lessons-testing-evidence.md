@@ -2155,6 +2155,24 @@ of the contract: exact old ciphertext/DEK bytes disappear once the snapshot is
 released, and a writer still completes while the snapshot is open. A passing
 shredding test obtained by changing journal mode is not sufficient evidence.
 
+## A deferred read-then-write fails at once under a concurrent commit; serial runs hide it
+
+**TASK-33006.5 fix round 1, 2026-10-03.** The Chat settings Apply test first ran on
+the harness's `:memory:` DB. That DB is per connection, so the test persisted the
+conversation on the main thread after Apply and never exercised the worker-thread
+flush. On a file-backed DB the flush passed 8 of 8 serial runs, but run 8 at a time
+it failed 2 of 32: `update_conversation` raised "database is locked" in 15 ms, with
+no 15 s busy wait. It reads the row version and then UPDATEs inside a deferred
+`transaction()`. Another thread's commit between the two makes SQLite refuse the
+upgrade at once, and the busy handler is never called. `transaction()`'s own
+docstring says read-then-write needs `immediate=True`. With that change, 96 of 96
+loaded runs passed.
+
+**What to do.** Give any read-then-write `transaction(immediate=True)`. Pin it from
+the SQL with `set_trace_callback` (expect `BEGIN IMMEDIATE`), not from a race. A
+test of a worker-thread DB write needs a file-backed DB, and it needs runs 8 at a
+time as well as serial ones: one serial pass says nothing about lock upgrades.
+
 ---
 
 ## An empty WAL reader can invalidate a content-free negative cache forever

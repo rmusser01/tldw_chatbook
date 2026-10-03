@@ -744,7 +744,7 @@ unchanged — what changed is response validation and request strictness:
   report the server's response shape so the tolerant profile can be widened
   with evidence.
 
-**Creating one.** In the Console settings modal, the **New endpoint…**
+**Creating one.** In Chat settings, the **New endpoint…**
 button sits with **Endpoint** (it appears for providers that take a base
 URL, and whenever named endpoints exist). It opens "New endpoint from
 template": pick a template — the "OpenAI-compatible (blank)" starter, any
@@ -1216,7 +1216,7 @@ to **Transcript**, with an explanation beside the controls. Frame rates accept
 1–12; a non-finite value in a hand-edited configuration loads the default of 6.
 
 The current conversation's **Thinking history replay** control lives in its
-Console settings, because Auto/Include/Exclude is durable conversation state,
+Chat settings, because Auto/Include/Exclude is durable conversation state,
 not a device presentation setting. **Save as default for new conversations**
 copies that optional value to `console.thinking_history_policy_default` for
 future conversations only. An effective **Required** state is derived from

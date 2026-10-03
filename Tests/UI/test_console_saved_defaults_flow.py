@@ -11,6 +11,8 @@ store and controller with real keys.
 from __future__ import annotations
 
 import pytest
+from textual.widgets import Button, Collapsible, Input
+from textual.worker import WorkerCancelled
 
 from Tests.private_profile import private_profile_test
 from Tests.UI.test_console_provider_apply_defaults_flow import (  # noqa: F401
@@ -66,7 +68,6 @@ async def _console_with_work(app, harness, pilot):
     """Mount the Console and give its chat work: own settings and a message."""
     console = harness.screen_stack[-1]
     assert isinstance(console, ChatScreen)
-    console._provider_readiness_app_config = lambda: app.app_config
     await _wait_for_selector(console, pilot, "#console-settings-summary")
     store = console._ensure_console_chat_store()
     session_id = store.active_session_id
@@ -75,6 +76,18 @@ async def _console_with_work(app, harness, pilot):
         session_id, role=ConsoleMessageRole.USER, content="Keep my settings."
     )
     return console, store, session_id
+
+
+async def _settle(harness, pilot) -> None:
+    """Wait out the workers; the Console's exclusive sync workers cancel
+    each other while Settings sits on top, and a cancelled one raises."""
+    for _ in range(5):
+        try:
+            await harness.workers.wait_for_complete()
+            break
+        except WorkerCancelled:
+            continue
+    await pilot.pause()
 
 
 async def _use_saved_defaults(harness, pilot) -> ConsoleSettingsModal:
@@ -153,33 +166,73 @@ async def test_use_saved_defaults_stages_what_a_new_blank_chat_resolves(request)
 async def test_saved_model_defaults_reach_a_chat_with_work_only_through_apply(
     request,
 ) -> None:
-    """AC#8 (and AC#7): Settings saves, the chat keeps; Use saved defaults +
-    Apply moves the new values into the conversation's snapshot, and Apply
-    leaves the config file byte-identical."""
+    """AC#8 (and AC#7): the F4 Settings screen saves new model defaults and a
+    persisted chat with work keeps its values; Use saved defaults + Apply
+    rewrites that conversation's durable snapshot, and Apply leaves the config
+    file byte-identical.
+
+    Nothing between the save and the modal is patched: Settings' own Save
+    writes the profile, and Chat settings reads it through the production
+    seam (``_provider_readiness_app_config`` re-sources ``load_settings()``).
+    The ChaChaNotes DB is a file, so the conversation is persisted BEFORE the
+    save and Apply's worker-thread flush reaches it (``:memory:`` is per
+    connection).
+    """
     from tldw_chatbook.config import get_cli_config_path
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
 
     app = _console_app()
+    db_path = request.getfixturevalue("tmp_path") / "chachanotes.db"
+    app.chachanotes_db = CharactersRAGDB(str(db_path), "test-client")
     harness = _ConsoleFlowHarness(app)
     config_path = get_cli_config_path()
     async with harness.run_test(size=(211, 44)) as pilot:
         console, store, session_id = await _console_with_work(app, harness, pilot)
+        conversation_id = store.persist_session_if_needed(session_id)
+        assert conversation_id is not None
 
-        # Settings saves new model defaults through its writer, then reloads.
-        adapter = SettingsConfigAdapter()
-        assert adapter.save_sections(
-            {
-                "api_settings.llama_cpp": {
-                    **LLAMA,
-                    "model_defaults": {
-                        "model-a": {"temperature": 0.25, "max_tokens": 777}
-                    },
-                }
-            }
+        def snapshot():
+            return store.persistence.get_conversation_generation_settings(
+                conversation_id
+            ).snapshot
+
+        assert (snapshot().temperature, snapshot().max_tokens) == (
+            pytest.approx(0.9),
+            100,
         )
-        app.app_config = adapter.load(force_reload=True)
+
+        # F4: Settings ▸ Providers & Models saves new model defaults.
+        await harness.push_screen(SettingsScreen(app))
+        await _settle(harness, pilot)
+        settings = harness.screen
+        settings.query_one("#settings-category-providers-models", Button).press()
+        await _settle(harness, pilot)
+        settings.query_one("#settings-generation-defaults", Collapsible).collapsed = False
+        await _settle(harness, pilot)
+        for selector, text in (
+            ("#settings-model-profile-temperature", "0.25"),
+            ("#settings-model-profile-max-tokens", "777"),
+        ):
+            field = settings.query_one(selector, Input)
+            field.focus()
+            await pilot.press("home", "shift+end", "backspace", *text)
+            await _settle(harness, pilot)
+            assert field.value == text
+        await pilot.press("escape", "s")  # Settings' own Save
+        await _settle(harness, pilot)
+        saved = config_path.read_text()
+        assert "model_defaults" in saved and "777" in saved, saved
+        harness.pop_screen()
+        await pilot.pause()
+        assert harness.screen is console
         # Every Console redraw runs the D1 refresh; a chat with work keeps.
         assert console._session._active_console_session_settings() == WORK
         assert store.session_settings(session_id) == WORK
+        assert (snapshot().temperature, snapshot().max_tokens) == (
+            pytest.approx(0.9),
+            100,
+        )
 
         modal = await _use_saved_defaults(harness, pilot)
         assert modal.query_one("#console-settings-temperature").value == "0.25"
@@ -192,21 +245,12 @@ async def test_saved_model_defaults_reach_a_chat_with_work_only_through_apply(
             await pilot.pause()
         assert harness.screen is console
         await _drain_settings_tasks(app)
+        await _settle(harness, pilot)
         assert config_path.read_bytes() == before_apply
 
         applied = store.session_settings(session_id)
         assert (applied.provider, applied.model) == ("llama_cpp", "model-a")
         assert (applied.temperature, applied.max_tokens) == (pytest.approx(0.25), 777)
-        # The conversation's durable snapshot: persisted here on the main
-        # thread, as the lifecycle test does, because the harness's in-memory
-        # DB is per connection and the worker-thread flush cannot reach it.
-        conversation_id = store.persist_session_if_needed(session_id)
-        assert conversation_id is not None
-        snapshot = store.persistence.get_conversation_generation_settings(
-            conversation_id
-        ).snapshot
-        assert (snapshot.provider, snapshot.model) == ("llama_cpp", "model-a")
-        assert (snapshot.temperature, snapshot.max_tokens) == (
-            pytest.approx(0.25),
-            777,
-        )
+        durable = snapshot()
+        assert (durable.provider, durable.model) == ("llama_cpp", "model-a")
+        assert (durable.temperature, durable.max_tokens) == (pytest.approx(0.25), 777)

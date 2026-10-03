@@ -38,7 +38,7 @@ Where this page's controls live:
   panel](#the-environment-panel-environment-tasks-agents) below), the
   "Sources — next send" tray, the Library search controls, the
   retrieval-scope row, the "Prefill" rows when one is armed, the
-  run/readiness groups, the "Selected turn" block, "Session Settings", the
+  run/readiness groups, the "Selected turn" block, "Chat settings", the
   "Live work sources" card, and the "Chat Dictionaries" / "World Books"
   blocks at the bottom. Press **Alt+I**
   to open the rail and put the caret on the send summary; press it again to
@@ -579,7 +579,7 @@ cannot return through a delayed load or export.
 
 ### Thinking history replay
 
-Open the current conversation's Console settings and find **Thinking history
+Open the current conversation's Chat settings and find **Thinking history
 replay**. Its saved policy belongs to the conversation and affects future
 provider requests, not whether Thinking rows are visible:
 
@@ -944,7 +944,7 @@ visit. Whatever is currently staged, the strip's count, the tray's
 "Sources N" count, and the Inspector's Source Readiness line ("Evidence:
 N/N available") always agree on the same number.
 
-Staged evidence also counts toward the Console Settings context estimate
+Staged evidence also counts toward the Chat settings context estimate
 and the running-session cost chip — it used to report zero for anything
 staged but not yet sent. The estimate counts the staged snippets as
 they'll actually be sent (each capped at 4,000 characters, the same cap
