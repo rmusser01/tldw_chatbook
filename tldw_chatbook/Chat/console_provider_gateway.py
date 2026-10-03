@@ -173,6 +173,7 @@ from tldw_chatbook.LLM_Calls.moonshot import MoonshotFinishPolicy
 from tldw_chatbook.LLM_Calls.zai import ZAIFinishPolicy
 from tldw_chatbook.config import ProviderSettingsError
 from tldw_chatbook.provider_registry import ENGINE_RECORDS, RECORDS_BY_KEY
+from tldw_chatbook.Utils.egress import capture_rate_limits_for
 from tldw_chatbook.Utils.input_validation import validate_url
 from tldw_chatbook.Utils.sensitive_llm_logging import (
     is_sensitive_llm_request,
@@ -5352,6 +5353,7 @@ class ConsoleProviderGateway:
                             self._complete_sensitive_sync,
                             kwargs,
                             admission,
+                            resolution.provider,
                         )
                         if call_signals is not None and isinstance(response, Mapping):
                             _maybe_record_usage(response, call_signals)
@@ -5444,10 +5446,17 @@ class ConsoleProviderGateway:
         self,
         kwargs: Mapping[str, Any],
         admission: _ProviderAdapterAdmission,
+        provider: str = "",
     ) -> Any:
-        """Invoke the final synchronous adapter under the sensitive policy."""
+        """Invoke the final synchronous adapter under the sensitive policy.
 
-        with sensitive_llm_request():
+        ``provider`` is the session-facing provider the cost tooltip looks up
+        (TASK-28229), not ``api_endpoint``: for a custom endpoint that is the
+        shared execution handler, so its readings would land in one bucket.
+        """
+
+        provider_key = provider_config_key(provider)
+        with sensitive_llm_request(), capture_rate_limits_for(provider_key):
             _check_automatic_dispatch()
             return self._enter_provider_adapter(
                 admission,
@@ -6708,7 +6717,13 @@ class ConsoleProviderGateway:
         def worker() -> None:
             token = _local_reasoning_sink.set(capture_structured)
             try:
-                with sensitive_llm_request() if current_automatic_work() else contextlib.nullcontext():
+                # TASK-28229: record the provider's rate-limit headers for the
+                # whole consume -- a stream may send its request lazily.
+                with (
+                    sensitive_llm_request()
+                    if current_automatic_work()
+                    else contextlib.nullcontext()
+                ), capture_rate_limits_for(provider_config_key(resolution.provider)):
                     consume_provider()
             finally:
                 _local_reasoning_sink.reset(token)

@@ -33,8 +33,12 @@ import asyncio
 import ipaddress
 import json as _json
 import socket
+import threading
+import time
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
-from typing import Any, Iterable, List, Mapping, MutableMapping
+from typing import Any, Iterable, Iterator, List, Mapping, MutableMapping
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -1009,6 +1013,77 @@ class DefaultTimeoutSession(requests.Session):
         return super().request(method, url, *args, **kwargs)
 
 
+#: TASK-28229: the provider whose responses are being received right now. The
+#: Console gateway sets it around a provider call; while it is unset (the
+#: default) no response is recorded, so every other caller is unaffected.
+_RATE_LIMIT_PROVIDER: ContextVar[str | None] = ContextVar(
+    "rate_limit_provider", default=None
+)
+_RATE_LIMIT_HEADER_PREFIXES = ("x-ratelimit-", "anthropic-ratelimit-")
+#: provider key -> (wall-clock capture time, the rate-limit headers kept).
+_LATEST_RATE_LIMITS: dict[str, tuple[float, dict[str, str]]] = {}
+_LATEST_RATE_LIMITS_LOCK = threading.Lock()
+
+
+@contextmanager
+def capture_rate_limits_for(provider_key: str | None) -> Iterator[None]:
+    """Record rate-limit headers of responses received in this context.
+
+    Args:
+        provider_key: The provider config key the responses belong to;
+            empty or ``None`` records nothing.
+
+    Yields:
+        Nothing; the scope ends when the block exits.
+    """
+    token = _RATE_LIMIT_PROVIDER.set(provider_key or None)
+    try:
+        yield
+    finally:
+        _RATE_LIMIT_PROVIDER.reset(token)
+
+
+def latest_rate_limit_headers(
+    provider_key: str,
+) -> tuple[float, dict[str, str]] | None:
+    """Return the last rate-limit headers recorded for a provider.
+
+    Args:
+        provider_key: The provider config key.
+
+    Returns:
+        ``(captured_at, headers)`` with lower-cased header names, or ``None``
+        when that provider has sent none in this process.
+    """
+    with _LATEST_RATE_LIMITS_LOCK:
+        entry = _LATEST_RATE_LIMITS.get(provider_key)
+    return None if entry is None else (entry[0], dict(entry[1]))
+
+
+def _record_rate_limit_headers(response: Any, *_args: Any, **_kwargs: Any) -> None:
+    """``requests`` response hook: keep the rate-limit headers, nothing else.
+
+    Only header names with a rate-limit prefix are kept, and their values are
+    cut to 64 characters; they are parsed as numbers before any display. A
+    response without such headers leaves the previous entry in place.
+    """
+    provider = _RATE_LIMIT_PROVIDER.get()
+    if provider is None:
+        return None
+    try:
+        kept = {
+            str(name).lower(): str(value)[:64]
+            for name, value in response.headers.items()
+            if str(name).lower().startswith(_RATE_LIMIT_HEADER_PREFIXES)
+        }
+    except Exception:  # noqa: BLE001 - telemetry must never break a request
+        return None
+    if kept:
+        with _LATEST_RATE_LIMITS_LOCK:
+            _LATEST_RATE_LIMITS[provider] = (time.time(), dict(list(kept.items())[:32]))
+    return None
+
+
 def create_default_session(
     *, timeout: float | tuple[float, float] | None = None
 ) -> "DefaultTimeoutSession":
@@ -1037,6 +1112,7 @@ def create_default_session(
     # every default session; per-request ``verify=`` kwargs still win, which
     # is how Subscriptions' per-feed ``ssl_verify`` flag keeps precedence.
     session.verify = requests_verify()
+    session.hooks["response"].append(_record_rate_limit_headers)
     return session
 
 
