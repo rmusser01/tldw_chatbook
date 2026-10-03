@@ -60,6 +60,9 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO_ROOT))
 
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator  # noqa: E402
+
+from tldw_chatbook.Utils.path_validation import validate_path_simple  # noqa: E402
 from tldw_chatbook.provider_registry import ALL_RECORDS, ProviderRecord  # noqa: E402
 
 try:  # the app sends requests' default User-Agent; match it exactly
@@ -78,6 +81,8 @@ MAX_STREAM_EVENTS = 5000
 MAX_LISTED_MODELS = 20
 MAX_TOKENS = 200
 PER_ACCOUNT = "<per-account>"
+REDACTED = "<redacted-credential>"
+_ENV_VAR_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 # Closed shapes of the engine's strict parser (hosted_chat.py); anything else
 # must be in the record's allowances.
@@ -159,33 +164,135 @@ def _config_seeds(record: ProviderRecord) -> list[str]:
     return [seed for seed in seeds if isinstance(seed, str)]
 
 
+def _single_line(value: str, limit: int) -> str:
+    if len(value) > limit or not value.isprintable():
+        raise ValueError(f"must be one printable line of at most {limit} characters")
+    return value
+
+
+class CaptureOverrides(BaseModel):
+    """The per-provider ``TLDW_LIVE_<KEY>_*`` settings, validated before any request.
+
+    Values come from the environment or the keys file; blanks mean "not set".
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    base_url: str | None = None
+    model: str | None = None
+    api_key_env_var: str | None = None
+    headers: dict[str, str] = {}
+
+    @field_validator("base_url")
+    @classmethod
+    def _check_base_url(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        parts = urllib.parse.urlsplit(_single_line(value, 2048))
+        if parts.scheme not in ("http", "https") or not parts.hostname:
+            raise ValueError("must be an http(s) URL with a host")
+        if parts.query or parts.fragment or parts.username or parts.password:
+            raise ValueError("must not carry a query, fragment or credentials")
+        return value
+
+    @field_validator("model")
+    @classmethod
+    def _check_model(cls, value: str | None) -> str | None:
+        return None if value is None else _single_line(value, 256)
+
+    @field_validator("api_key_env_var")
+    @classmethod
+    def _check_env_var(cls, value: str | None) -> str | None:
+        if value is not None and not _ENV_VAR_NAME.fullmatch(value):
+            raise ValueError("must be an environment variable name")
+        return value
+
+    @field_validator("headers")
+    @classmethod
+    def _check_headers(cls, value: dict[str, str]) -> dict[str, str]:
+        return {name: _single_line(item, 256) for name, item in value.items()}
+
+    @classmethod
+    def from_env(cls, record: ProviderRecord, env: dict[str, str]) -> "CaptureOverrides":
+        """Read and validate one provider's overrides.
+
+        Args:
+            record: The preset whose ``TLDW_LIVE_<KEY>_*`` names are read.
+            env: Environment merged with the keys file.
+
+        Returns:
+            The validated overrides.
+
+        Raises:
+            ValidationError: When a set value is unusable (its value is never echoed).
+        """
+        def value(suffix: str) -> str | None:
+            return env.get(_env_name(record, suffix), "").strip() or None
+
+        return cls(
+            base_url=value("BASE_URL"),
+            model=value("MODEL"),
+            api_key_env_var=value("API_KEY_ENV_VAR"),
+            headers={
+                header: item
+                for header, setting in record.config_headers.items()
+                if (item := value(setting.upper())) is not None
+            },
+        )
+
+
 class Target:
     """One provider's resolved capture settings (the key is never exposed)."""
 
     def __init__(self, record: ProviderRecord, env: dict[str, str]) -> None:
         self.record = record
-        self._api_key = next(
-            (env[name] for name in record.api_key_env_candidates if env.get(name, "").strip()), ""
+        self.invalid_override: str | None = None
+        try:
+            overrides = CaptureOverrides.from_env(record, env)
+        except ValidationError as error:
+            fields = sorted({str(item["loc"][0]) for item in error.errors()})
+            self.invalid_override = ", ".join(fields)
+            overrides = CaptureOverrides()
+        # The engine reads a configured api_key_env_var before the record's
+        # candidates (StepFun's STEP_API_KEY, Meta's MODEL_API_KEY); so does this.
+        names = ((overrides.api_key_env_var,) if overrides.api_key_env_var else ()) + tuple(
+            record.api_key_env_candidates
         )
-        override = env.get(_env_name(record, "BASE_URL"), "").strip()
-        base = override or (record.default_base_url or "")
+        self.key_names = names
+        self._api_key = next((env[name].strip() for name in names if env.get(name, "").strip()), "")
+        base = overrides.base_url or (record.default_base_url or "")
         if base and record.base_url_suffix and urllib.parse.urlsplit(base).path in ("", "/"):
             base = base.rstrip("/") + record.base_url_suffix
         self.base_url = base.rstrip("/")
-        self.base_url_display = PER_ACCOUNT if override else self.base_url
-        self.model_override = env.get(_env_name(record, "MODEL"), "").strip()
-        self.headers_extra = {
-            header: env[_env_name(record, setting.upper())].strip()
-            for header, setting in record.config_headers.items()
-            if env.get(_env_name(record, setting.upper()), "").strip()
-        }
+        self.base_url_display = PER_ACCOUNT if overrides.base_url else self.base_url
+        self.model_override = overrides.model or ""
+        self.headers_extra = dict(overrides.headers)
         timeout = record.settings_defaults.get("timeout", 120)
         self.timeout = float(timeout) if isinstance(timeout, (int, float)) else 120.0
 
+    def redact(self, text: str) -> tuple[str, bool]:
+        """Remove the credential from ``text`` if the provider echoed it.
+
+        Args:
+            text: Serialized fixture content.
+
+        Returns:
+            The text with every occurrence replaced, and whether any was found.
+        """
+        if not self._api_key:
+            return text, False
+        forms = {self._api_key, json.dumps(self._api_key)[1:-1]}
+        found = any(form in text for form in forms)
+        for form in forms:
+            text = text.replace(form, REDACTED)
+        return text, found
+
     def skip_reason(self) -> str | None:
         """Why this provider cannot be captured, or None when it can."""
+        if self.invalid_override:
+            return f"invalid override ({self.invalid_override}); value not shown"
         if not self._api_key:
-            return f"no key ({' / '.join(self.record.api_key_env_candidates)})"
+            return f"no key ({' / '.join(self.key_names)})"
         if not self.base_url:
             return f"per-account URL: set {_env_name(self.record, 'BASE_URL')}"
         if self.record.key == "azure" and not self.model_override:
@@ -228,7 +335,8 @@ def _request(target: Target, url: str, body: dict[str, Any] | None) -> tuple[int
         with urllib.request.urlopen(request, timeout=target.timeout) as response:
             raw, status = response.read().decode("utf-8", errors="replace"), response.status
     except urllib.error.HTTPError as error:
-        raw, status = error.read().decode("utf-8", errors="replace"), error.code
+        with error:
+            raw, status = error.read().decode("utf-8", errors="replace"), error.code
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         return -1, f"{type(error).__name__}"
     try:
@@ -256,7 +364,8 @@ def _stream(target: Target, url: str, body: dict[str, Any]) -> tuple[int, list[s
                         break
             status = response.status
     except urllib.error.HTTPError as error:
-        return error.code, [error.read().decode("utf-8", errors="replace")[:2000]]
+        with error:
+            return error.code, [error.read().decode("utf-8", errors="replace")[:2000]]
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         return -1, [type(error).__name__]
     if data_lines:
@@ -265,7 +374,16 @@ def _stream(target: Target, url: str, body: dict[str, Any]) -> tuple[int, list[s
 
 
 def choose_model(target: Target, listing: Any) -> str | None:
-    """Override, else a cheap-looking chat model from the listing, else the first seed."""
+    """Pick the model a capture uses.
+
+    Args:
+        target: The provider; its ``TLDW_LIVE_<KEY>_MODEL`` override wins.
+        listing: The provider's ``/models`` body, or None when not listed.
+
+    Returns:
+        The override, else a cheap-looking chat model from the listing, else
+        the first ``[providers]`` seed; None when there is nothing to use.
+    """
     if target.model_override:
         return target.model_override
     ids = [
@@ -284,7 +402,16 @@ def choose_model(target: Target, listing: Any) -> str | None:
 
 
 def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str, list[str]]:
-    """Response key NAMES outside the strict shape AND the record's allowances."""
+    """Response key NAMES outside the strict shape AND the record's allowances.
+
+    Args:
+        record: The preset whose allowances are subtracted.
+        fixture: A capture with ``chat_response``/``tool_call_response`` bodies
+            and ``stream_events``.
+
+    Returns:
+        Uncovered key names per level (``top``, ``choice``, ``message``), sorted.
+    """
     top: set[str] = set()
     choice: set[str] = set()
     message: set[str] = set()
@@ -319,7 +446,15 @@ def uncovered_keys(record: ProviderRecord, fixture: dict[str, Any]) -> dict[str,
 
 
 def capture(target: Target) -> Path | None:
-    """Run the rounds for one provider and write its raw fixture."""
+    """Run the rounds for one provider and write its raw fixture.
+
+    Args:
+        target: The provider's resolved capture settings.
+
+    Returns:
+        The fixture path, or None when nothing was written (no model, or no
+        round succeeded).
+    """
     record = target.record
     listing: Any = None
     if record.discovery_route is not None and not target.model_override:
@@ -337,8 +472,14 @@ def capture(target: Target) -> Path | None:
     if record.native_tools:
         tool_status, tool_body = _request(target, url, target.payload(model, TOOL_MESSAGES, stream=False, tools=True))
     stream_status, events = _stream(target, url, target.payload(model, PLAIN_MESSAGES, stream=True, tools=False))
+    stream_complete = stream_status == 200 and bool(events) and events[-1] == "[DONE]"
     print(f"  plain HTTP {chat_status}  tool HTTP {tool_status}  stream HTTP {stream_status}"
-          f" ({len(events)} events, ends [DONE]: {bool(events) and events[-1] == '[DONE]'})")
+          f" ({len(events)} events, complete: {stream_complete})")
+    if chat_status != 200 and tool_status != 200 and not stream_complete:
+        print("  FAILED: no round succeeded -- no fixture written (check the key, model and URL)")
+        return None
+    if stream_status == 200 and not stream_complete:
+        print("  ! the stream was cut off before [DONE]; its replay will fail until recaptured")
     listed = (listing or {}).get("data") if isinstance(listing, dict) else None
     fixture = {
         "server": record.key,
@@ -354,9 +495,12 @@ def capture(target: Target) -> Path | None:
         ),
         "captured_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
     }
+    text, echoed = target.redact(json.dumps(fixture, indent=2, ensure_ascii=False))
+    if echoed:
+        print("  ! the provider echoed the credential in a response; it was redacted")
     path = FIXTURE_DIR / f"{record.key}.json"
-    path.write_text(json.dumps(fixture, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    gaps = {level: keys for level, keys in uncovered_keys(record, fixture).items() if keys}
+    path.write_text(text + "\n", encoding="utf-8")
+    gaps = {level: keys for level, keys in uncovered_keys(record, json.loads(text)).items() if keys}
     print(f"  wrote {path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path}")
     print(f"  uncovered keys: {gaps or 'none'}")
     return path
@@ -367,6 +511,7 @@ NOAUTH_DIR = FIXTURE_DIR / "noauth"
 
 
 def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str], timeout: float) -> dict[str, Any]:
+    """One probe request; never carries a real credential."""
     data = json.dumps(body).encode("utf-8") if body is not None else None
     request = urllib.request.Request(url, data=data, method="POST" if body is not None else "GET",
                                      headers={"Content-Type": "application/json", "User-Agent": USER_AGENT, **headers})
@@ -374,7 +519,8 @@ def _plain_request(url: str, body: dict[str, Any] | None, headers: dict[str, str
         with urllib.request.urlopen(request, timeout=timeout) as response:
             raw, status = response.read().decode("utf-8", errors="replace"), response.status
     except urllib.error.HTTPError as error:
-        raw, status = error.read().decode("utf-8", errors="replace"), error.code
+        with error:
+            raw, status = error.read().decode("utf-8", errors="replace"), error.code
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         return {"status": -1, "body": type(error).__name__}
     try:
@@ -389,6 +535,12 @@ def probe_without_key(record: ProviderRecord) -> Path | None:
     Records how the model listing answers (and every model id when it is
     public) and how the chat route answers a missing and a bad key. No real
     credential is ever sent, so nothing is spent.
+
+    Args:
+        record: The preset to probe.
+
+    Returns:
+        The probe fixture path, or None for a per-account preset without a URL.
     """
     base = (os.environ.get(_env_name(record, "BASE_URL"), "").strip() or record.default_base_url or "").rstrip("/")
     if not base:
@@ -432,6 +584,14 @@ def probe_without_key(record: ProviderRecord) -> Path | None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run the capture or probe CLI.
+
+    Args:
+        argv: Command-line arguments; ``sys.argv[1:]`` when None.
+
+    Returns:
+        The process exit code.
+    """
     parser = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     parser.add_argument("providers", nargs="*", help="record keys to capture (default: every available)")
     parser.add_argument("--keys-file", type=Path, default=DEFAULT_KEYS_FILE)
@@ -439,7 +599,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--no-auth", action="store_true",
                         help="probe every preset's shipped URL without a real key (no tokens spent)")
     args = parser.parse_args(argv)
-    env = {**read_keys_file(args.keys_file), **os.environ}
+    try:
+        keys_file = validate_path_simple(args.keys_file, reject_shell_metacharacters=False)
+    except ValueError:
+        parser.error("--keys-file is not a usable path")
+    env = {**read_keys_file(keys_file), **os.environ}
     records = engine_presets()
     unknown = set(args.providers) - {r.key for r in records}
     if unknown:

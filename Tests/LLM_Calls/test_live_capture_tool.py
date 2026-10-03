@@ -31,12 +31,15 @@ _BODY = {
 
 class _Provider(BaseHTTPRequestHandler):
     requests: list[dict[str, Any]] = []
+    # "ok", "echo" (bodies repeat the Authorization header), "refuse" (every
+    # round 401) or "truncate" (the stream ends without [DONE]).
+    mode = "ok"
 
     def log_message(self, *args: Any) -> None:
         """Keep the test output quiet."""
 
-    def _send(self, body: bytes, content_type: str = "application/json") -> None:
-        self.send_response(200)
+    def _send(self, body: bytes, content_type: str = "application/json", status: int = 200) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", content_type)
         self.end_headers()
         self.wfile.write(body)
@@ -50,10 +53,16 @@ class _Provider(BaseHTTPRequestHandler):
         """Serve a chat completion, streamed when asked."""
         body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
         type(self).requests.append({"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}, "body": body})
+        if type(self).mode == "refuse":
+            self._send(json.dumps({"error": {"message": "Invalid API key"}}).encode(), status=401)
+            return
         if body.get("stream"):
             chunk = {"id": "c", "object": "chat.completion.chunk", "created": 1, "model": "m",
                      "choices": [{"index": 0, "delta": {"content": "ok"}, "finish_reason": "stop"}]}
-            self._send(f"data: {json.dumps(chunk)}\n\ndata: [DONE]\n\n".encode(), "text/event-stream")
+            tail = "" if type(self).mode == "truncate" else "data: [DONE]\n\n"
+            self._send(f"data: {json.dumps(chunk)}\n\n{tail}".encode(), "text/event-stream")
+        elif type(self).mode == "echo":
+            self._send(json.dumps({**_BODY, "debug": {"authorization": self.headers.get("Authorization")}}).encode())
         else:
             self._send(json.dumps(_BODY).encode())
 
@@ -62,6 +71,7 @@ class _Provider(BaseHTTPRequestHandler):
 def provider(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """A loopback provider URL, with fixtures redirected to ``tmp_path``."""
     _Provider.requests = []
+    _Provider.mode = "ok"
     server = ThreadingHTTPServer(("127.0.0.1", 0), _Provider)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
@@ -152,4 +162,116 @@ def test_no_auth_probe_sends_only_the_fake_key(
     auth = [r["headers"].get("authorization") for r in _Provider.requests if r["body"] is not None]
     assert auth == [None, f"Bearer {capture_tool.PROBE_KEY}"]
     assert _KEY not in json.dumps(fixture)
+
+
+def test_an_echoed_credential_is_redacted_before_the_fixture_is_written(
+    provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A provider repeating the Authorization header never puts the key on disk."""
+    _Provider.mode = "echo"
+    fixture = _run(tmp_path, "meta", {"TLDW_LIVE_META_BASE_URL": provider})
+    text = (tmp_path / "meta.json").read_text(encoding="utf-8")
+    assert _KEY not in text and capture_tool.REDACTED in text
+    assert fixture["chat_response"]["debug"]["authorization"] == f"Bearer {capture_tool.REDACTED}"
+    assert "echoed the credential" in capsys.readouterr().out
+
+
+def test_a_capture_with_no_successful_round_writes_nothing(
+    provider: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Every round refused: no fixture, not counted as captured."""
+    _Provider.mode = "refuse"
+    keys = tmp_path / "keys.env"
+    keys.write_text(f"META_API_KEY={_KEY}\n", encoding="utf-8")
+    monkeypatch.setenv("TLDW_LIVE_META_BASE_URL", provider)
+    monkeypatch.setenv("TLDW_LIVE_META_MODEL", "m")
+    assert capture_tool.main(["meta", "--keys-file", str(keys)]) == 0
+    out = capsys.readouterr().out
+    assert not (tmp_path / "meta.json").exists()
+    assert "FAILED: no round succeeded" in out and "captured 0 of 1" in out
+
+
+def test_a_truncated_stream_is_flagged(provider: str, tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    """A stream cut off before [DONE] is kept as evidence but called out."""
+    _Provider.mode = "truncate"
+    fixture = _run(tmp_path, "meta", {"TLDW_LIVE_META_BASE_URL": provider})
+    assert fixture["stream_events"] and fixture["stream_events"][-1] != "[DONE]"
+    assert "cut off before [DONE]" in capsys.readouterr().out
+
+
+def test_a_configured_alternate_key_variable_is_read_first() -> None:
+    """Like the engine, a configured api_key_env_var (StepFun's STEP_API_KEY) wins."""
+    record = next(r for r in capture_tool.engine_presets() if r.key == "stepfun")
+    env = {"STEP_API_KEY": _KEY, "TLDW_LIVE_STEPFUN_API_KEY_ENV_VAR": "STEP_API_KEY"}
+    target = capture_tool.Target(record, env)
+    assert target.skip_reason() is None
+    assert target.key_names[0] == "STEP_API_KEY"
+    assert capture_tool.Target(record, {"STEP_API_KEY": _KEY}).skip_reason().startswith("no key")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        ("TLDW_LIVE_META_BASE_URL", "ftp://example.invalid/v1"),
+        ("TLDW_LIVE_META_BASE_URL", "https://user:pw@example.invalid/v1"),
+        ("TLDW_LIVE_META_MODEL", "m\ninjected"),
+        ("TLDW_LIVE_META_API_KEY_ENV_VAR", "NOT A NAME"),
+    ],
+)
+def test_an_invalid_override_skips_the_provider_without_echoing_it(name: str, value: str) -> None:
+    """Overrides are validated before any request; the bad value is never printed.
+
+    Args:
+        name: The override variable.
+        value: An unusable value for it.
+    """
+    record = next(r for r in capture_tool.engine_presets() if r.key == "meta")
+    reason = capture_tool.Target(record, {"META_API_KEY": _KEY, name: value}).skip_reason()
+    assert reason is not None and reason.startswith("invalid override")
+    assert value not in reason
+
+
+def test_a_traversal_keys_file_path_is_refused(capsys: pytest.CaptureFixture[str]) -> None:
+    """The keys-file path goes through the shared path validator."""
+    with pytest.raises(SystemExit):
+        capture_tool.main(["--list", "--keys-file", "../../etc/passwd"])
+    assert "--keys-file is not a usable path" in capsys.readouterr().err
+
+
+# --- uncovered_keys, on its own ---
+
+_RECORD = next(r for r in capture_tool.engine_presets() if r.key == "zenmux")  # allows service_tier, refusal
+
+
+def test_uncovered_keys_reports_each_level_and_subtracts_allowances() -> None:
+    """Body top/choice/message and stream event/choice/delta keys, minus the record's allowances."""
+    fixture = {
+        "chat_response": {
+            "id": "c", "choices": [{"index": 0, "finish_reason": "stop", "extra_choice": 1,
+                                    "message": {"role": "assistant", "content": "ok", "refusal": None, "extra_msg": 1}}],
+            "service_tier": "default", "extra_top": 1,
+        },
+        "tool_call_response": None,
+        "stream_events": [
+            json.dumps({"id": "c", "event_extra": 1, "choices": [
+                {"index": 0, "delta": {"content": "o", "delta_extra": 1}, "stream_choice_extra": 1}]}),
+            "[DONE]",
+        ],
+    }
+    assert capture_tool.uncovered_keys(_RECORD, fixture) == {
+        "top": ["event_extra", "extra_top"],
+        "choice": ["extra_choice", "stream_choice_extra"],
+        "message": ["delta_extra", "extra_msg"],
+    }
+
+
+def test_uncovered_keys_is_empty_for_a_strict_shape_and_ignores_error_bodies() -> None:
+    """A clean reply reports nothing; a refused round's error body is not a response shape."""
+    fixture = {
+        "chat_response": {"id": "c", "choices": [{"index": 0, "finish_reason": "stop",
+                                                  "message": {"role": "assistant", "content": "ok"}}]},
+        "tool_call_response": {"error": {"message": "bad request"}},
+        "stream_events": ["not json", "[DONE]"],
+    }
+    assert capture_tool.uncovered_keys(_RECORD, fixture) == {"top": [], "choice": [], "message": []}
 

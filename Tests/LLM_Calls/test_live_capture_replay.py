@@ -10,7 +10,9 @@ names its record does not allow. That list is the evidence for amending the
 record (cite the fixture; never widen by guess).
 
 Rounds the provider refused (non-200) are recorded in the fixture but not
-replayed: an error body is not a response shape.
+replayed: an error body is not a response shape. A capture with no successful
+round, or a successful stream cut off before ``[DONE]``, is a degraded capture
+and fails rather than skips.
 """
 
 from __future__ import annotations
@@ -78,6 +80,38 @@ def _replay(
     )
 
 
+def stream_verdict(capture: dict[str, Any]) -> str:
+    """Classify a capture's stream round.
+
+    Args:
+        capture: One captured fixture.
+
+    Returns:
+        ``refused`` (non-200: not replayed), ``incomplete`` (200 but empty or
+        without ``[DONE]``: a degraded capture), or ``complete``.
+    """
+    events = capture.get("stream_events") or []
+    if capture["statuses"].get("stream") != 200:
+        return "refused"
+    return "complete" if events and events[-1] == "[DONE]" else "incomplete"
+
+
+def has_usable_round(capture: dict[str, Any]) -> bool:
+    """Whether a capture holds at least one successful response to replay.
+
+    Args:
+        capture: One captured fixture.
+
+    Returns:
+        True when a body round answered 200 with an object, or the stream is complete.
+    """
+    bodies = (("plain", "chat_response"), ("tool", "tool_call_response"))
+    return stream_verdict(capture) == "complete" or any(
+        capture["statuses"].get(name) == 200 and isinstance(capture.get(field), dict)
+        for name, field in bodies
+    )
+
+
 def _evidence(record: Any, fixture: dict[str, Any]) -> str:
     gaps = {level: keys for level, keys in uncovered_keys(record, fixture).items() if keys}
     return f"{record.key}: keys outside the record's allowances: {gaps or 'none'}"
@@ -93,6 +127,11 @@ def test_every_capture_belongs_to_an_engine_preset(capture: dict[str, Any]) -> N
     """A capture file is named after, and records, a real engine preset."""
     record = RECORDS_BY_KEY.get(capture["server"])
     assert record is not None and record.engine_driven, capture["server"]
+
+
+def test_every_capture_holds_a_successful_round(capture: dict[str, Any]) -> None:
+    """A capture whose every round failed proves nothing; recapture it."""
+    assert has_usable_round(capture), f"{capture['server']}: no successful round ({capture['statuses']})"
 
 
 @pytest.mark.parametrize("round_name, field", [("plain", "chat_response"), ("tool", "tool_call_response")])
@@ -127,14 +166,46 @@ def test_captured_stream_parses_under_its_record(
         capture: One captured fixture.
         monkeypatch: Replaces resolution and transport with the capture.
     """
-    events = capture.get("stream_events") or []
-    if capture["statuses"].get("stream") != 200 or not events or events[-1] != "[DONE]":
-        pytest.skip("stream round was not a complete successful stream")
+    verdict = stream_verdict(capture)
+    if verdict == "refused":
+        pytest.skip("the provider refused the stream round")
+    assert verdict == "complete", f"{capture['server']}: stream cut off before [DONE] -- recapture"
     record = RECORDS_BY_KEY[capture["server"]]
-    stream = _replay(monkeypatch, record, stream_events=list(events))
+    stream = _replay(monkeypatch, record, stream_events=list(capture["stream_events"]))
     assert isinstance(stream, HostedProviderStream)
     try:
         list(stream)
     except (HostedChatProtocolError, ChatProviderError) as error:
         pytest.fail(f"{type(error).__name__}: {error} -- {_evidence(record, capture)}")
     assert stream.terminal_turn.finish_reason is not None
+
+
+@pytest.mark.parametrize(
+    ("statuses", "events", "expected"),
+    [
+        ({"stream": 401}, ["error"], "refused"),
+        ({"stream": 200}, [], "incomplete"),
+        ({"stream": 200}, ['{"choices": []}'], "incomplete"),
+        ({"stream": 200}, ['{"choices": []}', "[DONE]"], "complete"),
+    ],
+)
+def test_stream_verdict_rejects_truncated_streams(
+    statuses: dict[str, int], events: list[str], expected: str
+) -> None:
+    """A 200 stream without ``[DONE]`` is degraded, never silently skipped.
+
+    Args:
+        statuses: The fixture's round statuses.
+        events: The captured stream payloads.
+        expected: The verdict the replay must reach.
+    """
+    assert stream_verdict({"statuses": statuses, "stream_events": events}) == expected
+
+
+def test_a_capture_with_no_successful_round_is_not_usable() -> None:
+    """Every round refused means nothing to replay."""
+    failed = {"statuses": {"plain": 401, "tool": 401, "stream": 401},
+              "chat_response": {"error": "x"}, "tool_call_response": {"error": "x"}, "stream_events": ["x"]}
+    assert has_usable_round(failed) is False
+    assert has_usable_round({**failed, "statuses": {"plain": 200, "tool": 401, "stream": 401}}) is True
+
