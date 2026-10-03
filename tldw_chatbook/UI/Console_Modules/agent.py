@@ -559,15 +559,24 @@ def console_turn_activity_text(
         started_at = getattr(usage, "started_at", None)
         waited = max(0.0, now - started_at) if started_at is not None else None
         elapsed = _format_fleet_elapsed(waited) if waited is not None else ""
+        output = getattr(usage, "output_tokens", 0)
         if (
             waited is not None
             and waited >= _FIRST_TOKEN_HINT_AFTER_SECONDS
-            and not usage_label
+            and (type(output) is not int or output < _FIRST_TOKEN_MIN_OUTPUT)
         ):
-            # TASK-34100.5 AC#5: no token yet -- say so, with the cold-load
-            # hint and the way out, instead of an unchanging "Generating…".
+            # TASK-34100.5 AC#5: the answer has not started (a cold local
+            # model still processing the prompt streams at most a stray
+            # delta) -- say so, with the cold-load hint and the way out.
             return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
-                (CONSOLE_TURN_ACTIVITY_FIRST_TOKEN, elapsed, _FIRST_TOKEN_HINT)
+                segment
+                for segment in (
+                    CONSOLE_TURN_ACTIVITY_FIRST_TOKEN,
+                    elapsed,
+                    usage_label,
+                    _FIRST_TOKEN_HINT,
+                )
+                if segment
             )
         segments = (label, elapsed, usage_label)
         return CONSOLE_TURN_ACTIVITY_SEPARATOR.join(
@@ -596,6 +605,9 @@ def console_turn_activity_text(
 #: TASK-34100.5 AC#5: the first-token wait copy and when it replaces
 #: "Generating…" (a warm model answers well inside this).
 _FIRST_TOKEN_HINT_AFTER_SECONDS = 15.0
+#: Live run (llama.cpp, CPU, 4.4k-token prompt, 2026-10-03): stray deltas
+#: during prompt processing read "~1-2 local output tok" for 3+ minutes.
+_FIRST_TOKEN_MIN_OUTPUT = 8
 CONSOLE_TURN_ACTIVITY_FIRST_TOKEN = "Waiting for the model to start answering"
 #: The Stop key is composer_run_controls.STOP_RUN_KEY_LABEL (a test pins it).
 _FIRST_TOKEN_HINT = "a large local model can take a few minutes to load · Stop: Ctrl+G"

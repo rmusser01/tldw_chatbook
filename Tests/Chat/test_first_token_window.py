@@ -124,6 +124,16 @@ def test_a_long_wait_for_the_first_token_shows_elapsed_and_a_cold_load_hint() ->
 
     early = console_turn_activity_text(snapshot, now=5.0)
     late = console_turn_activity_text(snapshot, now=42.0)
+    # Live: a cold llama.cpp streams a stray delta or two while it is still
+    # processing the prompt -- that is not the answer starting.
+    usage.output_tokens = 2
+    stray = console_turn_activity_text(snapshot, now=91.0)
+    assert stray.startswith("Waiting for the model to start answering")
+    assert "1m 31s" in stray
+    usage.output_tokens = 40
+    answering = console_turn_activity_text(snapshot, now=91.0)
+    assert answering.startswith("Generating…")
+    usage.output_tokens = 0
 
     assert early.startswith("Generating…") and "5s" in early
     assert late.startswith("Waiting for the model to start answering")
