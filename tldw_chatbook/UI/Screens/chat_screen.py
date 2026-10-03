@@ -18738,7 +18738,12 @@ class ChatScreen(BaseAppScreen):
             controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
             or controller.in_flight_run_count() > 0
             or self._console_runtime().has_custodied_turns()
-            or wake_delivering or review_pending
+            or wake_delivering
+            or review_pending
+            or any(
+                worker.group.startswith("console-run-") and not worker.is_finished
+                for worker in getattr(self, "workers", ())
+            )
         )
 
     def _start_console_transcript_sync_timer(self) -> None:
@@ -24497,6 +24502,21 @@ class ChatScreen(BaseAppScreen):
                 character_id=character_id,
                 character_name=character_name,
                 activate=False,
+                prepare_progress=False,
+            )
+
+            async def prepare_created_progress() -> None:
+                from ...Agents.fleet_messages import MessageError
+
+                try:
+                    await store.prepare_progress_inbox_owned(session.id)
+                except MessageError:
+                    pass  # Durable chat remains available for a later explicit read.
+
+            self.run_worker(
+                prepare_created_progress(),
+                exclusive=True,
+                group=f"console-progress-restore-{session.id}",
             )
             # Single write path: the restore rehydrates the draft from
             # the persisted console_agent_handoff key; this fill only

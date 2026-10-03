@@ -33,6 +33,7 @@ MESSAGE_CONTROLLER_CALLABLES = (
     "current_chat_store_accessor",
     "ensure_console_chat_controller",
     "current_chat_controller_accessor",
+    "generation_refusal_copy",
     "sync_native_console_chat_ui",
     "active_session_is_ephemeral",
     "active_native_console_session",

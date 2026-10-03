@@ -8,6 +8,7 @@ from threading import Event
 import pytest
 
 from tldw_chatbook.Backup_Recovery.sqlite_validation import validate_candidate
+from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
 from tldw_chatbook.DB.recovery_operations import _AGENT_RUNS_SCHEMA, recovery_adapters
 
 # Literal CREATE statement from the native v19/v20 constructor, before v21.
@@ -69,7 +70,7 @@ def test_legacy_agent_candidate_migration_preserves_history(tmp_path):
     with closing(sqlite3.connect(path)) as connection:
         assert connection.execute(
             "SELECT MAX(version) FROM schema_version"
-        ).fetchone() == (21,)
+        ).fetchone() == (AgentRunsDB._CURRENT_SCHEMA_VERSION,)
         assert connection.execute(
             "SELECT id,name,provider,params_json,max_wall_seconds FROM agent_definitions"
         ).fetchall() == [("kept", "Saved preset", "", "{}", None)]
@@ -108,7 +109,11 @@ def test_unknown_agent_schema_or_version_refuses(tmp_path, alteration):
         else:
             connection.execute(
                 "INSERT INTO schema_version VALUES (?)",
-                (21 if alteration == "relabeled_legacy" else 22,),
+                (
+                    21
+                    if alteration == "relabeled_legacy"
+                    else AgentRunsDB._CURRENT_SCHEMA_VERSION + 1,
+                ),
             )
         connection.commit()
     before = path.read_bytes()

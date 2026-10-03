@@ -163,6 +163,11 @@ class _Restrictions:
                 and second in ("ON", "1")
             )
             permitted |= self.migrating and first == "user_version"
+            # SQLite validates existing rows when ADD COLUMN adds a CHECK.
+            permitted |= (
+                self.migrating and self.migration_owner == "db.agent_runs"
+                and first == "quick_check" and second == "automatic_wake_attempts"
+            )
             return sqlite3.SQLITE_OK if permitted else sqlite3.SQLITE_DENY
         if (
             self.reading_fts_metadata
@@ -189,7 +194,7 @@ class _Restrictions:
             if self.migration_owner == "db.agent_runs":
                 allowed = (
                     action == sqlite3.SQLITE_CREATE_TABLE
-                    and first == "agent_worktrees"
+                    and first in {"agent_worktrees", "automatic_progress_wake_claims"}
                     or action == sqlite3.SQLITE_CREATE_INDEX
                     and first
                     in {
@@ -197,11 +202,16 @@ class _Restrictions:
                         "sqlite_autoindex_agent_worktrees_1",
                     }
                     and second == "agent_worktrees"
+                    or action == sqlite3.SQLITE_CREATE_INDEX
+                    and first in {"idx_automatic_progress_claims_attempt", "sqlite_autoindex_automatic_progress_wake_claims_1"}
+                    and second == "automatic_progress_wake_claims"
+                    or action == sqlite3.SQLITE_REINDEX
+                    and first == "idx_automatic_progress_claims_attempt"
                     or action == sqlite3.SQLITE_REINDEX
                     and first == "idx_agent_worktrees_scope"
                     or action == sqlite3.SQLITE_ALTER_TABLE
                     and first == "main"
-                    and second in {"agent_definitions", "agent_runs"}
+                    and second in {"agent_definitions", "agent_runs", "automatic_wake_attempts"}
                     or action == sqlite3.SQLITE_INSERT
                     and first in {"sqlite_master", "schema_version"}
                 )
@@ -511,7 +521,7 @@ def _check(connection, owner, policy, restrictions):
             and connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            != (75,)
+            != (76,)
         ):
             return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)

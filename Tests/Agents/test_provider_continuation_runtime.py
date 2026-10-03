@@ -1822,7 +1822,7 @@ def test_cycle_4d_raised_final_persistence_stops_safely() -> None:
     assert "PRIVATE-CANARY" not in outcome.steps[-1].summary
 
 
-@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages"])
+@pytest.mark.parametrize("name", ["report_to_supervisor", "read_agent_messages", "list_peer_agents", "send_to_peer"])
 def test_restored_pending_message_call_refuses_before_execution(name):
     from tldw_chatbook.Agents.fleet_message_tools import collect
     from tldw_chatbook.Agents.fleet_messages import MessageIdentity, MessageStore
@@ -1847,6 +1847,8 @@ def test_restored_pending_message_call_refuses_before_execution(name):
         invoked.append(args) or collect(reader, args, 8000)
     )
     deps.report_to_supervisor = lambda args: invoked.append(args) or ToolResult(True)
+    deps.list_peer_agents = lambda args: invoked.append(args) or ToolResult(True)
+    deps.send_to_peer = lambda args: invoked.append(args) or ToolResult(True)
     outcome = run_agent_loop(
         replace(CONFIG, budget=RunBudget(denial_circuit_breaker_limit=1)),
         [],

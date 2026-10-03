@@ -139,6 +139,8 @@ ADRs explain why significant architectural decisions were made. Backlog tasks, S
 | [ADR-166](166-agent-assisted-archive-recovery.md) | Accepted | Search local archives from Console agents in either retrieval mode under Library authority, with exact-target confirmation and separate restoration/opening. |
 | [ADR-210](210-console-region-ownership.md) | Accepted | Give each Console region one job — authority header, identity tab strip, one Chats browser, three-group Inspect, four-slot status strip, run-owning composer — and re-home every duplicated control. |
 
+| [ADR-211](211-ephemeral-provider-failure-presentation.md) | Accepted | Keep sanitized provider failure presentation transient across the gateway, agent outcome and Console while preserving typed fallback semantics and diagnostic persistence. |
+
 ## Historical Decision Material
 
 Some older decision material exists outside this directory. See [historical-index.md](historical-index.md). Historical entries are context, not canonical ADRs under the current immutability rules.

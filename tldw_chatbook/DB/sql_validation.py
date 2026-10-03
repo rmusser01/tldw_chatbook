@@ -126,6 +126,7 @@ VALID_TABLES = {
         "flashcard_assets",
         "flashcard_templates",
         "flashcards",
+        "fleet_progress_messages",
         "kept_briefings",
         "kept_scripts",
         "keyword_collections",

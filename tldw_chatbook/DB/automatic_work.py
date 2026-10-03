@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import math
 import sqlite3
+import threading
 import time
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -55,6 +56,9 @@ class AutomaticWorkLedger:
         self._db = db
         self._wall_clock = wall_clock
         self._monotonic_clock = monotonic_clock
+        self._progress_claim_lock = threading.RLock()
+        self._temporary_progress_attempts: dict[str, tuple[tuple[str, str], ...]] = {}
+        self._temporary_progress_claims: dict[str, str] = {}
 
     @contextmanager
     def transaction(self) -> Iterator[sqlite3.Connection]:
@@ -627,8 +631,7 @@ class AutomaticWorkLedger:
             raise ValueError("attempt owner mismatch")
         return row
 
-    @staticmethod
-    def _attempt_view(row: sqlite3.Row) -> AutomaticWakeAttempt:
+    def _attempt_view(self, row: sqlite3.Row) -> AutomaticWakeAttempt:
         return AutomaticWakeAttempt(
             row["id"],
             row["chain_id"],
@@ -637,6 +640,13 @@ class AutomaticWorkLedger:
             row["owner_id"],
             row["state"],
             tuple(json.loads(row["run_ids_json"])),
+            row["cause"],
+            tuple(
+                message_id
+                for message_id, _ in self._temporary_progress_attempts[row["id"]]
+            )
+            if row["id"] in self._temporary_progress_attempts
+            else tuple(json.loads(row["message_ids_json"])),
         )
 
     def read_attempt(self, attempt_id: str, *, owner_id: str) -> AutomaticWakeAttempt:
@@ -652,90 +662,213 @@ class AutomaticWorkLedger:
         owner_id: str,
         session_id: str,
         run_ids: Sequence[str],
+        progress_messages: Sequence[tuple[str, str]] = (),
+        persistent_progress: bool = True,
         limits: AutomaticWorkLimits | None = None,
     ) -> AutomaticWakeAttempt:
         """Claim one immutable survivor batch and its generation in one commit."""
         for value in (attempt_id, owner_id, session_id):
             _identity(value)
-        if isinstance(run_ids, str) or not 1 <= len(run_ids) <= 256:
-            raise ValueError("wake batch must contain 1 to 256 run IDs")
+        if isinstance(run_ids, str) or not 0 <= len(run_ids) <= 256:
+            raise ValueError("wake batch must contain at most 256 run IDs")
+        if isinstance(progress_messages, str) or len(progress_messages) > 256:
+            raise ValueError("progress batch must contain at most 256 messages")
+        progress = tuple(
+            sorted(
+                (_identity(message_id), _identity(source_id))
+                for message_id, source_id in progress_messages
+            )
+        )
+        if len({message_id for message_id, _ in progress}) != len(progress):
+            raise ValueError("wake batch contains duplicate message IDs")
+        if not run_ids and not progress:
+            raise ValueError("wake batch must not be empty")
+        cause = (
+            "mixed"
+            if run_ids and progress
+            else "progress"
+            if progress
+            else "completion"
+        )
         selected = tuple(sorted(_identity(run_id) for run_id in run_ids))
         if len(set(selected)) != len(selected):
             raise ValueError("wake batch contains duplicate run IDs")
-        with self._admission_transaction(chain_id) as conn:
-            self._check_runtime_owner(conn, owner_id)
-            existing = conn.execute(
-                "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
+        with self._progress_claim_lock:
+            with self._admission_transaction(chain_id) as conn:
+                self._check_runtime_owner(conn, owner_id)
+                existing = conn.execute(
+                    "SELECT * FROM automatic_wake_attempts WHERE id=?", (attempt_id,)
+                ).fetchone()
+                if existing:
+                    if (
+                        existing["chain_id"],
+                        existing["owner_id"],
+                        existing["session_id"],
+                        tuple(json.loads(existing["run_ids_json"])),
+                        existing["cause"],
+                        self._temporary_progress_attempts.get(attempt_id)
+                        if attempt_id in self._temporary_progress_attempts
+                        else tuple(
+                            (row["message_id"], row["source_run_id"])
+                            for row in conn.execute(
+                                "SELECT message_id, source_run_id FROM automatic_progress_wake_claims WHERE attempt_id=? ORDER BY message_id",
+                                (attempt_id,),
+                            )
+                        ),
+                    ) != (chain_id, owner_id, session_id, selected, cause, progress):
+                        raise ValueError("attempt identity conflict")
+                    return self._attempt_view(existing)
+                snapshot = self._snapshot(conn, chain_id)
+                self._check_admission(
+                    conn, chain_id, kind="generation", amount=1, limits=limits
+                )
+                active = conn.execute(
+                    "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? AND state IN ('prepared', 'accepted')",
+                    (snapshot.conversation_id,),
+                ).fetchone()
+                if active:
+                    raise AutomaticWorkRefused("conversation_wake_active")
+                for run_id in selected:
+                    row = conn.execute(
+                        "SELECT child.*, parent.status AS parent_status, parent.updated_at AS parent_updated_at "
+                        "FROM agent_runs child LEFT JOIN agent_runs parent ON parent.id=child.parent_run_id WHERE child.id=?",
+                        (run_id,),
+                    ).fetchone()
+                    if (
+                        row is None
+                        or row["work_chain_id"] != chain_id
+                        or row["conversation_id"] != snapshot.conversation_id
+                    ):
+                        raise ValueError("wake result scope mismatch")
+                    if (
+                        row["agent_kind"] == "primary"
+                        or row["status"] not in {"done", "error", "cancelled"}
+                        or row["parent_status"] not in TERMINAL_RUN_STATUSES
+                        or row["updated_at"] < row["parent_updated_at"]
+                    ):
+                        raise ValueError("wake result must be a terminal survivor")
+                    if (
+                        row["wake_delivered_at"] is not None
+                        or conn.execute(
+                            "SELECT 1 FROM automatic_wake_claims WHERE run_id=?",
+                            (run_id,),
+                        ).fetchone()
+                    ):
+                        raise AutomaticWorkRefused("result_already_claimed")
+                for message_id, source_id in progress:
+                    source = conn.execute(
+                        "SELECT agent_kind, conversation_id, work_chain_id, parent_run_id FROM agent_runs WHERE id=?",
+                        (source_id,),
+                    ).fetchone()
+                    if (
+                        source is None
+                        or source["agent_kind"] == "primary"
+                        or source["parent_run_id"] is None
+                        or source["work_chain_id"] != chain_id
+                        or source["conversation_id"] != snapshot.conversation_id
+                    ):
+                        raise ValueError("wake progress scope mismatch")
+                    if (
+                        message_id in self._temporary_progress_claims
+                        or conn.execute(
+                            "SELECT 1 FROM automatic_progress_wake_claims WHERE message_id=?",
+                            (message_id,),
+                        ).fetchone()
+                    ):
+                        raise AutomaticWorkRefused("progress_already_claimed")
+                now = self._wall_clock()
+                reservation_id = uuid4().hex
+                conn.execute(
+                    "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
+                    (reservation_id, chain_id, owner_id, now, now),
+                )
+                conn.execute(
+                    "INSERT INTO automatic_wake_attempts (id, chain_id, conversation_id, session_id, owner_id, generation_reservation_id, run_ids_json, cause, message_ids_json, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
+                    (
+                        attempt_id,
+                        chain_id,
+                        snapshot.conversation_id,
+                        session_id,
+                        owner_id,
+                        reservation_id,
+                        json.dumps(selected),
+                        cause,
+                        json.dumps(tuple(message_id for message_id, _ in progress))
+                        if persistent_progress
+                        else "[]",
+                        now,
+                    ),
+                )
+                conn.executemany(
+                    "INSERT INTO automatic_wake_claims (run_id, attempt_id) VALUES (?, ?)",
+                    [(run_id, attempt_id) for run_id in selected],
+                )
+                if persistent_progress:
+                    conn.executemany(
+                        "INSERT INTO automatic_progress_wake_claims (message_id, source_run_id, attempt_id) VALUES (?, ?, ?)",
+                        [
+                            (message_id, source_id, attempt_id)
+                            for message_id, source_id in progress
+                        ],
+                    )
+            # Populate process-local authority only after the transaction commits.
+            if progress and not persistent_progress:
+                self._temporary_progress_attempts[attempt_id] = progress
+                self._temporary_progress_claims.update(
+                    (message_id, attempt_id) for message_id, _ in progress
+                )
+            return self.read_attempt(attempt_id, owner_id=owner_id)
+
+    def progress_source_conversation(
+        self, source_run_id: str, *, parent_run_id: str, chain_id: str
+    ) -> str | None:
+        """Read the immutable causal conversation for an exact child source.
+
+        Args:
+            source_run_id: Child named by the committed report metadata.
+            parent_run_id: Immutable parent from that same report identity.
+            chain_id: Immutable chain from that same report identity.
+
+        Returns:
+            Source conversation, or None if its exact lineage does not match.
+        """
+        for value in (source_run_id, parent_run_id, chain_id):
+            _identity(value)
+        with self._db.connection() as conn:
+            row = conn.execute(
+                "SELECT chain.conversation_id FROM agent_runs source "
+                "JOIN automatic_work_chains chain ON chain.id=source.work_chain_id "
+                "AND chain.conversation_id=source.conversation_id "
+                "WHERE source.id=? AND source.parent_run_id=? "
+                "AND source.work_chain_id=? AND source.agent_kind!='primary'",
+                (source_run_id, parent_run_id, chain_id),
             ).fetchone()
-            if existing:
-                if (
-                    existing["chain_id"],
-                    existing["owner_id"],
-                    existing["session_id"],
-                    tuple(json.loads(existing["run_ids_json"])),
-                ) != (chain_id, owner_id, session_id, selected):
-                    raise ValueError("attempt identity conflict")
-                return self._attempt_view(existing)
-            snapshot = self._snapshot(conn, chain_id)
-            self._check_admission(
-                conn, chain_id, kind="generation", amount=1, limits=limits
-            )
-            active = conn.execute(
-                "SELECT 1 FROM automatic_wake_attempts WHERE conversation_id=? AND state IN ('prepared', 'accepted')",
-                (snapshot.conversation_id,),
-            ).fetchone()
-            if active:
-                raise AutomaticWorkRefused("conversation_wake_active")
-            for run_id in selected:
+            return row["conversation_id"] if row is not None else None
+
+    def pending_progress_sources(
+        self, conversation_id: str, progress_messages: Sequence[tuple[str, str]]
+    ) -> tuple[tuple[str, str, str], ...]:
+        """Filter source/claim metadata without reading or collecting any body."""
+        values = []
+        with self._progress_claim_lock, self._db.connection() as conn:
+            for message_id, source_id in progress_messages:
+                _identity(message_id)
+                _identity(source_id)
+                if message_id in self._temporary_progress_claims:
+                    continue
                 row = conn.execute(
-                    "SELECT child.*, parent.status AS parent_status, parent.updated_at AS parent_updated_at "
-                    "FROM agent_runs child LEFT JOIN agent_runs parent ON parent.id=child.parent_run_id WHERE child.id=?",
-                    (run_id,),
+                    "SELECT work_chain_id FROM agent_runs WHERE id=? AND conversation_id=? AND agent_kind!='primary' AND parent_run_id IS NOT NULL AND work_chain_id IS NOT NULL",
+                    (source_id, conversation_id),
                 ).fetchone()
                 if (
-                    row is None
-                    or row["work_chain_id"] != chain_id
-                    or row["conversation_id"] != snapshot.conversation_id
-                ):
-                    raise ValueError("wake result scope mismatch")
-                if (
-                    row["agent_kind"] == "primary"
-                    or row["status"] not in {"done", "error", "cancelled"}
-                    or row["parent_status"] not in TERMINAL_RUN_STATUSES
-                    or row["updated_at"] < row["parent_updated_at"]
-                ):
-                    raise ValueError("wake result must be a terminal survivor")
-                if (
-                    row["wake_delivered_at"] is not None
-                    or conn.execute(
-                        "SELECT 1 FROM automatic_wake_claims WHERE run_id=?", (run_id,)
+                    row is not None
+                    and not conn.execute(
+                        "SELECT 1 FROM automatic_progress_wake_claims WHERE message_id=?",
+                        (message_id,),
                     ).fetchone()
                 ):
-                    raise AutomaticWorkRefused("result_already_claimed")
-            now = self._wall_clock()
-            reservation_id = uuid4().hex
-            conn.execute(
-                "INSERT INTO automatic_work_reservations (id, chain_id, owner_id, kind, amount, state, created_at, updated_at) VALUES (?, ?, ?, 'generation', 1, 'reserved', ?, ?)",
-                (reservation_id, chain_id, owner_id, now, now),
-            )
-            conn.execute(
-                "INSERT INTO automatic_wake_attempts (id, chain_id, conversation_id, session_id, owner_id, generation_reservation_id, run_ids_json, state, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'prepared', ?)",
-                (
-                    attempt_id,
-                    chain_id,
-                    snapshot.conversation_id,
-                    session_id,
-                    owner_id,
-                    reservation_id,
-                    json.dumps(selected),
-                    now,
-                ),
-            )
-            conn.executemany(
-                "INSERT INTO automatic_wake_claims (run_id, attempt_id) VALUES (?, ?)",
-                [(run_id, attempt_id) for run_id in selected],
-            )
-            return self._attempt_view(self._attempt(conn, attempt_id, owner_id))
+                    values.append((message_id, source_id, row["work_chain_id"]))
+        return tuple(values)
 
     def accept_wake(
         self,
@@ -784,9 +917,16 @@ class AutomaticWorkLedger:
                 "DELETE FROM automatic_wake_claims WHERE attempt_id=?", (attempt_id,)
             )
             conn.execute(
+                "DELETE FROM automatic_progress_wake_claims WHERE attempt_id=?",
+                (attempt_id,),
+            )
+            conn.execute(
                 "UPDATE automatic_wake_attempts SET state='aborted', completed_at=? WHERE id=?",
                 (self._wall_clock(), attempt_id),
             )
+        with self._progress_claim_lock:
+            for message_id, _ in self._temporary_progress_attempts.get(attempt_id, ()):
+                self._temporary_progress_claims.pop(message_id, None)
         return True
 
     def complete_wake(self, attempt_id: str, *, owner_id: str) -> bool:
@@ -831,6 +971,19 @@ class AutomaticWorkLedger:
                     (current_owner_id, current_owner_id),
                 )
             }
+            # Temporary progress IDs are deliberately process-local. After
+            # restart a completed attempt's empty ID list cannot prove which
+            # saved reports it already woke; retain a review fence on its chain.
+            chains.update(
+                row["chain_id"]
+                for row in conn.execute(
+                    "SELECT id, chain_id FROM automatic_wake_attempts "
+                    "WHERE owner_id!=? AND state='completed' "
+                    "AND cause IN ('progress', 'mixed') AND message_ids_json='[]'",
+                    (current_owner_id,),
+                )
+                if row["id"] not in self._temporary_progress_attempts
+            )
             conn.execute(
                 "UPDATE automatic_wake_attempts SET state='review_required' WHERE owner_id!=? AND state IN ('prepared', 'accepted')",
                 (current_owner_id,),
