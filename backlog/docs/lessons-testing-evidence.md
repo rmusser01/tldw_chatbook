@@ -17723,3 +17723,18 @@ input list still named it. Updating that list to `features/_console.tcss` and
 `features/_console_panels.tcss` restored all 268 targeted checks without changing
 qualification claims. File moves must update explicit digest inputs as well as
 build inputs; the existing presence check caught this drift before publication.
+
+## Census os.open counts are a function of the temp path's depth
+
+**PR #2969 / TASK-33644, 2026-10-03.** The new trace-GC-pass row was pinned at
+34 opens, "the same in every run" (three runs, both variants). After a rebase it
+read 36 in every run, and once 73. A temporary trace of every billed `os.open`
+with its caller showed neither number is noise. Each private-SQLite helper start
+walks the profile directory chain, one open per path component plus `/` and
+`/dev/null`, so the pass costs `2 x (components + 2)`. The 34 had been measured
+under a scratch `--basetemp` one component shallower than macOS's default
+pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
+1 Hz backup-maintenance probe's own ~37-open walk landing inside the short
+billed window, about one run in ten; the census now holds that probe still for
+the phase. Pin `os_opens` at the depth the gate actually runs at (the default
+temp dir, or CI's), and trace callers before calling an upward step "jitter".
