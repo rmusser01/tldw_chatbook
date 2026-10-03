@@ -966,10 +966,13 @@ def test_runtime_generation_guard_linearizes_nonblocking_handoff_ack(
         assert writer_published.is_set() is False
         return pending.acknowledge_current(claim)
 
-    assert config_module.run_if_runtime_config_generation_current(
-        71,
-        acknowledge,
-    ) is True
+    assert (
+        config_module.run_if_runtime_config_generation_current(
+            71,
+            acknowledge,
+        )
+        is True
+    )
     writer.join(timeout=1)
 
     assert writer.is_alive() is False
@@ -982,10 +985,13 @@ def test_runtime_generation_guard_skips_ack_after_publication(monkeypatch) -> No
     monkeypatch.setattr(config_module, "_CONFIG_GENERATION", 82)
     acknowledged = []
 
-    assert config_module.run_if_runtime_config_generation_current(
-        81,
-        lambda: acknowledged.append(True) or True,
-    ) is False
+    assert (
+        config_module.run_if_runtime_config_generation_current(
+            81,
+            lambda: acknowledged.append(True) or True,
+        )
+        is False
+    )
     assert acknowledged == []
 
 
@@ -1000,16 +1006,22 @@ def test_runtime_generation_guard_callback_exception_does_not_poison_lock(
             lambda: (_ for _ in ()).throw(RuntimeError("callback failure")),
         )
 
-    assert config_module.run_if_runtime_config_generation_current(
-        83,
-        lambda: True,
-    ) is True
+    assert (
+        config_module.run_if_runtime_config_generation_current(
+            83,
+            lambda: True,
+        )
+        is True
+    )
     with config_module._config_file_lock():
         config_module._CONFIG_GENERATION += 1
-    assert config_module.run_if_runtime_config_generation_current(
-        83,
-        lambda: True,
-    ) is False
+    assert (
+        config_module.run_if_runtime_config_generation_current(
+            83,
+            lambda: True,
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize("serialized", [False, True])
@@ -1148,7 +1160,9 @@ def test_literal_transaction_keeps_punctuated_model_id_as_one_mapping_key(
     assert result.settings_view is not None
     assert len(observed) == 1
     assert observed[0].raw_values["api_settings"]["OpenAI"]["api_key"] == "test-key"
-    assert observed[0].effective_values["api_settings"]["OpenAI"]["api_key"] == "test-key"
+    assert (
+        observed[0].effective_values["api_settings"]["OpenAI"]["api_key"] == "test-key"
+    )
     saved = tomllib.loads(config_path.read_text(encoding="utf-8"))
     profiles = saved["api_settings"]["OpenAI"]["model_defaults"]
     assert profiles == {

@@ -293,9 +293,7 @@ class OpenAIRealtimeSession:
         }
         self._enqueue(payload)
 
-    def send_seed(
-        self, items: list[tuple[str, str]], instructions: str | None
-    ) -> None:
+    def send_seed(self, items: list[tuple[str, str]], instructions: str | None) -> None:
         """Seed the session with prior conversation history and, optionally,
         updated instructions -- without requesting a response.
 
@@ -618,8 +616,7 @@ class OpenAIRealtimeSession:
             reason = await self._transport.recv_loop(self._handle_event)
         except Exception as exc:
             logger.error(
-                f"OpenAIRealtimeSession recv loop failed: op=recv_loop "
-                f"error={exc!r}"
+                f"OpenAIRealtimeSession recv loop failed: op=recv_loop error={exc!r}"
             )
             self._safe_invoke(self._callbacks.on_error, exc, op="on_error")
             reason = f"error: {exc}"

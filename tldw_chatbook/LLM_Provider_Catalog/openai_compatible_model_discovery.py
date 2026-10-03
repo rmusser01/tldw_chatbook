@@ -908,7 +908,8 @@ async def discover_openai_compatible_models(
         else:
             async with _provider_recovery.discovery_native_context(
                 build_httpx_async_client(
-                    timeout=timeout_seconds, **_provider_recovery.discovery_client_options()
+                    timeout=timeout_seconds,
+                    **_provider_recovery.discovery_client_options(),
                 )
             ) as active_client:
                 payloads, request_error = await _request_payloads(active_client)

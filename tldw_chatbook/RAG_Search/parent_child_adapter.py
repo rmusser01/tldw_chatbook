@@ -345,9 +345,7 @@ def _derive_parent_child(
 ) -> Tuple[List[StructuredChunk], List[StructuredChunk]]:
     """Derive (children, parents) from the engine's flat hierarchical output."""
     children = _build_children(flat)
-    parents = _group_into_parents(
-        text, children, max_size, parent_size_multiplier
-    )
+    parents = _group_into_parents(text, children, max_size, parent_size_multiplier)
     return children, parents
 
 

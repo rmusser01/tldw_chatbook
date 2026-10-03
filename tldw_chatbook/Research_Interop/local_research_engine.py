@@ -121,6 +121,7 @@ class _RunAwaitingReview(Exception):
     def __init__(self, run: dict[str, Any]) -> None:
         super().__init__("run awaiting checkpoint review")
         self.run = run
+
     """Internal control-flow signal: the run was cancelled between phases."""
 
 
@@ -438,7 +439,10 @@ class LocalResearchEngine:
         run = self._get_run(run_id)
         control = str(run.get("control_state") or "")
         status = str(run.get("status") or "")
-        if control in {"paused", "pause_requested"} and status not in TERMINAL_RUN_STATUSES:
+        if (
+            control in {"paused", "pause_requested"}
+            and status not in TERMINAL_RUN_STATUSES
+        ):
             self._require_lease()
             self.service.update_run_progress(
                 run_id,
@@ -460,9 +464,18 @@ class LocalResearchEngine:
         web_only / academic_only / web_first / academic_first / balanced
         (default balanced: both lanes, web evidence first)."""
         value = str(raw or "").strip().lower()
-        return value if value in {
-            "web_only", "academic_only", "web_first", "academic_first", "balanced",
-        } else "balanced"
+        return (
+            value
+            if value
+            in {
+                "web_only",
+                "academic_only",
+                "web_first",
+                "academic_first",
+                "balanced",
+            }
+            else "balanced"
+        )
 
     def _paper_fn_accepts_providers(self) -> bool:
         """Whether the injected paper callable takes a ``providers`` kwarg
@@ -475,8 +488,7 @@ class LocalResearchEngine:
         try:
             parameters = inspect.signature(self.paper_search_fn).parameters
             accepts = any(
-                param.kind is inspect.Parameter.VAR_KEYWORD
-                or param.name == "providers"
+                param.kind is inspect.Parameter.VAR_KEYWORD or param.name == "providers"
                 for param in parameters.values()
             )
         except (TypeError, ValueError):
@@ -514,7 +526,10 @@ class LocalResearchEngine:
             control_state=f"awaiting_{checkpoint_type}",
             progress_message=f"Awaiting {checkpoint_type} ({checkpoint['id']})",
             event="awaiting_review",
-            data={"checkpoint_id": checkpoint["id"], "checkpoint_type": checkpoint_type},
+            data={
+                "checkpoint_id": checkpoint["id"],
+                "checkpoint_type": checkpoint_type,
+            },
         )
         raise _RunAwaitingReview(updated)
 
@@ -709,8 +724,10 @@ class LocalResearchEngine:
             reserved_for_call = 0
             if remaining is not None:
                 cap = min(
-                    int(params.get("search_default_max_queries", DEFAULT_MAX_QUERIES)
-                or DEFAULT_MAX_QUERIES),
+                    int(
+                        params.get("search_default_max_queries", DEFAULT_MAX_QUERIES)
+                        or DEFAULT_MAX_QUERIES
+                    ),
                     max(1, remaining),
                 )
                 params["search_default_max_queries"] = cap
@@ -934,9 +951,10 @@ class LocalResearchEngine:
         # Both branches are run-state writes, fenced the same way artifact
         # writes are (task-3 review finding 2).
         self._require_lease()
-        if str(run.get("status") or "") != "running" or str(
-            run.get("control_state") or ""
-        ) != "running":
+        if (
+            str(run.get("status") or "") != "running"
+            or str(run.get("control_state") or "") != "running"
+        ):
             run = self.service.update_run_progress(
                 run_id,
                 status="running",
@@ -981,7 +999,9 @@ class LocalResearchEngine:
         # (the baseline recorder does) still gets exactly one.
         default_iterations = _configured_max_iterations()
         try:
-            max_iterations = int(limits.get("max_iterations", default_iterations) or default_iterations)
+            max_iterations = int(
+                limits.get("max_iterations", default_iterations) or default_iterations
+            )
         except (TypeError, ValueError):
             max_iterations = default_iterations
         max_iterations = max(1, max_iterations)
@@ -1011,7 +1031,11 @@ class LocalResearchEngine:
             )
             self._check_control(run_id, "collecting")
             ledger.check_runtime()
-            round_results, round_sub_questions, round_warnings = await self._collect_round(
+            (
+                round_results,
+                round_sub_questions,
+                round_warnings,
+            ) = await self._collect_round(
                 round_queries,
                 self._active_run_params or search_params,
                 ledger,
@@ -1169,7 +1193,8 @@ class LocalResearchEngine:
                     dropped = set(sources_patch.get("dropped_source_ids") or [])
                     if dropped:
                         merged_results = [
-                            r for r in merged_results
+                            r
+                            for r in merged_results
                             if str(r.get("url") or "") not in dropped
                         ]
 
@@ -1394,7 +1419,9 @@ class LocalResearchEngine:
         from."""
         run_id = run["id"]
         claims_artifact = self.service.get_artifact(run_id, "claims.json")
-        claims_payload = getattr(claims_artifact, "get", lambda *_: None)("content") or {}
+        claims_payload = (
+            getattr(claims_artifact, "get", lambda *_: None)("content") or {}
+        )
         claims = [c for c in claims_payload.get("claims") or [] if isinstance(c, dict)]
         if not claims:
             return None
@@ -1404,9 +1431,7 @@ class LocalResearchEngine:
         bundle = getattr(bundle_artifact, "get", lambda *_: None)("content") or {}
 
         supported_claims = [c for c in claims if c.get("status") == "supported"]
-        key_claims = (supported_claims or claims)[
-            : self._FOLLOW_UP_SEED_KEY_CLAIMS_MAX
-        ]
+        key_claims = (supported_claims or claims)[: self._FOLLOW_UP_SEED_KEY_CLAIMS_MAX]
         outline_titles = list(plan.get("sub_questions") or [])[
             : self._FOLLOW_UP_SEED_OUTLINE_MAX
         ]
@@ -1440,7 +1465,11 @@ class LocalResearchEngine:
         insufficient, never a guess."""
         llm = str(self.search_params.get("final_answer_llm") or "").strip()
         if not llm:
-            return {"sufficient": False, "answer": None, "reason": "no synthesis LLM configured"}
+            return {
+                "sufficient": False,
+                "answer": None,
+                "reason": "no synthesis LLM configured",
+            }
         from ..Chat.Chat_Functions import chat_api_call
 
         prompt = (
@@ -1504,7 +1533,11 @@ class LocalResearchEngine:
         result = await self._llm_bounded_call(lambda: answerer(seed, question))
         if not isinstance(result, dict):
             result = {"sufficient": True, "answer": str(result)}
-        event = "follow_up_answered" if result.get("sufficient") else "follow_up_insufficient"
+        event = (
+            "follow_up_answered"
+            if result.get("sufficient")
+            else "follow_up_insufficient"
+        )
         self.service.update_run_progress(
             run_id, event=event, data={"question": question}
         )
@@ -1519,7 +1552,7 @@ class LocalResearchEngine:
             "status": "insufficient_evidence",
             "question": question,
             "answer": None,
-            "reason": result.get("reason") or "stored evidence does not support the question",
+            "reason": result.get("reason")
+            or "stored evidence does not support the question",
             "suggestion": "Launch a new research run (or a fresh search) for this question.",
         }
-

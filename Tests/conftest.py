@@ -661,7 +661,9 @@ def _huggingface_hub_is_offline(monkeypatch: pytest.MonkeyPatch) -> Iterator[Non
 
 
 @pytest.fixture(autouse=True)
-def _no_real_audio_device(request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch) -> None:
+def _no_real_audio_device(
+    request: pytest.FixtureRequest, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """No test opens real audio hardware unless it explicitly opts in.
 
     Task-4 streaming-pcm-sink review, merge-gate finding: `_generate_tts`
@@ -1184,9 +1186,13 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
         # unit tests but contain real-app mounts (the runtime-ownership
         # suite): mark only the mounting tests.
         or request.node.get_closest_marker("bootstrap_profile") is not None
-        or request.node.path.name in {
-            "test_mcp_workbench.py", "test_mcp_tools_mode.py", "test_mcp_servers_mode.py",
-            "test_hosted_chat.py", "test_qwencloud.py",
+        or request.node.path.name
+        in {
+            "test_mcp_workbench.py",
+            "test_mcp_tools_mode.py",
+            "test_mcp_servers_mode.py",
+            "test_hosted_chat.py",
+            "test_qwencloud.py",
             "test_groq_openrouter_migration_characterization.py",
 
 
@@ -1768,9 +1774,7 @@ def _fleet_chat_scripts_fully_consumed():
     # milliseconds, while a genuinely mis-keyed one costs this bounded
     # wait once, on a test that is failing anyway.
     deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline and any(
-        chat.unconsumed() for chat in instances
-    ):
+    while time.monotonic() < deadline and any(chat.unconsumed() for chat in instances):
         time.sleep(0.02)
     problems = []
     for chat in instances:

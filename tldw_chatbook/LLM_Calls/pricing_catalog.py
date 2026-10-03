@@ -88,9 +88,13 @@ _ZERO = {
 
 
 def _entry(
-    inp: float, out: float, cr: Optional[float] = None, cw: Optional[float] = None,
+    inp: float,
+    out: float,
+    cr: Optional[float] = None,
+    cw: Optional[float] = None,
     as_of: str = _SEED_AS_OF,
-    audio_in: Optional[float] = None, audio_out: Optional[float] = None,
+    audio_in: Optional[float] = None,
+    audio_out: Optional[float] = None,
     cached_audio_in: Optional[float] = None,
     transcription_per_minute: Optional[float] = None,
 ) -> Dict[str, Any]:
@@ -110,7 +114,9 @@ def _entry(
     }
 
 
-def _stamped(as_of: str, entries: Dict[str, Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _stamped(
+    as_of: str, entries: Dict[str, Dict[str, Any]]
+) -> Dict[str, Dict[str, Any]]:
     """Restamp a provider block's entries with the date IT was verified."""
     return {key: {**value, "as_of": as_of} for key, value in entries.items()}
 
@@ -246,28 +252,58 @@ _WHISPER_TRANSCRIPTION_PER_MINUTE = 0.006
 
 _OPENAI_REALTIME_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "openai:gpt-realtime": _entry(
-        4.00, 16.00, 0.40, None, as_of=_REALTIME_AS_OF,
-        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        4.00,
+        16.00,
+        0.40,
+        None,
+        as_of=_REALTIME_AS_OF,
+        audio_in=32.00,
+        audio_out=64.00,
+        cached_audio_in=0.40,
         transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
     ),
     "openai:gpt-realtime-mini": _entry(
-        0.60, 2.40, 0.06, None, as_of=_REALTIME_AS_OF,
-        audio_in=10.00, audio_out=20.00, cached_audio_in=0.30,
+        0.60,
+        2.40,
+        0.06,
+        None,
+        as_of=_REALTIME_AS_OF,
+        audio_in=10.00,
+        audio_out=20.00,
+        cached_audio_in=0.30,
         transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
     ),
     "openai:gpt-realtime-2.1": _entry(
-        4.00, 24.00, 0.40, None, as_of=_REALTIME_AS_OF,
-        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        4.00,
+        24.00,
+        0.40,
+        None,
+        as_of=_REALTIME_AS_OF,
+        audio_in=32.00,
+        audio_out=64.00,
+        cached_audio_in=0.40,
         transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
     ),
     "openai:gpt-realtime-2": _entry(
-        4.00, 24.00, 0.40, None, as_of=_REALTIME_AS_OF,
-        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        4.00,
+        24.00,
+        0.40,
+        None,
+        as_of=_REALTIME_AS_OF,
+        audio_in=32.00,
+        audio_out=64.00,
+        cached_audio_in=0.40,
         transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
     ),
     "openai:gpt-realtime-1.5": _entry(
-        4.00, 16.00, 0.40, None, as_of=_REALTIME_AS_OF,
-        audio_in=32.00, audio_out=64.00, cached_audio_in=0.40,
+        4.00,
+        16.00,
+        0.40,
+        None,
+        as_of=_REALTIME_AS_OF,
+        audio_in=32.00,
+        audio_out=64.00,
+        cached_audio_in=0.40,
         transcription_per_minute=_WHISPER_TRANSCRIPTION_PER_MINUTE,
     ),
 }
@@ -276,7 +312,6 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     **_stamped(_RECHECKED_AS_OF, _ANTHROPIC_MODEL_PRICING),
     **_stamped(_RECHECKED_AS_OF, _OPENAI_MODEL_PRICING),
     **_OPENAI_REALTIME_MODEL_PRICING,
-
     # Google Gemini - verified 2026-08-01 via https://ai.google.dev/gemini-api/docs/pricing
     # (standard, <=200k-token tier for models with a long-context surcharge).
     # Gemini has a context-caching *storage* fee ($/1M tokens/hour) that this
@@ -286,7 +321,6 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "google:gemini-2.5-flash-lite": _entry(0.10, 0.40, 0.01, None),
     "google:gemini-2.0-flash": _entry(0.10, 0.40, None, None),
     "google:gemini-2.0-flash-lite": _entry(0.075, 0.30, None, None),
-
     # Mistral - verified 2026-08-01 via https://mistral.ai/pricing/api/. Seeded under
     # both "mistral:" and "mistralai:" since Chat_Functions.API_CALL_HANDLERS dispatches
     # both provider strings to chat_with_mistral. No cache pricing published.
@@ -298,7 +332,6 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "mistralai:mistral-medium-latest": _entry(1.50, 7.50, None, None),
     "mistralai:mistral-small-latest": _entry(0.15, 0.60, None, None),
     "mistralai:codestral-latest": _entry(0.30, 0.90, None, None),
-
     # Cohere - verified 2026-08-01 via https://cohere.com/pricing (per-token rates are
     # published only for "legacy" models on that page; current Command A is billed via
     # Model Vault instance pricing, so command-a below is UNVERIFIED - see task-2-report.md).
@@ -306,14 +339,14 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
     "cohere:command-r": _entry(0.50, 1.50, None, None),
     "cohere:command": _entry(1.00, 2.00, None, None),
     "cohere:command-light": _entry(0.30, 0.60, None, None),
-    "cohere:command-a": _entry(2.50, 10.00, None, None),  # UNVERIFIED: no official per-token rate found
-
+    "cohere:command-a": _entry(
+        2.50, 10.00, None, None
+    ),  # UNVERIFIED: no official per-token rate found
     # Groq - verified 2026-08-01 via https://groq.com/pricing/. No cache pricing published.
     "groq:llama-3.3-70b-versatile": _entry(0.59, 0.79, None, None),
     "groq:llama-3.1-8b-instant": _entry(0.05, 0.08, None, None),
     "groq:openai/gpt-oss-20b": _entry(0.075, 0.30, None, None),
     "groq:openai/gpt-oss-120b": _entry(0.15, 0.60, None, None),
-
     # DeepSeek - verified 2026-08-01 via https://api-docs.deepseek.com/quick_start/pricing/.
     # deepseek-chat/deepseek-reasoner were retired 2026-07-24; deepseek-v4-flash and
     # deepseek-v4-pro are the current lineup. "Cache hit" -> cache_read_per_mtok,
@@ -329,46 +362,58 @@ DEFAULT_MODEL_PRICING: Dict[str, Dict[str, Any]] = {
 # None, which the UI renders as token counts. The alternative -- a loose
 # `^claude-opus` -- charged Opus 4.1's $15/$75 for every Opus 5 turn.
 DEFAULT_PRICING_PATTERNS: Dict[str, List[Dict[str, Any]]] = {
-    "anthropic": _stamped_patterns(_RECHECKED_AS_OF, [
-        # Current generations.
-        {"pattern": r"^claude-opus-4-1", **_entry(15.00, 75.00, 1.50, 18.75)},
-        {"pattern": r"^claude-opus-(?:4-[678]|5)", **_entry(5.00, 25.00, 0.50, 6.25)},
-        {"pattern": r"^claude-sonnet-(?:4-[56]|5)", **_entry(3.00, 15.00, 0.30, 3.75)},
-        {"pattern": r"^claude-haiku-4-5", **_entry(1.00, 5.00, 0.10, 1.25)},
-        {"pattern": r"^claude-fable-5", **_entry(10.00, 50.00, 1.00, 12.50)},
-        # Retired generations (claude-3 family named its tier last).
-        {"pattern": r"^claude-3-opus", **_entry(15.00, 75.00, 1.50, 18.75)},
-        {"pattern": r"^claude-3-7-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
-        {"pattern": r"^claude-3-5-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
-        {"pattern": r"^claude-3-5-haiku", **_entry(0.80, 4.00, 0.08, 1.00)},
-        {"pattern": r"^claude-3-haiku", **_entry(0.25, 1.25, 0.025, 0.3125)},
-    ]),
-    "openai": _stamped_patterns(_RECHECKED_AS_OF, [
-        # Longer/more specific prefixes must precede their shorter siblings.
-        {"pattern": r"^gpt-5\.6-terra", **_entry(2.00, 12.00, 0.20, 2.50)},
-        {"pattern": r"^gpt-5\.6-sol", **_entry(5.00, 30.00, 0.50, 6.25)},
-        {"pattern": r"^gpt-5\.6-luna", **_entry(0.20, 1.20, 0.02, 0.25)},
-        {"pattern": r"^gpt-5\.2", **_entry(1.75, 14.00, 0.175, None)},
-        {"pattern": r"^gpt-5\.1", **_entry(1.25, 10.00, 0.125, None)},
-        {"pattern": r"^gpt-5-nano", **_entry(0.05, 0.40, 0.005, None)},
-        {"pattern": r"^gpt-5-mini", **_entry(0.25, 2.00, 0.025, None)},
-        # `(?:-\d|$)` keeps the BASE gpt-5 rate off future point releases:
-        # a bare `^gpt-5` also matches "gpt-5.6-terra", which bills 2.00/12.00
-        # rather than 1.25/10.00. Dated snapshots ("gpt-5-2025-08-07") still
-        # resolve.
-        {"pattern": r"^gpt-5(?:-\d|$)", **_entry(1.25, 10.00, 0.125, None)},
-        {"pattern": r"^gpt-4\.1-nano", **_entry(0.10, 0.40, 0.025, None)},
-        {"pattern": r"^gpt-4\.1-mini", **_entry(0.40, 1.60, 0.10, None)},
-        {"pattern": r"^gpt-4\.1", **_entry(2.00, 8.00, 0.50, None)},
-        {"pattern": r"^gpt-4o-mini", **_entry(0.15, 0.60, 0.075, None)},
-        {"pattern": r"^gpt-4o", **_entry(2.50, 10.00, 1.25, None)},
-        {"pattern": r"^o1-pro", **_entry(150.00, 600.00, None, None)},
-        # Bare/dated o1 only -- `o1-mini` is retired with no published rate.
-        {"pattern": r"^o1(?:-\d|$)", **_entry(15.00, 60.00, 7.50, None)},
-        {"pattern": r"^o3-mini", **_entry(1.10, 4.40, 0.55, None)},
-        {"pattern": r"^o3(?:-\d|$)", **_entry(2.00, 8.00, 0.50, None)},
-        {"pattern": r"^o4-mini", **_entry(1.10, 4.40, 0.275, None)},
-    ]),
+    "anthropic": _stamped_patterns(
+        _RECHECKED_AS_OF,
+        [
+            # Current generations.
+            {"pattern": r"^claude-opus-4-1", **_entry(15.00, 75.00, 1.50, 18.75)},
+            {
+                "pattern": r"^claude-opus-(?:4-[678]|5)",
+                **_entry(5.00, 25.00, 0.50, 6.25),
+            },
+            {
+                "pattern": r"^claude-sonnet-(?:4-[56]|5)",
+                **_entry(3.00, 15.00, 0.30, 3.75),
+            },
+            {"pattern": r"^claude-haiku-4-5", **_entry(1.00, 5.00, 0.10, 1.25)},
+            {"pattern": r"^claude-fable-5", **_entry(10.00, 50.00, 1.00, 12.50)},
+            # Retired generations (claude-3 family named its tier last).
+            {"pattern": r"^claude-3-opus", **_entry(15.00, 75.00, 1.50, 18.75)},
+            {"pattern": r"^claude-3-7-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
+            {"pattern": r"^claude-3-5-sonnet", **_entry(3.00, 15.00, 0.30, 3.75)},
+            {"pattern": r"^claude-3-5-haiku", **_entry(0.80, 4.00, 0.08, 1.00)},
+            {"pattern": r"^claude-3-haiku", **_entry(0.25, 1.25, 0.025, 0.3125)},
+        ],
+    ),
+    "openai": _stamped_patterns(
+        _RECHECKED_AS_OF,
+        [
+            # Longer/more specific prefixes must precede their shorter siblings.
+            {"pattern": r"^gpt-5\.6-terra", **_entry(2.00, 12.00, 0.20, 2.50)},
+            {"pattern": r"^gpt-5\.6-sol", **_entry(5.00, 30.00, 0.50, 6.25)},
+            {"pattern": r"^gpt-5\.6-luna", **_entry(0.20, 1.20, 0.02, 0.25)},
+            {"pattern": r"^gpt-5\.2", **_entry(1.75, 14.00, 0.175, None)},
+            {"pattern": r"^gpt-5\.1", **_entry(1.25, 10.00, 0.125, None)},
+            {"pattern": r"^gpt-5-nano", **_entry(0.05, 0.40, 0.005, None)},
+            {"pattern": r"^gpt-5-mini", **_entry(0.25, 2.00, 0.025, None)},
+            # `(?:-\d|$)` keeps the BASE gpt-5 rate off future point releases:
+            # a bare `^gpt-5` also matches "gpt-5.6-terra", which bills 2.00/12.00
+            # rather than 1.25/10.00. Dated snapshots ("gpt-5-2025-08-07") still
+            # resolve.
+            {"pattern": r"^gpt-5(?:-\d|$)", **_entry(1.25, 10.00, 0.125, None)},
+            {"pattern": r"^gpt-4\.1-nano", **_entry(0.10, 0.40, 0.025, None)},
+            {"pattern": r"^gpt-4\.1-mini", **_entry(0.40, 1.60, 0.10, None)},
+            {"pattern": r"^gpt-4\.1", **_entry(2.00, 8.00, 0.50, None)},
+            {"pattern": r"^gpt-4o-mini", **_entry(0.15, 0.60, 0.075, None)},
+            {"pattern": r"^gpt-4o", **_entry(2.50, 10.00, 1.25, None)},
+            {"pattern": r"^o1-pro", **_entry(150.00, 600.00, None, None)},
+            # Bare/dated o1 only -- `o1-mini` is retired with no published rate.
+            {"pattern": r"^o1(?:-\d|$)", **_entry(15.00, 60.00, 7.50, None)},
+            {"pattern": r"^o3-mini", **_entry(1.10, 4.40, 0.55, None)},
+            {"pattern": r"^o3(?:-\d|$)", **_entry(2.00, 8.00, 0.50, None)},
+            {"pattern": r"^o4-mini", **_entry(1.10, 4.40, 0.275, None)},
+        ],
+    ),
     # Cohere publishes per-token rates only for the "legacy" models; Command A
     # is billed through Model Vault instance pricing, so its per-token entry
     # stays UNVERIFIED (see the direct mapping above). Patterned so the app's
@@ -643,7 +688,9 @@ class PricingCatalog:
                     try:
                         pattern = re.compile(pattern_config["pattern"], re.IGNORECASE)
                         # Extract the pricing entry from pattern config
-                        entry = {k: v for k, v in pattern_config.items() if k != "pattern"}
+                        entry = {
+                            k: v for k, v in pattern_config.items() if k != "pattern"
+                        }
                         compiled_list.append((pattern, entry))
                     except re.error as e:
                         logger.error(
@@ -652,7 +699,9 @@ class PricingCatalog:
 
             if compiled_list:
                 compiled[provider] = compiled_list
-                logger.debug(f"Compiled {len(compiled_list)} pricing patterns for provider {provider}")
+                logger.debug(
+                    f"Compiled {len(compiled_list)} pricing patterns for provider {provider}"
+                )
 
         return compiled
 
@@ -792,7 +841,9 @@ class PricingCatalog:
             audio_from_uncached = audio_input - audio_from_cache
             text_uncached = usage.uncached_input - audio_from_uncached
             text_cache_read = usage.cache_read - audio_from_cache
-            audio_input_cost = round(audio_input * pricing.audio_in_per_mtok / 1_000_000, 6)
+            audio_input_cost = round(
+                audio_input * pricing.audio_in_per_mtok / 1_000_000, 6
+            )
         else:
             text_uncached = usage.uncached_input
             text_cache_read = usage.cache_read
@@ -800,7 +851,9 @@ class PricingCatalog:
 
         if pricing.audio_out_per_mtok is not None and audio_output:
             text_output = usage.output - audio_output
-            audio_output_cost = round(audio_output * pricing.audio_out_per_mtok / 1_000_000, 6)
+            audio_output_cost = round(
+                audio_output * pricing.audio_out_per_mtok / 1_000_000, 6
+            )
         else:
             text_output = usage.output
             audio_output_cost = 0.0
@@ -814,11 +867,19 @@ class PricingCatalog:
         )
         output_cost = round(text_output * pricing.output_per_mtok / 1_000_000, 6)
         transcription_cost = round(
-            usage.transcription_seconds / 60.0 * (pricing.transcription_per_minute or 0.0), 6
+            usage.transcription_seconds
+            / 60.0
+            * (pricing.transcription_per_minute or 0.0),
+            6,
         )
         total = round(
-            input_cost + cache_read_cost + cache_write_cost + output_cost
-            + audio_input_cost + audio_output_cost + transcription_cost,
+            input_cost
+            + cache_read_cost
+            + cache_write_cost
+            + output_cost
+            + audio_input_cost
+            + audio_output_cost
+            + transcription_cost,
             6,
         )
 
