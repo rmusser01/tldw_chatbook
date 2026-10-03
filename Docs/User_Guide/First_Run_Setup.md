@@ -104,13 +104,16 @@ tool's plain-language name and one line about what it does — the read-class
 ones (Read file, List directory, Find files, Search in files, Expand
 document) add that they ask before running unless you approve a longer
 scope, and the ones that write are marked with ⚠. Leaving every switch off
-is a supported outcome: the summary then reads "off; the assistant can still
-ask to use chatbook's notes and search. Turn tools on under MCP ▸ Servers ▸
-built-in row ▸ Tool gates", which is where the same switches live after
-setup. The first half is there because the switches are not the whole story:
-Console's assistant is also offered chatbook's own built-in notes, character
-and search tools, each behind an approval card. The app's internal
-`chat_with_llm` tool, which the in-process server cannot run, is never offered.
+is a supported outcome: the summary then reads "gates off; the assistant
+still has chatbook's own tools (sub-agents, web search, notes, Watchlists).
+Turn gates on under MCP ▸ Servers ▸ built-in row ▸ Tool gates", which is
+where the same switches live after setup. The first half is there because
+the switches are not the whole story: Console's assistant also gets the agent
+runtime (sub-agents, skills), the local web and Watchlists tools
+(`[console] local_tools_enabled`) and chatbook's built-in notes and character
+tools, every call still subject to its MCP Ask/Allow/Off permission. The
+app's internal `chat_with_llm` tool, which the in-process server cannot run,
+is never offered.
 
 The Voice step leads with a sample text and **Test and Hear**; the endpoint,
 model, and output settings sit under its "Advanced" section. Advancing saves

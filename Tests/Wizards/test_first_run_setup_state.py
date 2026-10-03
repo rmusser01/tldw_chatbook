@@ -2183,11 +2183,13 @@ class TestSummaryThreeState:
             r.label: r for r in build_summary_rows({}, {}, rag_deps_installed=False)
         }
         # TASK-34100.5 AC#2 (entry-exit-handoff-24): 'all off' was untrue --
-        # Console's assistant can still ask to use chatbook's own built-in
-        # notes and search tools, and the first chat asked for one.
+        # live, a fresh profile's assistant listed sub-agents, web search,
+        # Watchlists and the built-in source's notes tools, and the first
+        # chat asked approval for one.
         assert rows["Tools"].detail == (
-            "off; the assistant can still ask to use chatbook's notes and "
-            f"search. Turn tools on under {TOOL_GATES_PANE_PATH}"
+            "gates off; the assistant still has chatbook's own tools "
+            "(sub-agents, web search, notes, Watchlists). Turn gates on "
+            f"under {TOOL_GATES_PANE_PATH}"
         )
         assert "all off" not in rows["Tools"].detail
         assert TOOL_GATES_PANE_PATH == "MCP ▸ Servers ▸ built-in row ▸ Tool gates"
