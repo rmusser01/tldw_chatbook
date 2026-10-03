@@ -16026,155 +16026,19 @@ class PersonasScreen(BaseAppScreen):
             inflight_save_domains=tuple(dict.fromkeys(inflight)),
         )
 
-    async def _save_aggregate_roleplay_drafts(
-        self, snapshot: RoleplayDraftSnapshot
-    ) -> tuple[str, ...]:
-        """Save each incumbent owner and return exact domains still failing."""
-
-        failures: list[str] = []
-        form_domain = (
-            "Persona form" if self.state.active_mode == "personas" else "character form"
-        )
-        character_visual = self._visual_identity_authoring
-        if snapshot.character_visual_dirty and character_visual is not None:
-            try:
-                await self._save_visual_identity_pack(
-                    character_visual.authoritative_pack
-                )
-            except Exception:  # noqa: BLE001 - name every failed domain
-                failures.append("character visuals")
-        if snapshot.persona_visual_dirty:
-            if self._persona_shared_visual_identity_authoring is not None:
-                try:
-                    await self._save_persona_shared_visual_identity_pack()
-                except Exception:  # noqa: BLE001
-                    failures.append("Persona visuals")
-            persona_visual = self._persona_visual_authoring
-            if persona_visual is not None and persona_visual.dirty:
-                try:
-                    await self._save_persona_visual_pack()
-                except Exception:  # noqa: BLE001
-                    if "Persona visuals" not in failures:
-                        failures.append("Persona visuals")
-        if snapshot.form_dirty:
-            try:
-                prior_owners = (
-                    self._character_save_worker_handle,
-                    self._actor_pack_save_worker_handle,
-                    self._profile_save_completion,
-                )
-                self.action_personas_save()
-                # The editor's button posts its save request on the next loop
-                # turn. Join only the exact owner it creates: Resume is a
-                # worker in the same manager and must never wait on itself.
-                for _ in range(20):
-                    await asyncio.sleep(0)
-                    current_owners = (
-                        self._character_save_worker_handle,
-                        self._actor_pack_save_worker_handle,
-                        self._profile_save_completion,
-                    )
-                    if current_owners != prior_owners or not self.state.has_unsaved_changes:
-                        break
-                await self._await_roleplay_save_owners()
-            except Exception:  # noqa: BLE001
-                failures.append(form_domain)
-            if self.state.has_unsaved_changes and form_domain not in failures:
-                failures.append(form_domain)
-        residual = self._aggregate_roleplay_dirty_domains(
-            self._aggregate_roleplay_draft_snapshot()
-        )
-        failures.extend(domain for domain in residual if domain not in failures)
-        return tuple(failures)
-
-    async def _await_roleplay_save_owners(self) -> None:
-        """Join only incumbent save owners, never the navigation worker."""
-
-        waits: list[Awaitable[Any]] = []
-        for worker in (
-            self._character_save_worker_handle,
-            self._actor_pack_save_worker_handle,
-        ):
-            if worker is not None:
-                waits.append(worker.wait())
-        completion = self._profile_save_completion
-        if completion is not None and not completion.done():
-            waits.append(asyncio.shield(completion))
-        current_task = asyncio.current_task()
-        for task in (
-            self._visual_identity_operation_task,
-            self._persona_shared_visual_identity_operation_task,
-            self._persona_visual_operation_task,
-        ):
-            if task is not None and task is not current_task and not task.done():
-                waits.append(task)
-        if waits:
-            await asyncio.gather(*waits, return_exceptions=True)
-
-    def _aggregate_roleplay_dirty_domains(
-        self, snapshot: RoleplayDraftSnapshot
-    ) -> tuple[str, ...]:
-        """Name the mounted form owner while preserving stable visual labels."""
-
-        domains = list(snapshot.dirty_domains)
-        if self.state.active_mode == "personas" and "character form" in domains:
-            domains[domains.index("character form")] = "Persona form"
-        return tuple(domains)
-
     async def confirm_navigation(self) -> bool:
         """App-invoked aggregate Save/Discard/Stay veto for leaving Roleplay."""
 
-        from ..Navigation.character_conversation_navigation import (
-            RoleplayDraftNavigationDialog,
-            RoleplayDraftRecoveryDialog,
-        )
+        from ..Persona_Modules.roleplay_draft_guard import confirm_roleplay_drafts
 
-        snapshot = self._aggregate_roleplay_draft_snapshot()
-        if snapshot.inflight_save_domains:
-            await self._await_roleplay_save_owners()
-            snapshot = self._aggregate_roleplay_draft_snapshot()
-        if snapshot.is_clean:
-            return True
-        domains = tuple(
-            dict.fromkeys(
-                self._aggregate_roleplay_dirty_domains(snapshot)
-                + snapshot.inflight_save_domains
-            )
-        )
-        try:
-            choice = await self.app.push_screen_wait(
-                RoleplayDraftNavigationDialog(domains)
-            )
-        except Exception:  # noqa: BLE001 - broken presentation fails closed
-            logger.opt(exception=True).warning(
-                "Could not present aggregate Roleplay navigation guard"
-            )
-            return False
-        if choice == "save":
-            while True:
-                failures = await self._save_aggregate_roleplay_drafts(snapshot)
-                if not failures and self._aggregate_roleplay_draft_snapshot().is_clean:
-                    return True
-                retry = await self.app.push_screen_wait(
-                    RoleplayDraftRecoveryDialog(failures)
-                )
-                if retry != "retry":
-                    return False
-                snapshot = self._aggregate_roleplay_draft_snapshot()
-        if choice == "discard":
-            await self._drain_visual_identity_authoring()
-            await self._drain_persona_shared_visual_identity_authoring()
-            await self._discard_persona_visual_authoring_async()
-            await self._drain_actor_pack_creation()
-            for editor in (
-                *self.query(PersonasCharacterEditorWidget),
-                *self.query(PersonaProfileEditorWidget),
-            ):
-                editor.discard_unsaved_form()
-            self.state.has_unsaved_changes = False
-            self._set_active_row_unsaved(False)
-            return self._aggregate_roleplay_draft_snapshot().is_clean
-        return False
+        return await confirm_roleplay_drafts(self, self.app.push_screen_wait)
+
+    async def confirm_quit(self) -> bool:
+        """Ctrl+Q asks the same veto through the quit flow's prompt (TASK-33622.14)."""
+
+        from ..Persona_Modules.roleplay_draft_guard import confirm_roleplay_quit
+
+        return await confirm_roleplay_quit(self)
 
     async def _run_guarded(self, continuation: Callable[[], Awaitable[None]]) -> None:
         """Run ``continuation``, confirming first when an edit would be discarded.

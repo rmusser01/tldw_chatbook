@@ -96,7 +96,10 @@ _BUDGETS: dict[str, int] = {
     "tldw_chatbook/app_feature_glue.py": 742,
     "tldw_chatbook/Chat/console_chat_controller.py": 29367,
     "tldw_chatbook/Chat/console_chat_store.py": 22344,
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16436,
+    # TASK-33622.14: the aggregate Roleplay draft guard moved to
+    # UI/Persona_Modules/roleplay_draft_guard.py (dev had grown to 16,533,
+    # over this row; the move brings it to 16,397).
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16397,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.

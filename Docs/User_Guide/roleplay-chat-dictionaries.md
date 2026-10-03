@@ -170,6 +170,18 @@ and asking whether to close it. **Keep Open** returns you to the editor;
 same as Keep Open). Deleting an item with unsaved edits shows two dialogs
 in a row — discard first, then the delete confirmation.
 
+Leaving Roleplay for another screen with unsaved work (a character or
+Persona form, a staged avatar, or unsaved visuals) asks **Finish Roleplay
+drafts before leaving**, naming what is unsaved: **Save and continue**,
+**Discard and continue**, or **Stay** (Escape is Stay). **Ctrl+Q** asks
+the same question before quitting. If a Roleplay save or reaction
+generation is still running, Ctrl+Q first says "Waiting for Roleplay work
+to finish before quitting" and carries on once that work is done. If a
+save fails, **Some Roleplay drafts could not be saved** names what failed
+and offers **Retry** or **Stay**, so neither leaving nor quitting drops a
+draft that did not save. If a question Ctrl+Q raised closes before you
+answer it, Chatbook stays open and says "Quit cancelled."
+
 ## Common tasks
 
 1. **Switch modes.** Click a chip in the **Modes:** strip, or press
