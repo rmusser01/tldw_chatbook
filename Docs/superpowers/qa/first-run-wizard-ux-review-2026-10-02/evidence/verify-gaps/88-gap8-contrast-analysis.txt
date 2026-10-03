@@ -1,0 +1,45 @@
+# WCAG contrast per text run, computed from tmux capture-pane -e truecolor SGR (parser carries SGR state across lines)
+
+## 82-gap8-appearance-dark.ansi.txt
+ 1.42:1 fg=(0, 15, 24) bg=(36, 47, 56) n=8 e.g. r15 '○' | r29 '○'
+ 3.78:1 fg=(221, 237, 249) bg=(1, 120, 212) n=2 e.g. r14 'textual-dark   (current)' | r37 'Next →'
+ 5.91:1 fg=(167, 171, 175) bg=(36, 47, 56) n=4 e.g. r6 '10' | r40 'Enter / Ctrl+N next · Ctrl+B back · Esc exit setup'
+ 6.00:1 fg=(221, 232, 243) bg=(0, 83, 170) n=1 e.g. r2 'Set up tldw chatbook'
+ 6.77:1 fg=(165, 165, 165) bg=(30, 30, 30) n=2 e.g. r21 'Show all themes…' | r32 'Show all cards…'
+ 7.28:1 fg=(223, 231, 237) bg=(15, 75, 122) n=1 e.g. r25 'Surprise me (random)'
+ 7.81:1 fg=(138, 212, 161) bg=(36, 47, 56) n=2 e.g. r14 '●' | r25 '●'
+ 8.12:1 fg=(225, 230, 235) bg=(25, 68, 102) n=1 e.g. r6 '9'
+ 8.50:1 fg=(254, 166, 43) bg=(30, 30, 30) n=2 e.g. r6 '│!' | r6 '│!'
+ 9.34:1 fg=(224, 229, 232) bg=(24, 58, 84) n=4 e.g. r15 'textual-light' | r18 'tokyo-night'
+12.63:1 fg=(224, 224, 224) bg=(30, 30, 30) n=9 e.g. r10 'Appearance' | r37 'Exit setup'
+12.75:1 fg=(225, 225, 225) bg=(30, 30, 30) n=6 e.g. r6 '✓' | r6 '✓'
+default-colour cell census:
+{'fg-set/bg-set': 1869, 'fg-default/bg-set': 2896}
+
+## 83-gap8-light-preview.ansi.txt
+ 1.38:1 fg=(254, 166, 43) bg=(216, 216, 216) n=2 e.g. r6 '│!' | r6 '│!'
+ 1.58:1 fg=(166, 166, 166) bg=(208, 208, 208) n=8 e.g. r14 '○' | r29 '○'
+ 4.57:1 fg=(40, 100, 59) bg=(208, 208, 208) n=2 e.g. r15 '●' | r25 '●'
+ 4.99:1 fg=(83, 83, 83) bg=(208, 208, 208) n=4 e.g. r6 '10' | r40 'Enter / Ctrl+N next · Ctrl+B back · Esc exit setup'
+ 5.15:1 fg=(86, 86, 86) bg=(216, 216, 216) n=2 e.g. r21 'Show all themes…' | r32 'Show all cards…'
+ 5.36:1 fg=(13, 18, 21) bg=(105, 141, 167) n=1 e.g. r25 'Surprise me (random)'
+ 7.28:1 fg=(18, 21, 23) bg=(146, 166, 181) n=1 e.g. r6 '9'
+ 7.65:1 fg=(19, 22, 24) bg=(151, 171, 185) n=4 e.g. r14 'textual-dark   (current)' | r18 'tokyo-night'
+ 7.83:1 fg=(221, 230, 237) bg=(0, 69, 120) n=2 e.g. r15 'textual-light' | r37 'Next →'
+11.56:1 fg=(31, 31, 31) bg=(216, 216, 216) n=9 e.g. r10 'Appearance' | r37 'Exit setup'
+11.73:1 fg=(221, 226, 232) bg=(0, 36, 82) n=1 e.g. r2 'Set up tldw chatbook'
+11.96:1 fg=(28, 28, 28) bg=(216, 216, 216) n=6 e.g. r6 '✓' | r6 '✓'
+default-colour cell census:
+{'fg-set/bg-set': 1869, 'fg-default/bg-set': 2896}
+
+## 85-gap8-light-summary.ansi.txt
+ 1.38:1 fg=(254, 166, 43) bg=(216, 216, 216) n=2 e.g. r6 '│!' | r6 '│!'
+ 4.99:1 fg=(83, 83, 83) bg=(208, 208, 208) n=2 e.g. r37 'Step 11 of 11' | r40 'Ctrl+B back · choose an action below to finish'
+ 5.15:1 fg=(86, 86, 86) bg=(216, 216, 216) n=2 e.g. r26 'Config file: /Users/macbook-dev/Documents/GitHub/tldw_chatbook/.worktr' | r27 'Re-run setup any time: Settings ▸ Diagnostics ▸ Ru'
+ 7.28:1 fg=(18, 21, 23) bg=(146, 166, 181) n=1 e.g. r6 '11'
+ 7.83:1 fg=(221, 230, 237) bg=(0, 69, 120) n=1 e.g. r29 'Review provider setup'
+11.56:1 fg=(31, 31, 31) bg=(216, 216, 216) n=16 e.g. r10 'Setup summary' | r37 '← Back'
+11.73:1 fg=(221, 226, 232) bg=(0, 36, 82) n=1 e.g. r2 'Set up tldw chatbook'
+11.96:1 fg=(28, 28, 28) bg=(216, 216, 216) n=8 e.g. r6 '✓' | r6 '✓'
+default-colour cell census:
+{'fg-set/bg-set': 2011, 'fg-default/bg-set': 2752}

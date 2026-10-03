@@ -1,0 +1,40 @@
+# Tools step shows 8 gates and says 'Everything is off by default'; 3 tool families are ON by default and absent
+# Tools step rows (FirstRunSetupWizard.py:7003-7040 -> gateable_builtin_tools())
+  [tools] read_file_enabled            Read file
+  [tools] list_directory_enabled       List directory
+  [tools] write_file_enabled           Write file
+  [tools] create_note_enabled          Create note
+  [tools] update_note_enabled          Update note
+  [tools] glob_files_enabled           Find files
+  [tools] grep_files_enabled           Search in files
+  [tools] expand_document_enabled      Expand document
+  => 8 rows; step copy: 'Everything is off by default.'
+
+# MCP hub Tool gates (MCP ▸ Servers ▸ built-in row ▸ Tool gates) -> all_tool_gates() on a FRESH template config
+  [tools] read_file_enabled            enabled=False Read file
+  [tools] list_directory_enabled       enabled=False List directory
+  [tools] write_file_enabled           enabled=False Write file
+  [tools] create_note_enabled          enabled=False Create note
+  [tools] update_note_enabled          enabled=False Update note
+  [tools] glob_files_enabled           enabled=False Find files
+  [tools] grep_files_enabled           enabled=False Search in files
+  [tools] expand_document_enabled      enabled=False Expand document
+  [console] local_tools_enabled          enabled=True  Local workspace, web, and Watchlists tools (master switch)   <-- NOT IN WIZARD
+  [tools] web_deep_search_enabled      enabled=False Deep web research (web_deep_search)   <-- NOT IN WIZARD
+  [tools] ask_user_enabled             enabled=True  Ask you a question (ask_user)   <-- NOT IN WIZARD
+  [tools] character_tools_enabled      enabled=True  Character cards (character_*)   <-- NOT IN WIZARD
+
+Gates absent from the wizard that are ON by default: ['[console] local_tools_enabled', '[tools] ask_user_enabled', '[tools] character_tools_enabled']
+
+## Step copy (FirstRunSetupWizard.py:7015-7019)
+            yield Static("Built-in tools", classes="setup-title")
+            yield Static(
+                "Everything is off by default. Tools that read or change your "
+                "files still show an approval card every time they run.",
+                classes="setup-subtitle",
+
+## Quick-track summary note (FirstRunSetupWizard.py:7681-7684)
+            self.query_one("#setup-summary-defaults-note", Static).update(
+                "Left at recommended defaults: tools off, RAG off, default theme, "
+                "notes sync off — each lives in Settings when you want it."
+            )

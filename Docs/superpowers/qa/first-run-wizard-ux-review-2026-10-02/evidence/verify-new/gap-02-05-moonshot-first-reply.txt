@@ -1,0 +1,50 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                            Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                  │ Conversation | Reply with exactly: vn4 moo...                                                                                                            │
+                       Context ◂  │   Reply with exactly…  ✕    New tab     Temporary                                                                                                        │
+   Terminal                       │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Workspaces                  ▸    │                                                                                                                                                          │
+ ───────────────────────────────  │                                                                                                                                                          │
+ Conversations               ▾    │                                                                                                                                                          │
+       Archive this chat          │                                                                                                                                                          │
+         Archived chats           │                                                                                                                                                          │
+       Search all chats…          │                                                                                                                                                          │
+   Reply with exactly: vn4        │                                                                                                                                                          │
+   moo...                         │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Clear    │                                                                                                                                                          │◂ Inspect
+  ▊  Filter visible   ▎           │                                                                                                                                                          │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                          │
+                                  │                                                                                                                                                          │
+  Chats                      ▾    │                                                                                                                                                          │
+   Reply with exactly: vn…  ⛔    │                                                                                                                                                          │
+   Blocked                        │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+                                  │   User                                                                                                                                                   │
+ ───────────────────────────────  │   Reply with exactly: vn4 moonshot ok                                                                                                                    │
+ Character · No chats        ▸    │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │
+ ───────────────────────────────  │  ▊ Assistant                                                                                                                                             │
+ Model                       ▸    │  ▊   ▸ Error                                                                                                                                · failed     │
+ ───────────────────────────────▆ │  ▊                                                                                                                                                       │
+ Agent                       ▸    │  ▊                                                                                                                                                       │
+ ▼ Details                        │  ▊                                                                                                                                                       │
+                                  │  ──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ blocked
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+╭──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                                                                                                                                                                      │
+│  Response delivery status is unknown on the source device.                                                                                                                                           │
+│  Retry anyway may send a duplicate request because delivery status is unknown.                                                                                                                       │
+│    Retry anyway       Discard                                                                                                                                                                        │
+│                                                                                                                                                                                                  ▆▆  │
+│                                                                                                                                                                                                      │
+╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+ Status ▾   Library · Auto off · Agent blocked     Provider: Moonshot AI     Model: kimi-k3     System Prompt: off     Assistant: General     Sources: 0     Tools: 6 ready     Approvals: 0 pending
+
+█  Composer ▾  Menu   Ask, command, or paste task...                                                        Send blocked — resolve response recovery first       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Ctrl+P · Ctrl+Q

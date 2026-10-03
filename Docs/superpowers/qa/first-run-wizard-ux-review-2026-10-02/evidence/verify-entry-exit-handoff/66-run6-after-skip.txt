@@ -1,0 +1,40 @@
+╭─────────╮
+│ ⌃1 Home │ ⌃2 Console    ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Home | Blocked · Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌──────────────────────┐┌──────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ ──────────────────── ││ Set up Console model                                                                     │ │
+│ │ Needs Attention  ▾   ││ Console needs a working model before live AI tasks.                                      │ │
+│ │  No approvals or     ││    Set up Console model                                                                  │ │
+│ │  failures pending.   ││                                                                                          │ │
+│ │ ──────────────────── ││                                                                                          │ │
+│ │ Running          ▾  ╭──────────────────────────────────────────────────────────────────────╮                     │ │
+│ │  Nothing running    │                                                                      │                     │ │
+│ │  right now.         │  Check model lists online?                                           │                     │ │
+│ │ ────────────────────│                                                                      │                     │ │
+│ │ Recent           ▾  │  tldw can fetch up-to-date model lists from your configured cloud    │                     │ │
+│ │  Conversations,     │  providers (OpenAI, Anthropic, MistralAI, Moonshot, OpenRouter,      │                     │ │
+│ │  notes, media,      │  QwenCloud, ZAI) at startup. This contacts those endpoints over the  │                     │ │
+│ │  runs, chatbooks,   │  network using your configured API keys.                             │                     │ │
+│ │  and imports will   │                                                                      │                     │ │
+│ │  appear here.       │  Allow this once and it stays on until you turn it off in Settings.  │                     │ │
+│ │ ────────────────────│  Nothing is checked until you say yes.                               │                     │ │
+│ │ Details          ▸  │                                                                      │                     │ │
+│ │                     │                                                                      │                     │ │
+│ │                     │                                     Don't check      Check online    │                     │ │
+│ │                     │                                                                      │                     │ │
+│ │                     │                                                                      │                     │ │
+│ │                     ╰──────────────────────────────────────────────────────────────────────╯                     │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ │                      ││                                                                                          │ │
+│ └──────────────────────┘└──────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit
