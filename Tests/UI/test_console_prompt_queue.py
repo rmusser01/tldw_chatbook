@@ -339,9 +339,9 @@ def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
     ``test_painted_label_walk_covers_every_shelf_projection_input`` fails
     until it has one. 'Starting...' and the bare 'Turn failed' are not walked:
     their buttons carry the same labels as states that are. The failed turn's
-    name uses the production preview budget at its full width: that summary
-    is the shelf's longest, and the one most likely to push a button off the
-    row.
+    name uses the production preview budget at its full width, behind a full
+    queue: that summary is the shelf's longest, and the one most likely to
+    push a button off the row.
     """
 
     paused = PromptQueueMode.PAUSED
@@ -364,14 +364,16 @@ def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
         ),
     )
     for reason in PromptQueuePauseReason:
+        failed = reason is PromptQueuePauseReason.FAILED
+        # The failed turn's row is also painted at a full queue: 'Queue 10/10'
+        # is one cell wider than 'Queue 1/10', on the longest summary.
+        count = MAX_CONSOLE_QUEUE_ENTRIES if failed else 1
         yield (
             f"paused-{reason.value}",
             derive(
-                _shelf_snapshot(paused, reason),
-                _activity(count=1, paused=True),
-                failed_turn_preview=(
-                    failed_name if reason is PromptQueuePauseReason.FAILED else None
-                ),
+                _shelf_snapshot(paused, reason, count=count),
+                _activity(count=count, paused=True),
+                failed_turn_preview=failed_name if failed else None,
             ),
         )
     yield (
@@ -456,15 +458,19 @@ def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
     and the walk never exercised it. Fed the real 'Response delivery status is
     unknown on the source device.' copy, it pushed Discard to cell 102 on a
     92-101 cell shelf. So every queue mode, and every projection argument
-    given a non-default value, must appear in the walk.
+    given a non-default value, must appear in the walk. Every parameter after
+    the snapshot and the activity counts, whatever its kind: a new input
+    added before the ``*`` must be walked too.
     """
 
-    signature = inspect.signature(derive_prompt_queue_presentation)
-    defaults = {
-        name: parameter.default
-        for name, parameter in signature.parameters.items()
-        if parameter.kind is inspect.Parameter.KEYWORD_ONLY
-    }
+    parameters = list(
+        inspect.signature(derive_prompt_queue_presentation).parameters.values()
+    )
+    assert [parameter.name for parameter in parameters[:2]] == [
+        "snapshot",
+        "activity",
+    ]
+    defaults = {parameter.name: parameter.default for parameter in parameters[2:]}
     walked_inputs: set[str] = set()
     walked_modes: set[PromptQueueMode] = set()
 
