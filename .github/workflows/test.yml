@@ -442,7 +442,9 @@ jobs:
     steps:
     - name: Enable long paths for Windows checkout
       shell: pwsh
-      run: git config --global core.longpaths true
+      run: |
+        git config --global core.longpaths true
+        git config --global core.autocrlf false
 
     - uses: actions/checkout@v4
       with:
@@ -464,11 +466,12 @@ jobs:
         python -m pip check
 
     - name: Run installed backup product workflows on native Windows
+      working-directory: ${{ github.workspace }}
       env:
         TLDW_PLATFORM_EVIDENCE_ROOT: ${{ runner.temp }}/backup-platform-product
         TLDW_ADMISSION_BASELINE_REF: ${{ inputs.backup_admission_baseline_ref }}
       run: |
-        python Tests/Backup_Recovery/run_platform_product.py \
+        python -m Tests.Backup_Recovery.run_platform_product \
           --evidence-root "$TLDW_PLATFORM_EVIDENCE_ROOT" \
           --product-selection "${{ matrix.selection }}" \
           --admission-baseline-ref "$TLDW_ADMISSION_BASELINE_REF"

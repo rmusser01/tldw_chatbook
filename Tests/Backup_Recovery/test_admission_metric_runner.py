@@ -2,17 +2,193 @@
 
 import asyncio
 import copy
+import hashlib
 import json
+import os
 import shutil
 import subprocess
+import sysconfig
 import time
+import venv
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import yaml
 
 from Tests.Backup_Recovery import run_platform_product as runner
+
+
+def windows_workflow_steps():
+    """Read the actual Windows job commands consumed by the local regressions."""
+    workflow = Path(runner.__file__).parents[2] / ".github/workflows/test.yml"
+    return yaml.safe_load(workflow.read_text())["jobs"]["backup-platform-windows"][
+        "steps"
+    ]
+
+
+def test_windows_checkout_and_exact_archive_preserve_approved_lf_programs(
+    history, tmp_path, monkeypatch
+):
+    """Removing the pre-checkout Git setting must expose raw CRLF hash drift."""
+    workspace = history[0]
+    copy_metric_programs(workspace)
+    runner._run_git(workspace, "-c", "core.autocrlf=false", "add", ".")
+    runner._run_git(
+        workspace,
+        "-c",
+        "user.name=Metric",
+        "-c",
+        "user.email=metric@example.invalid",
+        "commit",
+        "-qm",
+        "LF programs",
+    )
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(tmp_path / "private-gitconfig"))
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+    runner._run_git(tmp_path, "config", "--global", "core.autocrlf", "true")
+    for step in windows_workflow_steps():
+        if step.get("uses", "").startswith("actions/checkout@"):
+            break
+        subprocess.run(  # nosec B603, B607
+            ["bash", "-c", step["run"]],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+            timeout=30,
+        )
+    checkout = tmp_path / "materialized"
+    runner._run_git(tmp_path, "clone", "--no-hardlinks", str(workspace), str(checkout))
+    private = tmp_path / "archive"
+    private.mkdir()
+    source, _digest = runner._copy_tracked_source(checkout, private)
+    programs = {
+        "Helper_Scripts/Benchmarks/backup_admission_benchmark.py": "34278facac896ecc0e4ed8a3319243d3501272e87692a858779c6b449a475428",
+        "Helper_Scripts/Benchmarks/backup_admission_idle_benchmark.py": "1d4df8e02a0472c66b994ac562cc2aa729e75e9a4cb06a2e7a6617d0221bf440",
+        "tldw_chatbook/Notes/git_process_containment.py": "77c5fd81925b9f3377b88fa41782707b4979da9361fd6c5e4d111ceb75c5a6a5",
+    }
+    for relative, expected in programs.items():
+        blob = subprocess.run(  # nosec B603, B607
+            ["git", "show", f"HEAD:{relative}"],
+            cwd=workspace,
+            check=True,
+            capture_output=True,
+            timeout=30,
+        ).stdout
+        assert (  # nosec B101
+            hashlib.sha256(blob).hexdigest(),
+            (checkout / relative).read_bytes(),
+            (source / relative).read_bytes(),
+        ) == (expected, blob, blob)
+    runner._metric_programs(checkout)
+    runner._metric_programs(source)
+    fixed = checkout / "Helper_Scripts/Benchmarks/backup_admission_benchmark.py"
+    fixed.write_bytes(fixed.read_bytes().replace(b"\n", b"\r\n"))
+    with pytest.raises(ValueError, match="admission_program_identity_changed"):
+        runner._metric_programs(checkout)
+
+
+def test_windows_workflow_python_entrypoint_keeps_repository_namespace(tmp_path):
+    """The actual executable must reach the original Tests import without PYTHONPATH."""
+    workspace = tmp_path / "checkout"
+    origin = Path(runner.__file__).parents[2]
+    for relative in (
+        "Tests/__init__.py",
+        "Tests/network_guard.py",
+        "Tests/Backup_Recovery/run_platform_product.py",
+    ):
+        target = workspace / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(origin / relative, target)
+    environment_root = tmp_path / "python"
+    builder = venv.EnvBuilder(with_pip=False, symlinks=os.name != "nt")
+    builder.create(environment_root)
+    context = builder.ensure_directories(environment_root)
+    site_packages = Path(context.lib_path)
+    (site_packages / "dependencies.pth").write_text(
+        sysconfig.get_path("purelib") + "\n"
+    )
+    # Startup guard imports by file, leaving the Tests namespace unresolved.
+    # Only native preflight is replaced; stop before private/native preparation.
+    (site_packages / "sitecustomize.py").write_text(
+        """import importlib.util, json, sys
+from pathlib import Path
+import keyring
+from keyring.backends.null import Keyring
+keyring.set_keyring(Keyring())
+root = Path.cwd()
+target = root / 'Tests/Backup_Recovery/run_platform_product.py'
+spec = importlib.util.spec_from_file_location('startup_network_guard', root / 'Tests/network_guard.py')
+guard = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(guard)
+guard.install()
+def trace(frame, event, arg):
+    if Path(frame.f_code.co_filename) != target:
+        return trace
+    if event == 'call' and frame.f_code.co_name == '_run_admission_metrics':
+        frame.f_globals['_metric_preflight'] = lambda *args: {}
+    if event == 'call' and frame.f_code.co_name == '_create_private_root':
+        namespace = sys.modules['Tests.network_guard']
+        print(json.dumps({'namespace': str(Path(namespace.__file__).resolve()),
+            'workspace': str(root.resolve()), 'argv': sys.argv[1:],
+            'null_keyring': isinstance(keyring.get_keyring(), Keyring),
+            'network_attempts': len(guard.blocked_attempts()) + len(namespace.blocked_attempts())}))
+        raise SystemExit(0)
+    return trace
+sys.settrace(trace)
+"""
+    )
+    step = next(
+        step
+        for step in windows_workflow_steps()
+        if step.get("name")
+        == "Run installed backup product workflows on native Windows"
+    )
+    command = step["run"].replace("${{ matrix.selection }}", "admission-metrics")
+    cwd = step.get("working-directory", "${{ github.workspace }}").replace(
+        "${{ github.workspace }}", str(workspace)
+    )
+    environment = os.environ.copy()
+    environment.pop("PYTHONPATH", None)
+    environment["PATH"] = (
+        str(Path(context.env_exe).parent) + os.pathsep + environment["PATH"]
+    )
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["TLDW_PLATFORM_EVIDENCE_ROOT"] = str(tmp_path / "evidence")
+    environment["TLDW_ADMISSION_BASELINE_REF"] = "3" * 40
+    for name in (
+        "HOME",
+        "USERPROFILE",
+        "XDG_CONFIG_HOME",
+        "XDG_DATA_HOME",
+        "TLDW_TEST_CONFIG_ROOT",
+    ):
+        environment[name] = str(tmp_path / "profile")
+    completed = subprocess.run(  # nosec B603, B607
+        ["bash", "-c", command],
+        cwd=cwd,
+        env=environment,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert completed.returncode == 0, completed.stderr  # nosec B101
+    assert json.loads(completed.stdout) == {  # nosec B101
+        "namespace": str((workspace / "Tests/network_guard.py").resolve()),
+        "workspace": str(workspace.resolve()),
+        "argv": [
+            "--evidence-root",
+            str(tmp_path / "evidence"),
+            "--product-selection",
+            "admission-metrics",
+            "--admission-baseline-ref",
+            "3" * 40,
+        ],
+        "null_keyring": True,
+        "network_attempts": 0,
+    }
 
 
 @pytest.fixture
