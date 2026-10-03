@@ -360,9 +360,8 @@ class ProviderStep(SetupStep):
         super().__init__(wizard=wizard, config=config, **kwargs)
         from tldw_chatbook.Chat.local_server_discovery import discover_local_servers
 
-        # ``discover`` is the selected-provider seam. The provider-neutral
-        # localhost scan stays separate (no app config reaches a provider
-        # service) and runs off the UI loop: its admission and TLS setup block.
+        # ``discover`` is the selected-provider seam. The localhost scan stays
+        # separate and runs off the UI loop (its admission and TLS setup block).
         self._discover = discover
         self._local_discover = local_discover or step_guard.off_loop(discover_local_servers)
         self._probe = probe or _probe_first_run_provider_connection
@@ -816,7 +815,8 @@ class ProviderStep(SetupStep):
         ):
             return
         self._local_discovery_state = state
-        if not self.is_attached or not self.is_active:
+        listed = self.query("#setup-provider-detection-results")  # gone in teardown
+        if not self.is_attached or not self.is_active or not listed:
             return
         self._detected_servers = servers
         if servers:

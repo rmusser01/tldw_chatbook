@@ -306,3 +306,47 @@ async def test_cancelling_off_loop_work_cancels_it_on_its_thread():
         await task
 
     assert await asyncio.to_thread(finished.wait, 3.0), "the work kept running"
+
+
+@pytest.mark.asyncio
+async def test_a_localhost_scan_that_lands_after_its_list_is_gone_is_dropped(
+    monkeypatch,
+):
+    """The scan's result is dropped once the step's widgets are gone.
+
+    Review round 1: the scan now finishes on its own thread, so it can land
+    while the app tears the step down (children first, the step itself
+    later). Rendering into the missing detection list raised ``NoMatches``.
+    """
+    import threading
+
+    release = threading.Event()
+
+    async def slow_scan(*_args, **_kwargs):
+        release.wait(5)  # blocks only the scan's own thread
+        return ()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.local_server_discovery.discover_local_servers", slow_scan
+    )
+    wizard = _wizard()
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        provider_index = container._step_index_for_id("provider")
+        container.show_step(provider_index)
+        await pilot.pause(0.2)
+        provider = container.steps[provider_index]
+        assert provider._local_discovery_state == "in_progress"
+
+        await provider.query_one("#setup-provider-detection-results").remove()
+        release.set()
+        for _ in range(60):
+            if provider._local_discovery_state != "in_progress":
+                break
+            await pilot.pause(0.05)
+
+        assert provider._local_discovery_state == "complete"
+        assert app._exception is None, "a late scan result raised into a torn-down step"
