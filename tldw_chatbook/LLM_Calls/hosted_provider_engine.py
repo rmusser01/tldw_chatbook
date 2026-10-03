@@ -1097,9 +1097,16 @@ def build_hosted_chat_payload(
     if reasoning_effort is not None:
         toggle_key = thinking_toggle_key(record, resolution.model)
         if record.reasoning_effort:
-            payload[record.reasoning_effort_key or "reasoning_effort"] = (
-                _bounded_identifier(record, "reasoning effort", reasoning_effort)
-            )
+            level = _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            level = record.reasoning_effort_map.get(level, level)
+            if (
+                record.reasoning_effort_values is not None
+                and level not in record.reasoning_effort_values
+            ):
+                raise bad_request(
+                    f"{record.display_name} does not accept that reasoning effort level."
+                )
+            payload[record.reasoning_effort_key or "reasoning_effort"] = level
         elif toggle_key is not None:
             # A boolean switch cannot pass an unknown level through for the
             # provider to reject, so validate against the shared set (Qodo).
@@ -2164,6 +2171,7 @@ def _send_hosted_chat_request(
                 retry_delay=resolution.retry_delay,
                 auth_scheme=record.auth_scheme,
                 extra_headers=resolution.extra_headers,
+                display_name=record.display_name,
             ),
             route="chat/completions",
             payload=payload,
