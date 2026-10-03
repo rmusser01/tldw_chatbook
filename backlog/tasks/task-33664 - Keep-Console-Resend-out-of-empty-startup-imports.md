@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 21:15'
+updated_date: '2026-10-03 23:01'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -280,6 +280,21 @@ Reason: preserve landed test-only isolation and stricter platform/first-GC censu
 6. Close AC3/Done via CLI only after both approvals. Update only the four owned canonical Markdown records, preserving all approved source bytes/deletion/full tree outside those records. Publish ONCE with the EXACT observed e8deec610211b44c3d6392c5664d81b25844f250 lease and concise body; verify actual refs/GitHub/body after lag without second push. Fresh new-head Qodo/no actionable threads and ALL FOUR CI jobs precede any next strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency, then pause heartbeat/report completion.
 
 Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter, historical warning and optional/style/profile/resource/physical/wider limit remains preserved. No full suite, live providers/user keys, physical CtrlQ/relaunch, voice service/provision/download/playback, Windows, aggregate/package/index/installed/native-release/wider-audit certificate, admin bypass, weakened gate, shared stash or foreign cleanup.
+
+## Required lorebook scope and cleanup-census integration — October 3
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md
+Reason: preserve the landed existing-conversation-scope compatibility fix and test-only corrections within their existing API, profile, lifecycle and census boundaries. No root runtime repair, new owner, schema, authority, dependency or relaxed gate is planned.
+
+1. All FOUR published 405c5702473378a763e22d1ddd1e0a9170d2c324 jobs passed at the 22:54 UTC check; exact-head Qodo is clear, four historical threads resolved and pagination complete. Fresh strict up-to-date protection enforced for administrators requires the BEHIND update to actual dev efea5e45cf2348dd0da50fedac215cd849143822. Reopen TASK33664 AC3/In Progress prospectively; AC4 stays checked.
+2. Authenticate the 1,323 reviewed hashes/modes/blob addresses and full published tree before mutation. Capture nine incoming paths, three manifest overlaps and zero actual feature-patch overlaps. Rebase preserving all prior non-overlap files and every incoming byte, including existing ConversationScopeParams normalization, real SQLite/canonical config fixture, mounted CSS readiness, collection-selected bootstrap tooltip profile and its narrow watchdog, real cleanup timer capture/completed candidate query and cold helper floors. Preserve all old census ceilings, incoming first-GC/platform/caller coverage and capture_cloud.py deletion.
+3. Qualify bounded incoming API/service and numeric-loopback HTTP tests, actual Textual cleanup-timer control, CSS mounted census and the same affected UI selection. Retain all positive/NON-GREEN/baseline/interrupted/unexecuted evidence and qualify failures proportionately by exact source identity or exact incoming baseline, without cause, live server, physical UI or wider certification claims. No old marker, profile, readiness, fixture, production or census bypass is introduced by root.
+4. Authenticate immutable source/full tree, prior feature functions/assertions and all unchanged ceilings; classify fatal/added-line/whole Ruff/format debt, task/readability/whitespace and source-specific artifact identities. Preserve incoming TASK33806 Done and TASK33802 In Progress/AC1 and AC3 unchecked, AC2 checked, and all other separate shipped states. Obtain focused independent immutable source/functional/artifact/evidence approval.
+5. Only after ALL functional/artifact/reviewer activity settles, run the canonical FIVE storage (both variants), app-import, UI-ready and boot-CSS cases ONCE for this new source, with exact incoming guard bytes, default pytest temporary depth, exact REPO_ROOT cwd/PYTHONPATH and complete task-owned outer HOME/USERPROFILE/TLDW/XDG through late teardown. Read fresh printed/JSON/XML counts, cleanup/GC measurements and warnings, and reauthenticate source/full tree. Do not replay the completed isolation/a06/03b or older budget runs. No root pins, ceilings, work, warmup, timeout or counts change. Obtain supplemental independent budget/hash/raw/XML/count approval.
+6. Only after both approvals, CLI close AC3/Done and append the four owned canonical Markdown records, preserving all reviewed source/deletion/full tree outside four. Publish ONCE with the EXACT observed 405c5702473378a763e22d1ddd1e0a9170d2c324 lease and concise body; verify actual remote/GitHub/body after any lag without another push. Approvals qualify ONLY exact efea; later actual dev is separately unqualified. Fresh new-head Qodo/no actionable threads and ALL FOUR jobs precede any further strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency before pausing heartbeat/reporting completion.
+
+Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter and optional/style/profile/snapshot/stale-cleanup/physical/wider limit remains. No full suite/live providers/user keys/physical CtrlQ/relaunch/real voice provisioning/service/download/playback/Windows/aggregate/package/index/installed/native-release/wider audit, admin bypass, weakened gate, shared stash or foreign cleanup.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
