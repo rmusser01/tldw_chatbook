@@ -222,7 +222,14 @@ def test_catalog_returns_descriptor_for_known_ref_and_raises_keyerror_otherwise(
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 def test_managed_store_root_is_sibling_of_legacy_stt_install_dir() -> None:
+    # TASK-19642.22: this node derives the REAL managed store root through
+    # ``get_user_data_dir()`` -> the guarded config loader, which fails closed
+    # with RecoveryRequired("raw_source_selection_changed") under the per-test
+    # env redirect (same config-participant admission signature as the
+    # enrolled suites in Tests/conftest.py). It asserts a path relationship,
+    # not sandbox state, so it keeps the bootstrap profile.
     managed_root = artifact.managed_model_artifact_root()
     legacy_dir = installer.parakeet_v2_install_dir()
 
@@ -441,6 +448,7 @@ def _tiny_files(payloads: dict[str, bytes]) -> tuple[installer.BundleFile, ...]:
     )
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture(
     tmp_path: Path, monkeypatch
@@ -458,6 +466,15 @@ async def test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture
     ``parakeet_v2_source_map()`` read these as module attributes at call
     time (not a rebound import), so the patch is observed here exactly as
     it would be in production.
+
+    TASK-19642.22: the egress policy check on preflight's gating probes
+    reads ``web_security.enabled`` through ``get_cli_setting`` on the
+    guarded config loader, which fails closed with
+    RecoveryRequired("raw_source_selection_changed") under the per-test env
+    redirect (same config-participant admission signature as the enrolled
+    suites in Tests/conftest.py). This test drives the real orchestration
+    end to end and fakes neither the config getter nor the egress policy,
+    so it keeps the bootstrap profile.
     """
 
     payloads = {
@@ -516,10 +533,14 @@ async def test_run_parakeet_v2_preflight_and_provision_against_localhost_fixture
     assert artifact.active_managed_parakeet_v2_dir(service=core) == installed_dir
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_vad_only_preflight_and_provision_never_include_a_parakeet_root(
     tmp_path: Path, monkeypatch
 ) -> None:
+    # TASK-19642.22: same config-participant admission signature as the
+    # Parakeet v2 localhost-fixture node above (egress policy on the gating
+    # probe reads the guarded config loader); keeps the bootstrap profile.
     payload = b"tiny-vad-only"
     monkeypatch.setattr(
         artifact,
