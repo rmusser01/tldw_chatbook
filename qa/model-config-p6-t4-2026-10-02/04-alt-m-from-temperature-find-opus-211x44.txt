@@ -10,26 +10,26 @@
  ─────────────────────────────────  │                                                                                                                                                                   │
  Workspaces                    ▸    │                                                                                                                                                                   │
  ─────────────────────────────╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                    │
- Conversations                │  Conversation settings                                                                                                                             │                    │
+ Conversations                │  Chat settings · Chat 1                                                                                                                            │                    │
         Archive this chat     │                                                                                                                                                    │                    │
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
-        Search all chats…     │ Use: this conversation only. Defaults: future provider conversations.                                                                              │                    │
+        Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
    Chat 1                     │ Model             claude-sonnet-4-5 · Anthropic                                     this chat  Ready · not tested · ~200k context   Change Alt+M   │                    │
                               │ Temperature       █ 0.7        Console Behavior   How varied replies are: lower is focused, higher is more varied.                                 │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max╭─ Switch model · now: Anthropic · claude-sonnet-4-5 ──────────────────────────────────────────────────────────────────────────────────────╮    │                    │
   ▊  Filter visible     ▎     │ Str│ Find opus-5                                                                                                                              │    │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thi│ READY PROVIDERS · matches from every provider's catalog                                                                                  │ m… │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thi│ READY PROVIDERS · matches from every provider's catalog                                                                                  │e … │                    │
                               │ Thi│ ▶ claude-opus-5                Anthropic            ~200k  Ready · not tested                                                            │wh… │                    │◂ Inspect
    New conversation           │  ▶ │ TYPED MODEL ID · not in any catalog                                                                                                      │    │                    │
-  Chats                       │  pr│   opus-5                       Anthropic            ~200k  Ready · not tested           typed id · in no catalog                         │    │                    │
+  Chats                       │  ▶ │   opus-5                       Anthropic            ~200k  Ready · not tested           typed id · in no catalog                         │    │                    │
    Chat 1                     │  ▶ │ Enter picks · Esc cancel                                                                                                                 │    │                    │
                               │  ▶ ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯    │                    │
- ─────────────────────────────│  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
+ ─────────────────────────────│                                                                                                                                                    │                    │
  Character · No chats         │                                                                                                                                                    │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+ Model                        │                                                                                                                                                    │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                                            Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

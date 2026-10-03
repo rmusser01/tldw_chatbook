@@ -18,18 +18,18 @@
                               │ Temperature       │ 0.7        Console Behavior   How varied replies are: lower is focused, higher is more varied.                                 │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 2048       Console Behavior   Longest reply the model may write, in tokens.                                                    │                    │
   ▊  Filter visible     ▎     │ Streaming         │ Off ▼  provider           Show the reply as it is generated.                                                                   │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ Select ▼  built-in           Support not verified for this model. blank = provider default · How much extended thinking the …  │                    │
-                              │ Thinking budget   │            built-in           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…▅ │                    │◂ Inspect
-   New conversation           │  ▶ Sampling · hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity (this         │                    │
-  Chats                       │  provider does not accept them)                                                                                                                    │                    │
-   Chat 1                     │  ▼ Connection · api.anthropic.com · key missing · change it in Settings ▸ Providers & Models                                                       │                    │
-                              │  Configure credential…                                                                                                                             │                    │
- ─────────────────────────────│                                                                                                                                                    │                    │
- Character · No chats         │ ▼ more — scroll for the rest                                                                                                                       │                    │
- ─────────────────────────────│                                                                                                        Used by future conversations for Anthropic. │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ default ▼  provider           Support not verified for this model. blank = provider default · How much extended thinking the…  │                    │
+                              │ Thinking budget   │            provider           Support not verified for this model. blank = provider default · Tokens reserved for thinking w…  │                    │◂ Inspect
+   New conversation           │  ▶ Sampling · Anthropic does not accept 7 fields (open to list them)                                                                             ▃ │                    │
+  Chats                       │  ▼ Connection · api.anthropic.com · key missing · change it in Settings ▸ Providers & Models                                                       │                    │
+   Chat 1                     │  Configure credential…                                                                                                                             │                    │
+                              │                                                                                                                                                    │                    │
+ ─────────────────────────────│ No non-billable live connection check is available for this provider.                                                                              │                    │
+ Character · No chats         │ Not ready · no key                                                                                                                                 │                    │
+ ─────────────────────────────│ ▼ more — scroll for the rest                                                                                                                       │                    │
  Model                        │                                                                                                   Add or verify the Anthropic API key to continue. │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                          Esc close Matches saved defaults  Save as model default  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

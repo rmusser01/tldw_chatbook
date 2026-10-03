@@ -10,26 +10,26 @@
  ─────────────────────────────────  │                                                                                                                                                                   │
  Workspaces                    ▸    │                                                                                                                                                                   │
  ─────────────────────────────╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                    │
- Conversations                │  Conversation settings                                                                                                                             │                    │
+ Conversations                │  Chat settings · Chat 1                                                                                                                            │                    │
         Archive this chat     │                                                                                                                                                    │                    │
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
-        Search all chats…     │ Use: this conversation only. Defaults: future provider conversations.                                                                              │                    │
+        Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
    Chat 1                     │ Model             claude-sonnet-4-5 · Anthropic                                     this chat  Ready · not tested · ~200k context   Change Alt+M   │                    │
                               │ Temperature       █ 0.7        Console Behavior   How varied replies are: lower is focused, higher is more varied.                                 │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max tokens        │ 2048       Console Behavior   Longest reply the model may write, in tokens.                                                    │                    │
   ▊  Filter visible     ▎     │ Streaming         │ Off ▼  provider           Show the reply as it is generated.                                                                   │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ Select ▼  built-in           Support not verified for this model. blank = provider default · How much extended thinking the m… │                    │
-                              │ Thinking budget   │            built-in           Support not verified for this model. blank = provider default · Tokens reserved for thinking wh… │                    │◂ Inspect
-   New conversation           │  ▶ Sampling · hidden for Anthropic: Min P, Seed, Presence penalty, Frequency penalty, Reasoning effort, Reasoning summary, Verbosity (this         │                    │
-  Chats                       │  provider does not accept them)                                                                                                                    │                    │
-   Chat 1                     │  ▶ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
-                              │  ▶ Request estimate · 0 / 200,000 tokens (estimated; model unverified)                                                                             │                    │
- ─────────────────────────────│  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thinking          │ default ▼  provider           Support not verified for this model. blank = provider default · How much extended thinking the … │                    │
+                              │ Thinking budget   │            provider           Support not verified for this model. blank = provider default · Tokens reserved for thinking wh… │                    │◂ Inspect
+   New conversation           │  ▶ Sampling · Anthropic does not accept 7 fields (open to list them)                                                                               │                    │
+  Chats                       │  ▶ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
+   Chat 1                     │  ▶ Request estimate · 0 / 200,000 tokens (estimated; model unverified)                                                                             │                    │
+                              │  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
+ ─────────────────────────────│                                                                                                                                                    │                    │
  Character · No chats         │                                                                                                                                                    │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+ Model                        │                                                                                                                                                    │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                                            Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

@@ -14,22 +14,22 @@
         Archive this chat     │                                                                                                                                                    │                    │
           Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
         Search all chats…     │ Applies to this chat only · saved with the conversation · defaults live in Settings ▸ Providers & Models (F4)                                      │                    │
-   Chat 1                     │ Top K             │ 50         Console Behavior   Sample only from the K most likely tokens.                                                       │                    │
-                              │  ▼ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
-  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│                                                                                                                                                    │                    │
-  ▊  Filter visible     ▎     │ No non-billable live connection check is available for this provider.                                                                              │                    │
-  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Ready · not tested                                                                                                                                 │                    │
-                              │ A send attempt is permitted with these settings.                                                                                                 ▆ │                    │◂ Inspect
-   New conversation           │ Credential · Present — not verified (environment variable)                                                                                         │                    │
-  Chats                       │ Endpoint · Not tested                                                                                                                              │                    │
-   Chat 1                     │ Model · Selected — not verified at this endpoint                                                                                                   │                    │
-                              │ Generation · Not tested                                                                                                                            │                    │
- ─────────────────────────────│ Generation test unavailable for this provider.                                                                                                     │                    │
- Character · No chats         │  ▶ Request estimate · 0 / 200,000 tokens (estimated; model unverified)                                                                             │                    │
- ─────────────────────────────│  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
- Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+   Chat 1                     │ Top P             │ 0.95       Console Behavior   Sample only from the likeliest tokens whose chances add up to P.                                 │                    │
+                              │ Top K             │ 50         Console Behavior   Sample only from the K most likely tokens.                                                       │                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│  ▼ Connection · api.anthropic.com · key from env ANTHROPIC_API_KEY · change it in Settings ▸ Providers & Models                                    │                    │
+  ▊  Filter visible     ▎     │                                                                                                                                                    │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ No non-billable live connection check is available for this provider.                                                                              │                    │
+                              │ Ready · not tested                                                                                                                                 │                    │◂ Inspect
+   New conversation           │ A send attempt is permitted with these settings.                                                                                                   │                    │
+  Chats                       │ Credential · Present — not verified (environment variable)                                                                                         │                    │
+   Chat 1                     │ Endpoint · Not tested                                                                                                                              │                    │
+                              │ Model · Selected — not verified at this endpoint                                                                                                   │                    │
+ ─────────────────────────────│ Generation · Not tested                                                                                                                            │                    │
+ Character · No chats         │ Generation test unavailable for this provider.                                                                                                     │                    │
+ ─────────────────────────────│  ▶ Request estimate · 0 / 200,000 tokens (estimated; model unverified)                                                                             │                    │
+ Model                        │  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                          Esc close Matches saved defaults  Save as model default  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
+ Agent                        │                                                 Esc close Matches saved defaults  Default for new chats (Ctrl+N)  Apply to this chat (Ctrl+Enter)  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

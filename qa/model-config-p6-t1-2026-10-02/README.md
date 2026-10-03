@@ -19,3 +19,11 @@ Chat settings (Ctrl+O) after TASK-33006.1, captured at 211x44 and 235x52 from th
 5. `05-model-view-open-235x52`: Esc, `d` (discard), Ctrl+O again at 235x52.
 6. `06-not-ready-opens-connection-211x44`: profile B, Ctrl+O. The chat is Not ready (no key), so Connection opens by itself and "Configure credential…" has focus (bold on the focus fill in the `.ansi.txt`); Sampling stays closed. The OpenAI choice rows still carry the "Support not verified" note that TASK-33006.2 folds into the help line.
 7. `07-not-ready-opens-connection-235x52`: the same at 235x52.
+
+These captures show the modal as TASK-33006.1 left it. Later Phase 6 tasks changed parts of it:
+
+- TASK-33006.4 removed Connection's provider and model pickers.
+- TASK-33006.5 renamed the header and the footer actions.
+- In the final fix wave, a blank choice Select (a dropdown) shows "default" instead of "Select", and a blank row whose value no layer holds reads "provider" instead of "built-in".
+
+The current layout is in the retaken captures of `qa/model-config-p6-t2-2026-10-02/` through `qa/model-config-p6-t7-2026-10-03/`.

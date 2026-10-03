@@ -20,12 +20,13 @@
   ▊  Filter visible titles   ▎           │                                                                                                                                                                                      │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎           │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
+   New conversation                      │                                                                                                                                                                                      │
   Chats                             ▾    │                                                                                                                                                                                      │
    Chat 2                          💬    │                                                                                                                                                                                      │
-   Chat 1                          💬    │                                                                                                                                                                                      │
-                                         │                                                                                                                                                                                      │◂ Inspect
- ──────────────────────────────────────  │                                                                                                                                                                                      │
- Character · No chats               ▸    │                                                                                   No messages yet.                                                                                   │
+   Chat 1                          💬    │                                                                                                                                                                                      │◂ Inspect
+                                         │                                                                                                                                                                                      │
+ ──────────────────────────────────────  │                                                                                   No messages yet.                                                                                   │
+ Character · No chats               ▸    │                                                                                                                                                                                      │
  ──────────────────────────────────────  │                                                                                                                                                                                      │
  Model                              ▸    │                                                                                                                                                                                      │
  ──────────────────────────────────────  │                                                                                                                                                                                      │
@@ -43,10 +44,9 @@
                                          │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
                                          │                                                                                                                                                                                      │
-                                         │                                                                                                                                                                                      │
 ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-4-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current $0.00 · On next send —
 
-█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                                            Send disabled: type a message       Send         Dictate
+█  Composer ▾  Menu   Ask, command, or paste task...                                                                                                            Send disabled: type a message       Send         Dictate
 
   Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P palette | Y trace | Ctrl+Q

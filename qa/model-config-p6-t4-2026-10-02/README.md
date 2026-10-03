@@ -1,10 +1,17 @@
-# TASK-33006.4 Change the model through pick mode captures (re-taken 2026-10-03, review round 1)
+# TASK-33006.4 Change the model through pick mode captures
 
-Chat settings (Ctrl+O) after TASK-33006.4 and its first review round, captured from the real app in this worktree at 211x44 and 235x52. `.txt` is `tmux capture-pane -p`; `.ansi.txt` is the same moment with `-e` colour escapes, where focus shows as bold underlined text on the focus fill.
+Chat settings (Ctrl+O), captured from the real app in this worktree at 211x44 and 235x52. `.txt` is `tmux capture-pane -p`; `.ansi.txt` is the same moment with `-e` colour escapes, where focus shows as bold underlined text on the focus fill.
 
-All twelve captures were taken in one run on 2026-10-03 at the review-round-1 tree. They replace the 2026-10-02 set, whose MODEL row predates the round's layout fix.
+The captures come from two runs:
+
+- **01-07** were retaken on 2026-10-03 in the Phase 6 final fix wave, at commit 5ef85f878d (`git status -- tldw_chatbook` clean). The owner ruling of 2026-10-02 makes the closed Sampling title one row; the earlier 01 and 03 showed it wrapping to two.
+- **08-12** are the TASK-33006.4 review-round-1 run (2026-10-03, at that round's tree). The `/endpoint` flow they show is unchanged by the final fix wave.
 
 ## Setup
+
+**01-07 (final fix wave).** Isolated tmux server `-L p6finalt4`, under `env -i`, with a scratch `HOME`/`XDG_*`/`TLDW_CONFIG_PATH`, the null keyring and `PYTHONPATH` set to this worktree. The scratch profile is `verify_p6final_t4`: `[chat_defaults]` Anthropic `claude-sonnet-4-5`, Temperature 0.7, Max tokens 2048, and a llama.cpp endpoint at `http://127.0.0.1:9199` with nothing listening. It sets the same first-run, onboarding, catalog and splash keys as below. A dummy `ANTHROPIC_API_KEY` was set and appears in no capture. Only keys reached the app. The real profile kept 15c6cb224a6a51c7 / db7e7faf5bff92d2 before and after, and the scratch home was deleted. The driver is not committed.
+
+**08-12 (review round 1):**
 
 - **Isolation.** The app ran in an isolated tmux server (`-L p6t4fix1cap7a65db2`) under `env -i`. `HOME`, `XDG_*` and `TLDW_CONFIG_PATH` pointed into a scratch directory, the keyring backend was the null one, and `PYTHONPATH` was this worktree, so the main checkout's code was not used.
 - **Scratch profile.** The profile (users_name `verify_p6t4fix1_7a65db2`) set:
@@ -24,17 +31,16 @@ All twelve captures were taken in one run on 2026-10-03 at the review-round-1 tr
 
 ## Captures
 
-1. **`01-model-row-211x44`** (Ctrl+O). The MODEL row reads "claude-sonnet-4-5 · Anthropic", then "this chat", then "Ready · not tested · ~200k context" and **Change Alt+M**.
+1. **`01-model-row-211x44`** (Ctrl+O). The MODEL row reads "claude-sonnet-4-5 · Anthropic", then "this chat", "Ready · not tested · ~200k context" and **Change Alt+M**.
    - The pair takes the row's free width.
    - The Source word, the readiness words and Change sit together on the right.
+   - The closed Sampling title is one row: "Sampling · Anthropic does not accept 7 fields (open to list them)".
 2. **`02-change-opens-pick-mode-211x44`** (Shift+Tab from Temperature to Change, then Enter). Switch model opens over Chat settings in pick mode: "Enter picks · Esc cancel", with no value row and no default actions. The chat's pair is marked ● CURRENT.
-3. **`03-esc-returns-to-change-211x44`** (Esc). Chat settings is back unchanged, and focus is on Change.
-4. **`04-alt-m-from-temperature-find-opus-211x44`** (Tab to Temperature, Alt+M, type `opus-5`). Pick mode opened from inside a text field, and Temperature still reads 0.7.
-5. **`05-picked-pair-edited-211x44`** (Enter). The draft is on "claude-opus-5 · Anthropic" with the Source word "edited *", and nothing was applied: the footer reads "Esc close (asks: 3 unsaved)".
-6. **`06-picked-pair-edited-235x52`**. The same draft after resizing to 235x52; the frame stays 150x22.
-7. **`07-esc-asks-naming-model-235x52`** (Esc). The unsaved prompt names the pair as one field, "Model".
-   - It also names Min P and Streaming, which the rebase onto the new model changed.
-   - `d` then discarded the draft.
+3. **`03-esc-returns-to-change-211x44`** (Esc). Chat settings is back unchanged, with focus on Change (`.ansi.txt`).
+4. **`04-alt-m-from-temperature-find-opus-211x44`** (Tab to Temperature, Alt+M, type `opus-5`). Pick mode opened from inside a text field. Temperature still reads 0.7.
+5. **`05-picked-pair-edited-211x44`** (Enter). The draft is on "claude-opus-5 · Anthropic" with the Source word "edited *". Nothing was applied: the title reads "3 unsaved edits", and the footer reads "Esc close (asks: 3 unsaved)". The picked pair's defaults are staged, so the footer reads **Matches saved defaults**, and no Save as model default is offered. The closed Sampling title counts the 8 fields claude-opus-5 does not accept.
+6. **`06-picked-pair-edited-235x52`**. The same draft after a resize to 235x52. The frame stays 150x22.
+7. **`07-esc-asks-naming-model-235x52`** (Esc). The unsaved prompt names the pair as one field, "Model". It also names Min P and Streaming, which the rebase onto the new model changed (TASK-33006.16). `d` then discarded the draft.
 8. **`08-endpoint-command-template-over-chat-settings-211x44`** (resize to 211x44, type `/endpoint`, Enter twice). The first Enter accepts the completion and the second runs it. "New endpoint from template" opens over the Chat settings this command opened.
 9. **`09-endpoint-template-blank-models-211x44`**. The form after these steps:
    - Home, Enter, Up and Enter, which reached the focused Display name field and changed nothing;
@@ -49,4 +55,4 @@ All twelve captures were taken in one run on 2026-10-03 at the review-round-1 tr
     - Then come "edited *", "Ready · reachable 01:17 · ~32k context" and **Change Alt+M**.
 12. **`12-long-id-shortened-in-the-middle-235x52`**. The same draft at 235x52. Esc and `d` then discarded it, and Ctrl+Q quit.
 
-The header still reads "Conversation settings" and the footer keeps its old labels: TASK-33006.5 renames them. The closed Sampling title still wraps to two rows for Anthropic; that is the open owner ruling recorded under TASK-33006.1/.2, not this task's.
+In 08-12 (round 1) the header still reads "Conversation settings" and the footer keeps its old labels, which TASK-33006.5 renamed later. Where their Sampling title shows, it is the Lab box line ("Sampling · hidden for Lab box: Reasoning summary, Verbosity, Thinking, Thinking budget (this provider does not accept them)"): the named form, on one row.
