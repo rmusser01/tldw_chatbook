@@ -2755,7 +2755,11 @@ class ConsoleSettingsModal(
 
     def _show_settings_view(self, view: str) -> None:
         """Switch between the two stable in-modal destinations."""
-        self._active_view = "context" if view == "context" else "model"
+        if (view := "context" if view == "context" else "model") != self._active_view:
+            # Both views scroll one body: a switch opens the new view at its
+            # top, not at the other view's offset (TASK-33006.7).
+            self.query_one("#console-settings-body").scroll_home(animate=False, immediate=True)
+        self._active_view = view
         recovery_active = (
             self._default_durability_state.recovery_intent is not None
             and self._default_durability_state.failure_phase is not None
@@ -3293,16 +3297,11 @@ class ConsoleSettingsModal(
         self.set_class(compact, "-conversation-settings-compact")
         self.call_after_refresh(self._sync_fold_hint)
 
-    @on(Button.Pressed, "#console-settings-view-model")
-    def _show_model_view(self, event: Button.Pressed) -> None:
+    @on(Button.Pressed, "#console-settings-view-model, #console-settings-view-context")
+    def _switch_settings_view(self, event: Button.Pressed) -> None:
         event.stop()
-        self._show_settings_view("model")
-
-    @on(Button.Pressed, "#console-settings-view-context")
-    def _show_context_view(self, event: Button.Pressed) -> None:
-        event.stop()
-        self._show_settings_view("context")
-        self.query_one("#console-context-budget-mode", Select).focus()
+        self._show_settings_view(str(event.button.id).rpartition("-")[2])
+        self.call_after_refresh(self._focus_highest_priority_connection)
 
     @on(Button.Pressed, f"#{MODEL_CHANGE_ID}")
     def _change_pressed(self, event: Button.Pressed) -> None:
