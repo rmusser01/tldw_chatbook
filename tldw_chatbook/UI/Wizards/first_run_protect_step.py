@@ -25,6 +25,7 @@ from textual.widgets import (
 
 from tldw_chatbook.UI.Wizards import first_run_setup_state as wizard_state
 from tldw_chatbook.UI.Wizards.first_run_setup_widgets import SetupStep
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker
 
 
 class ProtectKeysStep(SetupStep):
@@ -124,12 +125,11 @@ class ProtectKeysStep(SetupStep):
         # group avoids that; the actual serialization guarantee against
         # concurrent config writes is enable_config_encryption's own config
         # RLock, not the worker group name.
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._apply_password_worker(password),
             exclusive=True,
             group="setup-protect-encrypt",
-            # TASK-32892: a raise in this worker must not exit the app.
-            exit_on_error=False,
         )
 
     async def _apply_password_worker(self, password: str) -> None:

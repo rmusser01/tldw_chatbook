@@ -9971,7 +9971,9 @@ async def test_protect_keys_failure_leaves_step_skippable_with_inline_error():
         assert ok2, error  # the step itself never blocks Next
 
 
-def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
+def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance(
+    monkeypatch,
+):
     """Parked Task-5 finding (deviation from the task-10 brief's pseudocode):
     "setup-wizard-advance" is the CONTAINER's own advance/finalize worker
     group. Reusing it here for the password-apply worker would let a slow
@@ -9994,11 +9996,15 @@ def test_protect_keys_password_worker_uses_dedicated_group_not_wizard_advance():
     )
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is step
         coro.close()
         calls.append(kwargs)
 
-    step.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.first_run_protect_step as protect_module
+
+    monkeypatch.setattr(protect_module, "run_wizard_worker", _fake_run_wizard_worker)
     step._on_password_result("hunter2-long-password")
     assert calls, "expected a worker to be scheduled for the password result"
     assert calls[0]["group"] == "setup-protect-encrypt"
@@ -10673,7 +10679,7 @@ async def test_down_space_selects_provider_with_no_tab_presses():
         assert provider_step.selected_provider_key != ""
 
 
-def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
+def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance(monkeypatch):
     """F-B fix pin: _handle_complete() runs synchronously from inside
     complete_wizard(), itself called synchronously from _advance() -- the
     body of the CURRENTLY-RUNNING "setup-wizard-advance" worker whenever the
@@ -10689,11 +10695,15 @@ def test_finalize_worker_uses_a_dedicated_group_not_wizard_advance():
     real_container = SetupWizardContainer(app_instance)
     calls = []
 
-    def _fake_run_worker(coro, **kwargs):
+    def _fake_run_wizard_worker(node, coro, **kwargs):
+        # TASK-34100.1: the group is chosen at the run_wizard_worker call.
+        assert node is real_container
         coro.close()  # never actually scheduled; avoid a "never awaited" warning
         calls.append(kwargs)
 
-    real_container.run_worker = _fake_run_worker
+    import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+    monkeypatch.setattr(wizard_module, "run_wizard_worker", _fake_run_wizard_worker)
     real_container._handle_complete({"summary": {"exit_route": None}})
     assert calls, "expected _handle_complete to schedule the finalize worker"
     assert calls[0]["group"] == "setup-wizard-finalize"
@@ -12561,12 +12571,18 @@ class TestComposeCrashPolicy:
             monkeypatch.setattr(app, "post_message", capture_posted_message)
             recovery_tasks = []
 
-            def independently_run_worker(coroutine, **_kwargs):
+            def independently_run_worker(node, coroutine, **_kwargs):
+                assert node is container
                 task = asyncio.create_task(coroutine)
                 recovery_tasks.append(task)
                 return task
 
-            monkeypatch.setattr(container, "run_worker", independently_run_worker)
+            # TASK-34100.1: recovery work starts through run_wizard_worker.
+            import tldw_chatbook.UI.Wizards.FirstRunSetupWizard as wizard_module
+
+            monkeypatch.setattr(
+                wizard_module, "run_wizard_worker", independently_run_worker
+            )
 
             wizard.query_one(action_selector, Button).press()
             await asyncio.wait_for(started.wait(), timeout=2)

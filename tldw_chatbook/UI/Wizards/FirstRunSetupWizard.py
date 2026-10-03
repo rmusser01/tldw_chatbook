@@ -23,7 +23,7 @@ from typing import (
 )
 
 from loguru import logger
-from textual import on, work
+from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Vertical
@@ -62,6 +62,7 @@ from tldw_chatbook.UI.Wizards.first_run_protect_step import ProtectKeysStep
 from tldw_chatbook.UI.Wizards.first_run_provider_step import ProviderStep
 from tldw_chatbook.UI.Wizards.first_run_rag_step import RagStep
 from tldw_chatbook.UI.Wizards.first_run_speech_step import SpeechSetupStep
+from tldw_chatbook.UI.Wizards.first_run_step_guard import run_wizard_worker, wizard_work
 from tldw_chatbook.UI.Wizards.first_run_summary_step import SummaryStep
 from tldw_chatbook.UI.Wizards.first_run_tools_step import ToolsStep
 from tldw_chatbook.UI.Wizards.first_run_welcome_step import WelcomeStep
@@ -154,7 +155,7 @@ class SetupWizardProgress(WizardProgress):
             return
         self.items = items
         self._sync_compatibility_state()
-        if self.is_mounted:
+        if self.is_attached:
             self._sync_compact_mode()
             self.refresh(recompose=True)
             self.call_after_refresh(self._sync_compact_mode)
@@ -466,7 +467,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         )
         self.wizard_data.pop(wizard_state.STEP_MODEL, None)
         if (
-            owner.is_mounted
+            owner.is_attached
             and current_key is not None
             and (
                 owner._selected_discovery_key != current_key
@@ -481,7 +482,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if model_index is None:
             return
         model_step = self.steps[model_index]
-        if isinstance(model_step, ModelStep) and model_step.is_mounted:
+        if isinstance(model_step, ModelStep) and model_step.is_attached:
             model_step.invalidate_discovery_bound_selection()
 
     def clear_provider_setup_sensitive_state(
@@ -679,7 +680,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         changed_draft: wizard_state.FirstRunProviderDraft | None = None
         committed_validation: tuple[object, int] | None = None
         async with self._provider_commit_lock:
-            if isinstance(owner, ProviderStep) and owner.is_mounted:
+            if isinstance(owner, ProviderStep) and owner.is_attached:
                 owner._sync_live_credential_revision()
                 current_draft = owner._effective_provider_draft()
                 current_key = owner._model_discovery_key(current_draft)
@@ -829,7 +830,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             self._committed_provider_model = ""
             self._committed_provider_expected_state = None
 
-        if isinstance(owner, ProviderStep) and owner.is_mounted:
+        if isinstance(owner, ProviderStep) and owner.is_attached:
             current_draft = owner._effective_provider_draft()
             if current_draft is not None:
                 self._refresh_changed_provider_identity(owner, current_draft)
@@ -868,7 +869,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                     or self._staged_provider_draft is not provider_draft
                 ):
                     return False
-                if isinstance(owner, ProviderStep) and owner.is_mounted:
+                if isinstance(owner, ProviderStep) and owner.is_attached:
                     owner._sync_live_credential_revision()
                     current_draft = owner._effective_provider_draft()
                     current_key = owner._model_discovery_key(current_draft)
@@ -935,7 +936,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 if (
                     getattr(result, "conflict_reason", None) == "identity_changed"
                     and isinstance(owner, ProviderStep)
-                    and owner.is_mounted
+                    and owner.is_attached
                 ):
                     self._provider_commit_write_started = False
                     write_started = False
@@ -1128,7 +1129,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if (
             current.config is None
             or current.config.id != draft.active_step_id
-            or not current.is_mounted
+            or not current.is_attached
         ):
             return
         screen = self.screen
@@ -1642,7 +1643,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if action is None:
             return
         try:
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 self._retry_failed_step(action),
                 exclusive=True,
                 group="setup-step-recovery",
@@ -1657,7 +1659,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if action is None:
             return
         try:
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 self._use_manual_setup(action),
                 exclusive=True,
                 group="setup-step-recovery",
@@ -1672,7 +1675,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         if action is None:
             return
         try:
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 self._finish_later_from_failure(action),
                 exclusive=True,
                 group="setup-step-recovery",
@@ -1702,8 +1706,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             step is None
             or step.config is None
             or step.compose_failure is None
-            or not self.is_mounted
-            or not step.is_mounted
+            or not self.is_attached
+            or not step.is_attached
         ):
             return None
         try:
@@ -1749,11 +1753,11 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             self._failure_action_running
             and self._failure_action is action
             and not self._finalized
-            and self.is_mounted
-            and action.screen.is_mounted
+            and self.is_attached
+            and action.screen.is_attached
             and same_screen
             and same_step
-            and (not require_step_mounted or action.step.is_mounted)
+            and (not require_step_mounted or action.step.is_attached)
         )
 
     def _retry_replacement_is_current(
@@ -1766,14 +1770,14 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 self._failure_action_running
                 and self._failure_action is action
                 and not self._finalized
-                and self.is_mounted
-                and action.screen.is_mounted
+                and self.is_attached
+                and action.screen.is_attached
                 and self.screen is action.screen
                 and action.screen.app.screen is action.screen
                 and action.screen.query_one(SetupWizardContainer) is self
                 and self.current_step == action.index
                 and self.steps[action.index] is replacement
-                and replacement.is_mounted
+                and replacement.is_attached
                 and replacement.config is not None
                 and replacement.config.id == action.step_id
             )
@@ -1791,15 +1795,15 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         try:
             current = self.steps[self.current_step]
             same_screen = (
-                self.is_mounted
-                and action.screen.is_mounted
+                self.is_attached
+                and action.screen.is_attached
                 and self.screen is action.screen
                 and action.screen.app.screen is action.screen
                 and action.screen.query_one(SetupWizardContainer) is self
             )
         except Exception:
             return
-        if same_screen and current.is_mounted:
+        if same_screen and current.is_attached:
             self._sync_action_controls()
 
     def _sync_action_controls(self) -> None:
@@ -1959,8 +1963,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             same_screen = (
                 self._failure_action is action
                 and not self._finalized
-                and self.is_mounted
-                and action.screen.is_mounted
+                and self.is_attached
+                and action.screen.is_attached
                 and self.screen is action.screen
                 and action.screen.app.screen is action.screen
                 and action.screen.query_one(SetupWizardContainer) is self
@@ -2050,7 +2054,9 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                     self._push_advance_confirmation(prompt)
                     return
         self._set_advancing(True)
-        self.run_worker(self._advance(), exclusive=True, group="setup-wizard-advance")
+        run_wizard_worker(
+            self, self._advance(), exclusive=True, group="setup-wizard-advance"
+        )
 
     def _push_advance_confirmation(self, prompt: str) -> None:
         """Ask before committing a step that reports itself broken."""
@@ -2154,8 +2160,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             else:
                 self.show_step(next_index)
         except Exception as error:  # TASK-33621.14: Next must not exit the app.
-            if not step_guard.contain_advance_error(self, error, started_at):
-                raise
+            step_guard.report_advance_error(self, error, started_at)
         finally:
             self._set_advancing(False)
 
@@ -2226,7 +2231,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     def open_provider_settings(self) -> None:
         """Checkpoint the wizard before routing to provider settings."""
 
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._open_provider_settings(),
             exclusive=True,
             group="setup-wizard-review-settings",
@@ -2247,7 +2253,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     # -- explicit whole-wizard skip ---------------------------------------
     @on(Button.Pressed, "#setup-skip-entirely")
     def handle_skip_entirely(self) -> None:
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._skip_entirely(), exclusive=True, group="setup-wizard-advance"
         )
 
@@ -2551,7 +2558,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         # _on_password_result already reasons about avoiding (see its
         # comment) by using a dedicated group; do the same here rather than
         # relying on a scheduling accident.
-        self.run_worker(
+        run_wizard_worker(
+            self,
             self._finalize(exit_route, offer_profile_interview),
             exclusive=True,
             group="setup-wizard-finalize",
@@ -2681,7 +2689,8 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                 announce=True,
             )
             self._sync_action_controls()
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 self._settle_provider_write_then_dismiss(task, result),
                 exclusive=True,
                 group="setup-wizard-provider-dismiss",
@@ -2734,7 +2743,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
     ) -> None:
         """Publish bounded save state only while this container is mounted."""
 
-        if self._provider_ui_detached or not self.is_mounted:
+        if self._provider_ui_detached or not self.is_attached:
             return
         try:
             status = self.query_one("#setup-provider-save-status", _ProviderSaveStatus)
@@ -2752,7 +2761,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
 
         if not self._provider_dismiss_pending:
             return False
-        if self._provider_ui_detached or not self.is_mounted:
+        if self._provider_ui_detached or not self.is_attached:
             return True
         try:
             status = self.query_one("#setup-provider-save-status", _ProviderSaveStatus)
@@ -2773,7 +2782,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         owner = getattr(self, "_first_run_provider_discovery_owner", None)
         if isinstance(owner, ProviderStep):
             owner.prepare_retry_after_failed_save()
-        if not self.is_mounted:
+        if not self.is_attached:
             return
         provider_index = self._step_index_for_id(wizard_state.STEP_PROVIDER)
         if provider_index is not None:
@@ -2784,7 +2793,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
             announce=True,
         )
         self._sync_action_controls()
-        if isinstance(owner, ProviderStep) and owner.is_mounted:
+        if isinstance(owner, ProviderStep) and owner.is_attached:
             try:
                 owner.query_one("#setup-provider-endpoint", Input).focus()
             except NoMatches:
@@ -2969,7 +2978,7 @@ class FirstRunSetupWizard(WizardScreen):
         # PRETENDS to hide shifts every geometry below it.
         hint.display = small
 
-    @work(thread=True, group="setup-wizard-started-flag")
+    @wizard_work(thread=True, group="setup-wizard-started-flag")
     def _persist_started_flag(self) -> None:
         from tldw_chatbook.config import save_settings_to_cli_config
 
@@ -3047,13 +3056,15 @@ class FirstRunSetupWizard(WizardScreen):
                     container = self.query_one(SetupWizardContainer)
                 except NoMatches:
                     return
-                container.run_worker(
+                run_wizard_worker(
+                    container,
                     container._skip_entirely(),
                     exclusive=True,
                     group="setup-wizard-advance",
                 )
                 return
-            self.run_worker(
+            run_wizard_worker(
+                self,
                 self._finish_later(),
                 exclusive=True,
                 group="setup-wizard-finish-later",
@@ -3100,12 +3111,13 @@ class FirstRunSetupWizard(WizardScreen):
             or current is not target
             or current.config is None
             or current.config.id != target_step_id
-            or not current.is_mounted
+            or not current.is_attached
             or not current.display
             or not current.visible
         ):
             return
-        self.run_worker(
+        run_wizard_worker(
+            self,
             container.clear_resume_attempt(target_step_id),
             exclusive=True,
             group="setup-wizard-resume-clear",
