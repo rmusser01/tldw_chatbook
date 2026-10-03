@@ -1,0 +1,44 @@
+         ╭──────────────╮
+ ⌃1 Home │ ⌃2 Console   │ ⌃3 Library  ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Research  F7 Meetings
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Console — Chat, source handoffs, live runs, and control actions.                                                                                       Speak replies   ▌   Hands-free   ▌     Ready · not tested
+   New tab     Settings     ⚓      Context rail     Search Library     Help
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+                                    │ Conversation | Chat 1                                                                                                                                             │
+                         Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
+   Terminal                         │                                                                                                                                                                   │
+ ─────────────────────────────────  │                                                                                                                                                                   │
+ Workspaces                    ▸    │                                                                                                                                                                   │
+ ─────────────────────────────╭────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮                    │
+ Conversations                │  Conversation settings                                                                                                                             │                    │
+        Archive this chat     │                                                                                                                                                    │                    │
+          Archived chats      │  Model and generation · Selected  Context and memory                                                                                               │                    │
+        Search all chats…     │ Use: this conversation only. Defaults: future provider conversations.                                                                              │                    │
+   Chat 1                     │                        ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎                                                                            │                    │
+                              │ Saved fallback                                                                                                                                     │                    │
+  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│                           Custom model                                                                                                             │                    │
+  ▊  Filter visible     ▎     │ No non-billable live connection check is available for this provider.                                                                              │                    │
+  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Ready · not tested                                                                                                                                 │                    │
+                              │ A send attempt is permitted with these settings.                                                                                                   │                    │◂ Inspect
+   New conversation           │ Credential · Present — not verified (environment variable)                                                                                         │                    │
+  Chats                       │ Endpoint · Not tested                                                                                                                            ▆ │                    │
+   Chat 1                     │ Model · Selected — not verified at this endpoint                                                                                                   │                    │
+                              │ Generation · Not tested                                                                                                                            │                    │
+ ─────────────────────────────│ Generation test unavailable for this provider.                                                                                                     │                    │
+ Character · No chats         │  ▶ Request estimate · 0 / 200,000 tokens (estimated; model unverified)                                                                             │                    │
+ ─────────────────────────────│  ▶ Your name in this chat · User (global default)                                                                                                  │                    │
+ Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
+ ─────────────────────────────│                                                                                                                                                    │                    │
+ Agent                        │                                            Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation  │                    │
+ ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
+ Details                       ▸    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+                                    │                                                                                                                                                                   │
+───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Status ▾   Library · Auto off · Agent blocked     Provider: Anthropic     Model: claude-sonnet-4-5     System Prompt: off     Assistant: General     Sources: 0     Approvals: 0 pending     Context 0% · Current
+
+█  Composer ▾  Menu  ▌Ask, command, or paste task...                                                                                    Send disabled: type a message       Send         Dictate
+
+  Ctrl+Shift+F focus | F6 next pane | F1 help | Alt+M switch model | Ctrl+O chat settings | Ctrl+K switch session | Ctrl+T new tab | Alt+I inspect | Alt+A approval | Alt+C context rail | Ctrl+P · Ctrl+Q

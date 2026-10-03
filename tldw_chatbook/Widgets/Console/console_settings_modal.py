@@ -164,7 +164,8 @@ from .console_provider_picker import ConsoleProviderPicker, ConsoleProviderPicke
 # edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
-    CONNECTION_DISCLOSURE_ID, CONNECTION_FOCUS_IDS, CORE_FIELDS, SAMPLING_DISCLOSURE_ID,
+    CONNECTION_DISCLOSURE_ID, CONNECTION_FOCUS_IDS, CONNECTION_TITLE, CORE_FIELDS,
+    ENDPOINT_ROW_ID, REQUEST_ESTIMATE_DISCLOSURE_ID, SAMPLING_DISCLOSURE_ID,
     SAMPLING_FIELDS, SAMPLING_FOCUS_IDS, SAMPLING_TITLE, ConsoleSettingsFieldRowsMixin,
     connection_blocked,
 )
@@ -188,7 +189,7 @@ ENDPOINT_NEW_BUTTON_LABEL = "New endpoint…"
 ENDPOINT_NEW_BUTTON_WIDTH = 17
 BASE_URL_ENTRY_HINT_ID = "console-settings-base-url-entry-hint"
 BASE_URL_ENTRY_HINT_COPY = (
-    "Managed by this endpoint entry — rename or edit it in F9 Settings › "
+    "Managed by this endpoint entry — rename or edit it in F4 Settings › "
     "Providers & Models."
 )
 #: H6: provider-list sentinel row that opens endpoint creation instead of
@@ -1681,7 +1682,7 @@ class ConsoleSettingsModal(
                     for name in SAMPLING_FIELDS:
                         yield self._field_row(name)
                 with Collapsible(
-                    title="Connection",
+                    title=CONNECTION_TITLE,
                     collapsed=not (
                         self._connection_details_disclosed
                         or self._focus_model
@@ -1717,16 +1718,26 @@ class ConsoleSettingsModal(
                             "Configure credential…",
                             id="console-settings-configure-credential",
                             tooltip=(
-                                "Open F9 Settings > Providers & Models to configure "
-                                "this provider's credentials"
+                                "Configure this provider's credentials in "
+                                "F4 Settings > Providers & Models"
                             ),
                         )
                         credential_action.display = (
                             self._missing_credential_recovery_available(readiness)
                         )
                         yield credential_action
-                        with Horizontal(classes="console-settings-modal-row"):
-                            yield self._modal_label(MODEL_FIELD_LABELS["endpoint"])
+                        # TASK-33006.3 AC#2: no Endpoint label without its input.
+                        new_endpoint_shown = self._endpoint_new_button_visible(
+                            self._settings.provider
+                        )
+                        endpoint_row = Horizontal(
+                            id=ENDPOINT_ROW_ID, classes="console-settings-modal-row"
+                        )
+                        endpoint_row.display = uses_base_url or new_endpoint_shown
+                        with endpoint_row:
+                            label = self._modal_label(MODEL_FIELD_LABELS["endpoint"])
+                            label.display = uses_base_url
+                            yield label
                             base_url_input = ConsoleSettingsInput(
                                 value=base_url or "",
                                 id="console-settings-base-url",
@@ -1748,9 +1759,7 @@ class ConsoleSettingsModal(
                             new_endpoint.add_class("w-17")
                             new_endpoint.styles.min_width = ENDPOINT_NEW_BUTTON_WIDTH
                             new_endpoint.styles.max_width = ENDPOINT_NEW_BUTTON_WIDTH
-                            new_endpoint.display = self._endpoint_new_button_visible(
-                                self._settings.provider
-                            )
+                            new_endpoint.display = new_endpoint_shown
                             yield new_endpoint
                         # H1: a registry entry's URL is display-only, so the
                         # row explains where to actually change it instead of
@@ -1925,57 +1934,8 @@ class ConsoleSettingsModal(
                         generation_status.display = False
                         yield generation_status
 
-                with Collapsible(
-                    title="Request estimate",
-                    collapsed=True,
-                    id="console-settings-request-estimate",
-                    classes="console-settings-model-view",
-                ):
-                    yield Static(
-                        f"Current         {self._context_label()}",
-                        id="console-settings-context-current",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Sources         {self._sources_label()}",
-                        id="console-settings-context-sources",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        "Estimate only; no truncation changes in this version. "
-                        "Open Context and memory to manage the conversation budget.",
-                        id="console-settings-context-note",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                with Collapsible(
-                    title="Your name in this chat",
-                    collapsed=True,
-                    id="console-settings-identity-advanced",
-                    classes="console-settings-model-view",
-                ):
-                    with Horizontal(classes="console-settings-modal-row"):
-                        yield self._modal_label("Your name in this chat")
-                        yield ConsoleSettingsInput(
-                            value=self._user_display_name_override or "",
-                            id="console-settings-user-display-name",
-                            classes="console-settings-control",
-                        )
-                    yield Static(
-                        "Leave blank to use the global default: "
-                        f"{self._global_user_display_name}.",
-                        id="console-settings-user-display-name-help",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
-                    yield Static(
-                        f"Current         {self._identity_current_label()}",
-                        id="console-settings-identity-current",
-                        classes="console-settings-modal-row",
-                        markup=False,
-                    )
+                yield self._request_estimate_disclosure()
+                yield self._name_disclosure()
 
                 context_view = Vertical(
                     id="console-settings-context-view",
@@ -4479,6 +4439,7 @@ class ConsoleSettingsModal(
         except (NoMatches, QueryError):
             return
         new_endpoint.display = self._endpoint_new_button_visible(provider)
+        self._sync_endpoint_row()
 
     def _endpoint_new_button_visible(self, provider: str) -> bool:
         """Return whether endpoint creation applies to the current provider.
@@ -6363,6 +6324,7 @@ class ConsoleSettingsModal(
             self._readiness_copy(readiness)
         )
         self._sync_model_row(readiness)
+        self._sync_connection_summary(readiness)
         try:
             self.query_one(
                 "#console-settings-configure-credential", Button
@@ -6464,6 +6426,8 @@ class ConsoleSettingsModal(
         }
         for control_id, text in updates.items():
             self.query_one(f"#{control_id}", Static).update(text)
+        disclosure = self.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible)
+        disclosure.title = self._request_estimate_title()
 
     def _readiness_for_current_draft(
         self,
@@ -6904,6 +6868,7 @@ class ConsoleSettingsModal(
             base_url_input.value = base_url or ""
         base_url_input.disabled = not uses_base_url or entry is not None
         base_url_input.display = uses_base_url
+        self._sync_endpoint_row()
         try:
             entry_hint = self.query_one(f"#{BASE_URL_ENTRY_HINT_ID}", Static)
         except (NoMatches, QueryError):

@@ -9,7 +9,9 @@ own. A blank field says what a blank sends instead of showing a placeholder.
 
 The view opens core-first: the MODEL row, then Temperature, Max tokens,
 Streaming and the reasoning or thinking controls, then the Sampling,
-Connection, Request estimate and name disclosures. Focus opens on Temperature,
+Connection, Request estimate and name disclosures. Closed, each is one row
+whose title carries its value (TASK-33006.3); Connection names the endpoint
+host and where the key comes from, never the key. Focus opens on Temperature,
 or on the recovery action while a connection blocker stands; a restored focus
 target wins over both (``_restore_suspended_scroll_and_focus``), and a missing
 or unavailable one still falls back to Connection (TASK-30012).
@@ -22,6 +24,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 from typing import Any
+from urllib.parse import urlsplit
 
 from textual import events
 from textual.containers import Horizontal
@@ -30,18 +33,23 @@ from textual.css.query import NoMatches, QueryError
 from textual.widget import Widget
 from textual.widgets import Collapsible, Input, Select, Static
 
+from tldw_chatbook.Chat.console_provider_endpoints import effective_provider_endpoint
 from tldw_chatbook.Chat.console_provider_support import (
     MODEL_CONFIG_FIELDS,
     MODEL_FIELD_LABELS,
     console_generation_control_support,
     supported_generation_fields,
 )
+from tldw_chatbook.Chat.console_roleplay_identity import (
+    ChatDisplayNameError,
+    normalize_chat_display_name,
+)
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
     resolve_console_value_layers,
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
-from tldw_chatbook.Chat.provider_readiness import provider_config_key
+from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
 
 from .console_settings_summary import build_console_readiness_presentation
 
@@ -69,6 +77,22 @@ SAMPLING_FIELDS = (
 FIELD_ROW_FIELDS = CORE_FIELDS + SAMPLING_FIELDS
 SAMPLING_DISCLOSURE_ID = "console-settings-sampling"
 CONNECTION_DISCLOSURE_ID = "console-settings-connection-disclosure"
+REQUEST_ESTIMATE_DISCLOSURE_ID = "console-settings-request-estimate"
+NAME_DISCLOSURE_ID = "console-settings-identity-advanced"
+#: The Endpoint row: label, Base URL input and New endpoint….
+ENDPOINT_ROW_ID = "console-settings-endpoint-row"
+CONNECTION_TITLE = "Connection"
+REQUEST_ESTIMATE_TITLE = "Request estimate"
+NAME_TITLE = "Your name in this chat"
+#: Ends the Connection summary (spec §7 mock (b)): credentials and provider
+#: defaults live in Settings, and Console only surfaces recovery (ADR-012).
+SETTINGS_POINTER = "change it in Settings ▸ Providers & Models"
+#: Cells for the Connection summary in the 150-column frame: 150 - 2 border
+#: - 2 padding - 2 title padding - 2 symbol - 1 scrollbar. A longer summary
+#: shortens the host, so the closed disclosure stays one row (AC#6).
+CONNECTION_SUMMARY_CELLS = 141
+#: The host part for an endpoint that cannot be parsed (a half-typed URL).
+INVALID_ENDPOINT_HOST = "invalid endpoint"
 MODEL_ROW_LABEL = "Model"
 #: Streaming at chat scope is a plain On/Off choice (ADR-095:75-81); the
 #: Source word, not a third option, says when it is inherited.
@@ -154,6 +178,78 @@ def connection_blocked(readiness: Any) -> bool:
         True unless the draft is ready or only waits for an active run.
     """
     return readiness.recovery_action not in _TUNING_RECOVERY_ACTIONS
+
+
+def endpoint_host(url: str | None) -> str:
+    """Return the host (and an explicit port) of an endpoint, never its userinfo.
+
+    Args:
+        url: An endpoint URL, with or without a scheme.
+
+    Returns:
+        For example ``"api.anthropic.com"`` or ``"127.0.0.1:9099"``; ``""``
+        when there is no endpoint or it has no host, and
+        ``INVALID_ENDPOINT_HOST`` when it cannot be parsed.
+    """
+    if not url or not url.strip():
+        return ""
+    url = url.strip()
+    try:
+        parts = urlsplit(url if "//" in url else f"//{url}")
+    except ValueError:  # e.g. "http://[host" while it is being typed
+        return INVALID_ENDPOINT_HOST
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    host = parts.hostname or ""
+    if ":" in host:  # IPv6: bracketed, so the port stays unambiguous.
+        host = f"[{host}]"
+    return f"{host}:{port}" if host and port else host
+
+
+def key_source_phrase(readiness: Any, env_var: str | None) -> str:
+    """Say where the draft's key comes from, never the key itself.
+
+    Args:
+        readiness: The draft's ``ConsoleSettingsReadiness``.
+        env_var: The variable an environment key is read from.
+
+    Returns:
+        ``key from env <VAR>``, ``key saved``, ``key missing``,
+        ``no key needed``, ``Claude subscription``, or ``key not checked``
+        while another blocker hides the credential.
+    """
+    if readiness.subscription_status is not None:
+        return "Claude subscription"
+    if readiness.credential == "not_required":
+        return "no key needed"
+    if readiness.credential_source == "environment":
+        return f"key from env {env_var}" if env_var else "key from env"
+    if readiness.credential_source != "none":
+        return "key saved"
+    if readiness.configuration_issue in (None, "credential_missing"):
+        return "key missing"
+    return "key not checked"
+
+
+def connection_summary(host: str, key_phrase: str) -> str:
+    """Return the closed Connection title (spec §7 mock (b)).
+
+    Args:
+        host: The endpoint host, ``""`` when none is set.
+        key_phrase: Where the key comes from (``key_source_phrase``).
+
+    Returns:
+        ``"Connection · <host> · <key> · change it in Settings ▸ Providers &
+        Models"``, the host ending in ``…`` when the whole would pass
+        ``CONNECTION_SUMMARY_CELLS``.
+    """
+    parts = [CONNECTION_TITLE, host or "no endpoint set", key_phrase, SETTINGS_POINTER]
+    overflow = len(" · ".join(parts)) - CONNECTION_SUMMARY_CELLS
+    if overflow > 0 and host:
+        parts[1] = host[: max(len(host) - overflow - 1, 0)] + "…"
+    return " · ".join(parts)
 
 
 def _show(widget: Static, text: str) -> None:
@@ -260,6 +356,144 @@ class ConsoleSettingsFieldRowsMixin:
             summary,
             f"{model} · {provider_display_name(self._active_provider)} · {word}",
         )
+
+    def _sync_connection_summary(self, readiness: Any) -> None:
+        """Title Connection with its host, key source and where to change it.
+
+        Args:
+            readiness: The draft's ``ConsoleSettingsReadiness``.
+        """
+        provider = self._active_provider
+        key = self._discovery_provider_key(provider)
+        endpoint = self._discovery_endpoint_value(provider) or effective_provider_endpoint(
+            key, None, self._provider_settings(key)
+        )
+        env_var = None
+        if readiness.credential_source == "environment":
+            entry = self._custom_endpoint_entry_for(provider)
+            env_var = (entry.api_key_env if entry is not None else None) or (
+                get_provider_readiness(
+                    provider, self._app_config, background_credentials=True
+                ).env_var
+            )
+        self.query_one(f"#{CONNECTION_DISCLOSURE_ID}", Collapsible).title = Content(
+            connection_summary(endpoint_host(endpoint), key_source_phrase(readiness, env_var))
+        )
+
+    def _request_estimate_title(self) -> Content:
+        """Return the Request estimate title, carrying the current estimate.
+
+        Returns:
+            For example ``"Request estimate · 10 / 4k tokens"``.
+        """
+        return Content(f"{REQUEST_ESTIMATE_TITLE} · {self._context_label()}")
+
+    def _request_estimate_disclosure(self) -> Collapsible:
+        """Build the closed Request estimate disclosure.
+
+        Returns:
+            The disclosure; ``_publish_context_window`` keeps its title current.
+        """
+        return Collapsible(
+            Static(
+                f"Current         {self._context_label()}",
+                id="console-settings-context-current",
+                classes="console-settings-modal-row",
+                markup=False,
+            ),
+            Static(
+                f"Sources         {self._sources_label()}",
+                id="console-settings-context-sources",
+                classes="console-settings-modal-row",
+                markup=False,
+            ),
+            Static(
+                "Estimate only; no truncation changes in this version. "
+                "Open Context and memory to manage the conversation budget.",
+                id="console-settings-context-note",
+                classes="console-settings-modal-row",
+                markup=False,
+            ),
+            title=self._request_estimate_title(),
+            collapsed=True,
+            id=REQUEST_ESTIMATE_DISCLOSURE_ID,
+            classes="console-settings-model-view",
+        )
+
+    def _name_title(self, raw: str) -> Content:
+        """Return the name disclosure's title, the name this chat uses.
+
+        Args:
+            raw: The name Input's text; blank inherits the global name.
+
+        Returns:
+            A literal title (the name is user text, never markup).
+        """
+        try:
+            name = normalize_chat_display_name(raw, blank_means_none=True)
+        except ChatDisplayNameError:
+            name = "not a valid name"
+        shown = name or f"{self._global_user_display_name} (global default)"
+        return Content(f"{NAME_TITLE} · {shown}")
+
+    def _name_disclosure(self) -> Collapsible:
+        """Build the closed 'Your name in this chat' disclosure.
+
+        Returns:
+            The disclosure; typing in its Input retitles it.
+        """
+        from .console_settings_modal import ConsoleSettingsInput
+
+        name = self._user_display_name_override or ""
+        return Collapsible(
+            Horizontal(
+                self._modal_label(NAME_TITLE),
+                ConsoleSettingsInput(
+                    value=name,
+                    id="console-settings-user-display-name",
+                    classes="console-settings-control",
+                ),
+                classes="console-settings-modal-row",
+            ),
+            Static(
+                "Leave blank to use the global default: "
+                f"{self._global_user_display_name}.",
+                id="console-settings-user-display-name-help",
+                classes="console-settings-modal-row",
+                markup=False,
+            ),
+            Static(
+                f"Current         {self._identity_current_label()}",
+                id="console-settings-identity-current",
+                classes="console-settings-modal-row",
+                markup=False,
+            ),
+            title=self._name_title(name),
+            collapsed=True,
+            id=NAME_DISCLOSURE_ID,
+            classes="console-settings-model-view",
+        )
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        """Retitle the name disclosure as the name is typed.
+
+        Args:
+            event: Any Input's change; only the name Input's is used.
+        """
+        if event.input.id == "console-settings-user-display-name":
+            self.query_one(f"#{NAME_DISCLOSURE_ID}", Collapsible).title = (
+                self._name_title(event.value)
+            )
+
+    def _sync_endpoint_row(self) -> None:
+        """Show the Endpoint label only beside its input (TASK-33006.3 AC#2).
+
+        A provider without a base URL hides the label, and the whole row when
+        New endpoint… is hidden too, so no label stands without an input.
+        """
+        label, base_url, new_endpoint = self.query_one(f"#{ENDPOINT_ROW_ID}").children
+        label.display = base_url.display
+        label.parent.display = base_url.display or new_endpoint.display
 
     def _streaming_select_value(self) -> str:
         """Return the Streaming Select value: the effective On or Off."""
