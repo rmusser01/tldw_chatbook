@@ -12,10 +12,12 @@ from __future__ import annotations
 import ast
 import importlib
 import os
+import runpy
 import shutil
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from types import SimpleNamespace
@@ -34,7 +36,19 @@ def _about(root: Path, refusal: str) -> bool:
 
 @pytest.fixture
 def fake_profile(tmp_path, monkeypatch):
-    """A stand-in for ``~/.config/tldw_cli`` that the guard protects instead."""
+    """Point the guard at a temporary stand-in for ``~/.config/tldw_cli``.
+
+    The stand-in holds ``existing.txt``, ``ui_state.toml`` and ``sub/``. At
+    teardown it drops the refusals about itself and fails the test on any
+    other refusal.
+
+    Args:
+        tmp_path: The test's temporary directory, which holds the stand-in.
+        monkeypatch: Restores the guard's real roots after the test.
+
+    Yields:
+        The stand-in profile root, the only path the guard protects meanwhile.
+    """
     root = tmp_path / "home" / ".config" / "tldw_cli"
     (root / "sub").mkdir(parents=True)
     (root / "existing.txt").write_text("keep")
@@ -220,14 +234,74 @@ def test_destroying_a_directory_that_holds_the_profile_is_refused(
     assert len(taken) == 1 and f"'{ancestor}'" in taken[0]
 
 
-def test_writes_through_a_symlink_into_the_profile_are_refused(fake_profile, tmp_path):
+@pytest.mark.parametrize(
+    "write",
+    [
+        pytest.param(
+            lambda link, tmp: (link / "ui_state.toml").write_text("x"), id="write"
+        ),
+        pytest.param(lambda link, tmp: os.mkdir(link / "new_dir"), id="mkdir-into"),
+        pytest.param(
+            lambda link, tmp: os.rename(tmp / "loose.txt", link / "loose.txt"),
+            id="rename-destination",
+        ),
+        pytest.param(
+            lambda link, tmp: shutil.rmtree(link / "sub"), id="rmtree-contents"
+        ),
+        pytest.param(
+            lambda link, tmp: os.remove(link / "existing.txt"), id="remove-inside"
+        ),
+    ],
+)
+def test_writes_through_a_symlink_into_the_profile_are_refused(
+    fake_profile, tmp_path, write
+):
     # M3: the abspath is outside the profile; only the realpath is inside.
     link = tmp_path / "innocent"
     link.symlink_to(fake_profile)
+    (tmp_path / "loose.txt").write_text("loose")
     with pytest.raises(guard.RealProfileWriteError):
-        (link / "ui_state.toml").write_text("x")
+        write(link, tmp_path)
     assert (fake_profile / "ui_state.toml").read_text() == OWNER_STATE
+    assert sorted(p.name for p in fake_profile.iterdir()) == [
+        "existing.txt",
+        "sub",
+        "ui_state.toml",
+    ]
     assert len(_take_about(fake_profile)) == 1
+
+
+def test_an_outside_symlink_into_the_profile_can_be_removed_or_renamed(
+    fake_profile, tmp_path
+):
+    """Unlink and rename act on the link entry, not on what it points to."""
+    file_link = tmp_path / "file_link"
+    file_link.symlink_to(fake_profile / "existing.txt")
+    dir_link = tmp_path / "dir_link"
+    dir_link.symlink_to(fake_profile)
+    os.rename(file_link, tmp_path / "renamed_link")
+    shutil.move(tmp_path / "renamed_link", tmp_path / "moved_link")
+    os.remove(tmp_path / "moved_link")
+    os.replace(dir_link, tmp_path / "dir_link_2")
+    os.unlink(tmp_path / "dir_link_2")
+    assert guard.take_violations() == []
+    assert (fake_profile / "existing.txt").read_text() == "keep"
+
+
+def test_removing_a_symlink_that_lives_inside_the_profile_is_refused(
+    fake_profile, tmp_path, monkeypatch
+):
+    target = tmp_path / "outside_target.txt"
+    target.write_text("t")
+    with monkeypatch.context() as unguarded:
+        unguarded.setattr(guard, "_roots", ())
+        (fake_profile / "inside_link").symlink_to(target)
+    with pytest.raises(guard.RealProfileWriteError):
+        os.remove(fake_profile / "inside_link")
+    with pytest.raises(guard.RealProfileWriteError):
+        os.rename(fake_profile / "inside_link", tmp_path / "taken")
+    assert (fake_profile / "inside_link").is_symlink()
+    assert len(_take_about(fake_profile)) == 2
 
 
 @pytest.mark.skipif(sys.platform != "darwin", reason="APFS is case-insensitive")
@@ -355,6 +429,60 @@ def _ui_conftest(monkeypatch):
     return importlib.import_module("Tests.UI.conftest")
 
 
+def _run_ui_bootstrap(monkeypatch, *, real_home, root, home, tempdir):
+    """Execute Tests/UI/conftest.py's module code as a run rooted there would."""
+    _sandbox_env(
+        monkeypatch,
+        (
+            "HOME",
+            "USERPROFILE",
+            "TLDW_CONFIG_PATH",
+            "TLDW_TEST_CONFIG_ROOT",
+            "TLDW_TEST_CONFIG_ROOT_OWNER",
+        ),
+    )
+    monkeypatch.delenv("PYTEST_XDIST_WORKER", raising=False)
+    monkeypatch.setenv(guard.REAL_HOME_ENV, str(real_home))
+    monkeypatch.setenv("TLDW_TEST_CONFIG_ROOT", str(root))
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(tempfile, "tempdir", str(tempdir))
+    return runpy.run_path(str(REPO_ROOT / "Tests" / "UI" / "conftest.py"))
+
+
+@pytest.mark.parametrize(
+    "case",
+    ["home-beside-the-root", "root-is-the-real-home", "root-holds-the-real-home"],
+)
+def test_the_ui_conftest_bootstrap_moves_home_into_a_sandbox_away_from_the_real_home(
+    monkeypatch, tmp_path, case
+):
+    real_home = tmp_path / "real_home"
+    sandbox = tmp_path / "sandbox"
+    fresh = tmp_path / "fresh"
+    for path in (real_home, sandbox, fresh):
+        path.mkdir()
+    root, home = {
+        # A prefix match took "sandbox_other" for a home inside "sandbox".
+        "home-beside-the-root": (sandbox, tmp_path / "sandbox_other"),
+        "root-is-the-real-home": (real_home, real_home),
+        "root-holds-the-real-home": (tmp_path, real_home),
+    }[case]
+    namespace = _run_ui_bootstrap(
+        monkeypatch, real_home=real_home, root=root, home=home, tempdir=fresh
+    )
+    used_root = Path(namespace["_BOOTSTRAP_CONFIG_ROOT"]).resolve()
+    if case == "home-beside-the-root":
+        assert used_root == sandbox
+    else:  # never the real home or a directory that holds it
+        assert fresh in used_root.parents
+        assert namespace["_OWNS_BOOTSTRAP_CONFIG_ROOT"] is True
+        assert os.environ["TLDW_TEST_CONFIG_ROOT"] == str(
+            namespace["_BOOTSTRAP_CONFIG_ROOT"]
+        )
+    assert Path(os.environ["HOME"]).resolve() == used_root / "home"
+    assert os.environ["USERPROFILE"] == os.environ["HOME"]
+
+
 def test_the_ui_conftest_session_end_keeps_tldw_config_path(monkeypatch, tmp_path):
     ui_conftest = _ui_conftest(monkeypatch)
     sandbox = tmp_path / "ui_sandbox"
@@ -384,14 +512,28 @@ def test_the_ui_conftest_session_end_fails_the_run_on_a_refusal(
     assert guard.take_violations() == []
 
 
-_CHILD_CONFTEST = """
+_CHILD_HOOKS = """
+import importlib
+import inspect
+
+# Register exactly the hooks {module} defines, as a run that loads it would.
+_conftest = importlib.import_module({module!r})
+globals().update(
+    {{
+        name: hook
+        for name, hook in vars(_conftest).items()
+        if name.startswith("pytest_") and inspect.isfunction(hook)
+    }}
+)
+"""
+
+_CHILD_WRITERS = """
 import atexit
 from pathlib import Path
 
 import pytest
 
 from Tests import real_profile_guard as guard
-from Tests.conftest import pytest_sessionfinish, pytest_testnodedown  # noqa: F401
 
 FAKE = Path({fake!r})
 guard._roots = guard._roots + (guard._norm(str(FAKE)),)
@@ -401,7 +543,7 @@ guard._roots = guard._roots + (guard._norm(str(FAKE)),)
 def late_session_writer():
     yield
     try:
-        (FAKE / "ui_state.toml").write_text("late")
+        (FAKE / "session_end.toml").write_text("late")
     except OSError:
         pass  # production writers log and move on
 
@@ -409,23 +551,47 @@ def late_session_writer():
 @atexit.register  # runs before the guard's own exit report (LIFO)
 def _after_the_session():
     try:
-        (FAKE / "ui_state.toml").write_text("after exit")
+        (FAKE / "after_exit.toml").write_text("after exit")
     except OSError:
         pass
 """
 
 
-def test_an_xdist_workers_session_end_refusal_fails_the_run(fake_profile, tmp_path):
+@pytest.mark.parametrize(
+    "layout",
+    [
+        pytest.param(("Tests.conftest",), id="root-conftest-only"),
+        pytest.param(("Tests.UI.conftest",), id="ui-rooted"),
+        pytest.param(("Tests.conftest", "Tests.UI.conftest"), id="both-conftests"),
+    ],
+)
+def test_an_xdist_workers_session_end_refusal_fails_the_run(
+    fake_profile, tmp_path, layout
+):
     """I1: a worker's own exit status and stdout are discarded by xdist.
 
-    The same run checks that a refusal after the session-end check is still
-    reported at exit.
+    ``child/conftest.py`` stands for Tests/conftest.py and
+    ``child/ui/conftest.py`` for Tests/UI/conftest.py; each registers the real
+    module's hooks when the layout loads it. "ui-rooted" is a run with
+    ``--confcutdir=Tests/UI``. The refusal must be reported exactly once,
+    and a refusal after the session-end check is still reported at exit.
     """
     child = tmp_path / "child"
-    child.mkdir()
+    (child / "ui").mkdir(parents=True)
     (child / "pytest.ini").write_text("[pytest]\n")
-    (child / "conftest.py").write_text(_CHILD_CONFTEST.format(fake=str(fake_profile)))
-    (child / "test_late.py").write_text("def test_ok(late_session_writer):\n    pass\n")
+    if "Tests.conftest" in layout:
+        (child / "conftest.py").write_text(_CHILD_HOOKS.format(module="Tests.conftest"))
+    ui_hooks = (
+        _CHILD_HOOKS.format(module="Tests.UI.conftest")
+        if "Tests.UI.conftest" in layout
+        else ""
+    )
+    (child / "ui" / "conftest.py").write_text(
+        ui_hooks + _CHILD_WRITERS.format(fake=str(fake_profile))
+    )
+    (child / "ui" / "test_late.py").write_text(
+        "def test_ok(late_session_writer):\n    pass\n"
+    )
     (tmp_path / "sandbox").mkdir()
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTEST_")}
     env.pop("TLDW_TEST_CONFIG_ROOT_OWNER", None)
@@ -433,8 +599,17 @@ def test_an_xdist_workers_session_end_refusal_fails_the_run(fake_profile, tmp_pa
     env["PYTHONPATH"] = os.pathsep.join(
         filter(None, (str(REPO_ROOT), os.environ.get("PYTHONPATH")))
     )
+    # The path argument makes ui/conftest.py an initial conftest, so the
+    # controller (which collects nothing) loads it, as `pytest Tests/UI/...` does.
+    # Its own --basetemp keeps it from running pytest's at-exit cleanup of the
+    # shared pytest-of-<user> directory, which other sessions fill.
+    pytest_args = [
+        *("-n", "2", "-p", "no:cacheprovider", "-q"),
+        f"--basetemp={tmp_path / 'basetemp'}",
+        "ui/test_late.py",
+    ]
     result = subprocess.run(
-        [sys.executable, "-m", "pytest", "-n", "2", "-p", "no:cacheprovider", "-q"],
+        [sys.executable, "-m", "pytest", *pytest_args],
         cwd=child,
         env=env,
         capture_output=True,
@@ -445,9 +620,15 @@ def test_an_xdist_workers_session_end_refusal_fails_the_run(fake_profile, tmp_pa
     output = result.stdout + result.stderr
     assert result.returncode == 1, output
     assert "1 passed" in output, output
-    assert "were refused:" in output and str(fake_profile) in output, output
+    assert "were refused:" in output, output
+    assert output.count("session_end.toml' in thread") == 1, output
     assert "refused after the session-end check" in output, output
-    assert (fake_profile / "ui_state.toml").read_text() == OWNER_STATE
+    assert "after_exit.toml' in thread" in output, output
+    assert sorted(p.name for p in fake_profile.iterdir()) == [
+        "existing.txt",
+        "sub",
+        "ui_state.toml",
+    ]
 
 
 @pytest.mark.bootstrap_profile

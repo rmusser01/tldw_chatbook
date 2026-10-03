@@ -15,7 +15,9 @@ events in ``_PATH_EVENTS`` (delete, rename, link, mkdir, rmtree, chmod and the
 other metadata writes) in this process. It refuses any whose path falls under
 the real user's ``~/.config/tldw_cli`` or ``~/.local/share/tldw_cli``, by
 abspath or by realpath, and any destructive tree operation on a directory that
-holds them (``shutil.rmtree(~/.config)``). Paths relative to a directory fd are
+holds them (``shutil.rmtree(~/.config)``). A remove, or a rename or move
+source, is checked as the entry itself (``_ENTRY_ARGS``), so an outside symlink
+into the profile can still be removed. Paths relative to a directory fd are
 resolved through the fd. The real home comes from ``TLDW_TEST_REAL_HOME``,
 which the first process to install the guard exports so xdist workers and
 pytest children inherit it, then from the password database, never from the
@@ -50,7 +52,12 @@ import sys
 import threading
 import traceback
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import unquote, urlparse
+
+if TYPE_CHECKING:
+    import pytest
+    from xdist.workermanage import WorkerController
 
 REAL_HOME_ENV = "TLDW_TEST_REAL_HOME"
 WORKEROUTPUT_KEY = "tldw_real_profile_refusals"
@@ -77,6 +84,12 @@ _PATH_EVENTS = {
     "shutil.copyfile": ((1, None, False),),
     "sqlite3.connect": ((0, None, False),),
 }
+# (event, path arg) pairs that act on the directory entry itself. A symlink
+# there is checked where it lives, not by what it points to, so removing or
+# renaming an outside link into the profile stays allowed.
+_ENTRY_ARGS = frozenset(
+    {("os.remove", 0), ("os.rmdir", 0), ("os.rename", 0), ("shutil.move", 0)}
+)
 _violations: list[str] = []
 _worker_violations: list[str] = []
 _lock = threading.Lock()
@@ -152,15 +165,22 @@ def _as_path(arg: object, dir_fd: object) -> str | None:
     return raw
 
 
-def _protected(arg: object, dir_fd: object = None, tree: bool = False) -> str | None:
+def _protected(
+    arg: object, dir_fd: object = None, tree: bool = False, follow: bool = True
+) -> str | None:
     raw = _as_path(arg, dir_fd)
     if raw is None:
         return None
     try:  # a deleted cwd or a NUL byte fails the call itself, not this hook
-        candidates = (os.path.abspath(raw), os.path.realpath(raw))
+        absolute = os.path.abspath(raw)
+        if follow:
+            resolved = os.path.realpath(raw)
+        else:  # the entry: resolve its directory, keep its own name
+            parent, name = os.path.split(absolute)
+            resolved = os.path.join(os.path.realpath(parent), name)
     except (OSError, ValueError):
         return None
-    for candidate in candidates:
+    for candidate in (absolute, resolved):
         text = _norm(candidate)
         for root in _roots:
             if text == root or text.startswith(root + os.sep):
@@ -201,7 +221,8 @@ def _hook(event: str, args: tuple) -> None:
         dir_fd = None
         if fd_position is not None and fd_position < len(args):
             dir_fd = args[fd_position]
-        path = _protected(args[position], dir_fd, tree)
+        follow = (event, position) not in _ENTRY_ARGS
+        path = _protected(args[position], dir_fd, tree, follow)
         if path is not None:
             _refuse(event, path)
 
@@ -242,7 +263,7 @@ def take_violations() -> list[str]:
     return taken
 
 
-def session_end_check(session) -> None:
+def session_end_check(session: pytest.Session) -> None:
     """Fail the run on any refusal that no test claimed.
 
     An xdist worker's exit status and stdout are discarded, so a worker hands
@@ -268,12 +289,16 @@ def session_end_check(session) -> None:
             session.exitstatus = 1
 
 
-def collect_worker_refusals(node) -> None:
+def collect_worker_refusals(node: WorkerController) -> None:
     """Keep the refusals an xdist worker reported at its session end.
+
+    Idempotent: the refusals are taken out of ``node.workeroutput``, so when
+    both the root and the UI conftest call this for one node, they count once.
 
     Args:
         node: The finished worker's controller node.
     """
-    refused = getattr(node, "workeroutput", None) or {}
+    workeroutput = getattr(node, "workeroutput", None) or {}
+    refused = workeroutput.pop(WORKEROUTPUT_KEY, ())
     with _lock:
-        _worker_violations.extend(refused.get(WORKEROUTPUT_KEY, ()))
+        _worker_violations.extend(refused)
