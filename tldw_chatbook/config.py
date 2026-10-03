@@ -9939,8 +9939,13 @@ def _commit_encryption_change_unlocked(
     return False
 
 
-def config_encryption_enabled_on_disk() -> bool:
-    """Whether the selected config file currently has encryption turned on."""
+def config_encryption_enabled_on_disk() -> Optional[bool]:
+    """Whether the selected config file currently has encryption turned on.
+
+    Returns:
+        True or False from the file, or None when it could not be read (the
+        caller keeps whatever state it already showed).
+    """
 
     try:
         config_path = get_cli_config_path()
@@ -9952,7 +9957,7 @@ def config_encryption_enabled_on_disk() -> bool:
             "Reading the config encryption state failed (error_type={}).",
             type(error).__name__,
         )
-        return False
+        return None
 
 
 def verify_config_encryption_password(password: str) -> bool:

@@ -626,6 +626,10 @@ def build_field_search_index() -> None:
                 for name, label in _labels.items()
             ),
             SettingsCategoryId.PRIVACY_SECURITY: (
+                # TASK-34100.4: the Encryption card's password-gated actions.
+                ("settings-encryption-enable", "Encrypt API keys"),
+                ("settings-encryption-change", "Change master password"),
+                ("settings-encryption-disable", "Turn off encryption"),
                 ("settings-raw-cli-permitted", "Allow raw CLI host access"),
             ),
             SettingsCategoryId.NETWORK: (
