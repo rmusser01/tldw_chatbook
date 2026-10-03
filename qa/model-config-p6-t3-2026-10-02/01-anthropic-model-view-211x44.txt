@@ -29,7 +29,7 @@
  ─────────────────────────────│                                                                                                                                                    │                    │
  Model                        │                                                                                                        Used by future conversations for Anthropic. │                    │
  ─────────────────────────────│                                                                                                                                                    │                    │
- Agent                        │                                            Esc close   Cancel    Save as provider defaults  Make default for new chats  Use for this conversation  │                    │
+ Agent                        │                                          Esc close   Cancel    Save as generation defaults  Make default for new chats  Use for this conversation  │                    │
  ─────────────────────────────╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯                    │
  Details                       ▸    │                                                                                                                                                                   │
                                     │                                                                                                                                                                   │

@@ -50,6 +50,7 @@ from tldw_chatbook.Chat.console_session_settings import (
 )
 from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness, provider_config_key
+from tldw_chatbook.provider_registry import RECORDS_BY_KEY
 
 from .console_settings_summary import build_console_readiness_presentation
 
@@ -365,8 +366,14 @@ class ConsoleSettingsFieldRowsMixin:
         """
         provider = self._active_provider
         key = self._discovery_provider_key(provider)
-        endpoint = self._discovery_endpoint_value(provider) or effective_provider_endpoint(
-            key, None, self._provider_settings(key)
+        # An engine preset's send falls back to its registry record's default
+        # URL (hosted_provider_engine._resolve_base_url), which the built-in
+        # endpoint table does not list, e.g. a blank api_base_url.
+        record = RECORDS_BY_KEY.get(key)
+        endpoint = (
+            self._discovery_endpoint_value(provider)
+            or effective_provider_endpoint(key, None, self._provider_settings(key))
+            or (record.default_base_url if record is not None else None)
         )
         env_var = None
         if readiness.credential_source == "environment":

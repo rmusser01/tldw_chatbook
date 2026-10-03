@@ -80,6 +80,13 @@ def _long_registry_entry(app: CoreFirstHarness, monkeypatch) -> None:
     monkeypatch.setenv(LONG_ENV, SECRET)
 
 
+def _together_blank_endpoint(app: CoreFirstHarness, monkeypatch) -> None:
+    # An engine preset whose endpoint setting is blank: the send falls back
+    # to the registry record's default URL, so the summary names that host.
+    app.app_config["api_settings"]["together"] = {"api_base_url": ""}
+    monkeypatch.setenv("TOGETHER_API_KEY", SECRET)
+
+
 #: (setup, chat, expected summary). The summary never names the key itself.
 _CONNECTION_CHATS = (
     pytest.param(
@@ -111,6 +118,12 @@ _CONNECTION_CHATS = (
         _settings("custom-ep:gpu-box", "model-a", temperature=0.7),
         f"Connection · 192.168.1.9:8080 · no key needed · {POINTER}",
         id="registry-entry",
+    ),
+    pytest.param(
+        _together_blank_endpoint,
+        _settings("together", "model-t", temperature=0.7),
+        f"Connection · api.together.xyz · key from env TOGETHER_API_KEY · {POINTER}",
+        id="engine-preset-default",
     ),
 )
 
