@@ -252,8 +252,11 @@ async def test_connection_summary_follows_a_typed_endpoint() -> None:
 async def test_every_closed_disclosure_measures_one_row(
     size, setup, settings, monkeypatch
 ) -> None:
-    """AC#6: under the production stylesheets each closed disclosure is one
-    row, a long custom host included (it is shortened, the rest stays)."""
+    """AC#6: under the production stylesheets each disclosure this task
+    folds (Connection, Request estimate, name) is one row closed, a long
+    custom host included (it is shortened, the rest stays). Sampling is not
+    in FOLDED: its title is TASK-33006.2's hidden-fields line, which wraps
+    for Anthropic (an open owner decision, see TASK-33006.1's notes)."""
     app = CoreFirstHarness()
     setup(app, monkeypatch)
     modal = _modal(app, settings)
