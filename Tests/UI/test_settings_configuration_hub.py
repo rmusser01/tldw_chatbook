@@ -7799,14 +7799,14 @@ async def test_settings_read_only_overview_hides_actions_and_clean_privacy_disab
             pilot,
             SettingsCategoryId.PRIVACY_SECURITY,
             expected_text=(
-                "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+                "Key encryption, Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secret values remain read-only and redacted."
             ),
         )
         assert screen.query_one("#settings-save-category", Button).disabled is True
         assert screen.query_one("#settings-revert-category", Button).disabled is True
         visible = _visible_text(screen)
         assert (
-            "Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secrets remain read-only and redacted."
+            "Key encryption, Canvas availability and create auto-open are editable; hard quotas, privacy posture, and secret values remain read-only and redacted."
             in visible
         )
         assert "Check Privacy" in visible
@@ -11518,8 +11518,10 @@ async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_w
     async with host.run_test(size=(180, 50)) as pilot:
         for button_id, expected, exposes_raw_cli_draft in (
             (
+                # TASK-34100.4: key encryption is now a password-gated card,
+                # so Privacy & Security no longer labels it "not available".
                 "#settings-category-privacy-security",
-                "Credential mutation: not available yet",
+                "Encrypt keys…",
                 True,
             ),
             (
@@ -11539,8 +11541,9 @@ async def test_settings_privacy_and_diagnostics_label_unsupported_mutations_as_w
 
             assert expected in text
             if exposes_raw_cli_draft:
-                # Privacy posture and credential mutation remain read-only, but
-                # the raw CLI unlock is an intentionally narrow editable draft.
+                # Privacy posture remains read-only; the raw CLI unlock is an
+                # intentionally narrow editable draft (key encryption acts
+                # through its own password-gated card, not the draft pair).
                 assert screen.query_one("#settings-save-category", Button).disabled
                 assert screen.query_one("#settings-revert-category", Button).disabled
             else:
@@ -11614,15 +11617,16 @@ async def test_settings_privacy_security_renders_guided_redacted_posture(monkeyp
         assert "Privacy posture" in text
         assert "Credential sources" in text
         assert "Data boundary" in text
-        assert "Config encryption: disabled" in text
+        # TASK-34100.4: the Encryption card owns the state line.
+        assert (
+            "Config encryption: Off — API keys are stored as plain text in config.toml."
+            in text
+        )
         assert "Sensitive config fields: 2 present" in text
         assert "Provider env vars: 1 of 2 referenced env vars are set (1 unset)" in text
         assert "Provider config secrets: 1 present" in text
         assert "Preferred source: environment variables" in text
-        assert (
-            "Credential mutation: not available yet - password-gated flow required"
-            in text
-        )
+        assert "Credential mutation" not in text
         assert "Open Providers & Models" in text
         assert "Open Advanced Config" in text
         assert "Environment variables are preferred for provider credentials." in text
