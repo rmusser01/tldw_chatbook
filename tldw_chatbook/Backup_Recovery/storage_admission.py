@@ -1178,6 +1178,13 @@ def _acquire_storage(
     if _forked_with_owners:
         raise bootstrap.RecoveryRequired("forked_owner_restart_required")
     root = bootstrap.default_bootstrap_root()
+    # NEGATIVE CONTROL (TASK-33643 AC#3) -- DO NOT MERGE: one extra directory
+    # walk per admission; the Linux os.open ceilings must catch it.
+    for _part in _chain(Path(root)):
+        try:
+            os.close(os.open(_part, os.O_RDONLY))
+        except OSError:
+            pass
     selector = effective_config_path()
     related_paths = tuple(lexical_path(selected) for selected in related_paths)
 
