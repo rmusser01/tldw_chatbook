@@ -136,6 +136,8 @@ _CONNECTION_CHATS = (
         ("http://user:hunter2@10.0.0.5:8080/v1", "10.0.0.5:8080"),
         ("http://[::1]:8080/v1", "[::1]:8080"),
         ("localhost:11434", "localhost:11434"),
+        # A "//" in a scheme-less path is not a scheme (Qodo #2992).
+        ("localhost:8080//v1", "localhost:8080"),
         ("http://box:notaport/v1", "box"),
         ("http://[not-a-valid-url", INVALID_ENDPOINT_HOST),
         (None, ""),

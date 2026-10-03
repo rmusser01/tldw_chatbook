@@ -314,7 +314,8 @@ def endpoint_host(url: str | None) -> str:
         return ""
     url = url.strip()
     try:
-        parts = urlsplit(url if "//" in url else f"//{url}")
+        # The endpoint parser's scheme test; a "//" in a path is not one.
+        parts = urlsplit(url if "://" in url else f"//{url}")
     except ValueError:  # e.g. "http://[host" while it is being typed
         return INVALID_ENDPOINT_HOST
     try:
