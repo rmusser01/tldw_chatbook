@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 03:03'
+updated_date: '2026-10-03 03:30'
 labels:
   - agents
   - console
@@ -104,6 +104,20 @@ Files: preserve eight non-overlap incoming files from dev2d34cbf80d1d7569abf0490
 - [ ] Reproduce the diagnostic inventory and CSS bundles; check fatal/added-line/new-file static plus affected diagnostic/worker/task artifacts. Request independent immutable source/quit/delegation/inventory/guard preservation review; reviewers write reports only, no source/Git/task changes. No new source repair is planned.
 - [ ] After functional/review/artifact activity settles, run the original five storage/import/UI-ready/boot-CSS cases unchanged. Record exact sources, limits/counts/warnings and inherited debt; recheck AC3 and Done through CLI only after qualification. Documentation-only closure must preserve the independent source manifest.
 - [ ] Publish once with EXACT observed637ebd161272e0ab903bee5ac587205b52d8d5fb lease, update concise PR body, verify refs/body/current-head Qodo and require all four fresh jobs. Merge normally with --match-head-commit only after live strict protection is met; verify MERGED parents/tree/concurrent changes and pause heartbeat.
+
+## Strict-base offline capture preservation — October 2
+
+Goal: retain the next actual strict-protection base acc45cdc2e7ec90157e478a0e4b499084830edf9 (PR2927/TASK33640) before the one exact637 lease publication. This follow-up occurs after all FOUR637 CI jobs passed; no CI for a newly published candidate is running. Roleplay source daf2bd is independently approved; its original editor-setup and bare-profile failures reproduce on exact incoming2d and remain NON-GREEN limits, with unchanged architecture/global-quit/artifact/static positive evidence.
+
+ADR required: no new ADR
+ADR path: existing ADR031/097/199 unchanged; incoming TASK33640 owns its shipped capture tooling.
+Reason: preserve incoming test/fixture/documentation files and deletion exactly, with no package/native/Performance change or new tool, runtime, provider, schema, permission or dependency decision.
+
+1. Capture the incoming37 surviving file hashes and one retired fixture-tool deletion against exactacc45; verify no direct patch or prior140 manifest overlap. Preserve all140 approved source hashes. Leave incoming TASK33640 In Progress/unchecked AC5 exactly as shipped; do not perform, certify or broaden live captures, no-key network probes or provider allowance changes.
+2. Add this prospective plan to existing TASK33664 via CLI before preserving rebase. Rebase onto exactacc45 only; preserve Roleplay/owned production, every Performance source, incoming tests/fixtures and original assertion/marker/config-admission behavior. No test readiness adapter or masking is authorized; automatic review rejected the proposed external adapter and it was not executed.
+3. Run incoming capture-tool loopback tests and offline parser/replay/no-auth-fixture/preset tests only. Their existing skipped cases remain skipped and disclosed; do not run capture.py, touch user keys or call live providers. Reproduce affected task/artifact/static checks, authenticate the union manifest and complete independent immutable source/evidence review with inherited Roleplay limits retained.
+4. After all root consumers/review/artifact activity settles, run the ORIGINAL five budget cases on the final candidate unchanged, with exact REPO_ROOT cwd/PYTHONPATH. Record count/ceiling warnings and all positive/NON-GREEN/skip limits. Close TASK33664 AC3 via CLI only after its original guards and independent review approve; documentation-only closure must preserve every final reviewed hash.
+5. Publish once with exact observed637ebd161272e0ab903bee5ac587205b52d8d5fb lease; verify remote head/base/body/Qodo and four fresh jobs. Do not rebase a newly published head while its jobs run. Normal protected --match-head-commit merge requires fresh-head Qodo/no actionable threads, all four jobs and actual strict up-to-date state; verify MERGED parents/tree/concurrent changes then pause heartbeat.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
