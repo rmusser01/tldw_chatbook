@@ -20,6 +20,7 @@ from Tests.UI.test_library_per_click_recompose_t21116 import (
 )
 from Tests.UI.test_library_shell import (
     LIBRARY_TEST_SIZE,
+    _disclose_media_viewer_more_actions,
     _wait_for_selector,
 )
 from tldw_chatbook.Library.library_shell_state import LIBRARY_ROW_BROWSE_MEDIA
@@ -30,6 +31,14 @@ from tldw_chatbook.Widgets.Library import LibraryMediaCanvas
 from tldw_chatbook.Widgets.Library.library_media_trash_canvas import (
     LibraryMediaTrashCanvas,
 )
+
+# task-31249: every test in this module mounts the real Library app through
+# LibraryHarness, whose service/config reads go through the config-participant
+# admission. Under the per-test sandbox redirect that admission fails closed
+# with ``RecoveryRequired("raw_source_selection_changed")`` (the TASK-32628
+# class; whole-module enrollment follows the TASK-32873 precedent -- the
+# suite is all real-app mounts, not a mostly-sandbox suite with a few).
+pytestmark = pytest.mark.bootstrap_profile
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +120,7 @@ async def test_late_media_detail_arrival_cannot_clobber_the_trash_view() -> None
 # ---------------------------------------------------------------------------
 
 
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> None:
     """Escaping a viewer sub-state re-registers the footer shortcuts.
@@ -126,7 +136,9 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
     async with host.run_test(size=LIBRARY_TEST_SIZE) as pilot:
         screen = await _boot_media_library(host, pilot)
         screen.query_one("#library-media-row-0", Button).press()
-        await _wait_for_selector(screen, pilot, "#library-media-edit")
+        # task-31249: "Edit metadata" composes only inside the viewer's
+        # collapsed "More" disclosure (d3c4b44a9b), so disclose it first.
+        await _disclose_media_viewer_more_actions(screen, pilot)
 
         plain_viewer_shortcuts = screen._footer_shortcut_registration
 
@@ -146,6 +158,21 @@ async def test_viewer_substate_escape_refreshes_the_footer_shortcut_set() -> Non
 
         assert screen._media_state.editing is False
         assert screen._media_state.view == "viewer"
+        # task-31249: entering metadata edit deliberately switches the
+        # Reader to its Info tab (``handle_library_media_edit`` ->
+        # ``set_mode(..., "info")``, d3c4b44a9b -- the edit form composes
+        # there), and Escape mirrors Cancel by dropping only the sub-state,
+        # so the post-Escape footer is the INFO-tab plain-viewer set, not
+        # the Read-tab set captured above. The subject is unchanged: the
+        # footer must have re-registered -- it must not keep the
+        # sub-state's set -- and switching back to Read must re-register
+        # exactly the set the plain Read viewer had.
+        assert screen._footer_shortcut_registration != substate_shortcuts, (
+            "footer kept the edit sub-state's shortcut set after Escape"
+        )
+        screen.query_one("#library-media-reader-select-read", Button).press()
+        for _ in range(10):
+            await pilot.pause(0.02)
         assert screen._footer_shortcut_registration == plain_viewer_shortcuts
 
 
