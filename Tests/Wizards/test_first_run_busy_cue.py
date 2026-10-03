@@ -249,6 +249,102 @@ async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_a_next_made_slow_by_the_step_change_still_shows_the_line(monkeypatch):
+    """Review round 2: the next step's mount must not hide the busy line.
+
+    The line comes from a 0.1 s timer on the UI loop. Once the checkpoint
+    settles near 400 ms, the next step's show runs synchronously and the
+    fence lifts straight after it, so the timer never got to reveal the
+    line. Live, under load: a 0.48 s fence and a 0.76-0.88 s wait, no cue.
+    """
+    import time
+
+    shown = _record_busy_lines(monkeypatch)
+    wizard = _wizard()
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        _slow_checkpoint(container, 0.33)
+        provider = container.steps[container._step_index_for_id(STEP_PROVIDER)]
+        real_on_show = provider.on_show
+
+        def slow_on_show() -> None:
+            time.sleep(0.3)  # a heavy mount: synchronous layout and CSS work
+            real_on_show()
+
+        provider.on_show = slow_on_show
+
+        await pilot.press("ctrl+n")
+        await _until_settled(pilot, container)
+        assert container.steps[container.current_step] is provider
+
+    assert [text for _elapsed, text in shown if text] == ["Preparing the Quick setup…"]
+
+
+@pytest.mark.asyncio
+async def test_finishing_setup_holds_the_fence_and_names_the_work(monkeypatch):
+    """Review round 2: Summary's exit buttons are a Next too.
+
+    Summary's advance only schedules the completion write in its own worker,
+    so the fence and the busy line used to lift before that write began: no
+    cue during it, and a second press started another write that cancelled
+    the first.
+    """
+    from tldw_chatbook.Constants import TAB_HOME
+
+    shown = _record_busy_lines(monkeypatch)
+    wizard = _wizard()
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        container.select_track(TRACK_QUICK)
+        container.show_step(container._step_index_for_id("summary"))
+        await pilot.pause(0.2)
+        finalized: list[object] = []
+        dismissed: list[object] = []
+        real_finalize = container._finalize
+        real_complete = container._complete_setup_locked
+
+        async def slow_completion_write() -> bool:
+            await asyncio.sleep(1.0)  # only the completion write is slow
+            return await real_complete()
+
+        def counting_finalize(*args, **kwargs):
+            finalized.append(args)
+            return real_finalize(*args, **kwargs)
+
+        container.commit_config = AsyncMock(return_value=True)
+        container._complete_setup_locked = slow_completion_write
+        container._finalize = counting_finalize
+        container._dismiss_screen = dismissed.append
+
+        wizard.query_one("#setup-exit-home", Button).press()
+        for _ in range(60):
+            if _busy_text(wizard):
+                break
+            await pilot.pause(0.05)
+        assert _busy_text(wizard) == "Finishing setup…"
+        assert container._advancing
+        assert wizard.query_one("#wizard-back", Button).disabled
+
+        wizard.query_one("#setup-exit-home", Button).press()  # a second press
+        for _ in range(60):
+            if dismissed and not container._advancing:
+                break
+            await pilot.pause(0.05)
+
+        assert len(finalized) == 1, "a second press started another completion"
+        assert dismissed == [{"completed": True, "exit_route": TAB_HOME}]
+        assert _busy_text(wizard) is None
+        assert not wizard.query_one("#wizard-back", Button).disabled
+    assert shown[-1][1] == ""
+
+
+@pytest.mark.asyncio
 async def test_each_step_names_its_own_work():
     from tldw_chatbook.UI.Wizards.first_run_busy_status import busy_label_for
 

@@ -32,11 +32,11 @@ setup** are disabled and drawn dimmed. A Next that is still working after
 about half a second also shows a line just above them that names the work:
 "Preparing the Full setup…" after Welcome, "Saving the OpenAI connection…"
 after Provider, "Saving the provider and model…" after Model, "Saving voice
-settings…" after Voice (that save can take up to 30 seconds), and "Saving
-*step* settings…" elsewhere. After two seconds the line also counts the
-seconds ("Saving voice settings… 4 s"). It goes away as soon as the next step
-opens or the step explains why it can't move on. A quick Next shows no line at
-all. When a step does refuse to move on (a missing API key, say), the keyboard
+settings…" after Voice (that save can take up to 30 seconds), "Finishing
+setup…" after a Summary button, and "Saving *step* settings…" elsewhere. After
+two seconds the line also counts the seconds ("Saving voice settings… 4 s").
+It goes away as soon as the next step opens, setup closes, or the step
+explains why it can't move on. A quick Next shows no line at all. When a step does refuse to move on (a missing API key, say), the keyboard
 stays where it was, on **Next →** if you pressed it, so once you have fixed
 the problem, Enter there (or Ctrl+N anywhere) tries again.
 The search for local servers that the Provider step starts runs in the

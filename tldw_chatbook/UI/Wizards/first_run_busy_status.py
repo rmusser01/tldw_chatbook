@@ -1,16 +1,14 @@
 """The first-run wizard's busy line: what a slow Next is doing (TASK-34100.1).
 
-Review finding cross-cutting-14 (2026-10-02) measured Nexts of 2.5-4 s,
-3-6 s when choosing the Full track, and up to 30 s while Voice waits for its
-save. The only feedback was nav buttons going disabled. The line shows only
-once a Next has run for about 400 ms, so the common sub-second Next does not
-flicker. It names the work ("Saving voice settings…"), and after 2 s it adds
-the elapsed seconds. It lives in the wizard chrome above the pinned error
-strip, and the container starts and stops it from ``_set_advancing``.
+Review finding cross-cutting-14 (2026-10-02): Nexts of 2.5-4 s, up to 30 s on
+Voice, had no cue but disabled buttons. The line shows once a Next has run for
+about 400 ms (no flicker on a quick one), names the work and adds the elapsed
+seconds after 2 s. The container runs it from ``_set_advancing``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any
 
@@ -26,11 +24,8 @@ _TICK_SECONDS = 0.1
 
 
 def busy_label_for(step: Any) -> str:
-    """Name the work a Next on ``step`` waits for.
-
-    A step can say what its own commit does by defining ``busy_label()``.
-    Otherwise, and whenever that raises or returns nothing, the step's title
-    is used.
+    """Name the work a Next on ``step`` waits for: its own ``busy_label()``
+    when that gives one, else the step's title.
 
     Args:
         step: The setup step being committed.
@@ -47,6 +42,8 @@ def busy_label_for(step: Any) -> str:
         if isinstance(label, str) and label.strip():
             return label
     config = getattr(step, "config", None)
+    if getattr(config, "id", "") == "summary":  # its exits finish setup
+        return "Finishing setup…"
     title = getattr(config, "title", "") or "this step's"
     return f"Saving {title} settings…"
 
@@ -63,11 +60,7 @@ class SetupBusyStatus(Static):
         self.display = False
 
     def start(self, label: str) -> None:
-        """Begin timing a Next; the line appears only if it runs long.
-
-        Args:
-            label: The work the Next waits for, from ``busy_label_for``.
-        """
+        """Time a Next doing ``label`` (from ``busy_label_for``)."""
         self.stop()
         self._label = label
         self._started_at = time.monotonic()
@@ -81,11 +74,19 @@ class SetupBusyStatus(Static):
         self._started_at = None
         self._show("")
 
-    def _tick(self) -> None:
+    async def reveal_before_step_change(self) -> None:
+        """Show a nearly due line and let it paint before the step change,
+        whose synchronous mount would starve the tick (review round 2)."""
+        if self._started_at is not None and not self._shown:
+            self._tick(early=_TICK_SECONDS)
+            if self._shown:  # the screen repaints on idle, a frame later
+                await asyncio.sleep(_TICK_SECONDS / 2)
+
+    def _tick(self, early: float = 0.0) -> None:
         if self._started_at is None:
             return
         elapsed = time.monotonic() - self._started_at
-        if elapsed < BUSY_REVEAL_SECONDS:
+        if elapsed < BUSY_REVEAL_SECONDS - early:
             return
         if elapsed < BUSY_ELAPSED_AFTER_SECONDS:
             self._show(self._label)
@@ -97,8 +98,7 @@ class SetupBusyStatus(Static):
             return
         self._shown = text
         self.update(text)
-        # Styles-level too: hosts without the app stylesheet have no
-        # ``.hidden`` rule, and a line that only pretends to hide would
-        # shift the nav bar.
+        # Styles-level too: a host without the app stylesheet has no
+        # ``.hidden`` rule, and a line only pretending to hide shifts the nav.
         self.set_class(not text, "hidden")
         self.display = bool(text)

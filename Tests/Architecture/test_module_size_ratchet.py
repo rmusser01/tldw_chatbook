@@ -154,9 +154,10 @@ _BUDGETS: dict[str, int] = {
     # to UI/Wizards/first_run_voice_step.py. TASK-34100.1: every other step
     # moved to its own module (9,866 -> 3,149), then the busy line and the
     # worker helper's call sites landed (3,183); review round 1 moved the
-    # fence's focus hold into first_run_step_guard.py (3,182). The wizard keeps
-    # the container, progress, nav bar, dialog and screen.
-    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3182,
+    # fence's focus hold into first_run_step_guard.py (3,182); round 2 held the
+    # fence through finishing (3,181). The wizard keeps the container, progress,
+    # nav bar, dialog and screen.
+    "tldw_chatbook/UI/Wizards/FirstRunSetupWizard.py": 3181,
     # TASK-34100.1: the modules the wizard's steps moved into, each born
     # governed at its exact size so the split cannot regrow one god module a
     # step at a time. Review round 1 added the two first-run modules that had

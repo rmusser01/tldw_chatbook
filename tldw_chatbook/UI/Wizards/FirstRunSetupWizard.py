@@ -391,6 +391,7 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         )
         self.skipped_step_reasons: dict[str, str] = {}
         self._advancing = False
+        self._finishing = False  # _finalize, not _advance, lifts the fence
         self._advance_confirmed = False
         self._failure_action_running = False
         self._failure_action: _SetupFailureAction | None = None
@@ -2178,12 +2179,15 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
                     return
             if next_index is None:
                 self.complete_wizard()
-            else:
+            else:  # review round 2: a nearly due busy line paints before the mount
+                for busy in self.query(SetupBusyStatus):
+                    await busy.reveal_before_step_change()
                 self.show_step(next_index)
         except Exception as error:  # TASK-33621.14: Next must not exit the app.
             step_guard.report_advance_error(self, error, started_at)
         finally:
-            self._set_advancing(False)
+            if not self._finishing:
+                self._set_advancing(False)
 
     @on(Button.Pressed, "#wizard-back")
     def handle_back(self, event: Button.Pressed) -> None:
@@ -2560,31 +2564,21 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         summary_data = wizard_data.get(wizard_state.STEP_SUMMARY, {})
         exit_route = summary_data.get("exit_route")
         offer_profile_interview = summary_data.get("offer_profile_interview") is True
-        # F-B fix: BaseWizard.complete_wizard() calls this callback
-        # SYNCHRONOUSLY (self.on_complete(self.wizard_data)), and it is
-        # itself invoked synchronously from _advance() -- which is the body
-        # of the currently-RUNNING "setup-wizard-advance" worker (Summary's
-        # own commit() has no real await, so nothing yields control back to
-        # the event loop between _advance() starting and reaching here).
-        # Scheduling _finalize into that SAME exclusive group from inside it
-        # asks Textual's WorkerManager.add_worker to cancel_group() the
-        # group it is currently executing -- i.e. cancel its own in-flight
-        # worker (confirmed via CPython's Task.__step_run_and_handle_result:
-        # a task whose coro returns normally while _must_cancel is set gets
-        # forced into the CANCELLED state anyway, "Task is cancelled right
-        # before coro stops"). A separately-created task happens to survive
-        # that regardless, which is why this was not visibly broken in
-        # testing -- but it is the same "worker schedules another worker
-        # into its own exclusive group" hazard ProtectKeysStep's
-        # _on_password_result already reasons about avoiding (see its
-        # comment) by using a dedicated group; do the same here rather than
-        # relying on a scheduling accident.
+        # F-B fix: complete_wizard() runs this synchronously inside _advance(),
+        # the running "setup-wizard-advance" worker. Scheduling _finalize into
+        # that same exclusive group would cancel_group() its own in-flight
+        # worker (CPython forces a task whose coro returns while _must_cancel
+        # is set into CANCELLED), so it gets a dedicated group, as
+        # ProtectKeysStep's _on_password_result does. TASK-34100.1 review
+        # round 2: the fence and busy line stay up until _finalize settles
+        # (the completion write), so a second press cannot start another.
         run_wizard_worker(
             self,
             self._finalize(exit_route, offer_profile_interview),
             exclusive=True,
             group="setup-wizard-finalize",
         )
+        self._finishing = True  # set once scheduled: a failed start lifts it
 
     async def _finalize(
         self,
@@ -2603,22 +2597,27 @@ class SetupWizardContainer(step_guard.WizardErrorGuard, WizardContainer):
         call would see it already True and skip the real dismiss on the
         very FIRST, intended run.
         """
-        if self._finalized:
-            return
-        async with self._draft_mutation_lock:
-            saved = await self._complete_setup_locked()
-        if not saved:
-            self._show_completion_save_error()
-            return
-        from tldw_chatbook.Constants import TAB_CHAT
+        try:
+            if self._finalized:
+                return
+            async with self._draft_mutation_lock:
+                saved = await self._complete_setup_locked()
+            if not saved:
+                self._show_completion_save_error()
+                return
+            from tldw_chatbook.Constants import TAB_CHAT
 
-        if exit_route == TAB_CHAT and not self._stage_console_first_chat_handoff():
-            self._show_first_chat_handoff_error()
-            return
-        result = {"completed": True, "exit_route": exit_route}
-        if offer_profile_interview:
-            result["offer_profile_interview"] = True
-        self._dismiss_screen(result)
+            if exit_route == TAB_CHAT and not self._stage_console_first_chat_handoff():
+                self._show_first_chat_handoff_error()
+                return
+            result = {"completed": True, "exit_route": exit_route}
+            if offer_profile_interview:
+                result["offer_profile_interview"] = True
+            self._dismiss_screen(result)
+        finally:
+            self._finishing = False
+            if not self._finalized and self.is_attached:  # setup stays open
+                self._set_advancing(False)
 
     def _stage_console_first_chat_handoff(self) -> bool:
         """Stage a revision-fenced, secret-free target after setup commits."""
