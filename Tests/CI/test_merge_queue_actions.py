@@ -8,6 +8,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "merge_queue.py"
 _spec = importlib.util.spec_from_file_location("merge_queue", SCRIPT)
@@ -18,6 +20,13 @@ _spec.loader.exec_module(mq)
 NOW = datetime(2026, 10, 3, 12, 0, tzinfo=timezone.utc)
 OLD = "a" * 40
 NEW = "b" * 40
+
+
+@pytest.fixture(autouse=True)
+def _no_real_run_id(monkeypatch):
+    """Isolate GITHUB_RUN_ID: these tests must not depend on (or be confused by) this
+    process's own CI run id. Tests that exercise self-exclusion set it explicitly."""
+    monkeypatch.delenv("GITHUB_RUN_ID", raising=False)
 
 
 def _node(number, *, head=OLD, armed="2026-10-03T10:00:00Z", state="BEHIND", repo=None, draft=False,
@@ -229,3 +238,84 @@ def test_gh_only_ever_calls_the_api_subcommand():
     gh.graphql("query { viewer { login } }", n=1)
     gh.rest("POST", "repos/x/y/issues/1/comments", {"body": "b"})
     assert seen and all(args[0] == "api" for args in seen)
+
+
+def test_live_required_run_without_check_waits():
+    """The required check is a needs-gated aggregate: it has NO check run while its lanes are
+    still running. A live derived-artifacts.yml run on the head must still read as 'in flight',
+    not as 'no run at all' (which would dispatch a duplicate on every tick)."""
+    runs = {OLD: [{"id": 77, "path": ".github/workflows/derived-artifacts.yml",
+                   "status": "in_progress", "html_url": "https://run/77"}]}
+    gh = FakeGh([_node(1, state="BLOCKED")], runs=runs)
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "wait"
+    assert gh.calls == []
+
+
+def test_live_retry_run_after_one_failure_waits():
+    runs = {OLD: [{"id": 78, "path": ".github/workflows/derived-artifacts.yml",
+                   "status": "in_progress", "html_url": "https://run/78"}]}
+    gh = FakeGh([_node(1, state="BLOCKED")], checks={OLD: [_check("failure")]}, runs=runs)
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "wait"
+    assert not any(c[0] == "dispatch" for c in gh.calls)
+
+
+def test_own_run_is_not_counted_as_live(monkeypatch):
+    monkeypatch.setenv("GITHUB_RUN_ID", "55")
+    runs = {OLD: [{"id": 55, "path": ".github/workflows/derived-artifacts.yml",
+                   "status": "in_progress", "html_url": "https://run/55"}]}
+    gh = FakeGh([_node(1, state="BLOCKED")], runs=runs)
+    decisions = _run(gh)
+    assert decisions[0][1].kind == "dispatch"
+
+
+def test_rebase_dispatches_before_cancelling_and_spares_the_queue(monkeypatch):
+    """queue-tick runs inside its own derived-artifacts run (id 11), and a merge-queue.yml run
+    (id 99) shares the old head too -- cancelling either would kill the run doing the cancelling.
+    Only the unrelated perf-guard run (id 12) is fair game."""
+    monkeypatch.setenv("GITHUB_RUN_ID", "11")
+    runs = {OLD: [
+        {"id": 99, "path": ".github/workflows/merge-queue.yml", "event": "pull_request", "status": "in_progress"},
+        {"id": 11, "path": ".github/workflows/derived-artifacts.yml", "event": "pull_request", "status": "in_progress"},
+        {"id": 12, "path": ".github/workflows/perf-guard.yml", "event": "pull_request", "status": "in_progress"},
+    ]}
+    gh = FakeGh([_node(1)], runs=runs)
+    _run(gh)
+    rebase_idx = next(i for i, c in enumerate(gh.calls) if c[0] == "rebase")
+    assert gh.calls[rebase_idx + 1] == ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"})
+    assert ("cancel", "99") not in gh.calls
+    assert ("cancel", "11") not in gh.calls
+    assert ("cancel", "12") in gh.calls
+
+
+def test_max_fronts_per_run_is_bounded():
+    nodes = [_node(i, state="DIRTY") for i in range(1, 13)]
+    gh = FakeGh(nodes)
+    decisions = _run(gh, "dry")
+    assert len(decisions) == mq.MAX_FRONTS_PER_RUN
+
+
+def test_still_unknown_after_rereads_waits():
+    sleeps = []
+    gh = FakeGh([_node(1, state="UNKNOWN")], reread={1: _node(1, state="UNKNOWN")})
+    decisions = mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: sleeps.append(s), log=lambda m: None)
+    assert decisions[0][1].kind == "wait"
+    assert sleeps == [mq.UNKNOWN_SLEEP_S] * mq.UNKNOWN_REREADS
+
+
+def test_rebase_failure_same_head_not_dirty_does_nothing():
+    gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, state="BEHIND")})
+    _run(gh)
+    assert [c[0] for c in gh.calls] == ["rebase"]
+
+
+def test_gh_argument_typing():
+    seen = []
+    gh = mq.Gh(runner=lambda args: (seen.append(args), "{}")[1])
+    gh.graphql("query { x }", number=5, id="X")
+    mq.dispatch(gh, "w.yml", "feat/1", 7)
+    graphql_args, dispatch_args = seen
+    assert graphql_args[graphql_args.index("-F") + 1] == "number=5"
+    assert "id=X" in graphql_args
+    assert "ref=feat/1" in dispatch_args and "inputs[pr]=7" in dispatch_args

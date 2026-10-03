@@ -251,6 +251,29 @@ def runs_on(gh: GhApi, sha: str, status: str | None = None) -> list[dict]:
     return (gh.rest("GET", path) or {}).get("workflow_runs", [])
 
 
+def _workflow_name(run: dict) -> str:
+    """The workflow file's basename, stripped of any `@ref` suffix the API may add."""
+    return str(run.get("path", "")).split("/")[-1].split("@")[0]
+
+
+def live_required_runs(gh: GhApi, sha: str) -> tuple[CheckRun, ...]:
+    """Live runs of the required workflow on this head, standing in for the check run its
+    needs-gated aggregate job does not report until the lanes finish (verified live: run
+    37156228421 showed `total_count: 0` for the required check while its lanes were still
+    running, so an in-flight front PR would otherwise look like it has no run at all and get
+    re-dispatched on every tick). Modeled by run STATUS only, never by conclusion -- the queue
+    must not read a workflow-run conclusion as a merge signal (spec section 6).
+    """
+    own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
+    return tuple(
+        CheckRun(run["status"], None, None, run.get("html_url", ""))
+        for run in runs_on(gh, sha)
+        if _workflow_name(run) == REQUIRED_WORKFLOW
+        and run.get("status") in LIVE_RUN_STATUSES
+        and run.get("id") != own_run_id
+    )
+
+
 def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]) -> None:
     try:
         fn()
@@ -280,7 +303,7 @@ def _workflows_to_redispatch(runs: list[dict]) -> list[str]:
     """Workflows (other than the required one and the queue) that ran on the old head."""
     names = set()
     for run in runs:
-        name = str(run.get("path", "")).split("/")[-1].split("@")[0]
+        name = _workflow_name(run)
         if not name or name in (REQUIRED_WORKFLOW, QUEUE_WORKFLOW):
             continue
         if run.get("event") not in ("pull_request", "workflow_dispatch"):
@@ -316,18 +339,27 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
         return
     new_head = result["data"]["updatePullRequestBranch"]["pullRequest"]["headRefOid"]
     old_runs = runs_on(gh, pr.head_sha)
-    for run in old_runs:
-        if run.get("status") in LIVE_RUN_STATUSES:
-            _best_effort(log, f"cancel run {run['id']}",
-                         lambda rid=run["id"]: gh.rest("POST", f"repos/{REPO}/actions/runs/{rid}/cancel"))
+    # Dispatch the required check *before* cancelling anything on the old head: queue-tick runs
+    # inside its own derived-artifacts run, and an auto_merge_enabled-triggered merge-queue.yml
+    # run shares this same head too. Cancelling first would kill the run executing this script
+    # (spec section 7).
     dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
+    own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
+    for run in old_runs:
+        if run.get("status") not in LIVE_RUN_STATUSES:
+            continue
+        if run.get("id") == own_run_id or _workflow_name(run) == QUEUE_WORKFLOW:
+            continue
+        _best_effort(log, f"cancel run {run['id']}",
+                     lambda rid=run["id"]: gh.rest("POST", f"repos/{REPO}/actions/runs/{rid}/cancel"))
     refused = []
     for workflow in _workflows_to_redispatch(old_runs):
         try:
             dispatch(gh, workflow, pr.head_ref)
-        except GhError:
-            refused.append(workflow)
-    note = f"\n\nNot re-run (dispatch refused): {', '.join(refused)}" if refused else ""
+        except GhError as exc:
+            refused.append(f"{workflow} ({str(exc)[:120]})")
+            log(f"  re-dispatch of {workflow} failed: {exc}")
+    note = f"\n\nNot re-run (dispatch failed): {', '.join(refused)}" if refused else ""
     comment_once(
         gh, pr.number, "rebased", new_head,
         f"Merge queue: this PR is next. Rebased onto `{BASE}` (head `{new_head[:10]}`) and started CI.{note}",
@@ -352,8 +384,16 @@ def apply(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) ->
 
 
 def cleanup_approval_runs(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
-    """Delete the empty approval-pending runs our own token rebase created (spec F4, V1)."""
-    for run in runs_on(gh, pr.head_sha, status="action_required"):
+    """Delete the empty approval-pending runs our own token rebase created (spec F4, V1).
+
+    Best-effort end to end: a failed listing must not abort the tick.
+    """
+    try:
+        runs = runs_on(gh, pr.head_sha, status="action_required")
+    except GhError as exc:
+        log(f"  best-effort list approval-pending runs failed: {exc}")
+        return
+    for run in runs:
         if (run.get("triggering_actor") or {}).get("login") != "github-actions[bot]":
             continue
         _best_effort(log, f"delete approval-pending run {run['id']}",
@@ -366,10 +406,13 @@ def comment_forks(gh: GhApi, prs: list[PrState], mode: str, log: Callable[[str],
             continue
         log(f"#{pr.number}: fork PR armed; not queued")
         if mode == "on":
-            comment_once(
-                gh, pr.number, "fork", pr.head_sha,
-                "Merge queue: fork PRs are not queued, because GitHub cannot dispatch workflows on a fork's "
-                "branch. A maintainer merges this one by hand.",
+            _best_effort(
+                log, f"comment on fork PR #{pr.number}",
+                lambda p=pr: comment_once(
+                    gh, p.number, "fork", p.head_sha,
+                    "Merge queue: fork PRs are not queued, because GitHub cannot dispatch workflows on a fork's "
+                    "branch. A maintainer merges this one by hand.",
+                ),
             )
 
 
@@ -401,7 +444,7 @@ def run(
         pr = settle_unknown(gh, pr, sleep)
         if pr.armed_at is None:
             continue
-        pr = replace(pr, checks=read_checks(gh, pr.head_sha))
+        pr = replace(pr, checks=read_checks(gh, pr.head_sha) + live_required_runs(gh, pr.head_sha))
         action = decide_front(pr, now())
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")

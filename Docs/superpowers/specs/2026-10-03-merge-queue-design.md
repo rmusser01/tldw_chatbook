@@ -160,6 +160,8 @@ never rebased, dispatched or commented on.
   - head moved: do nothing (someone else acted);
   - now `DIRTY`: evict;
   - anything else: do nothing and log it.
+- After a successful rebase the queue dispatches the required check first, then cancels the old head's live runs except its
+  own run and any merge-queue.yml run.
 - **Dispatch** of the PR's workflows happens only after this run's own rebase succeeded, or under the dispatch rows of the
   table above.
 - **Evict** means `disablePullRequestAutoMerge` plus one comment. Re-arming puts the PR at the back of the line.
