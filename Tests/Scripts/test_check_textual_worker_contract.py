@@ -1456,6 +1456,299 @@ def test_w003_reports_a_positional_argument_after_an_unresolvable_partial_target
     assert _unresolved(source) == [f"{_M0}::S.on_mount -> external#0 => {_M0}::S._pick"]
 
 
+#: A waiting ``self.pick`` handed to ``run``'s parameter of the SAME name.
+_SAME_NAME = """
+async def run(pick):
+    await pick()
+
+
+class S:
+    async def on_button_pressed(self, event):
+        {call}
+
+    async def pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        "await run(self.pick)",
+        "await run(pick=self.pick)",
+        "pick = self.pick\n        await pick()",
+    ],
+    ids=["positional", "keyword", "local-alias"],
+)
+def test_w003_a_same_named_value_still_binds_the_parameter(call):
+    """``run(self.pick)`` binds ``run``'s ``pick`` to the method: the two
+    share a name, not a value. Each form was skipped on the name alone
+    (``param != ref[1]``), so ``await pick()`` in ``run`` -- and in the
+    caller, for the local alias -- reached nothing (PR #2987 review)."""
+    assert _w003(_SAME_NAME.format(call=call)) == [
+        _row("S.on_button_pressed", "S.pick")
+    ]
+
+
+@pytest.mark.parametrize(
+    "forward",
+    ["await run(pick)", "await run(pick=pick)"],
+    ids=["positional", "keyword"],
+)
+def test_w003_forwarding_a_same_named_parameter_neither_binds_nor_blocks(forward):
+    """``relay(pick)`` handing its own ``pick`` on to ``run(pick)`` binds the
+    parameter to itself. That binding says nothing, so it is dropped -- not
+    recorded as one more binding that must wait, which would stop ``pick``
+    ever waiting through ``run(self._pick)``."""
+    source = f"""
+async def run(pick):
+    await pick()
+
+
+async def relay(pick):
+    {forward}
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await run(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+#: A positional handoff through a local alias of the callee.
+_ALIASED_CALLEE = {
+    "module-function": """
+async def run(pick):
+    await pick()
+
+
+class S:
+    async def on_button_pressed(self, event):
+        go = run
+        await go(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+""",
+    "bound-method": """
+class S:
+    async def on_button_pressed(self, event):
+        go = self._run
+        await go(self._pick)
+
+    async def _run(self, pick):
+        await pick()
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+""",
+    "alias-chain": """
+async def run(pick):
+    await pick()
+
+
+class S:
+    async def on_button_pressed(self, event):
+        first = run
+        go = first
+        await go(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+""",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_ALIASED_CALLEE))
+def test_w003_a_positional_handoff_through_a_local_alias_binds_the_parameter(shape):
+    """``go = run; go(self._pick)`` binds ``run``'s ``pick`` as ``run(self._pick)``
+    does: the local alias is followed to the callee (a bound method keeps
+    its ``self`` offset). It was reported as an unresolved handoff to
+    ``go`` instead (PR #2987 review)."""
+    source = _ALIASED_CALLEE[shape]
+    assert _unresolved(source) == []
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+def test_w003_a_local_alias_cycle_as_a_callee_is_reported_not_followed_forever():
+    """``a = b; b = a; a(self._pick)`` names no callee: the alias walk stops
+    at the repeat and the handoff is reported as unresolved."""
+    source = """
+class S:
+    async def on_button_pressed(self, event):
+        first = second
+        second = first
+        await first(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+    assert _unresolved(source) == [
+        f"{_M0}::S.on_button_pressed -> first#0 => {_M0}::S._pick"
+    ]
+
+
+def test_w003_a_class_body_call_binds_the_parameter_of_the_classs_own_function():
+    """A class body reads its own namespace first, so ``_keep(_pick)`` there
+    calls the class's ``_keep`` -- a plain function at that point, with no
+    ``self`` to skip -- and binds its ``pick``. It was searched for in the
+    module only and reported as unresolved (PR #2987 review)."""
+    source = """
+async def use(pick=None):
+    await pick()
+
+
+class S:
+    def _keep(pick):
+        return pick
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+
+    _kept = _keep(_pick)
+
+    async def on_button_pressed(self, event):
+        await use()
+"""
+    assert _unresolved(source) == []
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+#: Calls elsewhere in the package that name an ``__init__``/``run`` by
+#: attribute and pass a NON-waiting value positionally.
+_UNRELATED_POSITIONAL = {
+    # `Base.__init__(self, ...)`: the receiver is passed explicitly, so
+    # position 0 is `self`, not the first parameter after it. As a bound
+    # call by name it bound `self` to EVERY package `__init__`'s first
+    # parameter -- `request_review` included.
+    "unbound-base-init": """
+class Failure(RuntimeError):
+    def __init__(self, reason):
+        super().__init__(reason)
+
+
+class Timeout(Failure):
+    def __init__(self):
+        Failure.__init__(self, "timeout")
+""",
+    # `runner.run(len)`: `runner`'s type is unknown, so `run` matched every
+    # package def of that name by name -- one that is no relation of the
+    # call's real callee binds `len` to its `request_review`.
+    "by-name-method": """
+class Runner:
+    def run(self, request_review):
+        return request_review
+
+
+def elsewhere(runner):
+    runner.run(len)
+""",
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_UNRELATED_POSITIONAL))
+def test_w003_an_unrelated_positional_call_never_cancels_a_keyword_binding(shape):
+    """``HooksController(request_review=_pick)`` stays a row whatever an
+    unrelated module passes positionally. A parameter waits only when EVERY
+    binding of it does, so a guessed, non-waiting binding to
+    ``request_review`` silently removed the row dev reported (PR #2987
+    review)."""
+    wiring = _WAITING_PICK.format(wiring="HooksController(request_review=_pick)")
+    expected = [
+        "tldw_chatbook/UI/m0.py::Console.on_button_pressed => "
+        "tldw_chatbook/UI/m1.py::_pick"
+    ]
+    # Precondition: the row, without the unrelated module.
+    assert _w003(_POSITIONAL_HOOKS, wiring) == expected
+    assert _w003(_POSITIONAL_HOOKS, wiring, _UNRELATED_POSITIONAL[shape]) == expected
+
+
+def test_w003_a_guessed_waiting_binding_is_not_cancelled_by_another_guess():
+    """With only by-name bindings of ``pick`` -- ``self._runner.run(self._pick)``
+    and an unrelated ``o.run(len)`` -- the waiting one is enough: a guess
+    that does not wait is more likely another ``run``'s, so it never cancels
+    one that does. As ordinary bindings, "every binding must wait" let the
+    unrelated call hide the row."""
+    source = """
+class Runner:
+    async def run(self, pick):
+        await pick()
+
+
+class Other:
+    def run(self, pick):
+        return pick
+
+
+def elsewhere(o):
+    o.run(len)
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await self._runner.run(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+    # Precondition: the waiting guess alone.
+    alone = source.replace("    o.run(len)", "    pass")
+    assert _w003(alone) == [_row("S.on_button_pressed", "S._pick")]
+    assert _w003(source) == [_row("S.on_button_pressed", "S._pick")]
+
+
+def test_w003_a_classmethod_called_on_its_class_binds_after_cls():
+    """``Base.make(self._pick)`` on a ``@classmethod`` binds ``cls`` itself,
+    so the argument is ``make``'s parameter AFTER it."""
+    source = """
+class Base:
+    @classmethod
+    def make(cls, pick):
+        cls._pick_cb = pick
+
+    async def on_button_pressed(self, event):
+        await self._pick_cb()
+
+
+class Child(Base):
+    def __init__(self):
+        Base.make(self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+    assert _unresolved(source) == []
+    assert _w003(source) == [_row("Base.on_button_pressed", "Child._pick")]
+
+
+def test_w003_an_unbound_base_call_binds_the_bases_own_parameter():
+    """``Base.__init__(self, _pick)`` binds ``Base.__init__``'s parameter
+    AFTER ``self`` -- position 1, offset 0 -- and only that class's (through
+    its MRO), not every ``__init__`` sharing the name."""
+    source = """
+class Base:
+    def __init__(self, pick):
+        self._pick_cb = pick
+
+    async def on_button_pressed(self, event):
+        await self._pick_cb()
+
+
+class Child(Base):
+    def __init__(self):
+        Base.__init__(self, self._pick)
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+    assert _unresolved(source) == []
+    assert _w003(source) == [_row("Base.on_button_pressed", "Child._pick")]
+
+
 def test_w003_self_call_resolves_through_a_package_base_class():
     """An inherited `self._pick()` is the base class's `_pick`, found by the
     class's own bases -- not by every `_pick` in the package."""
@@ -2382,6 +2675,323 @@ class Unrelated:
         await self._answer
 """
     assert _w003(source) == [_row("S.on_button_pressed", "S._open_review")]
+
+
+#: An ASYNC helper that pushes and returns its pending future or event, and
+#: how a handler receives it. ``await open_review(self)`` runs the coroutine
+#: and gets the future back -- it does not wait for the modal. Only awaiting
+#: that RESULT does.
+_ASYNC_HANDBACK = {
+    "future": """
+async def open_review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=answer.set_result)
+    return answer
+""",
+    "event": """
+async def open_review(screen):
+    decided = asyncio.Event()
+    screen.app.push_screen(Review(), lambda _: decided.set())
+    return decided
+""",
+}
+
+_ASYNC_HANDBACK_RECEIVERS = {
+    "awaits-the-coroutine": ("await open_review(self)", False),
+    "keeps-the-result": ("self._pending = await open_review(self)", False),
+    "awaits-the-result": ("await (await open_review(self))", True),
+    "awaits-the-result-via-a-local": (
+        "pending = await open_review(self)\n        await pending",
+        True,
+    ),
+    "awaits-the-result-under-wait-for": (
+        "await asyncio.wait_for(await open_review(self), 30)",
+        True,
+    ),
+    "waits-on-the-result": ("await (await open_review(self)).wait()", True),
+}
+
+
+#: A future is awaited itself; an event only through ``.wait()``.
+_ASYNC_HANDBACK_CASES = [
+    (handed, receiver)
+    for handed in sorted(_ASYNC_HANDBACK)
+    for receiver in sorted(_ASYNC_HANDBACK_RECEIVERS)
+    if receiver in ("awaits-the-coroutine", "keeps-the-result")
+    or (handed == "event") == (receiver == "waits-on-the-result")
+]
+
+
+@pytest.mark.parametrize("handed, receiver", _ASYNC_HANDBACK_CASES)
+def test_w003_awaiting_an_async_helper_obtains_its_pending_future_only(
+    handed, receiver
+):
+    """``await open_review(self)`` on an ``async def`` that RETURNS its pending
+    future runs the coroutine to its ``return``: the handler holds the
+    future and returns, so its pump is free to run the callback. Counted as
+    a wait, that was a false row; awaiting the result -- ``await (await
+    open_review(self))``, a local, ``wait_for``, ``.wait()`` on an event --
+    is the wait (PR #2987 review). Textual's ``invoke`` awaits a handler's
+    return value once, which for an ``async def`` is the coroutine."""
+    body, flagged = _ASYNC_HANDBACK_RECEIVERS[receiver]
+    source = _ASYNC_HANDBACK[handed] + f"""
+
+class S:
+    async def on_button_pressed(self, event):
+        {body}
+"""
+    expected = [_row("S.on_button_pressed", "open_review")] if flagged else []
+    assert _w003(source) == expected
+
+
+#: An ``async def`` that hands on ANOTHER async helper's pending future.
+_ASYNC_RELAYS = {
+    "returns-the-awaited-call": "return await open_review(screen)",
+    "returns-a-local-of-it": "pending = await open_review(screen)\n    return pending",
+    "relays-a-relay": "return await relay_once(screen)",
+}
+
+
+@pytest.mark.parametrize("relay", sorted(_ASYNC_RELAYS))
+@pytest.mark.parametrize(
+    "receiver, flagged",
+    [
+        ("await relay(self)", False),
+        ("await (await relay(self))", True),
+    ],
+    ids=["awaits-the-relay", "awaits-the-result"],
+)
+def test_w003_an_async_relay_hands_back_the_future_it_obtained(
+    relay, receiver, flagged
+):
+    """``return await open_review(screen)`` in an ``async def relay`` returns
+    the PENDING future ``open_review`` handed back, unawaited: ``await
+    relay(self)`` only obtains it, and awaiting that result is the wait --
+    reported at ``open_review``, which holds the push. Before the async
+    hand-back was modelled both forms were rows (one by accident); without
+    following the relay, neither was."""
+    source = (
+        _ASYNC_HANDBACK["future"]
+        + """
+
+async def relay_once(screen):
+    return await open_review(screen)
+
+
+async def relay(screen):
+    """
+        + _ASYNC_RELAYS[relay]
+        + f"""
+
+
+class S:
+    async def on_button_pressed(self, event):
+        {receiver}
+"""
+    )
+    expected = [_row("S.on_button_pressed", "open_review")] if flagged else []
+    assert _w003(source) == expected
+
+
+#: A getter that returns a future ANOTHER method created on ``self`` and
+#: pushed with ``callback=``: (getter, how the handler receives it, waits).
+_FUTURE_GETTERS = {
+    "sync-getter-awaited": (
+        "def _get_answer(self):\n        return self._answer",
+        "await self._get_answer()",
+        True,
+    ),
+    "sync-getter-kept": (
+        "def _get_answer(self):\n        return self._answer",
+        "self._kept = self._get_answer()",
+        False,
+    ),
+    "async-getter-awaited-once": (
+        "async def _get_answer(self):\n        return self._answer",
+        "await self._get_answer()",
+        False,
+    ),
+    "async-getter-result-awaited": (
+        "async def _get_answer(self):\n        return self._answer",
+        "await (await self._get_answer())",
+        True,
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_FUTURE_GETTERS))
+def test_w003_a_getter_hands_back_the_future_its_publisher_stored(shape):
+    """``self._open()`` stores the pending future on ``self`` and pushes;
+    ``await self._get_answer()`` awaits it through a getter. The getter
+    neither created it nor pushed, and the handler awaited no ``self``
+    attribute, so the wait was invisible. A getter that returns ``self.X``
+    hands back X's publishers' wait, exactly as awaiting ``self.X`` does
+    (PR #2987 review)."""
+    getter, receive, flagged = _FUTURE_GETTERS[shape]
+    source = f"""
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._answer.set_result)
+
+    {getter}
+
+    async def on_button_pressed(self, event):
+        self._open()
+        {receive}
+"""
+    expected = [_row("S.on_button_pressed", "S._open")] if flagged else []
+    assert _w003(source) == expected
+
+
+def test_w003_a_getter_of_an_unrelated_classs_future_does_not_wait():
+    """The getter follows ``self.X`` only to the classes ``self`` can be."""
+    source = """
+class Elsewhere:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback=self._answer.set_result)
+
+
+class S:
+    def _get_answer(self):
+        return self._answer
+
+    async def on_button_pressed(self, event):
+        await self._get_answer()
+"""
+    assert _w003(source) == []
+
+
+#: Which future a push's callback completes, and whether that is the one the
+#: function awaits or hands back. ``answer`` is awaited/returned; ``other``
+#: is created alongside it and completed by nothing the caller waits on.
+_SETTLING_CALLBACKS = {
+    "completer-of-the-awaited-future": ("answer.set_result", True),
+    "completer-of-another-future": ("other.set_result", False),
+    "lambda-completing-the-awaited-future": (
+        "lambda result: answer.set_result(result)",
+        True,
+    ),
+    "lambda-completing-another-future": (
+        "lambda result: other.set_result(result)",
+        False,
+    ),
+    "nested-def-completing-the-awaited-future": ("done_answer", True),
+    "nested-def-completing-another-future": ("done_other", False),
+    # Nothing visible completes anything: matched by shape, as before.
+    "callback-of-unknown-effect": ("record", True),
+    "lambda-of-unknown-effect": ("lambda result: record(result)", True),
+}
+
+#: The hand-rolled wait in one function, and split across two by returning
+#: the future: (template, push site).
+_SETTLING_FORMS = {
+    "awaited-in-one-function": ("async def", "return await answer"),
+    "returned-to-the-caller": ("def", "return answer"),
+}
+
+
+@pytest.mark.parametrize("form", sorted(_SETTLING_FORMS))
+@pytest.mark.parametrize("callback", sorted(_SETTLING_CALLBACKS))
+def test_w003_a_callback_push_waits_only_if_it_may_complete_the_awaited_future(
+    form, callback
+):
+    """A ``push_screen(..., callback=...)`` whose callback visibly completes a
+    DIFFERENT future than the one awaited or handed back is not a
+    hand-rolled wait: the caller's await is settled elsewhere, and the
+    pump never waits on the modal. Pairing any callback push with any
+    created future reported it (PR #2987 review). A callback whose effect
+    W003 cannot see still counts, by shape."""
+    value, flagged = _SETTLING_CALLBACKS[callback]
+    keyword, finish = _SETTLING_FORMS[form]
+    source = f"""
+def record(result):
+    print(result)
+
+
+{keyword} review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+
+    def done_answer(result):
+        answer.set_result(result)
+
+    def done_other(result):
+        other.set_result(result)
+
+    screen.app.push_screen(Review(), callback={value})
+    answer.set_result(None)
+    {finish}
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await review(self)
+"""
+    expected = [_row("S.on_button_pressed", "review")] if flagged else []
+    assert _w003(source) == expected
+
+
+@pytest.mark.parametrize(
+    "value, flagged",
+    [
+        ("self._answer.set_result", True),
+        ("self._other.set_result", False),
+        ("self._settle_answer", True),
+        ("self._settle_other", False),
+    ],
+    ids=[
+        "completes-the-stored-future",
+        "completes-another-future",
+        "method-completing-the-stored-future",
+        "method-completing-another-future",
+    ],
+)
+def test_w003_a_future_on_self_waits_only_on_a_push_that_may_complete_it(
+    value, flagged
+):
+    """The same for a future stored on ``self``: the publisher's push must
+    be able to complete the attribute the caller awaits -- itself, or
+    through an own-class method whose body does."""
+    source = f"""
+class S:
+    def _open(self):
+        self._answer = asyncio.get_running_loop().create_future()
+        self._other = asyncio.get_running_loop().create_future()
+        self.app.push_screen(Review(), callback={value})
+
+    def _settle_answer(self, result):
+        self._answer.set_result(result)
+
+    def _settle_other(self, result):
+        self._other.set_result(result)
+
+    async def on_button_pressed(self, event):
+        self._open()
+        await self._answer
+"""
+    expected = [_row("S.on_button_pressed", "S._open")] if flagged else []
+    assert _w003(source) == expected
+
+
+def test_w003_a_site_counts_only_the_pushes_that_may_complete_its_future():
+    """Two callback pushes, one completing the awaited future and one another:
+    the site holds ONE wait push, so the row's count is one."""
+    source = """
+async def review(screen):
+    answer = asyncio.get_running_loop().create_future()
+    other = asyncio.get_running_loop().create_future()
+    screen.app.push_screen(Review(), callback=answer.set_result)
+    screen.app.push_screen(Notice(), callback=other.set_result)
+    return await answer
+
+
+class S:
+    async def on_button_pressed(self, event):
+        await review(self)
+"""
+    assert _w003(source) == [_row("S.on_button_pressed", "review")]
 
 
 # --------------------------------------------------------------------------
