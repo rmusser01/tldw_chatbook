@@ -7,7 +7,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-11 01:55'
-updated_date: '2026-10-03 06:05'
+updated_date: '2026-10-03 06:37'
 labels:
   - console
   - approvals
@@ -118,4 +118,6 @@ Final review identified a separate stale captured chat-create UI payload after C
 Delayed chat-create projection now qualifies the current UI sink, live round, committed Close and scoped active session at callback execution. Teardown derives the active parked head, preserving a live sibling. A trusted internal session_scoped flag preserves legacy unparked initial projection; this extension to the marshal-only plan is required by a reproduced legacy regression. Only request_chat_create_confirm and _marshal_pending_chat_create change; callbacks remain outside locks. Existing ADR-094/150 apply, no new owner/authority/persistence or public payload contract.
 
 Mounted navigation and completed-Close regressions reproduce stale source cards on reviewed 54c; an isolated unconditional-clear branch comparison reproduces sibling erasure in the otherwise corrected controller. Qodo's separate register-after-sweep claim is excluded by six real call-through lock-order probes; its prior-head overview is clean/resolved after the rebuttal. Final local qualification passes all 58 checked-in Chat cases plus those six probes (64 total with explicit existing collection-profile ownership), five ordinary mounted wrappers covering 23 fresh-app journeys, and all 37 exact Perf Guards, without failures/errors/skips. Existing journey AST/public wrapper census and 235 other source pins are exact (238 current). Range formatting, zero-new Ruff across 35 files, full derived-artifact preflight and independent read-only review pass. Guide, incident lesson and QA chat_create_ui_projection_review_followup preserve valid/invalid fixture modes and source evidence. Original native receipts retained; no fresh native replay. Task remains In Progress until fresh published-head review and all four CI gates pass; verified normal merge remains tracked in PR2953.
+
+Latest-dev PR2964 queue-button integration: all 38 Console patches replay unchanged onto dev74bd039d. Only the inherited queue region and two generated-style pins change; 235 other prior pins remain exact, with the inherited queue regression additionally pinned (239 total). Fresh coupled qualification passes all 23 Console projection/Close/approval journeys plus all 17 inherited queue-button cases (22 top-level cases), and all 37 exact Perf Guards, with zero failures/errors/skips and unchanged caps/budgets/counters. Zero-new Ruff35 and diff checks pass. QA queue_button_dev_integration retains exact sources and fixture modes. Original64-case/native receipts retain their identities; no fresh Chat or native replay claim for this rebase. Fresh artifact preflight and published-head Qodo/all four hosted gates/current dev still required; task remains In Progress.
 <!-- SECTION:NOTES:END -->

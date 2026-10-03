@@ -920,3 +920,35 @@ valid/invalid comparisons, fixture modes, exact sources and fresh run receipts.
 Fresh full artifact preflight passes (exit 0, all 238 source pins stable).
 Published-head Qodo/all four CI gates/current dev and verified protected
 normal merge remain the completion checkpoints.
+
+
+Latest-dev queue-button integration (PR2964, 2026-10-03 UTC)
+
+All 38 Console patches rebase unchanged onto dev 74bd039d. Its queue-region
+runtime and two generated-style pins change; all 235 other preceding source
+pins retain exact bytes, including the reviewed callback fix and its tests.
+The inherited queue regression module is additionally pinned (239 current).
+Six inherited paths match dev exactly; the shared incident lesson retains both
+independent sections through exact patch replay. No own runtime, fixture,
+style, authority, CI, budget or timeout change. Existing ADR-094/150 apply;
+no new ADR is required.
+
+The combined mounted run passes all 23 Console projection/Close/approval
+journeys in five ordinary private wrappers, plus all 17 inherited queue-button
+paint/composer-width cases: 22 top-level cases, zero failures/errors/skips,
+in 419.22 seconds. Public wrapper-file census is retained; no temporary plugin
+or source replacement. Every original journey body/assertion remains intact.
+The slowest ordinary wrapper remains below its unchanged 180-second cap.
+Zero-new Ruff across 35 changed Python files and diff checks pass.
+
+The preceding 64-case Chat/probe receipt retains its original source/head
+identity; its controller, Chat tests and worker/store dependencies remain exact.
+This rebase changes UI-region/generated-style bytes and therefore has separate
+mounted and performance qualification. Original native receipts remain
+historical; no fresh native replay is claimed. QA queue_button_dev_integration
+records exact source/provenance and current coupled receipts. All 37 exact
+Perf Guards pass on this combination, with unchanged limits and 239 stable
+source pins. Fresh full artifact preflight passes (exit0; all239 source pins
+stable), with the unchanged124-file UI census. Published-head review/all four
+CI gates, latest dev and verified normal merge remain required. TASK-32367
+remains In Progress until hosted checks pass.
