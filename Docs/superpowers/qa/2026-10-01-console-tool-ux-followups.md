@@ -759,3 +759,20 @@ these affected files. Fresh preflight, zero-new Ruff34, range format and diff
 checks pass. QA remaining_private_startup_followup records exact hashes,
 real red/green receipts, review and limitations. Fresh final-head gates/Qodo
 and current dev remain required before protected normal merge.
+
+
+Latest-dev Roleplay quit integration (PR2963, 2026-10-03 UTC)
+
+All32 Console patches rebase unchanged onto dev2d34cbf8. Eight upstream files
+retain exact dev bytes; the combined diagnostic inventory additionally retains
+the existing Console-controller diagnostics and passes the actual rebuild check.
+Of234 preceding pins,233 remain byte-identical; the sole inherited change is
+the expanded quit choke-point test. The Roleplay screen, lazy guard and its
+upstream regression file are additionally pinned (237 current).
+
+All42 fresh targeted cases pass with zero failures/errors/skips: five expanded
+quit architecture cases and all37 exact Perf Guard cases, including both ordinary
+storage variants. Fresh full artifact preflight and zero-new Ruff34 pass.
+Code anchor:c0c459d5654c59481a88e685593210efb059d02d.
+Original grouped17-journey,147-case and native27/29 receipts retain their original head/byte identities. All grouped Console test source pins and production/runtime pins retain bytes across this rebase. The inherited Roleplay quit behavior is not claimed as a new native or mounted Roleplay replay here; its upstream files are exact and the expanded shared quit architecture/37 mounted and startup guards pass. No budget, snapshot, counter, canary, tick, deadline, authority or global CI changes; no full sweep. Final published-head CI/Qodo and current dev remain required.
+QA roleplay_quit_base_final_followup records the exact source manifest and limits.

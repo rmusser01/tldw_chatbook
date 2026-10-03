@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-03 02:08'
+updated_date: '2026-10-03 02:22'
 labels:
   - performance
   - ci
@@ -97,6 +97,8 @@ Reason: Reduce repeated private interpreter setup within existing selected mount
 3. Run both complete affected files, compare actual timings, check cleanup/isolation, run zero-new lint/range-format and fresh artifact preflight. Preserve original functional/native evidence identities with precise fixture-equivalence limits. Safe-push and require fresh final-head Qodo/all four gates and current dev before protected normal merge.
 
 Baseline exposed a real geometry-test synchronization race: End starts the scroll animation, but scroll_y >0 becomes true before the bottom consequence is painted. Preserve the red234.08s receipt (7 pass/1 failure, not a successful timing baseline). Before grouping, await the existing Textual scheduled-animation completion after the same positive-scroll check and before unchanged paint assertions; verify the original geometry node and prove this one added await is the sole scenario-body change.
+
+Latest-dev integration before final push (2d34cbf8 / PR2963): upstream Roleplay draft quit helper stays lazily imported. Rebase all32 Console patches unchanged; prove all eight directly retained upstream files exact dev and verify the combined diagnostic inventory against the actual rebuild and233/234 existing source pins unchanged except the expanded upstream quit choke-point test. Run the expanded architecture choke-point test and all exact37 Perf Guard cases to qualify shared quit/startup boundaries, retaining budgets/counters/caps. Fresh lint and full artifact preflight; record exact hashes and limits. ADR required: no. ADR path: N/A; direct upstream ADR-094/097-governed integration with no new Console boundary.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -143,6 +145,8 @@ Qodo c3c3fc77 documentation correction adds Google-style summaries/Args to three
 Audit-only dev2612fc56 (PR2925) retained all seven upstream audit paths; all29 PR patches and233 qualified source pins unchanged. Fresh full preflight and zero-new Ruff34 pass. No app/test/CI/budget/boundary change or new ADR (N/A). Original147-case/native receipts retain identities; no functional replay claimed. Preceding c88 UI job hit20m at88% with no reported assertion failure and comparable groups25–34% slower than successful c814. Preserve limits/coverage and require fresh final-head gates/resolved Qodo before protected normal merge. QA audit_only_dev_rebase records proof and explicit limits.
 
 Repeated c88/998d UI timeouts at88%/96% showed no assertions; both Close files cost251s. Remaining8 mounted scenarios now use2 private wrappers, preserving8 complete bodies/145 assertions, fresh owners, scoped patches, distinct fleet DB paths and existing drain/unfreeze/GC; original9 Close scenarios retain2 wrappers. Initial234.08s timing baseline is7 pass/1 geometry failure, not a successful paired timing baseline. Added only existing Pilot animation-completion wait before unchanged pixel assertions; original geometry node passes28.84s. Complete affected files pass all17 journeys in4 wrappers,225.76s, max102.851s, zero failures/errors/skips. Independent AST/isolation review clear; all34 old function signatures/bodies preserved except that await.232/233 prior pins unchanged; Close test updated and approval test newly pinned,234 current. Other production/helper source pins and native/147-case identities retained; no full suite or extra native replay. Fresh preflight, zero-new Ruff34/range format pass; unchanged180s/20m limits/CI/budgets. Existing ADR-094/126 apply, no new ADR. QA remaining_private_startup_followup and actual animation lesson record evidence/limits. Fresh final-head gates/Qodo/current dev still required for normal merge.
+
+Latest dev2d34cbf8 (PR2963 Roleplay quit guard) integrates with all32 Console patches unchanged. Eight upstream files exact; combined diagnostic inventory retains existing Console diagnostics and passes rebuild.233/234 prior pins unchanged, expanded upstream quit scan changed and three upstream source files added (237 current).42 fresh targeted cases pass, zero failures/errors/skips: five quit architecture plus all37 exact Perf Guard cases. All grouped17-journey Console source bytes remain qualified; no extra Roleplay/native replay claimed. Fresh preflight and zero-new Ruff34 pass; budgets, snapshots, counters, canaries, ticks,180s/20m caps and CI settings unchanged. No new boundary/ADR; upstream ADR-094/097 integration. QA roleplay_quit_base_final_followup records exact hashes/limits. Final published-head CI/Qodo/latest dev and normal merge still required.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary
