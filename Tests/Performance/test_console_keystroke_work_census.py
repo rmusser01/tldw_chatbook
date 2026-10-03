@@ -32,6 +32,9 @@ import inspect
 import json
 import os
 import sys
+import tempfile
+import threading
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -106,6 +109,77 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
 IO_UNITS = ("config_admissions", "storage_admissions", "helper_spawns", "os_opens")
 
 
+def _census_log_path() -> Path | None:
+    """Where to append this run's census, or None when nobody asked for it.
+
+    ``TLDW_STORAGE_UNIT_CENSUS_LOG`` must name a file inside the runner's
+    temporary directory (``RUNNER_TEMP`` on CI, else the system temporary
+    directory); anything else, including a symlink that resolves outside it,
+    is refused.
+
+    Returns:
+        The validated path, or None when the variable is unset.
+
+    Raises:
+        ValueError: The path lies outside the temporary directory.
+    """
+    requested = os.environ.get("TLDW_STORAGE_UNIT_CENSUS_LOG")
+    if not requested:
+        return None
+    from tldw_chatbook.Utils.path_validation import validate_path
+
+    root = os.environ.get("RUNNER_TEMP") or tempfile.gettempdir()
+    return validate_path(requested, root)
+
+
+def _report_census(case: str, census: dict[str, Any]) -> None:
+    """Append one run's census to the requested log (see ``_census_log_path``).
+
+    Args:
+        case: The test case's node name.
+        census: Phase name to its measured storage units.
+    """
+    census_log = _census_log_path()
+    if census_log is None:
+        return
+    line = {"case": case, "platform": sys.platform, "census": census}
+    with open(census_log, "a", encoding="utf-8") as handle:
+        handle.write(json.dumps(line, sort_keys=True) + "\n")
+
+
+#: TASK-33802: who paid each storage admission and helper spawn billed to the
+#: typing burst, so an over-ceiling burst names its caller in the failure.
+_TYPING_BURST_CALLERS: list[str] = []
+#: TASK-33644: why the GC census pass failed. The pass records rather than
+#: asserts, so the census is still reported before the test fails on it.
+_GC_PASS_FAILURES: list[str] = []
+#: The app package's own frames (not the venv's, whose path also names the
+#: repository).
+_APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
+
+
+def _caller(unit: str) -> str:
+    """One line per unit: the unit, the thread and the innermost app frames.
+
+    Args:
+        unit: The storage unit being billed.
+
+    Returns:
+        ``"<unit> on <thread>: file:line fn <- ..."`` for the last six
+        ``tldw_chatbook`` frames, innermost first.
+    """
+    frames = [
+        frame
+        for frame in traceback.extract_stack()[:-3]
+        if frame.filename.startswith(_APP_PACKAGE)
+    ][-6:]
+    where = " <- ".join(
+        f"{frame.filename[len(_APP_PACKAGE):]}:{frame.lineno} {frame.name}"
+        for frame in reversed(frames)
+    )
+    return f"{unit} on {threading.current_thread().name}: {where or '(no app frame)'}"
+
+
 _OS_OPEN_AUDIT: dict[str, Any] = {"installed": False, "bump": None}
 
 
@@ -163,6 +237,8 @@ def _count_storage_units(
         if counting["on"]:
             with lock:
                 counts[key] += 1
+            if counting.get("burst") and key in ("storage_admissions", "helper_spawns"):
+                _TYPING_BURST_CALLERS.append(_caller(key))
 
     real_operation = config_participants.operation
 
@@ -378,11 +454,12 @@ async def _census(
         # instead of scheduled; the ``trace`` phase bills it per tick.
         from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
+        real_schedule = ConsoleRuntime._schedule_legacy_trace_maintenance
         monkeypatch.setattr(
             ConsoleRuntime,
             "_schedule_legacy_trace_maintenance",
-            lambda _runtime, database, normalizer_factory: trace_maintenance.append(
-                (database, normalizer_factory)
+            lambda runtime, database, normalizer_factory: trace_maintenance.append(
+                (database, normalizer_factory, runtime, real_schedule)
             ),
         )
 
@@ -443,13 +520,18 @@ async def _census(
             # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
+        _TYPING_BURST_CALLERS.clear()
+        counting["burst"] = True
         counting["on"] = True
         for _ in range(KEYSTROKES):
             await pilot.press("a")
         counting["on"] = False
+        counting["burst"] = False
 
         if storage_units:
-            await _census_idle_and_visit(pilot, counts, counting, trace_maintenance)
+            await _census_idle_and_visit(
+                pilot, counts, counting, trace_maintenance, monkeypatch
+            )
 
     return counts
 
@@ -499,7 +581,8 @@ async def _census_idle_and_visit(
     pilot: Any,
     counts: dict[str, int],
     counting: dict[str, Any],
-    trace_maintenance: list[tuple[Any, Any]],
+    trace_maintenance: list[tuple[Any, Any, Any, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Census the typing pause, idle ticks and a warm visit in storage units.
 
@@ -518,6 +601,8 @@ async def _census_idle_and_visit(
     * ``trace:`` -- the 1 Hz legacy trace-maintenance batch, driven exactly
       as its loop does (per tick; a helper spawn/s, via
       ``run_owned_db_call``'s owned connection).
+    * ``gc:`` -- the production maintenance loop's first GC pass
+      (TASK-33644): its graph-epoch read, collection and compaction attempt.
     * ``visit:`` -- Console -> Library (uncounted) -> Console. The route is
       reusable (TASK-31520), so the return is a warm resume: no mount, only
       ``on_screen_resume`` and what it schedules.
@@ -531,8 +616,15 @@ async def _census_idle_and_visit(
         pilot: the running app's pilot, on a settled Console after the burst.
         counts: census mapping; phase keys are added as ``<phase>:<unit>``.
         counting: shared ``{"on": bool}`` switch.
-        trace_maintenance: the captured ``(database, normalizer_factory)``
-            the runtime would have started its maintenance loop with.
+        trace_maintenance: one captured ``(database, normalizer_factory,
+            runtime, real_schedule)`` per scheduling call: the arguments the
+            runtime would have started its maintenance loop with, the runtime
+            itself and the real ``_schedule_legacy_trace_maintenance`` that
+            ``gc_pass`` uses to start that loop.
+        monkeypatch: pytest fixture that owns every patch the GC pass makes
+            (owned-call wrapper, ready delay, held backup probe). The pass
+            puts the wrapper and the probe back when it ends; the fixture
+            undoes the rest at teardown.
     """
     from textual import worker_manager
 
@@ -592,7 +684,7 @@ async def _census_idle_and_visit(
             console._poll_console_credential_readiness()
 
     assert trace_maintenance, "the Console never armed legacy trace maintenance"
-    database, normalizer_factory = trace_maintenance[0]
+    database, normalizer_factory, runtime, real_schedule = trace_maintenance[0]
     maintenance = LegacyTraceMaintenance(
         database, normalizer=normalizer_factory(), provider_active=lambda: False
     )
@@ -600,6 +692,132 @@ async def _census_idle_and_visit(
     async def trace_ticks() -> None:
         for _ in range(IDLE_TICKS):
             await run_owned_db_call(database, maintenance.run_batch)
+
+    async def gc_pass() -> None:
+        """Bill the maintenance loop's first GC pass, collection included.
+
+        The census holds the loop back until here, so its first pass is the
+        first GC of the profile: the graph-epoch read, the collection and the
+        compaction attempt. On the census's small database compaction defers
+        (``database_threshold``, a retryable reason) and the loop keeps that
+        collection pending, so later passes are the epoch read plus a
+        compaction retry with no collection -- the first pass is the superset,
+        and the census asserts it ran exactly those three calls. It is billed
+        from its epoch read through compaction (the batch normalization before
+        it is the per-tick row above) and fails the census if a call raises or
+        the collection is unusable. The 1 Hz backup-maintenance probe is held
+        still for the whole phase: it walks every registered root (~37 opens)
+        on its own thread, and landing inside the short billed window it
+        doubled the pass's opens about one run in ten.
+        """
+        from tldw_chatbook.Backup_Recovery import storage_admission
+        from tldw_chatbook.Chat import console_runtime as runtime_module
+
+        real_owned = runtime_module.run_owned_db_call
+        real_probe = storage_admission._local_pause_requested
+        probe_held = threading.Event()
+
+        def held_probe() -> bool:
+            probe_held.set()
+            return False
+
+        _GC_PASS_FAILURES.clear()
+        window: dict[str, Any] = {"calls": [], "error": None}
+        billed = asyncio.Event()
+        # Owned calls run in worker threads that cancelling the loop does not
+        # stop; cleanup waits for them before it restores anything.
+        in_flight: set[asyncio.Future[Any]] = set()
+        # Calls whose wrapper was cancelled; their outcome is read after
+        # cleanup, since no wrapper is left to report it.
+        orphaned: list[tuple[str, asyncio.Future[Any]]] = []
+
+        async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
+            name = getattr(operation, "__name__", "")
+            if name == "current_graph_epoch" and not window["calls"]:
+                for unit in IO_UNITS:
+                    counts[unit] = 0
+                counting["on"] = True
+            if counting["on"] and not billed.is_set():
+                window["calls"].append(name)
+            call = asyncio.ensure_future(real_owned(database_, operation, *args, **kwargs))
+            in_flight.add(call)
+            call.add_done_callback(in_flight.discard)
+            try:
+                result = await asyncio.shield(call)
+            except BaseException as error:
+                if isinstance(error, asyncio.CancelledError):
+                    orphaned.append((name, call))
+                # Any call in the billed pass -- epoch read, collection or
+                # compaction -- ends the census with its name, not a timeout.
+                if window["calls"] and not billed.is_set():
+                    counting["on"] = False
+                    window["error"] = window["error"] or (
+                        f"{name or 'an owned call'} raised {type(error).__name__}"
+                    )
+                    billed.set()
+                raise
+            if name == "collect" and window["calls"] and not billed.is_set():
+                window["collected"] = getattr(result, "status", None)
+            if name == "run_after_gc" and window["calls"] and not billed.is_set():
+                counting["on"] = False
+                # A deferral (e.g. database_threshold on the small census
+                # database) is a whole pass: all three calls ran. A collection
+                # that did not complete (e.g. a stale epoch) or was unusable
+                # did partial work, so its counts are not the pass's.
+                if window.get("collected") != "completed":
+                    window["error"] = window["error"] or (
+                        f"the billed collection ended {window.get('collected')!r}"
+                    )
+                elif getattr(result, "reason_code", "") == "logical_gc_unavailable":
+                    window["error"] = "the billed pass found no usable collection"
+                phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
+                billed.set()
+            return result
+
+        monkeypatch.setattr(storage_admission, "_local_pause_requested", held_probe)
+        # The monitor probes one at a time, so its first held call means a
+        # probe that started before the hold has finished (within a second;
+        # an app without the monitor has none in flight).
+        await asyncio.to_thread(probe_held.wait, 5)
+        monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
+        monkeypatch.setattr(
+            runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
+        )
+        real_schedule(runtime, database, normalizer_factory)
+        try:
+            await asyncio.wait_for(billed.wait(), GC_PASS_WAIT_SECONDS)
+        except TimeoutError:
+            window["error"] = window["error"] or (
+                f"the billed GC pass did not finish in {GC_PASS_WAIT_SECONDS} s"
+            )
+        finally:
+            task = runtime._legacy_trace_maintenance_task
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                runtime._legacy_trace_maintenance_task = None
+            if in_flight:
+                await asyncio.wait(set(in_flight), timeout=GC_PASS_WAIT_SECONDS)
+            monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
+            monkeypatch.setattr(storage_admission, "_local_pause_requested", real_probe)
+        late = [
+            f"{name} then raised {type(call.exception()).__name__}"
+            for name, call in orphaned
+            if call.done() and not call.cancelled() and call.exception() is not None
+        ]
+        failure = "; ".join(filter(None, [window["error"], *late]))
+        if not failure and window["calls"] != [
+            "current_graph_epoch",
+            "collect",
+            "run_after_gc",
+        ]:
+            failure = f"the billed GC pass ran {window['calls']}"
+        if failure:
+            _GC_PASS_FAILURES.append(failure)
+            # Unmeasured (never over a ceiling); the test fails on the
+            # recorded failure once the census is reported.
+            for unit in IO_UNITS:
+                phases.setdefault(f"gc:{unit}", -1)
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -623,6 +841,7 @@ async def _census_idle_and_visit(
         await phase("pause", typing_pause)
         await phase("idle", credential_ticks)
         await phase("trace", trace_ticks)
+        await gc_pass()
         await phase(None, lambda: navigate("library"))
         assert app.screen is not console, "census never left the Console"
         await phase("visit", lambda: navigate("chat"))
@@ -820,7 +1039,8 @@ async def test_typing_does_not_rebuild_the_provider_derivation(
 #: a live connection (no connect admission, no helper), so these pins are the
 #: observed maxima. ``os_opens`` also jitters UPWARD, in steps of ~37 opens
 #: (one extra path walk) between runs with identical admission counts --
-#: timing-dependent, source not isolated -- so its pins are the observed
+#: timing-dependent; TASK-33644 traced one such walk to the 1 Hz backup-
+#: maintenance probe (``_local_pause_requested``) -- so its pins are the observed
 #: maxima checked with ``OS_OPENS_JITTER_SLACK`` on top; the admission
 #: counts are the exact signal. ``os_opens`` scales with
 #: the depth of the profile path (one open per component): pinned on macOS's
@@ -872,8 +1092,122 @@ MAX_VISIT_STORAGE_UNITS = {
     "helper_spawns": 9,
     "os_opens": 35_351,
 }
+#: TASK-33644: the maintenance loop's first GC pass, billed on its own: the
+#: graph-epoch read, the collection and the compaction attempt (deferred on
+#: the census's small database). Pinned 2026-10-03 at dev 0409592a2d:
+#: 0 / 9 / 3 / 54 in every run -- three owned database calls, each on a fresh
+#: helper. ``os_opens`` is exact, not jitter: each helper start walks the
+#: profile directory chain (one open per component, plus ``/`` and
+#: ``/dev/null``), so it is ``3 x (components + 2)``: 54 under macOS's default
+#: pytest temp dir (16 components), 39 on the Linux runner (11). A deeper
+#: ``--basetemp`` adds 3 per component; a helper reused from a live
+#: connection reads 18 fewer.
+MAX_TRACE_GC_PASS_STORAGE_UNITS = {
+    "config_admissions": 0,
+    "storage_admissions": 9,
+    "helper_spawns": 3,
+    "os_opens": 54,
+}
+#: How long the GC census waits for its billed pass, and again for owned
+#: calls still in their worker threads after cancelling the loop.
+GC_PASS_WAIT_SECONDS = 60
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
+#: TASK-33643: os.open ceilings on the Linux perf-guard runner, where path
+#: depth (and so opens per admission) differs from macOS -- the dicts above
+#: hold macOS values. Pinned 2026-10-03 from three perf-guard runs (six
+#: census lines, both evidence variants) at the highest value seen; the
+#: shared jitter slack applies on top. Observed ranges: typing burst 54-81,
+#: typing pause 153-206, credential poll 3.375-6.75 per tick, trace
+#: maintenance 16.5-23.125 per tick, trace GC pass 26, visit 1,913-1,926.
+#: The GC-pass row was re-pinned 26 -> 39 when the census started billing
+#: the first pass (collection included): 3 helpers x (11 components + 2).
+#: Every row assumes the runner's default pytest temp dir (11 path components
+#: to the census profile): each directory walk opens one file per component,
+#: so a run under a deeper ``--basetemp`` reads higher on every row by design.
+#: The gate is for that CI layout, not for arbitrary local temp roots.
+LINUX_OS_OPENS_CEILINGS = {
+    "typing (whole burst)": 81,
+    "typing pause": 206,
+    "credential poll (per tick)": 6.75,
+    "trace maintenance (per tick)": 23.125,
+    "trace GC pass": 39,
+    "visit": 1_926,
+}
+
+
+def _ceiling(phase: str, unit: str, ceilings: dict[str, float]) -> float | None:
+    """The ceiling one census unit is gated on here, or None if ungated.
+
+    Admissions and helper spawns count logic, so they gate everywhere.
+    os.open counts depend on path depth, so each platform has its own:
+    macOS uses the per-phase dicts, Linux ``LINUX_OS_OPENS_CEILINGS``, and
+    any other platform is not gated on them.
+
+    Args:
+        phase: The census phase, a key of ``LINUX_OS_OPENS_CEILINGS``.
+        unit: One of ``IO_UNITS``.
+        ceilings: That phase's macOS ceilings.
+
+    Returns:
+        The ceiling, or None when this platform has no os.open pin.
+    """
+    if unit != "os_opens":
+        return ceilings[unit]
+    if sys.platform == "darwin":
+        return ceilings[unit]
+    if sys.platform.startswith("linux"):
+        return LINUX_OS_OPENS_CEILINGS[phase]
+    return None
+
+
+def test_each_platform_gates_os_opens_on_its_own_ceilings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """TASK-33643: macOS and Linux each gate os.open on their own pins.
+
+    Args:
+        monkeypatch: Switches ``sys.platform``.
+    """
+    macos = {"config_admissions": 8, "os_opens": 2_000}
+    monkeypatch.setattr(sys, "platform", "darwin")
+    assert _ceiling("visit", "os_opens", macos) == 2_000
+    monkeypatch.setattr(sys, "platform", "linux")
+    assert _ceiling("visit", "os_opens", macos) == LINUX_OS_OPENS_CEILINGS["visit"]
+    assert _ceiling("visit", "config_admissions", macos) == 8
+    monkeypatch.setattr(sys, "platform", "win32")
+    assert _ceiling("visit", "os_opens", macos) is None
+    assert _ceiling("visit", "config_admissions", macos) == 8
+
+
+def test_the_census_log_stays_inside_the_runner_temp_dir(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """TASK-33643: the census writes only where the runner's temp dir allows.
+
+    Args:
+        monkeypatch: Sets the runner temp dir and the requested log path.
+        tmp_path: The runner temp dir, and a sibling outside it.
+    """
+    runner_temp = tmp_path / "runner"
+    runner_temp.mkdir()
+    monkeypatch.setenv("RUNNER_TEMP", str(runner_temp))
+    monkeypatch.delenv("TLDW_STORAGE_UNIT_CENSUS_LOG", raising=False)
+    assert _census_log_path() is None
+
+    inside = runner_temp / "census.jsonl"
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(inside))
+    assert _census_log_path() == inside.resolve()
+
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(tmp_path / "outside.jsonl"))
+    with pytest.raises(ValueError):
+        _census_log_path()
+
+    escape = runner_temp / "escape.jsonl"
+    escape.symlink_to(tmp_path / "outside.jsonl")
+    monkeypatch.setenv("TLDW_STORAGE_UNIT_CENSUS_LOG", str(escape))
+    with pytest.raises(ValueError):
+        _census_log_path()
 
 
 @pytest.mark.ui
@@ -913,10 +1247,6 @@ async def test_console_storage_units_stay_within_their_ratchets(
         storage_units=True,
         known_evidence=known_evidence,
     )
-    assert (
-        counts["settings_readiness_builds"] / KEYSTROKES
-        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
-    )
     measured = {
         "typing (whole burst)": (
             {unit: counts[unit] for unit in IO_UNITS},
@@ -934,13 +1264,27 @@ async def test_console_storage_units_stay_within_their_ratchets(
             {unit: counts[f"trace:{unit}"] / IDLE_TICKS for unit in IO_UNITS},
             MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK,
         ),
+        "trace GC pass": (
+            {unit: counts[f"gc:{unit}"] for unit in IO_UNITS},
+            MAX_TRACE_GC_PASS_STORAGE_UNITS,
+        ),
         "visit": (
             {unit: counts[f"visit:{unit}"] for unit in IO_UNITS},
             MAX_VISIT_STORAGE_UNITS,
         ),
     }
-    request.node.user_properties.append(
-        ("storage_units", json.dumps({k: v[0] for k, v in measured.items()}))
+    census: dict[str, Any] = {k: v[0] for k, v in measured.items()}
+    request.node.user_properties.append(("storage_units", json.dumps(census)))
+    # TASK-33643: every run reports its census -- before any assertion, so a
+    # failing run reports too -- and CI ceilings are pinned from those lines;
+    # perf-guard.yml names the file and prints it.
+    if _GC_PASS_FAILURES:
+        census["trace GC pass failure"] = _GC_PASS_FAILURES[0]
+    _report_census(request.node.name, census)
+    assert not _GC_PASS_FAILURES, _GC_PASS_FAILURES[0]
+    assert (
+        counts["settings_readiness_builds"] / KEYSTROKES
+        <= MAX_SETTINGS_READINESS_BUILDS_PER_KEY
     )
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
@@ -950,21 +1294,37 @@ async def test_console_storage_units_stay_within_their_ratchets(
             "path, so every ceiling below would pass vacuously."
         )
     slack = {"os_opens": OS_OPENS_JITTER_SLACK}
-    # The os.open ceilings are macOS measurements (path depth differs per OS),
-    # so elsewhere -- the Linux perf-guard runner -- only the logic-level
-    # admission and helper counts gate.
-    gated = set(IO_UNITS) if sys.platform == "darwin" else set(IO_UNITS) - {"os_opens"}
     over = [
-        f"{phase} {unit}: {value} > ceiling {ceilings[unit]}"
+        f"{phase} {unit}: {value} > ceiling {ceiling}"
         f"{' x ' + str(slack[unit]) if unit in slack else ''}"
         for phase, (values, ceilings) in measured.items()
         for unit, value in values.items()
-        if unit in gated and value > ceilings[unit] * slack.get(unit, 1)
+        if (ceiling := _ceiling(phase, unit, ceilings)) is not None
+        and value > ceiling * slack.get(unit, 1)
     ]
+    # Only the units the burst went over: its ceilings allow dozens of
+    # ordinary admissions, which would bury the one that broke it.
+    burst_over = {
+        unit
+        for unit in ("storage_admissions", "helper_spawns")
+        if f"typing (whole burst) {unit}:" in " ".join(over)
+    }
+    burst_callers = [
+        entry
+        for entry in _TYPING_BURST_CALLERS
+        if entry.split(" on ", 1)[0] in burst_over
+    ]
+    callers = (
+        " Typing-burst callers: " + " | ".join(burst_callers) + "."
+        if burst_callers
+        else ""
+    )
     assert not over, (
         "Console storage units rose above their ratchet: "
         + "; ".join(over)
-        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}. "
+        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}."
+        + callers
+        + " "
         "Each unit is a real cost on a user path (an admission re-walks "
         "directory chains with one open() per component; a helper spawn is a "
         "python child, ~45-75 ms). Take the new cost off the path; never "
