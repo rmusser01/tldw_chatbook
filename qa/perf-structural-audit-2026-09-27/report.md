@@ -99,7 +99,7 @@ Measured on this pin. The machine carried load averages of 10–50 from other se
   - the Textual traps (`run_worker(coro)` is not a thread, and so on).
 
   Each finder traced at least one real caller per finding.
-- **Verification.** Every finding then went to an independent verifier told to refute it. The verifier re-read the cited line, traced callers across the repo (no truncated greps), looked for missed offloads and caches, matched open tasks, and re-rated severity. Verifiers downgraded ~100 severities, upgraded ~15, refuted 22 and marked 11 as fully tracked.
+- **Verification.** Every finding then went to an independent verifier told to refute it. The verifier re-read the cited line, traced callers across the repo (no truncated greps), looked for missed offloads and caches, matched open tasks, and re-rated severity. Verifiers downgraded ~100 severities and upgraded ~15; across the first run and the completion pass they refuted 23 and marked 19 as fully tracked (1,001 confirmed of 1,043).
 - **Measurement.** The five probes and most pattern sweeps ran safe micro-benchmarks under a scratch `HOME` / `XDG_*` / `TLDW_CONFIG_PATH` with `TLDW_TEST_MODE=1`. The user's real profile was verified untouched afterwards: `config.toml` hash `fd1f1351…` and mtime Sep 26 are unchanged.
 - **Dedup.** Findings in the same PR group were clustered by location and title similarity: 1,020 live findings → 904 issues. The keystone problems were reported independently by 5–10 agents with consistent numbers. The `n` column in the appendix is that corroboration count.
 
