@@ -459,8 +459,20 @@ bar's **Settings** button, or the **Session Settings** action in the
 Inspector. It is 150 columns by 22 rows, and the **Model and generation**
 view puts tuning first, so at 211x44 the whole view fits without scrolling:
 
-- **Model**: the chat's model, its provider and its readiness word (e.g.
-  "model-a · llama.cpp · Ready · not tested").
+- **Model**: the chat's model and its provider's name, where the pair comes
+  from (*this chat*, or *edited \** once you change it here), the readiness
+  word and the context window (e.g. "claude-sonnet-4-5 · Anthropic  this chat
+  Ready · not tested · 200k context"), then **Change  Alt+M**. Change is the
+  only way to change the model: it opens **Switch model** (below) in pick
+  mode over Chat settings, listing the same provider·model pairs. **Enter**
+  picks a pair and returns to Chat settings with the draft moved to that
+  exact provider and model; nothing is applied until **Apply**. **Esc** returns
+  with nothing changed and focus on Change. Pick mode shows no values or
+  default actions and cannot pick a NEEDS SETUP row; to use a model the list
+  does not have, type its id in **Find** and pick the **TYPED MODEL ID** row.
+  **Alt+M** works from anywhere in Chat settings, even in a text field; on
+  macOS it needs the Option key set to send Meta, so the **Change** button is
+  there for every keyboard.
 - The core fields: **Temperature**, **Max tokens**, **Streaming** (On or Off)
   and the reasoning or thinking controls the model takes.
 - Then four closed disclosures, one row each (a long Sampling line wraps,
@@ -483,13 +495,16 @@ view puts tuning first, so at 211x44 the whole view fits without scrolling:
   - **Your name in this chat** shows the name this chat uses, or the global
     name with "(global default)" when the field is blank.
 
-  Opened, **Connection** holds the Provider and Model pickers, the
-  **Endpoint** field (only for providers that take a server address; other
-  providers show no Endpoint label), **Configure credential…** when a key is
-  missing, **Test connection & list models**, the paid generation test with
-  its confirmation step, and the readiness detail. When the chat is not
-  ready (a missing key, an endpoint to set, no model), Chat settings opens
-  with **Connection** already open and the fix focused. Help that points at
+  Opened, **Connection** holds the **Endpoint** field (only for providers
+  that take a server address; other providers show no Endpoint label),
+  **Configure credential…** when a key is missing, **Test connection & list
+  models**, the paid generation test with its confirmation step, and the
+  readiness detail. It has no provider or model picker: a provider is never
+  chosen without a model. A models listing reports what the server serves
+  ("2 models listed") but never picks a model, even when it lists only one;
+  **Change** does. When the chat is not ready (a missing key, an endpoint to
+  set, no model), Chat settings opens with **Connection** already open and
+  the fix focused (**Change** when the model is missing). Help that points at
   Settings names **F4**, the key that opens it.
 
 Every field row reads the same way: the label, the value, a word saying
@@ -519,7 +534,9 @@ not verified for this model."
 
 Focus opens on **Temperature**. **Tab** walks the core fields, the four
 disclosure titles and the footer to **Use for this conversation**, never into
-a closed disclosure; **Shift+Tab** from Temperature reaches the view tabs.
+a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
+the view tabs. A focus target that a credential round trip cannot restore
+lands on **Change**.
 The **Context and memory** view keeps its taller frame and scrolls.
 - Footer: **Cancel** / **Save as default** / **Save**, under the note "Save
   applies to this session only. Save as default also writes provider +
@@ -537,7 +554,7 @@ colour, and a focused **Apply to this chat** keeps its colour instead of
 dimming; a focused plain button always stands out from the panel at least as much as it does unfocused. Each field is as wide as the value it
 holds, not as wide as the window: a number gets 12 columns, a dropdown is as
 wide as its longest choice, and text is capped by what it holds (your name in
-this chat 32, the provider and model 48, an endpoint URL 64). The fields keep
+this chat 32, an endpoint URL 64; the MODEL row's pair ends in "…" past 48). The fields keep
 their width on a wider terminal. The reasoning and thinking dropdowns
 (**Reasoning effort**, **Reasoning summary**, **Verbosity**, **Thinking**)
 show their choice, or "Select" when none is set. A value saved earlier that
@@ -581,9 +598,12 @@ Need another server beyond the built-in providers? **New endpoint…**, next
 to **Endpoint**, creates a named custom endpoint without leaving the modal:
 pick a template (blank OpenAI-compatible, any provider, or an existing named
 entry), adjust family, URL, and models, name it, and **Create**. The entry
-is saved to `config.toml` immediately and becomes selectable here, so unlike
-a typed-in URL it never trips the "Endpoint not saved" block, and
-conversations using it survive restart. Renaming, editing, and deletion
+is saved to `config.toml` immediately. **Create** then opens Switch model's
+pick mode with the new entry's name in **Find**: pick one of its models (or
+type a model id after the name) and the chat moves to that pair, after
+which the new server is tested by listing its models; **Esc** keeps the
+chat's pair. Unlike a typed-in URL, an entry never trips the "Endpoint not
+saved" block, and conversations using it survive restart. Renaming, editing, and deletion
 (with a guard that detaches conversations first) live in **F4 ▸ Providers &
 Models ▸ Custom endpoints**.
 

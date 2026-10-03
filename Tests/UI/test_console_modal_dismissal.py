@@ -1060,11 +1060,16 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
         ("tldw_chatbook/Widgets/Console/console_session_switcher_modal.py",),
         ("action_show_workbench_help",),
     ),
+    # TASK-33006.4: Chat settings' Change opens Switch model in pick-only
+    # mode; the Console's opener (model_switcher.open_model_picker) builds it.
     _ModalLaunchEdge(
         ConsoleSettingsModal,
-        (ConsoleEndpointTemplateModal,),
-        ("tldw_chatbook/Widgets/Console/console_settings_modal.py",),
-        ("_open_endpoint_template_modal",),
+        (ConsoleEndpointTemplateModal, ConsoleModelPopover),
+        (
+            "tldw_chatbook/Widgets/Console/console_settings_modal.py",
+            "tldw_chatbook/UI/Console_Modules/model_switcher.py",
+        ),
+        ("_open_endpoint_template_modal", "open_model_picker"),
     ),
     # task-18810: the Console workspace browser opens the shared create
     # dialog (`_create_console_workspace`), which itself opens the vendored
@@ -1973,7 +1978,8 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
         focused_input = modal.query_one(
             "#console-settings-temperature", ConsoleSettingsInput
         )
-        provider_select = modal.query_one("#console-settings-provider", Select)
+        # TASK-33006.4: the provider Select is gone; Streaming is a Select.
+        provider_select = modal.query_one("#console-settings-streaming", Select)
         focused_input.focus()
         await pilot.pause()
         provider_region = _settings_screen_region(provider_select)
@@ -2002,6 +2008,61 @@ async def test_settings_redirected_select_click_uses_real_mro_dispatch() -> None
         assert provider_select.expanded
         assert app.screen is modal
         assert app.results == []
+
+
+@pytest.mark.asyncio
+async def test_settings_change_pick_mode_escape_keeps_draft_and_focuses_change() -> None:
+    """TASK-33006.4 AC#4 (ADR-031 task-16211): Chat settings opens pick-only
+    Switch model over itself; Esc returns to Chat settings with the draft
+    unchanged and focus on Change, and Chat settings stays open."""
+    from Tests.UI.test_console_settings_model_change import (
+        pick_mode_opener,
+        real_rebase,
+    )
+    from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+        MODEL_CHANGE_ID,
+    )
+
+    app = _SettingsMROHarness()
+    app_config = {"api_settings": {"llama_cpp": {}, "openai": {"api_key": "k"}}}
+    modal = ConsoleSettingsModal(
+        settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
+        app_config=app_config,
+        providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-5"]},
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=real_rebase,
+        model_picker=pick_mode_opener(
+            app, app_config, {"llama_cpp": ["model-a"], "openai": ["gpt-5"]}
+        ),
+    )
+
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal, callback=app.results.append)
+        await pilot.pause()
+        before = modal._draft
+        change = modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        change.focus()
+        await pilot.press("enter")
+        for _ in range(3):
+            await pilot.pause()
+            await app.workers.wait_for_complete()
+        switcher = app.screen
+        assert isinstance(switcher, ConsoleModelPopover) and switcher._pick_only
+        await pilot.press(*"gpt")
+        await pilot.pause()
+        await pilot.press("escape")
+        for _ in range(3):
+            await pilot.pause()
+
+        assert app.screen is modal
+        assert app.results == []
+        assert modal._draft is before
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "llama_cpp",
+            "model-a",
+        )
+        assert app.focused is change
 
 
 @dataclass(frozen=True)

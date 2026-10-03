@@ -15,15 +15,11 @@ from ...Utils.input_validation import (
 )
 
 # Must cover every focus target a Chat settings draft snapshot may carry
-# (TASK-33003.10: a missing id failed the Configure credential handoff).
+# (TASK-33003.10: a missing id failed the Configure credential handoff). The
+# model is changed by the MODEL row's Change only (TASK-33006.4).
 _FOCUS_CONTROL_IDS = frozenset(
     {
-        "console-settings-provider",
-        "console-settings-provider-picker",
-        "console-settings-model-picker",
-        "console-settings-model-select",
-        "console-settings-model-input",
-        "console-settings-model-custom",
+        "console-settings-model-change",
         "console-settings-base-url",
         "console-settings-user-display-name",
         "console-settings-temperature",

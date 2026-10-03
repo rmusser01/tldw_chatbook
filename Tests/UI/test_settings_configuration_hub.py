@@ -8081,7 +8081,7 @@ def _stage_conversation_settings_return_intent(app, *, provider: str = "openai")
         session_id="console-session-return",
         settings_revision=3,
         active_view="model",
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
     )
     revision = app.pending_handoffs.stage(
         HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -8142,7 +8142,7 @@ async def test_conversation_settings_return_preserves_explicit_unselected_model(
         session_id="console-session-first-run",
         settings_revision=0,
         active_view="model",
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
     )
     revision = app.pending_handoffs.stage(
         HandoffChannel.CONVERSATION_SETTINGS_RETURN,
@@ -8407,12 +8407,12 @@ async def test_conversation_settings_return_keeps_mounted_credential_out_of_tran
             system_prompt=snapshot_marker,
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={"console-settings-base-url": ""},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=2,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={
             "advanced_generation": False,
             "connection_details": False,

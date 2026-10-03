@@ -654,7 +654,7 @@ async def test_full_settings_recovery_keyboard_scrolls_and_stays_in_phase_action
 @pytest.mark.parametrize(
     ("focus_model", "focus_context", "restored_focus_id"),
     (
-        (True, False, "model-search-picker-input"),
+        (True, False, "console-settings-model-change"),
         (False, True, "console-context-budget-mode"),
     ),
 )
@@ -914,7 +914,8 @@ async def test_blocked_quick_transfer_keeps_initial_model_focus_visible(
         fold = modal.query_one("#console-settings-fold-hint", Static)
         focused = app.focused
         assert focused is not None
-        assert focused.id == "model-search-picker-input"
+        # TASK-33006.4: Change (the MODEL row) is the model's control now.
+        assert focused.id == "console-settings-model-change"
         assert body.content_region.contains_region(focused.region)
         assert blocked.display
         assert "not configured" in str(blocked.renderable)

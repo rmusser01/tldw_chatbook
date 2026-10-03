@@ -20,7 +20,6 @@ from textual.widgets import (
     Button,
     Collapsible,
     Input,
-    OptionList,
     Select,
     Static,
     TextArea,
@@ -72,6 +71,8 @@ from tldw_chatbook.Chat.console_settings_apply import (
     ConsoleSettingsCommittedSubmission,
 )
 from tldw_chatbook.Chat.local_server_discovery import LocalModelProbeResult
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
+from Tests.UI.test_console_settings_model_change import real_rebase
 from tldw_chatbook.Chat.provider_test_evidence import (
     ProviderDraftIdentity,
     ProviderProbeResult,
@@ -110,16 +111,12 @@ from tldw_chatbook.Widgets.Console.console_bounded_section import (
 from tldw_chatbook.Widgets.Console.console_context_controls import (
     build_console_context_control_state,
 )
-from tldw_chatbook.Widgets.Console.console_provider_picker import (
-    ConsoleProviderPicker,
-)
 from tldw_chatbook.Widgets.Console.console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID,
     GENERATION_CONTROL_UNKNOWN_COPY,
     SAMPLING_DISCLOSURE_ID,
 )
 from tldw_chatbook.Widgets.Console.console_settings_modal import (
-    CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS,
     MODEL_DISCOVER_BUTTON_ID,
     MODEL_DISCOVER_STATUS_ID,
     ConsoleModelDiscoveryIdentity,
@@ -128,7 +125,6 @@ from tldw_chatbook.Widgets.Console.console_settings_modal import (
     ConsoleSettingsInput,
     ConsoleSettingsModal,
     ConsoleSettingsResult,
-    ConsoleUnverifiedModelDecision,
     _settings_screen_region,
 )
 from tldw_chatbook.Widgets.Console.console_settings_summary import (
@@ -140,7 +136,6 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
     TEXT_AREA_ID as SYSTEM_PROMPT_TEXT_AREA_ID,
 )
-from tldw_chatbook.Widgets.model_search_picker import CURRENT_MARK, ModelSearchPicker
 
 
 def _assert_private_values_absent(
@@ -431,8 +426,6 @@ def test_suspended_draft_round_trips_raw_modal_values_and_sensitive_session_fiel
             custom_budget_tokens=2048,
         ),
         raw_values={
-            "console-settings-provider": "llama_cpp",
-            "console-settings-model-picker": "model-a",
             "console-settings-base-url": "http://127.0.0.1:9099",
             "console-settings-temperature": "0.7.2",
             "console-settings-user-display-name": "Ada",
@@ -494,15 +487,13 @@ def test_suspended_draft_allows_incomplete_connection_and_multiline_private_text
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "llama_cpp",
-            "console-settings-model-picker": "",
             "console-settings-base-url": "",
         },
         provider_model_drafts={"llama_cpp": ""},
         provider_base_url_drafts={"llama_cpp": ""},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
 
@@ -511,7 +502,6 @@ def test_suspended_draft_allows_incomplete_connection_and_multiline_private_text
     assert restored is not None
     assert restored.settings.model == ""
     assert restored.settings.base_url == ""
-    assert restored.raw_values["console-settings-model-picker"] == ""
     assert restored.raw_values["console-settings-base-url"] == ""
     assert restored.provider_model_drafts == {"llama_cpp": ""}
     assert restored.provider_base_url_drafts == {"llama_cpp": ""}
@@ -553,12 +543,12 @@ def _minimal_suspended_draft_mapping() -> dict[str, object]:
     return ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     ).to_mapping()
 
@@ -707,7 +697,7 @@ def test_suspended_draft_rejects_equality_impersonating_view_and_focus() -> None
     common = dict(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         scroll_anchor=0,
@@ -718,13 +708,13 @@ def test_suspended_draft_rejects_equality_impersonating_view_and_focus() -> None
         ConsoleSettingsDraftSnapshot(
             **common,
             active_view=Impersonator("model"),  # type: ignore[arg-type]
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
     with pytest.raises(ValueError):
         ConsoleSettingsDraftSnapshot(
             **common,
             active_view="model",
-            focus_control_id=Impersonator("console-settings-model-picker"),  # type: ignore[arg-type]
+            focus_control_id=Impersonator("console-settings-model-change"),  # type: ignore[arg-type]
         )
 
 
@@ -732,12 +722,12 @@ def test_credential_request_rejects_values_the_navigation_target_would_reject() 
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
 
@@ -791,8 +781,6 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         settings=suspended_settings,
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "llama_cpp",
-            "console-settings-model-picker": "model-a",
             "console-settings-base-url": "http://127.0.0.1:9099",
             "console-settings-temperature": "0.7.2",
         },
@@ -800,7 +788,7 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
         provider_base_url_drafts={"llama_cpp": "http://127.0.0.1:9099"},
         active_view="model",
         scroll_anchor=3,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": True},
     )
     request = ConsoleSettingsCredentialRequest(
@@ -892,7 +880,7 @@ def test_credential_request_stages_only_a_secret_free_return_and_navigation_cont
     assert return_intent.session_id == session.id
     assert return_intent.settings_revision == 0
     assert return_intent.active_view == "model"
-    assert return_intent.focus_control_id == "console-settings-model-picker"
+    assert return_intent.focus_control_id == "console-settings-model-change"
     _assert_private_values_absent(
         return_intent,
         private_values,
@@ -967,12 +955,12 @@ def test_credential_route_staging_is_atomic_when_navigation_target_is_invalid(
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
@@ -1003,12 +991,12 @@ def test_credential_route_navigation_rejection_clears_exact_staged_return_slot()
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
@@ -1035,12 +1023,12 @@ def test_credential_route_rejected_delivery_repairs_the_exact_slot() -> None:
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
@@ -1065,12 +1053,12 @@ def test_credential_route_stale_identical_snapshot_cannot_reopen_newer_request(m
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     request = ConsoleSettingsCredentialRequest(snapshot, "openai", "gpt-5")
@@ -1111,12 +1099,12 @@ async def test_failed_source_reopen_retains_suspended_snapshot_and_token(monkeyp
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     screen = ChatScreen.__new__(ChatScreen)
@@ -1151,12 +1139,12 @@ async def test_cancelled_source_reopen_retains_suspended_snapshot_and_token(
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     screen = ChatScreen.__new__(ChatScreen)
@@ -1219,12 +1207,12 @@ async def test_covered_cancelled_source_reopen_transfers_exact_draft_to_modal(
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     store = ConsoleChatStore()
@@ -1317,12 +1305,12 @@ async def test_source_reopen_revalidates_exact_owner_after_model_resolution(
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     store = ConsoleChatStore()
@@ -1401,12 +1389,12 @@ async def test_open_console_settings_real_callback_stages_typed_credential_route
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=settings,
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     store = ConsoleChatStore()
@@ -1640,17 +1628,19 @@ async def test_open_console_settings_propagates_mount_cancellation(monkeypatch) 
 
 
 @pytest.mark.asyncio
-async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
+async def test_suspended_open_uses_the_draft_pair_for_initial_discovery(
     monkeypatch,
 ) -> None:
-    """Fresh composition is seeded from the draft provider, not its canonical origin."""
+    """Fresh composition is seeded from the draft's pair, not the chat's.
+
+    TASK-33006.4: the draft pair is the snapshot's settings (a pick rebased
+    it before suspension); there is no separate raw provider any more.
+    """
     settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
     snapshot = ConsoleSettingsDraftSnapshot(
-        settings=settings,
+        settings=ConsoleSessionSettings(provider="vllm", model="draft-model"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "vllm",
-            "console-settings-model-picker": "draft-model",
             "console-settings-base-url": "http://draft-vllm.invalid:8000",
         },
         provider_model_drafts={"openai": "gpt-5", "vllm": "draft-model"},
@@ -1659,7 +1649,7 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
         },
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-provider",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     store = ConsoleChatStore()
@@ -1718,8 +1708,11 @@ async def test_suspended_open_uses_active_raw_provider_for_initial_discovery(
 
 
 @pytest.mark.asyncio
-async def test_suspended_modal_initial_composition_uses_active_raw_provider() -> None:
-    """Connection controls compose for the draft provider before mount events run."""
+async def test_suspended_modal_initial_composition_uses_the_draft_pair() -> None:
+    """Connection controls compose for the draft's pair before mount events run.
+
+    TASK-33006.4: the pair is the snapshot's settings, shown in the MODEL row.
+    """
     app = ModalHarness()
     app.app_config = {
         "api_settings": {
@@ -1729,11 +1722,9 @@ async def test_suspended_modal_initial_composition_uses_active_raw_provider() ->
     }
     settings = ConsoleSessionSettings(provider="openai", model="gpt-5")
     snapshot = ConsoleSettingsDraftSnapshot(
-        settings=settings,
+        settings=ConsoleSessionSettings(provider="vllm", model="draft-model"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "vllm",
-            "console-settings-model-picker": "draft-model",
             "console-settings-base-url": "http://draft-vllm.invalid:8000",
         },
         provider_model_drafts={"openai": "gpt-5", "vllm": "draft-model"},
@@ -1742,7 +1733,7 @@ async def test_suspended_modal_initial_composition_uses_active_raw_provider() ->
         },
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-provider",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
     modal = _basic_modal(
@@ -1765,8 +1756,13 @@ async def test_suspended_modal_initial_composition_uses_active_raw_provider() ->
         await pilot.pause()
 
         assert discovery_provider_calls[0] == "vllm"
-        assert modal.query_one("#console-settings-provider", Select).value == "vllm"
-        assert modal.query_one(ModelSearchPicker).value == "draft-model"
+        assert (modal._active_provider, modal._current_model_value()) == (
+            "vllm",
+            "draft-model",
+        )
+        assert str(
+            modal.query_one("#console-settings-model-summary", Static).render()
+        ) == f"draft-model · {provider_display_name('vllm')}"
         assert modal.query_one("#console-settings-base-url", Input).value == (
             "http://draft-vllm.invalid:8000"
         )
@@ -1837,12 +1833,41 @@ async def _wait_for_console_settings_modal(host: ConsoleHarness, pilot):
         if (
             host.screen_stack
             and host.screen_stack[-1].query("#console-settings-modal")
-            and host.screen_stack[-1].query("#console-settings-provider")
+            and host.screen_stack[-1].query("#console-settings-model-change")
         ):
             await pilot.pause()
             return host.screen_stack[-1]
         await pilot.pause(0.05)
     raise AssertionError("Console settings modal did not open")
+
+
+async def _pick_through_console_change(
+    modal: ConsoleSettingsModal, pilot, provider: str, model: str
+) -> None:
+    """Change opens the Console's real pick-only switcher; hand back a pick.
+
+    TASK-33006.4: the pair changes only through pick mode. The pick result is
+    delivered the way the switcher delivers it (its dismissal), so the
+    Console's opener and the modal's callback both run.
+    """
+    from tldw_chatbook.Widgets.Console.console_model_popover import (
+        ConsoleModelPopover,
+    )
+
+    modal.query_one("#console-settings-model-change", Button).press()
+    for _ in range(20):
+        await pilot.pause(0.05)
+        if isinstance(modal.app.screen, ConsoleModelPopover):
+            break
+    else:
+        raise AssertionError("Change did not open pick mode")
+    assert modal.app.screen._pick_only
+    modal.app.screen.dismiss((provider, model))
+    for _ in range(20):
+        await pilot.pause(0.05)
+        if (modal._active_provider, modal._current_model_value()) == (provider, model):
+            return
+    raise AssertionError(f"The pick did not land on {(provider, model)!r}")
 
 
 async def _apply_open_console_settings_modal(
@@ -1856,24 +1881,15 @@ async def _apply_open_console_settings_modal(
 ) -> None:
     """Submit an open production modal through its live transaction path."""
 
-    modal.query_one("#console-settings-provider", Select).value = provider
-    for _ in range(20):
-        await pilot.pause(0.05)
-        if modal._active_provider == provider:
-            break
-    else:
-        raise AssertionError(f"Provider did not settle to {provider!r}")
-    model_select = modal.query_one("#console-settings-model-select", Select)
-    if model_select.value != model:
-        model_select.value = model
-        await pilot.pause()
+    if (modal._active_provider, modal._current_model_value()) != (provider, model):
+        await _pick_through_console_change(modal, pilot, provider, model)
     if base_url is not None:
         modal.query_one("#console-settings-base-url", Input).value = base_url
     if user_display_name_override is not None:
         modal.query_one(
             "#console-settings-user-display-name", Input
         ).value = user_display_name_override
-    await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.05)
+    await pilot.pause(0.25)
     modal.query_one("#console-settings-save", Button).press()
 
 
@@ -1944,7 +1960,7 @@ async def test_missing_credential_action_is_mounted_only_for_missing_cloud_crede
 
 
 @pytest.mark.asyncio
-async def test_compact_missing_credential_pointer_click_after_picker_focus_dismisses_once() -> (
+async def test_compact_missing_credential_pointer_click_after_change_focus_dismisses_once() -> (
     None
 ):
     """A compact modal must not lose the recovery click to its scrollable body."""
@@ -1960,7 +1976,7 @@ async def test_compact_missing_credential_pointer_click_after_picker_focus_dismi
     async with app.run_test(size=(100, 30)) as pilot:
         await app.push_screen(modal, callback=results.append)
         await pilot.pause()
-        modal.query_one(ModelSearchPicker).focus_input()
+        modal.query_one("#console-settings-model-change", Button).focus()
         await pilot.click("#console-settings-configure-credential", button=3)
         await pilot.pause()
         assert results == []
@@ -2018,7 +2034,7 @@ class RejectingConversationSettingsHarness(ConsoleHarness):
 
 
 @pytest.mark.asyncio
-async def test_mounted_configure_rejection_restores_picker_focus_through_production_route(
+async def test_mounted_configure_rejection_restores_change_focus_through_production_route(
     monkeypatch,
 ) -> None:
     """A real Configure click reopens the draft at its prior logical input."""
@@ -2043,9 +2059,8 @@ async def test_mounted_configure_rejection_restores_picker_focus_through_product
 
         assert await console._open_console_settings() is True
         original = await _wait_for_console_settings_modal(host, pilot)
-        picker = original.query_one(ModelSearchPicker)
-        picker.focus_input()
-        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
+        original.query_one("#console-settings-model-change", Button).focus()
+        await _wait_for_focused_id(host, pilot, "console-settings-model-change")
         await pilot.click("#console-settings-configure-credential")
 
         fresh = None
@@ -2056,7 +2071,7 @@ async def test_mounted_configure_rejection_restores_picker_focus_through_product
                 break
             await pilot.pause(0.05)
         assert fresh is not None
-        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
+        await _wait_for_focused_id(host, pilot, "console-settings-model-change")
 
         assert len(host.rejected_settings_routes) == 1
         navigation = host.rejected_settings_routes[0]
@@ -2066,13 +2081,17 @@ async def test_mounted_configure_rejection_restores_picker_focus_through_product
 
 
 @pytest.mark.asyncio
-async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus() -> None:
-    """Mounted capture and fresh modal rehydration retain raw, per-provider state."""
+async def test_mounted_suspended_draft_rehydrates_raw_values_and_change_focus() -> None:
+    """Mounted capture and fresh modal rehydration retain the raw draft.
+
+    TASK-33006.4 (R8): the pair is the snapshot's settings and the model is
+    changed only by Change, so focus restores to Change; the raw values,
+    the endpoint draft, the disclosures and the scroll anchor round-trip.
+    """
     app = ModalHarness()
     app.app_config = {
         "api_settings": {
             "llama_cpp": {"api_url": "http://canonical-llama.invalid:8080"},
-            "vllm": {"api_url": "http://canonical-vllm.invalid:8000"},
         }
     }
     settings = ConsoleSessionSettings(
@@ -2082,10 +2101,7 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         system_prompt="private system prompt",
         pinned_prefill="private prefill",
     )
-    providers_models = {
-        "llama_cpp": ["canonical-model", "llama-draft"],
-        "vllm": ["canonical-vllm", "vllm-draft"],
-    }
+    providers_models = {"llama_cpp": ["canonical-model", "llama-draft"]}
     original = _basic_modal(settings, app, providers_models=providers_models)
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -2094,23 +2110,15 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         original.query_one("#console-settings-temperature", Input).value = "0.7.2"
         original.query_one("#console-settings-user-display-name", Input).value = "Ada"
         original.query_one("#console-context-custom-budget", Input).value = "raw-budget"
-        original.query_one(ModelSearchPicker).set_model_value("llama-draft")
         original.query_one("#console-settings-base-url", Input).value = (
             "http://draft-llama.invalid:9090"
         )
-        original.query_one("#console-settings-provider", Select).value = "vllm"
-        await pilot.pause()
-        original.query_one(ModelSearchPicker).set_model_value("vllm-draft")
-        original.query_one("#console-settings-base-url", Input).value = (
-            "http://draft-vllm.invalid:8001"
-        )
-        original.query_one("#console-settings-provider", Select).value = "llama_cpp"
         await pilot.pause()
         original.query_one(
             f"#{SAMPLING_DISCLOSURE_ID}", Collapsible
         ).collapsed = False
         original._connection_details_disclosed = True
-        original.query_one(ModelSearchPicker).focus_input()
+        original.query_one("#console-settings-model-change", Button).focus()
         await pilot.pause()
         body = original.query_one("#console-settings-body", ScrollableContainer)
         body.scroll_to(y=7, animate=False)
@@ -2120,16 +2128,15 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         assert snapshot.settings.system_prompt == "private system prompt"
         assert snapshot.settings.pinned_prefill == "private prefill"
         assert snapshot.active_view == "model"
-        assert snapshot.focus_control_id == "console-settings-model-picker"
+        assert snapshot.focus_control_id == "console-settings-model-change"
         assert snapshot.scroll_anchor == expected_scroll_anchor
-        assert snapshot.provider_model_drafts == {
-            "llama_cpp": "llama-draft",
-            "vllm": "vllm-draft",
-        }
+        assert snapshot.provider_model_drafts == {"llama_cpp": "canonical-model"}
         assert snapshot.provider_base_url_drafts == {
             "llama_cpp": "http://draft-llama.invalid:9090",
-            "vllm": "http://draft-vllm.invalid:8001",
         }
+        assert not {"console-settings-provider", "console-settings-model-picker"} & set(
+            snapshot.raw_values
+        )
         detached = snapshot.to_mapping()
         detached["raw_values"]["console-settings-temperature"] = "changed"  # type: ignore[index]
         assert snapshot.raw_values["console-settings-temperature"] == "0.7.2"
@@ -2149,7 +2156,7 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         )
         await app.push_screen(fresh)
         await pilot.pause()
-        assert fresh.query_one(ModelSearchPicker).value == "llama-draft"
+        assert fresh._current_model_value() == "canonical-model"
         assert fresh.query_one("#console-settings-base-url", Input).value == (
             "http://draft-llama.invalid:9090"
         )
@@ -2158,22 +2165,10 @@ async def test_mounted_suspended_draft_rehydrates_raw_provider_drafts_and_focus(
         assert fresh.query_one("#console-context-custom-budget", Input).value == "raw-budget"
         assert fresh._advanced_generation_disclosed is True
         assert fresh._connection_details_disclosed is True
-        assert getattr(app.focused, "id", None) == "model-search-picker-input"
+        assert getattr(app.focused, "id", None) == "console-settings-model-change"
         assert int(
             fresh.query_one("#console-settings-body", ScrollableContainer).scroll_y
         ) == expected_scroll_anchor
-        fresh.query_one("#console-settings-provider", Select).value = "vllm"
-        await pilot.pause()
-        assert fresh.query_one(ModelSearchPicker).value == "vllm-draft"
-        assert fresh.query_one("#console-settings-base-url", Input).value == (
-            "http://draft-vllm.invalid:8001"
-        )
-        fresh.query_one("#console-settings-provider", Select).value = "llama_cpp"
-        await pilot.pause()
-        assert fresh.query_one(ModelSearchPicker).value == "llama-draft"
-        assert fresh.query_one("#console-settings-base-url", Input).value == (
-            "http://draft-llama.invalid:9090"
-        )
 
 
 @pytest.mark.asyncio
@@ -2185,7 +2180,6 @@ async def test_mounted_suspended_draft_preserves_active_raw_base_url_whitespace(
     app.app_config = {
         "api_settings": {
             "llama_cpp": {"api_url": "http://canonical-llama.invalid:8080"},
-            "vllm": {"api_url": "http://canonical-vllm.invalid:8000"},
         }
     }
     settings = ConsoleSessionSettings(
@@ -2194,11 +2188,7 @@ async def test_mounted_suspended_draft_preserves_active_raw_base_url_whitespace(
         base_url="http://canonical-llama.invalid:8080",
     )
     raw_active_endpoint = "  http://draft.invalid:9090  "
-    other_provider_endpoint = "http://draft-vllm.invalid:8001"
-    providers_models = {
-        "llama_cpp": ["llama-model"],
-        "vllm": ["vllm-model"],
-    }
+    providers_models = {"llama_cpp": ["llama-model"]}
 
     async with app.run_test(size=(120, 40)) as pilot:
         original = _basic_modal(
@@ -2207,14 +2197,6 @@ async def test_mounted_suspended_draft_preserves_active_raw_base_url_whitespace(
             providers_models=providers_models,
         )
         await app.push_screen(original)
-        await pilot.pause()
-        provider_select = original.query_one("#console-settings-provider", Select)
-        provider_select.value = "vllm"
-        await pilot.pause()
-        original.query_one("#console-settings-base-url", Input).value = (
-            other_provider_endpoint
-        )
-        provider_select.value = "llama_cpp"
         await pilot.pause()
         original.query_one("#console-settings-base-url", Input).value = (
             raw_active_endpoint
@@ -2237,18 +2219,10 @@ async def test_mounted_suspended_draft_preserves_active_raw_base_url_whitespace(
         await pilot.pause()
 
         fresh_base_url = fresh.query_one("#console-settings-base-url", Input)
-        fresh_provider = fresh.query_one("#console-settings-provider", Select)
         assert fresh_base_url.value == raw_active_endpoint
         assert fresh.capture_suspended_draft().provider_base_url_drafts == {
             "llama_cpp": raw_active_endpoint,
-            "vllm": other_provider_endpoint,
         }
-        fresh_provider.value = "vllm"
-        await pilot.pause()
-        assert fresh_base_url.value == other_provider_endpoint
-        fresh_provider.value = "llama_cpp"
-        await pilot.pause()
-        assert fresh_base_url.value == raw_active_endpoint
 
 
 @pytest.mark.asyncio
@@ -2265,15 +2239,13 @@ async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_f
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "llama_cpp",
-            "console-settings-model-picker": "",
             "console-settings-base-url": "",
         },
         provider_model_drafts={"llama_cpp": ""},
         provider_base_url_drafts={"llama_cpp": ""},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
 
@@ -2286,9 +2258,10 @@ async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_f
         )
         await app.push_screen(modal)
         await pilot.pause()
-        assert modal.query_one(
-            "#model-search-picker-input", Input
-        ).value == ""
+        assert modal._current_model_value() is None
+        assert str(
+            modal.query_one("#console-settings-model-summary", Static).render()
+        ).startswith("no model · ")
         assert modal.query_one("#console-settings-base-url", Input).value == ""
         captured = modal.capture_suspended_draft()
         assert captured.settings.system_prompt == "system\n\tindented"
@@ -2296,10 +2269,14 @@ async def test_mounted_suspended_draft_rehydrates_blank_connection_and_private_f
 
 
 @pytest.mark.asyncio
-async def test_mounted_suspended_none_model_stays_blank_after_provider_round_trip() -> (
+async def test_mounted_suspended_none_model_stays_blank_without_catalog_fallback() -> (
     None
 ):
-    """An explicitly unselected provider model cannot fall back to the catalog."""
+    """An explicitly unselected model cannot fall back to the catalog.
+
+    TASK-33006.4: there is no provider round trip in Chat settings any more;
+    the draft's pair stays as suspended until Change picks a pair.
+    """
     app = ModalHarness()
     app.app_config = {
         "api_settings": {
@@ -2310,15 +2287,12 @@ async def test_mounted_suspended_none_model_stays_blank_after_provider_round_tri
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model=None),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={
-            "console-settings-provider": "openai",
-            "console-settings-model-picker": "",
-        },
+        raw_values={},
         provider_model_drafts={"openai": None},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-model-change",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
 
@@ -2335,35 +2309,26 @@ async def test_mounted_suspended_none_model_stays_blank_after_provider_round_tri
         await app.push_screen(modal)
         await pilot.pause()
 
-        picker_input = modal.query_one("#model-search-picker-input", Input)
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        assert picker_input.value == ""
+        assert modal._current_model_value() is None
         assert modal._provider_model_drafts["openai"] is None
-
-        provider_select.value = "anthropic"
-        await pilot.pause()
-        assert picker_input.value == "claude-model"
-        assert modal._provider_model_drafts["openai"] is None
-        provider_select.value = "openai"
-        await pilot.pause()
-
-        assert picker_input.value == ""
+        assert str(
+            modal.query_one("#console-settings-model-summary", Static).render()
+        ) == "no model · OpenAI"
         captured = modal.capture_suspended_draft()
-        assert captured.raw_values["console-settings-model-picker"] == ""
+        assert captured.settings.model is None
         assert captured.provider_model_drafts["openai"] is None
 
 
 @pytest.mark.asyncio
-async def test_suspended_focus_falls_back_to_connection_provider_when_target_hidden() -> None:
+async def test_suspended_focus_falls_back_to_change_when_target_hidden() -> None:
+    """TASK-33006.4: a hidden restored target falls back to Change (the
+    model is chosen in the MODEL row now, not Connection's picker)."""
     app = ModalHarness()
     app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={
-            "console-settings-provider": "openai",
-            "console-settings-model-picker": "gpt-5",
-        },
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
@@ -2381,25 +2346,24 @@ async def test_suspended_focus_falls_back_to_connection_provider_when_target_hid
                 suspended_draft=snapshot,
             )
         )
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        await _wait_for_focused_id(app, pilot, "console-settings-model-change")
 
 
 @pytest.mark.asyncio
-async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden() -> None:
-    """The logical picker target uses its input's effective focusability."""
+async def test_suspended_focus_falls_back_when_its_ancestor_is_hidden() -> None:
+    """The restored target uses its effective focusability: a focusable
+    control under a hidden row falls back to Change (TASK-33006.4)."""
     app = ModalHarness()
     app.app_config = {"api_settings": {"openai": {"api_key": "test-key"}}}
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-model-picker": "gpt-5"},
+        raw_values={},
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
         active_view="model",
         scroll_anchor=0,
-        focus_control_id="console-settings-model-picker",
+        focus_control_id="console-settings-max-tokens",
         disclosure_state={"advanced_generation": False, "connection_details": False},
     )
 
@@ -2411,17 +2375,12 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
         )
         await app.push_screen(modal)
         await pilot.pause()
-        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
-        assert picker.parent is not None
-        picker.parent.display = False
-        assert picker.query_one("#model-search-picker-input", Input).focusable
-        assert modal.query_one(
-            "#console-settings-provider-picker-input", Input
-        ).focusable
+        target = modal.query_one("#console-settings-max-tokens", Input)
+        assert target.parent is not None
+        target.parent.display = False
+        assert target.focusable
         modal._restore_suspended_scroll_and_focus(snapshot)
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        await _wait_for_focused_id(app, pilot, "console-settings-model-change")
 
 
 @pytest.mark.asyncio
@@ -2429,17 +2388,16 @@ async def test_suspended_model_picker_focus_falls_back_when_ancestor_is_hidden()
     "focus_control_id",
     [None, "console-context-undo-reset", "console-context-confirm-reset-all"],
 )
-async def test_suspended_context_missing_or_transient_focus_reveals_connection_fallback(
+async def test_suspended_context_missing_or_transient_focus_reveals_change_fallback(
     focus_control_id: str | None,
 ) -> None:
-    """Unavailable Context focus restores a usable visible Connection target."""
+    """Unavailable Context focus restores a usable visible Model view target:
+    Change, since TASK-33006.4 deleted Connection's provider picker."""
     app = ModalHarness()
     snapshot = ConsoleSettingsDraftSnapshot(
         settings=ConsoleSessionSettings(provider="openai", model="gpt-5"),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "openai",
-            "console-settings-model-picker": "gpt-5",
         },
         provider_model_drafts={"openai": "gpt-5"},
         provider_base_url_drafts={},
@@ -2457,9 +2415,7 @@ async def test_suspended_context_missing_or_transient_focus_reveals_connection_f
             suspended_draft=snapshot,
         )
         await app.push_screen(modal)
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-provider-picker-input"
-        )
+        await _wait_for_focused_id(app, pilot, "console-settings-model-change")
 
         assert modal._active_view == "model"
         assert all(section.display for section in modal.query(".console-settings-model-view"))
@@ -2542,8 +2498,6 @@ async def test_suspended_rehydration_rebuilds_context_state_before_raw_overlay()
         settings=settings,
         context_policy_overrides=overrides,
         raw_values={
-            "console-settings-provider": "llama_cpp",
-            "console-settings-model-picker": "model-a",
             "console-context-budget-mode": "custom",
             "console-context-custom-budget": "temporarily-invalid",
         },
@@ -4961,11 +4915,9 @@ _NUMERIC_FIELD_IDS = (
     "console-context-target-percent",
     "console-context-summary-max",
 )
-#: AC#3: the free-text fields (search pickers type an id; the rest are text).
+#: AC#3: the free-text fields (TASK-33006.4 removed the two search pickers).
 _FREE_TEXT_FIELD_IDS = (
-    "console-settings-provider-picker",
     "console-settings-base-url",
-    "console-settings-model-picker",
     "console-settings-user-display-name",
 )
 #: A dense-form Select paints its left edge, one padding cell on each side,
@@ -4987,9 +4939,7 @@ def _shown_field_widths(screen) -> dict[str, int]:
             )
     return {
         widget.id: widget.region.width
-        for widget in screen.query(
-            "Input, Select, ConsoleProviderPicker, ModelSearchPicker"
-        )
+        for widget in screen.query("Input, Select")
         if widget.id and widget.region.area
     }
 
@@ -5232,7 +5182,7 @@ async def test_console_settings_obsolete_choice_copy_paints_beside_its_select(
     """TASK-33003.8 AC#2: a restored obsolete value keeps its recovery copy."""
     app = StyledModalHarness()
     snapshot = _task_30012_suspended_modal_draft(
-        focus_control_id="console-settings-provider-picker",
+        focus_control_id="console-settings-model-change",
         advanced_generation=True,
         raw_values={"console-settings-reasoning-effort": "obsolete-effort"},
     )
@@ -6085,17 +6035,36 @@ _ENGINE_CLOUD_PROVIDER_TABLES = {
 
 
 def test_console_modal_offers_engine_cloud_providers_with_display_labels() -> None:
-    """TASK-32919: the four ADR-179 engine presets render as first-class
-    picker options labeled with the shared catalog display names, not raw
-    config keys or "(WIP)" markers."""
-    modal = _unmounted_settings_modal({"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)})
+    """TASK-32919, via TASK-33006.4: Chat settings' Change lists the four
+    ADR-179 engine presets in pick mode, labeled with the shared catalog
+    display names, not raw config keys or "(WIP)" markers."""
+    from tldw_chatbook.Widgets.Console.console_model_popover import (
+        ConsoleModelPopover,
+    )
 
-    options = {value: label for label, value in modal._provider_select_options()}
+    app_config = {"api_settings": dict(_ENGINE_CLOUD_PROVIDER_TABLES)}
+    modal = _unmounted_settings_modal(app_config)
+    picker = ConsoleModelPopover(
+        origin=modal._origin,
+        app_config=app_config,
+        initial_draft=modal._draft,
+        providers_models={},
+        scope_copy="",
+        durability_copy="",
+        draft_rebaser=lambda *_a, **_k: None,
+        live_committer=lambda _submission: None,
+        default_readiness_resolver=lambda _provider, _model: None,
+        pick_only=True,
+    )
 
-    assert options["databricks"] == "Databricks"
-    assert options["together"] == "Together"
-    assert options["fireworks"] == "Fireworks"
-    assert options["cerebras"] == "Cerebras"
+    for key, label in (
+        ("databricks", "Databricks"),
+        ("together", "Together"),
+        ("fireworks", "Fireworks"),
+        ("cerebras", "Cerebras"),
+    ):
+        assert key in picker._provider_order
+        assert picker._display(key) == label
 
 
 def test_console_modal_collects_databricks_workspace_url() -> None:
@@ -6446,6 +6415,7 @@ async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -
                 settings,
                 app,
                 providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
+                draft_rebaser=real_rebase,
             ),
             callback=app.capture_saved_settings,
         )
@@ -6454,8 +6424,8 @@ async def test_console_settings_modal_provider_switch_refreshes_choice_hints() -
         summary = app.screen.query_one("#console-settings-reasoning-summary", Select)
         assert summary.parent is not None and summary.parent.display is True
 
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
-        provider_select.value = "llama_cpp"
+        # TASK-33006.4: the pair changes through pick mode's result.
+        app.screen._model_picked(("llama_cpp", "model-a"))
         await pilot.pause()
 
         assert summary.parent is not None and summary.parent.display is False
@@ -6559,86 +6529,6 @@ async def test_console_settings_modal_tab_order_skips_hidden_support_rows() -> N
         assert "console-settings-verbosity" not in visited
         assert "console-settings-thinking-effort" not in visited
         assert "console-settings-thinking-budget-tokens" not in visited
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_ignores_hidden_invalid_value_without_rewriting_it() -> None:
-    app = ModalHarness()
-    app.app_config["api_settings"]["local_vllm"] = {
-        "api_url": "http://127.0.0.1:8000"
-    }
-    settings = ConsoleSessionSettings(
-        provider="llama_cpp",
-        model="model-a",
-        thinking_budget_tokens=2048,
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(
-            _basic_modal(
-                settings,
-                app,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_vllm": ["model-b"],
-                },
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        budget = app.screen.query_one(
-            "#console-settings-thinking-budget-tokens", Input
-        )
-        budget.value = "unfinished-budget"
-        app.screen.query_one("#console-settings-provider", Select).value = "local_vllm"
-        await pilot.pause()
-
-        assert budget.value == "unfinished-budget"
-        assert budget.parent is not None and budget.parent.display is False
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "local_vllm"
-    assert app.saved_settings.thinking_budget_tokens == 2048
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_preserves_hidden_parseable_current_value() -> None:
-    app = ModalHarness()
-    app.app_config["api_settings"]["local_vllm"] = {
-        "api_url": "http://127.0.0.1:8000"
-    }
-    settings = ConsoleSessionSettings(
-        provider="llama_cpp",
-        model="model-a",
-        thinking_budget_tokens=2048,
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(
-            _basic_modal(
-                settings,
-                app,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_vllm": ["model-b"],
-                },
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        budget = app.screen.query_one(
-            "#console-settings-thinking-budget-tokens", Input
-        )
-        budget.value = "4096"
-        app.screen.query_one("#console-settings-provider", Select).value = "local_vllm"
-        await pilot.pause()
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.thinking_budget_tokens == 4096
 
 
 @pytest.mark.asyncio
@@ -6754,53 +6644,6 @@ async def test_console_settings_error_summary_is_visually_distinct() -> None:
 
         error = app.screen.query_one("#console-settings-error", Static)
         assert "bold" in str(error.styles.text_style)
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_single_model_uses_readonly_value_not_dead_dropdown() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
-
-        assert model_select.display is False
-        assert model_select.disabled is True
-        assert model_input.display is True
-        assert model_input.disabled is True
-        assert model_input.value == "model-a"
-        assert model_custom.display is True
-        assert model_custom.disabled is False
-
-        model_custom.press()
-        await pilot.pause()
-        assert model_input.display is True
-        assert model_input.disabled is False
-        assert model_custom.label == "Model list"
-
-        model_custom.press()
-        await pilot.pause()
-        assert model_select.display is False
-        assert model_input.display is True
-        assert model_input.disabled is True
-        assert model_input.value == "model-a"
-        assert getattr(app.focused, "id", None) == "model-search-picker-input"
 
 
 @pytest.mark.asyncio
@@ -7299,17 +7142,19 @@ async def test_console_settings_modal_entry_url_not_captured_into_provider_draft
                 providers_models={"llama_cpp": ["model-a"]},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
+                draft_rebaser=real_rebase,
             ),
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
 
         modal = app.screen
-        # Switch to the built-in llama_cpp provider and back onto the entry.
-        modal._switch_provider("llama_cpp")
+        # Pick the built-in llama_cpp pair and back onto the entry's pair
+        # (TASK-33006.4: pick mode's results).
+        modal._model_picked(("llama_cpp", "model-a"))
         await pilot.pause()
         assert "custom-ep:gpu-box" not in modal._provider_base_url_drafts
-        modal._switch_provider("custom-ep:gpu-box")
+        modal._model_picked(("custom-ep:gpu-box", "model-a"))
         await pilot.pause()
 
         base_url_input = app.screen.query_one("#console-settings-base-url", Input)
@@ -7322,24 +7167,28 @@ def _registry_rebase_harness(**kwargs) -> tuple[ModalHarness, ConsoleSettingsMod
     """Mounted modal wired with the REAL controller rebaser (CE-001 setup).
 
     The suite's existing custom-ep tests mount the modal without
-    ``draft_rebaser``, so ``_switch_provider`` never enters the production
-    rebase path -- exactly why the CE-001 crash escaped them. This harness
-    binds the real ``ConsoleChatController.rebase_console_settings_draft``
-    so selection messages exercise ``_switch_provider -> _rebase_to ->
-    _apply_rebased_state`` as in the live app.
+    ``draft_rebaser``, so a pick never enters the production rebase path --
+    exactly why the CE-001 crash escaped them. This harness binds the real
+    ``ConsoleChatController.rebase_console_settings_draft`` (and, since
+    TASK-33006.4, a pick-mode opener) so a pick exercises ``_model_picked ->
+    _rebase_to -> _apply_rebased_state`` as in the live app.
     """
+    from Tests.UI.test_console_settings_model_change import pick_mode_opener
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 
     app = ModalHarness()
     app.app_config = _registry_app_config()
     controller = ConsoleChatController.__new__(ConsoleChatController)
+    providers_models = {"llama_cpp": ["model-a"]}
     modal = ConsoleSettingsModal(
         settings=ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
         app_config=app.app_config,
-        providers_models={"llama_cpp": ["model-a"]},
+        providers_models=providers_models,
         context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
         can_save=True,
         draft_rebaser=controller.rebase_console_settings_draft,
+        # TASK-33006.4: the Console's Change opener, built from this config.
+        model_picker=pick_mode_opener(app, app.app_config, providers_models),
         **kwargs,
     )
     return app, modal
@@ -7353,19 +7202,11 @@ async def _unreachable_connection_tester(
 
 
 @pytest.mark.asyncio
-async def test_endpoint_created_message_switches_selection_without_crash() -> None:
-    """CE-001 regression: the automatic post-Create switch must not crash.
-
-    Posting the template modal's EndpointCreated (the real create-switch
-    message) drives Select.Changed -> _switch_provider -> _rebase_to ->
-    _apply_rebased_state; the rebased settings.provider must stay the dashed
-    registry id the Select's options carry, not the config-key canonicalized
-    ``custom_ep:...`` spelling that raised InvalidSelectValueError live.
-    """
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-
+async def test_entry_pick_keeps_the_dashed_registry_identity() -> None:
+    """CE-001 regression, via TASK-33006.4: a pick that lands on a registry
+    entry runs _rebase_to -> _apply_rebased_state with the real rebaser, and
+    the rebased provider stays the dashed registry id, not the config-key
+    canonicalized ``custom_ep:...`` spelling that once crashed live."""
     app, modal = _registry_rebase_harness(
         connection_tester=_unreachable_connection_tester
     )
@@ -7374,111 +7215,14 @@ async def test_endpoint_created_message_switches_selection_without_crash() -> No
         await app.push_screen(modal)
         await pilot.pause()
 
-        modal.post_message(
-            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
-        )
+        modal._model_picked(("custom-ep:gpu-box", "model-a"))  # pick mode's result
         await pilot.pause()
 
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        assert provider_select.value == "custom-ep:gpu-box"
         assert modal._active_provider == "custom-ep:gpu-box"
         assert modal._draft.settings.provider == "custom-ep:gpu-box"
-
-
-@pytest.mark.asyncio
-async def test_endpoint_created_switch_renders_entry_in_provider_picker() -> None:
-    """CE-006 regression: the post-Create switch must render the entry.
-
-    The visible provider control is the ConsoleProviderPicker, whose option
-    snapshot is taken at compose time; the create flow persists the entry
-    only after that. Unless the switch chain refreshes the picker's options
-    before the selection lands, ``set_provider`` drops the unknown entry id
-    (blank field, "Choose a provider.") and the dropdown never lists the
-    entry until the modal is reopened (UAT captures 04b-06b).
-    """
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-
-    app, modal = _registry_rebase_harness(
-        connection_tester=_unreachable_connection_tester
-    )
-    # Mount BEFORE the entry exists: the real create flow persists the
-    # entry (and mirrors it into the shared app_config mapping) only when
-    # the template modal commits, so the mounted picker's option snapshot
-    # predates the entry.
-    created = app.app_config["custom_endpoints"].pop("gpu-box")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        app.app_config["custom_endpoints"]["gpu-box"] = created
-        modal.post_message(
-            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
-        )
-        await pilot.pause()
-
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        assert provider_select.value == "custom-ep:gpu-box"
-        assert modal._active_provider == "custom-ep:gpu-box"
-
-        picker = modal.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        )
-        assert picker.value == "custom-ep:gpu-box"
-        picker_input = picker.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
-        assert picker_input.value == "GPU box"
-        status = picker.query_one(
-            "#console-settings-provider-picker-status", Static
-        )
-        status_text = str(getattr(status.renderable, "plain", status.renderable))
-        assert "Selected: GPU box" in status_text
-
-        # The dropdown lists all providers including the new entry without
-        # reopening the modal. Re-entering the field (the create flow had a
-        # modal screen on top, so the input lost focus) opens the grouped
-        # results for the refreshed option list.
-        app.set_focus(None)
-        await pilot.pause()
-        picker.focus_input()
-        await pilot.pause()
-        visible = picker.visible_provider_ids()
-        assert "custom-ep:gpu-box" in visible
-        assert "llama_cpp" in visible
-
-        # Entry -> built-in -> entry switching inside one modal session.
-        modal.post_message(ConsoleProviderPicker.ProviderSelected("llama_cpp"))
-        await pilot.pause()
-        assert picker.value == "llama_cpp"
-        modal.post_message(ConsoleProviderPicker.ProviderSelected("custom-ep:gpu-box"))
-        await pilot.pause()
-        assert picker.value == "custom-ep:gpu-box"
-        assert picker_input.value == "GPU box"
-
-
-@pytest.mark.asyncio
-async def test_provider_picker_selection_message_switches_entry_without_crash() -> None:
-    """CE-001 regression (explicit selection): picking a registry entry from
-    the provider picker must rebase and re-project the dashed id, not crash
-    with an illegal Select value."""
-    app, modal = _registry_rebase_harness(
-        connection_tester=_unreachable_connection_tester
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        modal.post_message(ConsoleProviderPicker.ProviderSelected("custom-ep:gpu-box"))
-        await pilot.pause()
-
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        assert provider_select.value == "custom-ep:gpu-box"
-        assert modal._active_provider == "custom-ep:gpu-box"
-        assert modal._draft.settings.provider == "custom-ep:gpu-box"
+        assert str(
+            modal.query_one("#console-settings-model-summary", Static).render()
+        ) == "model-a · GPU box"
 
 
 async def _reachable_two_model_tester(
@@ -7693,10 +7437,6 @@ async def test_endpoint_created_entry_discovery_settles_and_surfaces() -> None:
     evidence store never settled and the readiness panel kept showing
     "Endpoint · Not tested" (UAT re-run R2 discovery-evidence note).
     """
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-
     app, modal = _registry_rebase_harness(
         connection_tester=_reachable_two_model_tester
     )
@@ -7705,9 +7445,12 @@ async def test_endpoint_created_entry_discovery_settles_and_surfaces() -> None:
         await app.push_screen(modal)
         await pilot.pause()
 
-        modal.post_message(
-            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
-        )
+        # TASK-33006.4: a created entry opens pick mode on itself; the
+        # pick lands on the entry's pair and its first probe runs then.
+        modal._pick_created_endpoint("custom-ep:gpu-box")
+        for _ in range(4):
+            await pilot.pause()
+        await pilot.press("enter")
         await _drain_entry_probe(pilot, modal)
 
         assert modal._active_provider == "custom-ep:gpu-box"
@@ -7719,10 +7462,6 @@ async def test_endpoint_created_entry_discovery_settles_and_surfaces() -> None:
         assert tuple(evidence.model_ids) == ("model-a", "model-b")
         assert "2 models listed" in _discovery_status_text(modal)
         assert "Endpoint · Reachable" in _readiness_text(modal)
-        assert modal._discovered_model_ids.get("custom-ep:gpu-box") == (
-            "model-a",
-            "model-b",
-        )
 
 
 @pytest.mark.asyncio
@@ -7733,10 +7472,6 @@ async def test_endpoint_created_entry_discovery_settles_failure() -> None:
     land in the evidence store (readiness "Endpoint · Unreachable") instead
     of being silently discarded by the draft fencing.
     """
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-
     app, modal = _registry_rebase_harness(
         connection_tester=_unreachable_connection_tester
     )
@@ -7745,9 +7480,12 @@ async def test_endpoint_created_entry_discovery_settles_failure() -> None:
         await app.push_screen(modal)
         await pilot.pause()
 
-        modal.post_message(
-            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
-        )
+        # TASK-33006.4: a created entry opens pick mode on itself; the
+        # pick lands on the entry's pair and its first probe runs then.
+        modal._pick_created_endpoint("custom-ep:gpu-box")
+        for _ in range(4):
+            await pilot.pause()
+        await pilot.press("enter")
         await _drain_entry_probe(pilot, modal)
 
         assert modal._active_provider == "custom-ep:gpu-box"
@@ -7837,135 +7575,6 @@ def _registry_entry_rebase_modal_harness(
     return app, modal
 
 
-@pytest.mark.asyncio
-async def test_custom_model_edit_after_listing_rebases_controller_draft() -> None:
-    """qodo PR-2736 finding 4: genuine custom-model edits after a listing
-    must still reach the controller rebaser.
-
-    The readiness-debounce guard keyed on discovery-identity equality
-    mistook user typing for the listing's mechanical auto-selection: user
-    edits re-bind the identity (``_advance_model_generation_preserving_
-    current_listing``), so the debounced ``_rebase_to`` was skipped and
-    ``_draft.settings.model`` kept the pre-typing model until submission's
-    late repair.
-    """
-    app, modal = _registry_entry_rebase_modal_harness(_reachable_two_model_tester)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        discover.press()
-        await _drain_entry_probe(pilot, modal)
-        assert "2 models listed" in _discovery_status_text(modal)
-        assert modal._draft.settings.model == "model-a"
-
-        # Genuine custom-model edit AFTER the listing published.
-        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
-        picker.set_custom_value("model-z")
-        modal._model_picker_value_changed(
-            ModelSearchPicker.ModelValueChanged("model-z", custom=True)
-        )
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
-
-        assert modal._current_model_value() == "model-z"
-        assert modal._draft.settings.model == "model-z"
-
-
-@pytest.mark.asyncio
-async def test_listing_auto_selection_survives_debounced_readiness_sync() -> None:
-    """TASK-32566 guard (qodo PR-2736 finding 4 counterweight): a debounce
-    scheduled before a listing lands must not re-project the draft over the
-    listing's sole-model auto-selection once it fires."""
-    app, modal = _registry_entry_rebase_modal_harness(_reachable_sole_model_tester)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        # A stale debounce is pending (scheduled by an earlier edit), then
-        # the listing lands and auto-selects the sole served model.
-        modal._schedule_readiness_sync()
-        discover = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
-        discover.press()
-        await _drain_entry_probe(pilot, modal)
-        assert modal._current_model_value() == "only-model"
-
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
-
-        # The mechanical auto-selection stands: the debounce neither
-        # reverted the picker nor wiped the listing status.
-        assert modal._current_model_value() == "only-model"
-        assert "1 model listed" in _discovery_status_text(modal)
-        assert modal._draft.settings.model == "model-a"
-
-
-@pytest.mark.asyncio
-async def test_endpoint_created_failed_rebase_restores_provider_adapters() -> None:
-    """qodo PR-2736 finding 5: a failed post-Create rebase must not render
-    the never-activated entry as the selected provider.
-
-    ``_endpoint_created`` teaches both adapters the new entry before the
-    switch lands; when the controller rebase rejects the switch, the
-    Select/picker must fall back to the still-active provider while the
-    refreshed option set keeps the entry retryable.
-    """
-    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-
-    app = ModalHarness()
-    app.app_config = _registry_app_config()
-    controller = ConsoleChatController.__new__(ConsoleChatController)
-    real_rebase = controller.rebase_console_settings_draft
-
-    def rejecting_new_entry(  # type: ignore[no-untyped-def]
-        source, **kwargs
-    ):
-        if kwargs.get("provider") == "custom-ep:gpu-box":
-            raise RuntimeError("rebase rejected")
-        return real_rebase(source, **kwargs)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=ConsoleSessionSettings(
-                    provider="llama_cpp", model="model-a"
-                ),
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-                draft_rebaser=rejecting_new_entry,
-                connection_tester=_unreachable_connection_tester,
-            )
-        )
-        await pilot.pause()
-        modal = app.screen
-
-        modal.post_message(
-            ConsoleEndpointTemplateModal.EndpointCreated("custom-ep:gpu-box")
-        )
-        await pilot.pause()
-        await pilot.pause()
-
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        picker = modal.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        )
-        # The switch never landed: the session still addresses llama_cpp.
-        assert modal._active_provider == "llama_cpp"
-        assert modal._draft.settings.provider == "llama_cpp"
-        assert provider_select.value == "llama_cpp"
-        assert picker.value == "llama_cpp"
-        assert modal._pending_entry_discovery is None
-        # The refreshed option set stays so the created entry remains
-        # selectable for a manual retry.
-        assert "custom-ep:gpu-box" in picker._known_provider_ids
-
-
 def _two_entry_registry_app_config() -> dict:
     """Registry config with two same-family entries sharing one URL."""
     app_config = _registry_app_config()
@@ -8002,6 +7611,7 @@ async def test_entry_switch_discards_stale_discovery_evidence() -> None:
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
                 connection_tester=_reachable_two_model_tester,
+                draft_rebaser=real_rebase,
             )
         )
         await pilot.pause()
@@ -8020,15 +7630,14 @@ async def test_entry_switch_discards_stale_discovery_evidence() -> None:
             modal._connection_evidence_store.evidence_for(identity_a) is not None
         )
 
-        # Switch to the sibling entry: same family, same URL, different id.
-        modal._switch_provider("custom-ep:relay")
+        # Pick the sibling entry: same family, same URL, different id.
+        modal._model_picked(("custom-ep:relay", "model-a"))  # pick mode's result
         await pilot.pause()
         identity_b = modal._current_connection_probe_identity()
         assert identity_b is not None
         assert identity_b != identity_a
         assert identity_b.connection_identity == identity_a.connection_identity
         assert modal._connection_evidence_store.evidence_for(identity_b) is None
-        assert "custom-ep:gpu-box" not in modal._discovered_model_ids
 
         # Editing the selected entry's URL is a new connection identity.
         app.app_config["custom_endpoints"]["relay"]["base_url"] = (
@@ -8078,6 +7687,7 @@ async def test_switching_away_from_entry_cancels_inflight_discovery_worker() -> 
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
                 connection_tester=hanging_tester,
+                draft_rebaser=real_rebase,
             )
         )
         await pilot.pause()
@@ -8091,7 +7701,7 @@ async def test_switching_away_from_entry_cancels_inflight_discovery_worker() -> 
                 break
         assert modal._active_connection_probe_token is not None
 
-        modal._switch_provider("llama_cpp")
+        modal._model_picked(("llama_cpp", "model-a"))  # pick mode's result
         for _ in range(_PROBE_POLL_MAX_PAUSES):
             await pilot.pause(_PROBE_POLL_PAUSE_SECONDS)
             if cancelled:
@@ -8108,7 +7718,7 @@ def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
             provider="custom-ep:gpu-box", model="model-a", base_url=None
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        raw_values={},
         provider_model_drafts={"custom-ep:gpu-box": "model-a"},
         provider_base_url_drafts={},
         active_view="model",
@@ -8123,7 +7733,6 @@ def test_suspended_draft_snapshot_accepts_registry_provider_identity() -> None:
     restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
     assert restored is not None
     assert restored.settings.provider == "custom-ep:gpu-box"
-    assert restored.raw_values["console-settings-provider"] == "custom-ep:gpu-box"
     assert restored.provider_model_drafts == {"custom-ep:gpu-box": "model-a"}
 
 
@@ -8168,7 +7777,7 @@ def test_suspended_draft_snapshot_rejects_malformed_registry_slugs(
             provider="custom-ep:gpu-box", model="model-a", base_url=None
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-provider": "custom-ep:gpu-box"},
+        raw_values={},
         provider_model_drafts={"custom-ep:gpu-box": "model-a"},
         provider_base_url_drafts={},
         active_view="model",
@@ -8181,10 +7790,7 @@ def test_suspended_draft_snapshot_rejects_malformed_registry_slugs(
     assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
 
     payload = valid.to_mapping()
-    payload["raw_values"] = {
-        **payload["raw_values"],
-        "console-settings-provider": malformed_provider,
-    }
+    payload["provider_model_drafts"] = {malformed_provider: "model-a"}
     assert ConsoleSettingsDraftSnapshot.from_mapping(payload) is None
 
 
@@ -8202,7 +7808,7 @@ def test_suspended_draft_snapshot_accepts_pattern_valid_registry_slugs(
             provider=valid_provider, model="model-a", base_url=None
         ),
         context_policy_overrides=ConsoleContextPolicyOverrides(),
-        raw_values={"console-settings-provider": valid_provider},
+        raw_values={},
         provider_model_drafts={valid_provider: "model-a"},
         provider_base_url_drafts={},
         active_view="model",
@@ -8213,7 +7819,7 @@ def test_suspended_draft_snapshot_accepts_pattern_valid_registry_slugs(
     restored = ConsoleSettingsDraftSnapshot.from_mapping(snapshot.to_mapping())
     assert restored is not None
     assert restored.settings.provider == valid_provider
-    assert restored.raw_values["console-settings-provider"] == valid_provider
+    assert restored.provider_model_drafts == {valid_provider: "model-a"}
 
 
 def test_screen_send_selection_keeps_hyphenated_registry_entry_identity() -> None:
@@ -8307,151 +7913,6 @@ def test_screen_send_selection_keeps_endpoint_workspace_and_identity() -> None:
     assert selection.configured_endpoint_fallback_allowed is False
     assert selection.endpoint_provenance is ConsoleEndpointProvenance.EPHEMERAL_SESSION
     assert selection.system_prompt == "You are Ada; the user is Rob."
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_provider_options_end_with_new_endpoint_sentinel() -> (
-    None
-):
-    """H6: the provider surfaces end with a 'New custom endpoint…' sentinel so
-    a cloud-only user can reach the creation flow from Console settings."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
-        app,
-        providers_models={"llama_cpp": ["model-a"]},
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        from tldw_chatbook.Widgets.Console.console_settings_modal import (
-            NEW_CUSTOM_ENDPOINT_LABEL,
-            NEW_CUSTOM_ENDPOINT_SENTINEL,
-        )
-
-        select_options = modal._provider_select_options()
-        assert select_options[-1] == (
-            NEW_CUSTOM_ENDPOINT_LABEL,
-            NEW_CUSTOM_ENDPOINT_SENTINEL,
-        )
-        assert all(
-            value != NEW_CUSTOM_ENDPOINT_SENTINEL for _, value in select_options[:-1]
-        )
-        picker = modal.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        )
-        assert NEW_CUSTOM_ENDPOINT_SENTINEL in picker._known_provider_ids
-        assert (
-            picker._display_name(NEW_CUSTOM_ENDPOINT_SENTINEL)
-            == NEW_CUSTOM_ENDPOINT_LABEL
-        )
-
-
-@pytest.mark.parametrize("change_path", ["legacy_select", "provider_picker"])
-@pytest.mark.asyncio
-async def test_console_settings_modal_sentinel_opens_template_modal_and_restores(
-    change_path: str,
-) -> None:
-    """Selecting the sentinel opens the template modal immediately and leaves
-    the previously active provider selected: no switch logic, no drafts, no
-    readiness flicker."""
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        NEW_CUSTOM_ENDPOINT_SENTINEL,
-    )
-
-    app = ModalHarness()
-    app.app_config = _registry_app_config()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", base_url=None
-        ),
-        app,
-        providers_models={"llama_cpp": ["model-a"]},
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        if change_path == "legacy_select":
-            with provider_select.prevent(Select.Changed):
-                provider_select.value = NEW_CUSTOM_ENDPOINT_SENTINEL
-            modal._provider_changed(
-                Select.Changed(provider_select, NEW_CUSTOM_ENDPOINT_SENTINEL)
-            )
-        else:
-            modal._provider_picker_selected(
-                ConsoleProviderPicker.ProviderSelected(
-                    NEW_CUSTOM_ENDPOINT_SENTINEL
-                )
-            )
-        await pilot.pause()
-
-        assert isinstance(app.screen, ConsoleEndpointTemplateModal)
-        assert modal._active_provider == "llama_cpp"
-        assert provider_select.value == "llama_cpp"
-        picker = modal.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        )
-        assert picker.value == "llama_cpp"
-        assert NEW_CUSTOM_ENDPOINT_SENTINEL not in modal._provider_base_url_drafts
-        assert NEW_CUSTOM_ENDPOINT_SENTINEL not in modal._provider_model_drafts
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert not isinstance(app.screen, ConsoleEndpointTemplateModal)
-        assert modal._active_provider == "llama_cpp"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_sentinel_never_reaches_saved_settings() -> (
-    None
-):
-    """After visiting the sentinel flow and cancelling, Save still persists the
-    previously active provider -- the sentinel is never a provider value."""
-    from tldw_chatbook.Widgets.Console.console_endpoint_template_modal import (
-        ConsoleEndpointTemplateModal,
-    )
-    from tldw_chatbook.Widgets.Console.console_settings_modal import (
-        NEW_CUSTOM_ENDPOINT_SENTINEL,
-    )
-
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp", model="model-a", base_url=None
-        ),
-        app,
-        providers_models={"llama_cpp": ["model-a"]},
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal, callback=app.capture_saved_settings)
-        await pilot.pause()
-
-        provider_select = modal.query_one("#console-settings-provider", Select)
-        with provider_select.prevent(Select.Changed):
-            provider_select.value = NEW_CUSTOM_ENDPOINT_SENTINEL
-        modal._provider_changed(
-            Select.Changed(provider_select, NEW_CUSTOM_ENDPOINT_SENTINEL)
-        )
-        await pilot.pause()
-        assert isinstance(app.screen, ConsoleEndpointTemplateModal)
-        await pilot.press("escape")
-        await pilot.pause()
-
-        await pilot.click("#console-settings-save")
-        await pilot.pause()
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "llama_cpp"
-    assert app.saved_settings.provider != NEW_CUSTOM_ENDPOINT_SENTINEL
 
 
 def test_endpoint_command_action_is_guarded_and_dispatches_worker() -> None:
@@ -8730,42 +8191,6 @@ async def test_console_settings_modal_focus_mode_uses_ready_copy_when_model_sele
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_clears_setup_copy_when_dropdown_model_is_available() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="custom", model=None)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"custom": ["freeform-model"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-                focus_model=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-connection")
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        readiness_copy = str(readiness.renderable)
-        assert "Choose a model to enable sending." not in readiness_copy
-        assert "not wired yet" not in readiness_copy
-        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
-        assert model_select.disabled is False
-        assert model_select.value == "freeform-model"
-        assert (
-            provider_model_section.has_class("console-settings-primary-section")
-            is False
-        )
-
-
-@pytest.mark.asyncio
 async def test_console_settings_modal_setup_copy_uses_typed_blocker_precedence() -> (
     None
 ):
@@ -9034,410 +8459,6 @@ async def test_console_settings_modal_renders_context_and_single_identity_row() 
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_select_lists_all_configured_providers() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "openai": ["gpt-4"],
-                    "custom": [],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            )
-        )
-        await pilot.pause()
-
-        provider_values = _select_values(
-            app.screen.query_one("#console-settings-provider", Select)
-        )
-        assert {"custom", "llama_cpp", "openai"}.issubset(provider_values)
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_uses_model_dropdown_without_configured_models() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"custom": []},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            )
-        )
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_select.display is True
-        assert model_select.disabled is False
-        assert model_select.value == "freeform-model"
-        assert "freeform-model" in _select_values(model_select)
-        assert model_input.display is False
-        assert model_input.disabled is True
-        assert model_input.value == "freeform-model"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_uses_first_model_when_initial_model_missing() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="openai", model=None)
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"openai": ["gpt-4.1"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.disabled is False
-        assert model_select.value == "gpt-4.1"
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "openai"
-    assert app.saved_settings.model == "gpt-4.1"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_keyboard_selects_model_from_dropdown() -> None:
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"openai": ["gpt-4.1", "gpt-5"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_select.focus()
-        await pilot.press("enter")
-        assert model_select.expanded is True
-
-        await pilot.press("down")
-        await pilot.press("enter")
-        assert model_select.expanded is False
-        assert model_select.value == "gpt-5"
-
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "openai"
-    assert app.saved_settings.model == "gpt-5"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_searchable_provider_picker_preserves_drafts() -> None:
-    """Replacing the Select must retain provider-scoped model and endpoint drafts."""
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_llamacpp": ["local-model"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        picker = app.screen.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        )
-        picker_input = picker.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        base_url = app.screen.query_one("#console-settings-base-url", Input)
-        assert picker.value == "llama_cpp"
-        assert provider_select.value == "llama_cpp"
-        assert provider_select.display is False
-        assert provider_select.disabled is True
-        assert provider_select.focusable is False
-        assert model_select.value == "model-a"
-
-        base_url.value = "http://llama-draft.invalid:9090"
-        picker.focus_input()
-        await pilot.pause()
-        picker_input.value = "legacy"
-        await pilot.pause()
-        await pilot.press("down", "enter")
-        await pilot.pause()
-        assert provider_select.value == "local_llamacpp"
-        assert model_select.disabled is False
-        assert model_select.value == "local-model"
-
-        base_url.value = "http://legacy-draft.invalid:9091"
-        picker.focus_input()
-        await pilot.pause()
-        picker_input.value = "llama_cpp"
-        await pilot.pause()
-        await pilot.press("enter")
-        await pilot.pause()
-        assert picker.value == "llama_cpp"
-        assert provider_select.value == "llama_cpp"
-        assert model_select.value == "model-a"
-        assert base_url.value == "http://llama-draft.invalid:9090"
-
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "llama_cpp"
-    assert app.saved_settings.model == "model-a"
-
-
-@pytest.mark.asyncio
-async def test_searchable_provider_picker_focus_round_trips_as_public_picker_target() -> None:
-    """Nested picker focus must not serialize the hidden compatibility Select."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="openai", model="gpt-5"),
-        app,
-        providers_models={"openai": ["gpt-5"], "llama_cpp": ["model-a"]},
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        picker = modal.query_one(ConsoleProviderPicker)
-        picker.focus_input()
-        await pilot.pause()
-
-        snapshot = modal.capture_suspended_draft()
-        assert snapshot.focus_control_id == "console-settings-provider-picker"
-        assert snapshot.raw_values["console-settings-provider"] == "openai"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_tabs_to_model_picker_after_provider_change() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "groq": ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        provider_picker = app.screen.query_one(ConsoleProviderPicker)
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        picker = app.screen.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
-
-        provider_picker.focus_input()
-        await pilot.pause()
-        provider_select.value = "groq"
-        await pilot.pause()
-
-        assert (
-            app.screen.query_one("#console-settings-model-legacy-adapter").display
-            is False
-        )
-        assert model_select.value == "llama-3.3-70b-versatile"
-        assert picker.value == "llama-3.3-70b-versatile"
-
-        await pilot.press("tab")
-        await _wait_for_focused_id(
-            app, pilot, "console-settings-configure-credential"
-        )
-        await pilot.press("tab")
-        await _wait_for_focused_id(app, pilot, "model-search-picker-input")
-        await pilot.press("8")
-        await pilot.pause()
-
-        assert app.screen.query_one("#model-search-picker-results", OptionList).display
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_reopens_provider_picker_after_input_edit() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_llamacpp": ["local-model"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        temperature = app.screen.query_one("#console-settings-temperature", Input)
-        provider_picker = app.screen.query_one(ConsoleProviderPicker)
-
-        temperature.focus()
-        temperature.value = "0.22"
-        await pilot.pause()
-
-        provider_picker.focus_input()
-        await pilot.pause()
-
-        assert app.screen.query_one(
-            "#console-settings-provider-picker-results", OptionList
-        ).display
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_picker_click_after_input_edit() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_llamacpp": ["local-model"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
-        temperature = app.screen.query_one(
-            "#console-settings-temperature", ConsoleSettingsInput
-        )
-        provider_input = app.screen.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
-
-        await pilot.click("#console-settings-temperature")
-        temperature.value = "0.72"
-        await pilot.pause()
-        await pilot.click("#console-settings-provider-picker-input")
-
-        assert provider_input.has_focus
-        assert app.screen.query_one(
-            "#console-settings-provider-picker-results", OptionList
-        ).display
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_opens_screen_routed_provider_picker_click_after_input_edit() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_llamacpp": ["local-model"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
-        temperature = app.screen.query_one(
-            "#console-settings-temperature", ConsoleSettingsInput
-        )
-        provider_input = app.screen.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
-
-        temperature.focus()
-        temperature.value = "0.72"
-        await pilot.pause()
-
-        provider_region = _settings_screen_region(provider_input)
-        click = events.Click(
-            app.screen,
-            x=0,
-            y=0,
-            delta_x=0,
-            delta_y=0,
-            button=1,
-            shift=False,
-            meta=False,
-            ctrl=False,
-            screen_x=provider_region.x + provider_region.width - 1,
-            screen_y=provider_region.y,
-        )
-
-        app.screen.on_click(click)
-        await pilot.pause()
-
-        assert provider_input.has_focus
-
-
-@pytest.mark.asyncio
 async def test_console_settings_input_releases_mouse_capture_after_click_to_replace() -> (
     None
 ):
@@ -9470,72 +8491,6 @@ async def test_console_settings_input_releases_mouse_capture_after_click_to_repl
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_opens_provider_picker_from_redirected_input_click(
-    monkeypatch,
-) -> None:
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "llama_cpp": ["model-a"],
-                    "local_llamacpp": ["local-model"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            )
-        )
-        await pilot.pause()
-
-        await _open_disclosure(pilot, app.screen, CONNECTION_DISCLOSURE_ID)
-        temperature = app.screen.query_one(
-            "#console-settings-temperature", ConsoleSettingsInput
-        )
-        provider_input = app.screen.query_one(
-            "#console-settings-provider-picker-input", Input
-        )
-        temperature.capture_mouse()
-        temperature.value = "0.22"
-
-        provider_screen_region = provider_input.region.translate((10, 0))
-        monkeypatch.setattr(
-            Input,
-            "screen_region",
-            property(
-                lambda widget: (
-                    provider_screen_region
-                    if widget is provider_input
-                    else widget.region
-                )
-            ),
-            raising=False,
-        )
-        click = events.Click(
-            temperature,
-            x=0,
-            y=0,
-            delta_x=0,
-            delta_y=0,
-            button=1,
-            shift=False,
-            meta=False,
-            ctrl=False,
-            screen_x=provider_screen_region.x + provider_screen_region.width - 1,
-            screen_y=provider_screen_region.y,
-        )
-
-        temperature.on_click(click)
-        await pilot.pause()
-
-        assert app.mouse_captured is None
-        assert provider_input.has_focus
-
-
-@pytest.mark.asyncio
 async def test_console_settings_modal_ignores_plain_select_click_without_redirected_input() -> (
     None
 ):
@@ -9557,7 +8512,8 @@ async def test_console_settings_modal_ignores_plain_select_click_without_redirec
         )
         await pilot.pause()
 
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        # TASK-33006.4: the provider Select is gone; Streaming is a Select.
+        provider_select = app.screen.query_one("#console-settings-streaming", Select)
         provider_region = _settings_screen_region(provider_select)
         click = events.Click(
             provider_select,
@@ -9601,7 +8557,8 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
         )
         await pilot.pause()
 
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
+        # TASK-33006.4: the provider Select is gone; Streaming is a Select.
+        provider_select = app.screen.query_one("#console-settings-streaming", Select)
         cancel_button = app.screen.query_one("#console-settings-cancel", Button)
         cancel_button.focus()
         await pilot.pause()
@@ -9631,6 +8588,8 @@ async def test_console_settings_modal_ignores_screen_routed_select_click_without
 async def test_console_settings_modal_preserves_missing_registry_model_for_current_provider() -> (
     None
 ):
+    """An unlisted model stays the chat's model: nothing snaps it to the
+    catalog (TASK-33006.4: the MODEL row shows it; only Change changes it)."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="openai", model="custom-openai-model")
 
@@ -9647,280 +8606,14 @@ async def test_console_settings_modal_preserves_missing_registry_model_for_curre
         )
         await pilot.pause()
 
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.disabled is False
-        assert model_select.value == "custom-openai-model"
-        assert {"custom-openai-model", "gpt-4.1"}.issubset(_select_values(model_select))
+        assert str(
+            app.screen.query_one("#console-settings-model-summary", Static).render()
+        ) == "custom-openai-model · OpenAI"
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.model == "custom-openai-model"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_allows_manual_model_when_registry_has_stale_options() -> (
-    None
-):
-    app = ModalHarness()
-    app.app_config["api_settings"]["anthropic"] = {"api_key": "test-key"}
-    settings = ConsoleSessionSettings(
-        provider="anthropic", model="claude-3-haiku-20240307"
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"anthropic": ["claude-3-haiku-20240307"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        custom_button = app.screen.query_one("#console-settings-model-custom", Button)
-        assert model_select.display is True
-        assert model_input.display is False
-        assert custom_button.display is True
-
-        custom_button.press()
-        await pilot.pause()
-
-        assert model_select.display is False
-        assert model_input.display is True
-        assert model_input.disabled is False
-        model_input.value = "claude-haiku-4-5-20251001"
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "anthropic"
-    assert app.saved_settings.model == "claude-haiku-4-5-20251001"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_uses_shared_picker_and_saves_search_result() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="openai", model="gpt-4.1")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"openai": ["gpt-4.1", "gpt-5"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        picker = app.screen.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
-        legacy_adapter = app.screen.query_one("#console-settings-model-legacy-adapter")
-        assert picker.display is True
-        assert legacy_adapter.display is False
-
-        search_input = picker.query_one("#model-search-picker-input", Input)
-        search_input.value = "gpt-5"
-        await pilot.pause()
-        results = picker.query_one("#model-search-picker-results", OptionList)
-        option_id = "model-provenance-option-0"
-        option = results.get_option(option_id)
-        option_index = results.get_option_index(option_id)
-        assert option.disabled is False
-        results.post_message(
-            OptionList.OptionSelected(results, option, option_index)
-        )
-        await pilot.pause()
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.model == "gpt-5"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_refreshes_readiness_after_returning_to_model_list() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-                focus_model=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-
-        app.screen.query_one("#console-settings-model-custom", Button).press()
-        picker = app.screen.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
-        for _ in range(500):
-            if picker.custom_mode:
-                break
-            await pilot.pause(0.01)
-        assert picker.custom_mode is True
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        readiness = app.screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = app.screen.query_one("#console-settings-connection")
-        model_input.value = ""
-        # Debounced (task-15476): let the production `Input.Changed`
-        # handler settle instead of forcing `_sync_readiness_display()`
-        # directly, which raced the (now-delayed) handler-driven update.
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
-
-        assert model_input.value == ""
-        assert picker.value is None
-        assert "Not ready · no model" in str(readiness.renderable)  # TASK-33005.3
-        assert (
-            provider_model_section.has_class("console-settings-primary-section") is True
-        )
-
-        app.screen._toggle_manual_model_input()
-        # TASK-33005.3 review round 1: the readiness line is debounced here too
-        # (task-15476); one bare pause read it before the update, red at base.
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.display is True
-        assert model_select.value == "model-a"
-        assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
-        assert "Credential · Not required" in str(readiness.renderable)
-        assert (
-            provider_model_section.has_class("console-settings-primary-section")
-            is False
-        )
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_uses_configured_provider_model() -> (
-    None
-):
-    app = ModalHarness()
-    app.app_config["api_settings"]["llama_cpp"] = {
-        "api_url": "http://127.0.0.1:9099",
-        "model": "gemma-local-config-model",
-    }
-    settings = ConsoleSessionSettings(
-        provider="custom",
-        model="custom-model-beta",
-        base_url="http://localhost:1234/v1/chat/completions",
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "Custom": ["custom-model-alpha", "custom-model-beta"],
-                    "Llama_cpp": ["None"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        base_url_input = app.screen.query_one("#console-settings-base-url", Input)
-        assert model_select.display is True
-        assert model_select.disabled is False
-        assert model_select.value == "gemma-local-config-model"
-        assert model_input.display is False
-        assert model_input.disabled is True
-        assert model_input.value == "gemma-local-config-model"
-        assert base_url_input.value == "http://127.0.0.1:9099"
-
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "llama_cpp"
-    assert app.saved_settings.model == "gemma-local-config-model"
-    assert app.saved_settings.base_url == "http://127.0.0.1:9099"
-
-
-@pytest.mark.parametrize(
-    ("provider_settings", "expected_model"),
-    (
-        (
-            {
-                "api_url": "http://127.0.0.1:9099",
-                "api_model": "gemma-api-model",
-            },
-            "gemma-api-model",
-        ),
-        (
-            {
-                "api_url": "http://127.0.0.1:9099",
-                "model": "None",
-                "api_model": "null",
-                "default_model": "gemma-default-model",
-            },
-            "gemma-default-model",
-        ),
-    ),
-)
-@pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_uses_model_alias_fallbacks(
-    provider_settings: dict[str, str],
-    expected_model: str,
-) -> None:
-    app = ModalHarness()
-    app.app_config["api_settings"]["llama_cpp"] = provider_settings
-    settings = ConsoleSessionSettings(
-        provider="custom",
-        model="custom-model-beta",
-        base_url="http://localhost:1234/v1/chat/completions",
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "Custom": ["custom-model-alpha", "custom-model-beta"],
-                    "Llama_cpp": ["None"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.display is True
-        assert model_select.value == expected_model
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "llama_cpp"
-    assert app.saved_settings.model == expected_model
 
 
 @pytest.mark.asyncio
@@ -9956,11 +8649,32 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
 
-        model_select = modal_screen.query_one("#console-settings-model-select", Select)
-        assert {"gpt-4.1", "gpt-5"}.issubset(_select_values(model_select))
+        # TASK-33006.4: Change opens the Console's real pick-only switcher,
+        # which lists the runtime-discovered model from the catalog.
+        from tldw_chatbook.Widgets.Console.console_model_popover import (
+            ConsoleModelPopover,
+        )
 
-        model_select.value = "gpt-5"
+        modal_screen.query_one("#console-settings-model-change", Button).press()
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if isinstance(host.screen, ConsoleModelPopover):
+                break
+        picker = host.screen
+        assert isinstance(picker, ConsoleModelPopover) and picker._pick_only
+        for _ in range(4):
+            await host.workers.wait_for_complete()
+            await pilot.pause()
+        picker.query_one("#console-popover-find", Input).value = "gpt-5"
         await pilot.pause()
+        row = picker.highlighted_row()
+        assert (row.provider, row.model) == ("openai", "gpt-5")
+        await pilot.press("enter")
+        for _ in range(20):
+            await pilot.pause(0.05)
+            if host.screen is modal_screen:
+                break
+        assert modal_screen._current_model_value() == "gpt-5"
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
         await _visible_console_settings_button(console, pilot)
@@ -9979,165 +8693,43 @@ async def test_console_settings_modal_can_select_runtime_discovered_model_with_w
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_to_no_models_allows_freeform_model_entry() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"], "custom": []},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "custom"
-        await pilot.pause()
-
-        picker = app.screen.query_one("#console-settings-model-picker")
-        picker_input = picker.query_one("#model-search-picker-input", Input)
-        picker_status = picker.query_one("#model-search-picker-status", Static)
-        custom_button = app.screen.query_one("#console-settings-model-custom", Button)
-        assert picker.value is None
-        assert "No models reported" in str(picker_status.renderable)
-        assert custom_button.display is True
-        assert custom_button.disabled is False
-
-        app.screen.query_one("#console-settings-model-custom", Button).press()
-        await pilot.pause()
-        picker_input.value = "freeform-model"
-        await pilot.pause()
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "custom"
-    assert app.saved_settings.model == "freeform-model"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_accepts_keyboard_edited_freeform_model_input() -> (
-    None
-):
-    app = StyledModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(140, 60)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"], "koboldcpp": []},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "koboldcpp"
-        await pilot.pause()
-
-        app.screen.query_one("#console-settings-model-custom", Button).press()
-        await pilot.pause()
-        model_input = app.screen.query_one("#model-search-picker-input", Input)
-        assert model_input.placeholder == "Choose or search models"
-
-        await pilot.click(model_input)
-        for character in "local-model":
-            await pilot.press(character)
-        assert model_input.value == "local-model"
-
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "koboldcpp"
-    assert app.saved_settings.model == "local-model"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_provider_change_uses_target_provider_model() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "openai"
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_select.display is False
-        assert model_select.disabled is True
-        assert model_select.value == "gpt-4.1"
-        assert model_input.display is True
-        assert model_input.disabled is True
-        assert model_input.value == "gpt-4.1"
-        assert "model-a" not in _select_values(model_select)
-        picker = app.screen.query_one(
-            "#console-settings-model-picker", ModelSearchPicker
-        )
-        assert picker.value == "gpt-4.1"
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "openai"
-    assert app.saved_settings.model == "gpt-4.1"
-
-
-@pytest.mark.asyncio
 async def test_console_settings_modal_provider_round_trip_ignores_none_model_sentinel() -> (
     None
 ):
+    """Pick mode never offers the "None" placeholder as a model, and the
+    pick lands on the real pair (TASK-33006.4)."""
+    from Tests.UI.test_console_settings_model_change import pick, pick_mode_opener
+
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="koboldcpp",
         model=None,
         base_url="http://localhost:5001/api/v1/generate",
     )
+    providers_models = {
+        "koboldcpp": ["None"],
+        "Llama_cpp": ["None"],
+        "llama_cpp": ["model-a"],
+    }
+    modal = ConsoleSettingsModal(
+        settings=settings,
+        app_config=app.app_config,
+        providers_models=providers_models,
+        context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
+        can_save=True,
+        draft_rebaser=real_rebase,
+        model_picker=pick_mode_opener(app, app.app_config, providers_models),
+    )
 
     async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={
-                    "koboldcpp": ["None"],
-                    "Llama_cpp": ["None"],
-                    "llama_cpp": ["model-a"],
-                },
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
+        await app.push_screen(modal, callback=app.capture_saved_settings)
+        await pilot.pause()
+        await pick(pilot, app, modal, "model-a")
+        assert (modal._active_provider, modal._current_model_value()) == (
+            "llama_cpp",
+            "model-a",
         )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.disabled is False
-        assert model_select.value == "model-a"
-        assert "None" not in _select_values(model_select)
-        # The switch re-reads readiness after the model picker settles; Apply
-        # is briefly disabled until then, so the click must not race it.
-        save = app.screen.query_one("#console-settings-save", Button)
+        save = modal.query_one("#console-settings-save", Button)
         for _ in range(20):
             if not save.disabled:
                 break
@@ -10153,6 +8745,8 @@ async def test_console_settings_modal_provider_round_trip_ignores_none_model_sen
 async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved() -> (
     None
 ):
+    """A stored "None" placeholder reads as no model and is never saved as
+    one; Change picks a real model (TASK-33006.4)."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(
         provider="llama_cpp",
@@ -10171,14 +8765,19 @@ async def test_console_settings_modal_existing_none_model_sentinel_is_not_saved(
                 },
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
+                draft_rebaser=real_rebase,
             ),
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.value == "model-a"
-        assert "None" not in _select_values(model_select)
+        modal = app.screen
+        assert modal._current_model_value() is None
+        assert str(
+            modal.query_one("#console-settings-model-summary", Static).render()
+        ).startswith("no model · ")
+        assert modal.query_one("#console-settings-save", Button).disabled
+        modal._model_picked(("llama_cpp", "model-a"))  # pick mode's result
+        await pilot.pause()
         await pilot.click("#console-settings-save")
 
     assert app.saved_settings is not None
@@ -10204,11 +8803,12 @@ async def test_console_settings_modal_provider_change_does_not_carry_base_url_to
                 providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
+                draft_rebaser=real_rebase,
             ),
             callback=app.capture_saved_settings,
         )
         await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "openai"
+        app.screen._model_picked(("openai", "gpt-4.1"))  # pick mode's result
         await pilot.pause()
 
         base_url_input = app.screen.query_one("#console-settings-base-url", Input)
@@ -10218,50 +8818,6 @@ async def test_console_settings_modal_provider_change_does_not_carry_base_url_to
     assert app.saved_settings is not None
     assert app.saved_settings.provider == "openai"
     assert app.saved_settings.base_url is None
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_restores_freeform_model_after_provider_round_trip() -> (
-    None
-):
-    app = ModalHarness()
-    settings = ConsoleSessionSettings(provider="custom", model="freeform-model")
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(
-            ConsoleSettingsModal(
-                settings=settings,
-                app_config=app.app_config,
-                providers_models={"custom": [], "llama_cpp": ["model-a"]},
-                context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
-                can_save=True,
-            ),
-            callback=app.capture_saved_settings,
-        )
-        await pilot.pause()
-        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
-        await pilot.pause()
-        assert (
-            app.screen.query_one("#console-settings-model-select", Select).value
-            == "model-a"
-        )
-
-        app.screen.query_one("#console-settings-provider", Select).value = "custom"
-        await pilot.pause()
-
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_select.display is True
-        assert model_select.disabled is False
-        assert model_select.value == "freeform-model"
-        assert model_input.display is False
-        assert model_input.disabled is True
-        assert model_input.value == "freeform-model"
-        await pilot.click("#console-settings-save")
-
-    assert app.saved_settings is not None
-    assert app.saved_settings.provider == "custom"
-    assert app.saved_settings.model == "freeform-model"
 
 
 @pytest.mark.asyncio
@@ -10482,16 +9038,12 @@ async def test_console_settings_modal_result_stays_bound_to_opening_session(
         settings_button = await _visible_console_settings_button(console, pilot)
         settings_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        modal_screen.query_one("#console-settings-provider", Select).value = "openai"
-        await pilot.pause()
-        modal_screen.query_one(
-            "#console-settings-model-select", Select
-        ).value = "gpt-4.1"
+        await _pick_through_console_change(modal_screen, pilot, "openai", "gpt-4.1")
         modal_screen.query_one(
             "#console-settings-user-display-name", Input
         ).value = "Captain Rowan"
         store.switch_session(first.id)
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.05)
+        await pilot.pause(0.25)
         modal_screen.query_one("#console-settings-save", Button).press()
         await _wait_for_console_top_screen(host, console, pilot)
         await pilot.pause()
@@ -12096,21 +10648,35 @@ async def test_console_missing_model_opens_console_settings_from_summary() -> No
 
         recovery_button.press()
         modal_screen = await _wait_for_console_settings_modal(host, pilot)
-        await _wait_for_focused_id(host, pilot, "model-search-picker-input")
-
-        assert (
-            modal_screen.query_one("#console-settings-provider", Select).value
-            == "llama_cpp"
+        # TASK-33006.4: Choose model lands on Change; nothing picks a model
+        # for the user. Enter opens the Console's real pick-only switcher.
+        await _wait_for_focused_id(host, pilot, "console-settings-model-change")
+        assert str(
+            modal_screen.query_one("#console-settings-model-summary", Static).render()
+        ) == "no model · llama.cpp"
+        from tldw_chatbook.Widgets.Console.console_model_popover import (
+            ConsoleModelPopover,
         )
-        assert modal_screen.query_one(ModelSearchPicker).value == "model-a"
+
+        await pilot.press("enter")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if isinstance(host.screen, ConsoleModelPopover):
+                break
+        assert isinstance(host.screen, ConsoleModelPopover) and host.screen._pick_only
+        await host.workers.wait_for_complete()
+        await pilot.press(*"model-a", "enter")
+        for _ in range(40):
+            await pilot.pause(0.05)
+            if host.screen is modal_screen:
+                break
+        assert (modal_screen._active_provider, modal_screen._current_model_value()) == (
+            "llama_cpp",
+            "model-a",
+        )
         readiness = modal_screen.query_one("#console-settings-readiness", Static)
-        provider_model_section = modal_screen.query_one("#console-settings-connection")
         assert "Ready · not tested" in str(readiness.renderable)  # TASK-33005.3 AC#11
         assert "Credential · Not required" in str(readiness.renderable)
-        assert (
-            provider_model_section.has_class("console-settings-primary-section")
-            is False
-        )
 
         await pilot.click("#console-settings-save")
         await _wait_for_console_top_screen(host, console, pilot)
@@ -12968,6 +11534,8 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel
     Rewritten on purpose by TASK-33006.1 (AC#8/#13): focus opens on
     Temperature, not the provider picker; the view tabs come first and Cancel
     last; Sampling, Connection and the name stay closed until opened.
+    TASK-33006.4 (R7): the MODEL row's Change sits between the view tabs and
+    Temperature.
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -12981,6 +11549,8 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel
 
         assert app.focused.id == "console-settings-temperature"
         await pilot.press("shift+tab")
+        assert app.focused.id == "console-settings-model-change"
+        await pilot.press("shift+tab")
         assert app.focused.id == "console-settings-view-context"
 
         focused_ids: list[str | None] = []
@@ -12990,7 +11560,10 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel
             if app.focused.id == "console-settings-cancel":
                 break
 
-        assert focused_ids[0] == "console-settings-temperature"
+        assert focused_ids[:2] == [
+            "console-settings-model-change",
+            "console-settings-temperature",
+        ]
         assert "console-settings-save" in focused_ids
         for hidden in (
             "console-settings-top-p",
@@ -12998,30 +11571,6 @@ async def test_console_settings_modal_focus_order_starts_temperature_ends_cancel
             "console-settings-user-display-name",
         ):
             assert hidden not in focused_ids
-
-
-@pytest.mark.asyncio
-async def test_console_settings_keyboard_tab_leaves_provider_results_in_logical_order() -> None:
-    """Tab from an open compound list advances instead of reopening Provider."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        # TASK-33006.1 (AC#13): Connection follows the core fields closed and
-        # focus opens on Temperature; open it and enter the picker first.
-        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
-        modal.query_one(ConsoleProviderPicker).focus_input()
-        await pilot.pause()
-        await pilot.press("down")
-        assert app.focused.id == "console-settings-provider-picker-results"
-
-        await pilot.press("tab")
-
-        assert app.focused.id == "console-settings-base-url"
 
 
 @pytest.mark.asyncio
@@ -13144,33 +11693,6 @@ async def test_generation_confirmation_confirm_restores_running_action_focus() -
             await pilot.pause()
     finally:
         release.set()
-
-
-@pytest.mark.asyncio
-async def test_model_picker_keyboard_escape_restores_then_dismisses_modal() -> None:
-    """Model Escape is two-stage: cancel picker state, then request safe close."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a"), app
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal, callback=app.capture_saved_settings)
-        await pilot.pause()
-        picker = modal.query_one("#console-settings-model-picker", ModelSearchPicker)
-        picker.focus_input()
-        await pilot.pause()
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert app.screen is modal
-        assert picker.value == "model-a"
-
-        await pilot.press("escape")
-        await pilot.pause()
-        assert app.screen is not modal
-        assert app.saved_result is None
-
 
 
 @pytest.mark.asyncio
@@ -13943,6 +12465,8 @@ def _select_labels(select: Select) -> set[str]:
 async def test_console_settings_modal_provider_labels_use_catalog_display_names() -> (
     None
 ):
+    """The MODEL row names the provider by its catalog display name, before
+    and after a pick (TASK-33006.4: the provider list lives in pick mode)."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model="model-a")
 
@@ -13954,20 +12478,15 @@ async def test_console_settings_modal_provider_labels_use_catalog_display_names(
                 providers_models={"llama_cpp": ["model-a"], "openai": ["gpt-4.1"]},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
+                draft_rebaser=real_rebase,
             )
         )
         await pilot.pause()
-
-        provider_select = app.screen.query_one("#console-settings-provider", Select)
-        labels = _select_labels(provider_select)
-        values = _select_values(provider_select)
-
-    # Labels render shared-catalog display names; values stay raw config keys.
-    assert "llama.cpp" in labels
-    assert "OpenAI" in labels
-    assert "Ollama" in labels
-    assert "llama_cpp" not in labels
-    assert {"llama_cpp", "openai", "ollama"}.issubset(values)
+        summary = app.screen.query_one("#console-settings-model-summary", Static)
+        assert str(summary.render()) == "model-a · llama.cpp"
+        app.screen._model_picked(("openai", "gpt-4.1"))  # pick mode's result
+        await pilot.pause()
+        assert str(summary.render()) == "gpt-4.1 · OpenAI"
 
 
 class _RecordingProber:
@@ -13992,9 +12511,11 @@ async def _wait_for_discover_status(app, pilot, fragment: str) -> Static:
 
 
 @pytest.mark.asyncio
-async def test_console_settings_modal_discover_models_success_swaps_input_for_select() -> (
+async def test_console_settings_modal_discover_models_success_lists_then_change_picks() -> (
     None
 ):
+    """A listing reports what the endpoint serves but picks nothing; Apply
+    waits for Change's pick (TASK-33006.4, spec rule 1)."""
     app = ModalHarness()
     settings = ConsoleSessionSettings(provider="llama_cpp", model=None)
     prober = _RecordingProber(
@@ -14014,6 +12535,7 @@ async def test_console_settings_modal_discover_models_success_swaps_input_for_se
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
                 model_prober=prober,
+                draft_rebaser=real_rebase,
             ),
             callback=app.capture_saved_settings,
         )
@@ -14025,17 +12547,11 @@ async def test_console_settings_modal_discover_models_success_swaps_input_for_se
         )
 
         assert prober.calls == [("http://127.0.0.1:9099", "llama_cpp")]
-        model_select = app.screen.query_one("#console-settings-model-select", Select)
-        assert model_select.display is True
-        assert model_select.disabled is False
-        assert _select_values(model_select) == {"srv-a", "srv-b"}
-        assert model_select.value == "srv-a"
-        # Free-text fallback stays available after discovery.
-        model_custom = app.screen.query_one("#console-settings-model-custom", Button)
-        assert model_custom.display is True
-        assert model_custom.disabled is False
-        assert app.screen._current_model_value() == "srv-a"
-        assert app.screen._selected_model_requires_confirmation() is False
+        assert app.screen._current_model_value() is None
+        assert app.screen.query_one("#console-settings-save", Button).disabled is True
+
+        app.screen._model_picked(("llama_cpp", "srv-a"))  # pick mode's result
+        await pilot.pause()
         readiness = build_console_settings_readiness(
             app.screen._build_draft(),
             app_config=app.app_config,
@@ -14086,11 +12602,12 @@ async def test_console_settings_modal_discover_models_failure_shows_inline_copy(
         status = app.screen.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
         assert "No models endpoint" not in str(status.renderable)
 
-        # Honest inline line, button usable again, manual entry still works.
+        # Honest inline line, button usable again, and Change still picks
+        # any model, an unlisted id included (TASK-33006.4).
         assert discover.disabled is False
-        model_input = app.screen.query_one("#console-settings-model-input", Input)
-        assert model_input.display is True
-        assert model_input.disabled is False
+        change = app.screen.query_one("#console-settings-model-change", Button)
+        assert change.display is True
+        assert change.disabled is False
 
 
 @pytest.mark.asyncio
@@ -14108,6 +12625,7 @@ async def test_console_settings_modal_discover_button_only_for_url_based_provide
                 providers_models={"openai": ["gpt-4.1"], "llama_cpp": ["model-a"]},
                 context_estimate=ConsoleSettingsContextEstimate(10, 4096, "10 / 4k"),
                 can_save=True,
+                draft_rebaser=real_rebase,
             )
         )
         await pilot.pause()
@@ -14123,7 +12641,7 @@ async def test_console_settings_modal_discover_button_only_for_url_based_provide
             "No non-billable live connection check is available for this provider."
         )
 
-        app.screen.query_one("#console-settings-provider", Select).value = "llama_cpp"
+        app.screen._model_picked(("llama_cpp", "model-a"))  # pick mode's result
         await pilot.pause()
         assert discover.display is True
         assert discover.disabled is False
@@ -14354,7 +12872,8 @@ async def test_console_connection_tester_uses_chat_catalog_and_returns_typed_res
 
 @pytest.mark.asyncio
 async def test_connection_probe_publishes_only_bounded_current_identity_model_evidence() -> None:
-    """A current typed result must drive provenance without claiming generation."""
+    """A current typed result is bounded evidence; it never claims generation
+    and never picks the model (TASK-33006.4: only Change picks one)."""
     app = ModalHarness()
     tester = _BlockingConnectionTester(
         ProviderProbeResult("reachable", ("served-model",))
@@ -14396,10 +12915,7 @@ async def test_connection_probe_publishes_only_bounded_current_identity_model_ev
         tester.release.set()
         await _wait_for_discover_status(app, pilot, "1 model listed")
 
-        assert modal._current_model_value() == "served-model"
-        assert modal.query_one(ModelSearchPicker).provenance_for_model(
-            "served-model", provider="llama_cpp"
-        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
+        assert modal._current_model_value() is None
         evidence = modal._connection_evidence_store.evidence_for(
             modal._current_connection_probe_identity()
         )
@@ -14457,15 +12973,15 @@ async def test_endpoint_edit_immediately_removes_reachable_confirmation_from_rea
         assert "Endpoint · Reachable" not in cancelled_readiness
 
 
-@pytest.mark.parametrize(
-    "change_path",
-    ("select", "input", "picker_selected", "picker_value"),
-)
 @pytest.mark.asyncio
-async def test_model_change_cancels_probe_restores_action_and_rejects_late_result(
-    change_path: str,
-) -> None:
-    """Every model edit path must revoke the probe before a late result settles."""
+async def test_model_change_cancels_probe_restores_action_and_rejects_late_result() -> (
+    None
+):
+    """A model pick revokes the probe before a late result settles.
+
+    TASK-33006.4: pick mode's result is the one model edit path left (the
+    Select, typed input and picker paths were deleted with the pickers).
+    """
     app = ModalHarness()
     tester = _CancellationResistantConnectionTester(
         ProviderProbeResult("reachable", ("stale-model",))
@@ -14479,34 +12995,18 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
         app,
         providers_models={"llama_cpp": ["model-a", "model-b"]},
         connection_tester=tester,
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 60)) as pilot:
         await app.push_screen(modal)
         await pilot.pause()
-        if change_path == "input":
-            modal.query_one("#console-settings-model-custom", Button).press()
-            await pilot.pause()
-            assert modal.query_one(
-                "#console-settings-model-picker", ModelSearchPicker
-            ).custom_mode
         action = modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button)
         action.press()
         await asyncio.wait_for(tester.started.wait(), timeout=3)
         assert action.disabled is True
 
-        if change_path == "select":
-            model_select = modal.query_one("#console-settings-model-select", Select)
-            model_select.value = "model-b"
-        elif change_path == "input":
-            model_input = modal.query_one("#console-settings-model-input", Input)
-            model_input.value = "model-b"
-        elif change_path == "picker_selected":
-            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
-        else:
-            modal._model_picker_value_changed(
-                ModelSearchPicker.ModelValueChanged("model-b", custom=True)
-            )
+        modal._model_picked(("llama_cpp", "model-b"))  # pick mode's result
 
         for _ in range(40):
             if tester.cancelled:
@@ -14514,9 +13014,9 @@ async def test_model_change_cancels_probe_restores_action_and_rejects_late_resul
             await pilot.pause(0.01)
 
         assert tester.cancelled is True
+        assert modal._current_model_value() == "model-b"
         assert action.display is True
         assert action.disabled is False
-        assert "stale-model" not in modal._current_discovered_model_ids
         assert "model listed" not in str(
             modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
         )
@@ -14561,7 +13061,7 @@ async def test_dismissed_modal_discards_cancellation_resistant_connection_result
         assert not modal.is_attached
         assert tester.cancelled
         assert modal._active_connection_probe_token is None
-        assert "stale-model" not in modal._current_discovered_model_ids
+        assert modal._current_model_discovery_identity is None
 
 
 @pytest.mark.parametrize(
@@ -14668,7 +13168,7 @@ async def test_connection_probe_is_cancelled_and_cannot_publish_after_endpoint_e
         assert modal._connection_evidence_store.evidence_for(
             modal._current_connection_probe_identity()
         ) is None
-        assert "stale-model" not in modal._current_discovered_model_ids
+        assert modal._current_model_discovery_identity is None
         cancelled_readiness = str(
             modal.query_one("#console-settings-readiness", Static).renderable
         )
@@ -14785,114 +13285,12 @@ def test_discovery_status_renders_next_to_the_discover_button() -> None:
     text = source.read_text()
 
     base_url_pos = text.index('id="console-settings-base-url"')
-    model_pos = text.index('id="console-settings-model-picker"')
     actions_pos = text.index('id="console-settings-connection-actions"')
     status_pos = text.index("id=MODEL_DISCOVER_STATUS_ID,")
     readiness_pos = text.index('id="console-settings-readiness-panel"')
 
-    assert base_url_pos < model_pos < actions_pos < status_pos < readiness_pos
-
-
-@pytest.mark.asyncio
-async def test_discovery_selects_the_model_when_exactly_one_is_found() -> None:
-    """One discovered model must be selected, not left for the user to notice.
-
-    Leaving the previous (often wrong) model selected after a successful
-    discovery is what let a TTS model stay active on a chat endpoint.
-    """
-    app = ModalHarness()
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(
-            provider="llama_cpp", model="stale-model", base_url="http://127.0.0.1:9099"
-        ),
-        app_config=app.app_config,
-        providers_models={"llama_cpp": ["stale-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        modal._apply_model_discovery_result(
-            "llama_cpp",
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=("only-real-model",),
-            ),
-        )
-        await pilot.pause()
-
-        assert modal._current_model_value() == "only-real-model"
-        picker = modal.query_one(ModelSearchPicker)
-        picker.focus_input()
-        await pilot.pause()
-        await pilot.press("o", "n", "l", "y")
-        await pilot.pause()
-        results = modal.query_one("#model-search-picker-results", OptionList)
-        # TASK-33004.6: the selected model is the committed one, so it says so.
-        assert [str(option.prompt) for option in results.options] == [
-            "Custom / unverified",
-            f"only-real-model  {CURRENT_MARK}",
-        ]
-
-
-@pytest.mark.asyncio
-async def test_single_model_discovery_refreshes_generation_control_support(
-    monkeypatch,
-) -> None:
-    app = ModalHarness()
-    modal = ConsoleSettingsModal(
-        settings=ConsoleSessionSettings(
-            provider="llama_cpp", model="stale-model", base_url="http://127.0.0.1:9099"
-        ),
-        app_config=app.app_config,
-        providers_models={"llama_cpp": ["stale-model"]},
-        context_estimate=ConsoleSettingsContextEstimate(
-            used_tokens=10, token_limit=16384, label="10 / 16k"
-        ),
-        can_save=True,
-    )
-
-    def model_dependent_support(_provider, model, control, _app_config=None):
-        if control == "verbosity" and model == "only-real-model":
-            return "unsupported"
-        return "unknown"
-
-    # Patched where it is looked up: TASK-33006.2 moved every support read
-    # (the row sync and the modal's draft-retention reads, through
-    # ``_control_support``) into console_settings_field_row.py.
-    import tldw_chatbook.Widgets.Console.console_settings_field_row as field_row_module
-
-    monkeypatch.setattr(
-        field_row_module, "console_generation_control_support", model_dependent_support
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        verbosity = modal.query_one("#console-settings-verbosity", Select)
-        assert verbosity.parent is not None and verbosity.parent.display is True
-
-        picker = modal.query_one(ModelSearchPicker)
-        with (
-            modal.prevent(Select.Changed, ModelSearchPicker.ModelValueChanged),
-            picker.prevent(ModelSearchPicker.ModelValueChanged),
-        ):
-            modal._apply_model_discovery_result(
-                "llama_cpp",
-                LocalModelProbeResult(
-                    ok=True,
-                    base_url="http://127.0.0.1:9099",
-                    model_ids=("only-real-model",),
-                ),
-            )
-        await pilot.pause()
-
-        assert verbosity.parent is not None and verbosity.parent.display is False
+    # TASK-33006.4: the model search left Connection; the order holds.
+    assert base_url_pos < actions_pos < status_pos < readiness_pos
 
 
 # --- task-30012.3: connection-first composition and deliberate disclosure ---
@@ -14909,8 +13307,6 @@ def _task_30012_suspended_modal_draft(
         settings=settings,
         context_policy_overrides=ConsoleContextPolicyOverrides(),
         raw_values={
-            "console-settings-provider": "openai",
-            "console-settings-model-picker": "gpt-5.6-terra",
             **(raw_values or {}),
         },
         provider_model_drafts={"openai": "gpt-5.6-terra"},
@@ -14931,8 +13327,9 @@ async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
 
     Rewritten on purpose by TASK-33006.1 (AC#1/#13). It pinned TASK-30012's
     connection-first order; Connection now follows the tuning fields as a
-    one-row disclosure (blocked chats still open it, see the next test), and
-    its own internal order is unchanged.
+    one-row disclosure (blocked chats still open it, see the next test).
+    TASK-33006.4 removed its provider picker and model search: the MODEL
+    row's Change is the only way to change the pair.
     """
     app = ModalHarness()
     modal = _basic_modal(
@@ -14968,13 +13365,15 @@ async def test_console_settings_modal_core_first_hierarchy_and_title() -> None:
         connection_ids = [
             widget.id for widget in connection.query("*") if widget.id is not None
         ]
-        assert connection_ids.index("console-settings-provider-picker") < (
-            connection_ids.index("console-settings-base-url")
-        )
+        assert not {
+            "console-settings-provider",
+            "console-settings-provider-picker",
+            "console-settings-model-picker",
+        } & set(connection_ids)
+        assert "console-settings-model-change" in [
+            widget.id for widget in modal.query_one("#console-settings-model-row").children
+        ]
         assert connection_ids.index("console-settings-base-url") < (
-            connection_ids.index("console-settings-model-picker")
-        )
-        assert connection_ids.index("console-settings-model-picker") < (
             connection_ids.index("console-settings-connection-actions")
         )
         assert connection_ids.index("console-settings-connection-actions") < (
@@ -15018,41 +13417,6 @@ async def test_console_settings_modal_blocked_chat_opens_connection_others_close
         assert app.focused is modal.query_one(
             "#console-settings-configure-credential", Button
         )
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_setup_emphasis_clears_on_connection_when_ready() -> (
-    None
-):
-    """The setup cue belongs to Connection and must clear after model recovery."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model=None),
-        app,
-        providers_models={"llama_cpp": []},
-        focus_model=True,
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        connection = modal.query_one("#console-settings-connection")
-        compatibility_wrapper = modal.query_one(
-            "#console-settings-provider-model-section"
-        )
-        assert connection.has_class("console-settings-primary-section") is True
-        assert (
-            compatibility_wrapper.has_class("console-settings-primary-section")
-            is False
-        )
-
-        modal.query_one("#console-settings-model-custom", Button).press()
-        await pilot.pause()
-        manual_model = modal.query_one("#console-settings-model-input", Input)
-        manual_model.value = "model-a"
-        await pilot.pause(CONSOLE_SETTINGS_READINESS_DEBOUNCE_SECONDS + 0.1)
-
-        assert connection.has_class("console-settings-primary-section") is False
 
 
 @pytest.mark.asyncio
@@ -15155,7 +13519,7 @@ async def test_console_settings_modal_restores_non_targeted_disclosure_snapshot(
     """
     app = ModalHarness()
     snapshot = _task_30012_suspended_modal_draft(
-        focus_control_id="console-settings-provider-picker",
+        focus_control_id="console-settings-model-change",
         advanced_generation=True,
     )
     modal = _basic_modal(
@@ -15241,7 +13605,7 @@ async def test_console_settings_modal_invalid_restored_choice_stays_inline_until
     """An obsolete saved choice must be visible and cannot be silently erased."""
     app = ModalHarness()
     snapshot = _task_30012_suspended_modal_draft(
-        focus_control_id="console-settings-provider-picker",
+        focus_control_id="console-settings-model-change",
         advanced_generation=True,
         raw_values={"console-settings-reasoning-effort": "obsolete-effort"},
     )
@@ -15307,28 +13671,20 @@ def test_console_settings_modal_discovery_uses_exact_model_count_copy() -> None:
     )
 
 
-def test_console_discovery_identity_and_unverified_decision_are_exact_values() -> None:
-    """Confirmation carries the provider, canonical endpoint, generation, and model."""
+def test_console_discovery_identity_is_an_exact_value() -> None:
+    """The identity carries the provider, canonical endpoint and generation.
+
+    TASK-33006.4 deleted the unverified-model decision it was paired with
+    (Keep unverified went with the model search).
+    """
     identity = ConsoleModelDiscoveryIdentity(
         provider_key="llama_cpp",
         connection_identity=("llama_cpp", "http://127.0.0.1:9099"),
         draft_generation=7,
     )
 
-    assert ConsoleUnverifiedModelDecision(
-        identity=identity,
-        model_id="custom-model",
-    ) != ConsoleUnverifiedModelDecision(
-        identity=replace(identity, draft_generation=8),
-        model_id="custom-model",
-    )
-    assert ConsoleUnverifiedModelDecision(
-        identity=identity,
-        model_id="custom-model",
-    ) != ConsoleUnverifiedModelDecision(
-        identity=identity,
-        model_id="other-model",
-    )
+    assert identity != replace(identity, draft_generation=8)
+    assert identity != replace(identity, entry_id="custom-ep:gpu-box")
     assert "http://127.0.0.1:9099" not in repr(identity)
 
 
@@ -15386,6 +13742,7 @@ async def test_stale_discovery_results_never_clear_or_overwrite_newer_state() ->
             "llama_cpp": ["draft-model"],
             "vllm": ["vllm-model"],
         },
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 60)) as pilot:
@@ -15431,13 +13788,14 @@ async def test_stale_discovery_results_never_clear_or_overwrite_newer_state() ->
         )
         assert modal._current_model_discovery_identity is None
 
-        prior_copy = str(status.renderable)
-        modal._switch_provider("vllm")
+        # TASK-33006.4: a pick round trip (pick mode's results).
+        modal._model_picked(("vllm", "vllm-model"))
         await pilot.pause(0.1)
-        modal._switch_provider("llama_cpp")
+        modal._model_picked(("llama_cpp", "draft-model"))
         await pilot.pause(0.1)
         endpoint.value = "http://127.0.0.1:9099"
         await pilot.pause()
+        prior_copy = str(status.renderable)
         modal._apply_model_discovery_result(
             newer,
             LocalModelProbeResult(
@@ -15448,296 +13806,6 @@ async def test_stale_discovery_results_never_clear_or_overwrite_newer_state() ->
         )
         await pilot.pause()
         assert str(status.renderable) == prior_copy
-
-
-@pytest.mark.asyncio
-async def test_zero_model_discovery_requires_confirmation_for_existing_selection() -> None:
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="custom-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["custom-model"]},
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        identity = modal._begin_model_discovery_identity(
-            "llama_cpp", "http://127.0.0.1:9099"
-        )
-        modal._apply_model_discovery_result(
-            identity,
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=(),
-            ),
-        )
-        await pilot.pause()
-
-        assert str(
-            modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
-        ) == "No models reported"
-        assert modal._selected_model_requires_confirmation() is True
-        assert modal.query_one(
-            "#console-settings-keep-unverified-model", Button
-        ).display is True
-
-
-@pytest.mark.asyncio
-async def test_zero_result_provenance_events_settle_and_accept_later_catalog_refresh() -> None:
-    """A marker-free empty listing must not recursively classify its own overlay."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="custom-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["custom-model"]},
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        for _ in range(40):
-            if "llama_cpp" in modal._base_provenance_options:
-                break
-            await pilot.pause(0.01)
-        for _ in range(3):
-            await pilot.pause()
-        promote_calls = 0
-        original_promote = modal._promote_current_discovery_options
-
-        def counted_promote() -> None:
-            nonlocal promote_calls
-            promote_calls += 1
-            # Bound the red-case feedback cycle so the regression fails quickly.
-            if promote_calls <= 5:
-                original_promote()
-
-        modal._promote_current_discovery_options = counted_promote
-        identity = modal._begin_model_discovery_identity(
-            "llama_cpp", "http://127.0.0.1:9099"
-        )
-        modal._apply_model_discovery_result(
-            identity,
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=(),
-            ),
-        )
-        for _ in range(5):
-            await pilot.pause()
-
-        assert 1 <= promote_calls <= 2
-        settled_calls = promote_calls
-        for _ in range(5):
-            await pilot.pause()
-        assert promote_calls == settled_calls
-
-        refreshed = provider_model_resolution.ResolvedProviderModelOption(
-            label="catalog-new",
-            model_id="catalog-new",
-            source="saved",
-            capability_status="known",
-            persisted=True,
-            provenance=provider_model_resolution.ConsoleModelProvenance.SAVED_FALLBACK,
-        )
-        modal.query_one(ModelSearchPicker).set_provenance_options(
-            "llama_cpp", (refreshed,)
-        )
-        await pilot.pause()
-
-        assert promote_calls == settled_calls + 1
-        assert [
-            option.model_id
-            for option in modal._base_provenance_options["llama_cpp"]
-        ] == ["catalog-new"]
-
-
-@pytest.mark.asyncio
-async def test_unverified_model_requires_exact_secondary_confirmation() -> None:
-    """A successful list that omits the selected model cannot silently complete."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="custom-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["custom-model"]},
-    )
-    fallback_calls = 0
-    original_focus_fallback = modal._focus_connection_fallback
-
-    def counted_focus_fallback() -> None:
-        nonlocal fallback_calls
-        fallback_calls += 1
-        # Keep a re-entrant focus regression bounded so it reports an
-        # assertion instead of starving the Textual event loop indefinitely.
-        if fallback_calls <= 8:
-            original_focus_fallback()
-
-    modal._focus_connection_fallback = counted_focus_fallback
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        await _open_disclosure(pilot, modal, CONNECTION_DISCLOSURE_ID)
-        identity = modal._begin_model_discovery_identity(
-            "llama_cpp", "http://127.0.0.1:9099"
-        )
-        modal._apply_model_discovery_result(
-            identity,
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=("served-a", "served-b"),
-            ),
-        )
-        await pilot.pause()
-
-        keep = modal.query_one("#console-settings-keep-unverified-model", Button)
-        use = modal.query_one("#console-settings-save", Button)
-        assert keep.display is True
-        assert keep.disabled is False
-        assert use.disabled is True
-
-        keep.focus()
-        await pilot.pause()
-        assert keep.has_focus is True
-        keep.press()
-        await pilot.pause()
-        assert modal._unverified_model_decision == ConsoleUnverifiedModelDecision(
-            identity=identity,
-            model_id="custom-model",
-        )
-        assert keep.display is False
-        assert use.disabled is False
-        assert use.has_focus is True
-        assert fallback_calls <= 3
-
-        picker = modal.query_one(ModelSearchPicker)
-        picker.set_custom_value("changed-model")
-        modal._model_picker_value_changed(
-            ModelSearchPicker.ModelValueChanged("changed-model", custom=True)
-        )
-        await pilot.pause()
-        assert modal._unverified_model_decision is None
-        assert modal._current_model_discovery_identity == (
-            modal._current_draft_discovery_identity()
-        )
-        assert keep.display is True
-        assert use.disabled is True
-
-        keep.focus()
-        keep.press()
-        await pilot.pause()
-        assert modal._unverified_model_decision == ConsoleUnverifiedModelDecision(
-            identity=modal._current_draft_discovery_identity(),
-            model_id="changed-model",
-        )
-        assert keep.display is False
-        assert use.disabled is False
-        assert use.has_focus is True
-        assert fallback_calls <= 3
-
-
-@pytest.mark.parametrize(
-    "modal_guard",
-    ({"active_run": True}, {"can_save": False}),
-)
-@pytest.mark.asyncio
-async def test_unverified_confirmation_respects_completion_guards(modal_guard) -> None:
-    """A guarded modal cannot record an exception or redirect to disabled primary."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="custom-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["custom-model"]},
-        **modal_guard,
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        identity = modal._begin_model_discovery_identity(
-            "llama_cpp", "http://127.0.0.1:9099"
-        )
-        modal._apply_model_discovery_result(
-            identity,
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=("served-a", "served-b"),
-            ),
-        )
-        await pilot.pause()
-
-        keep = modal.query_one("#console-settings-keep-unverified-model", Button)
-        use = modal.query_one("#console-settings-save", Button)
-        assert keep.display is True
-        assert keep.disabled is True
-        keep.press()
-        await pilot.pause()
-        assert modal._unverified_model_decision is None
-        assert use.disabled is True
-
-
-@pytest.mark.asyncio
-async def test_exact_identity_discovery_promotes_models_to_served_now_without_generation_claim() -> None:
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="old-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["old-model", "served-model"]},
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        identity = modal._begin_model_discovery_identity(
-            "llama_cpp", "http://127.0.0.1:9099"
-        )
-        before_generation = modal._model_discovery_generation
-        modal._apply_model_discovery_result(
-            identity,
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=("served-model",),
-            ),
-        )
-        await pilot.pause()
-
-        picker = modal.query_one(ModelSearchPicker)
-        assert modal._current_model_value() == "served-model"
-        assert modal._model_discovery_generation == before_generation + 1
-        assert modal._current_model_discovery_identity == (
-            modal._current_draft_discovery_identity()
-        )
-        assert picker.provenance_for_model(
-            "served-model", provider="llama_cpp"
-        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
-        provenance = modal.query_one("#console-settings-model-provenance", Static)
-        assert str(provenance.renderable) == "Served by this endpoint now"
-        assert "generation" not in str(provenance.renderable).lower()
 
 
 @pytest.mark.asyncio
@@ -15752,6 +13820,7 @@ async def test_discovery_scope_is_visible_before_activation_and_persists_after_r
         ),
         app,
         providers_models={"llama_cpp": ["served-model"], "openai": ["gpt-4.1"]},
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 60)) as pilot:
@@ -15778,7 +13847,7 @@ async def test_discovery_scope_is_visible_before_activation_and_persists_after_r
             modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static).renderable
         ) == "1 model listed"
 
-        modal._switch_provider("openai")
+        modal._model_picked(("openai", "gpt-4.1"))  # pick mode's result
         await pilot.pause(0.1)
         assert scope.display is True
         assert str(scope.renderable) == (
@@ -15788,7 +13857,11 @@ async def test_discovery_scope_is_visible_before_activation_and_persists_after_r
 
 @pytest.mark.asyncio
 async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation() -> None:
-    """Choosing another listed row retains exact listing evidence and provenance."""
+    """Picking another listed model keeps the exact listing and its status.
+
+    TASK-33006.4: the pick arrives from pick mode and lands through the
+    controller's rebaser; a same-endpoint model change keeps the listing.
+    """
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(
@@ -15798,6 +13871,7 @@ async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation(
         ),
         app,
         providers_models={"llama_cpp": ["served-a", "served-b"]},
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 60)) as pilot:
@@ -15818,21 +13892,15 @@ async def test_selecting_served_now_row_rebinds_listing_to_new_model_generation(
         before_generation = modal._model_discovery_generation
         status = modal.query_one(f"#{MODEL_DISCOVER_STATUS_ID}", Static)
         assert str(status.renderable) == "2 models listed"
-        picker = modal.query_one(ModelSearchPicker)
-        picker.set_model_value("served-b")
-        modal._model_picker_selected(ModelSearchPicker.ModelSelected("served-b"))
+        modal._model_picked(("llama_cpp", "served-b"))  # pick mode's result
         await pilot.pause()
 
+        assert modal._current_model_value() == "served-b"
         assert modal._model_discovery_generation > before_generation
         assert modal._current_model_discovery_identity == (
             modal._current_draft_discovery_identity()
         )
-        assert modal._current_discovered_model_ids == ("served-a", "served-b")
         assert str(status.renderable) == "2 models listed"
-        assert picker.provenance_for_model(
-            "served-b", provider="llama_cpp"
-        ) == settings_modal_module.ConsoleModelProvenance.SERVED_NOW
-        assert modal._selected_model_requires_confirmation() is False
 
 
 @pytest.mark.asyncio
@@ -15850,6 +13918,7 @@ async def test_selecting_another_listed_model_rebinds_connection_evidence() -> N
         connection_tester=_ImmediateConnectionTester(
             ProviderProbeResult("reachable", ("served-a", "served-b"))
         ),
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 60)) as pilot:
@@ -15858,10 +13927,9 @@ async def test_selecting_another_listed_model_rebinds_connection_evidence() -> N
         modal.query_one(f"#{MODEL_DISCOVER_BUTTON_ID}", Button).press()
         await _wait_for_discover_status(app, pilot, "2 models listed")
 
-        picker = modal.query_one(ModelSearchPicker)
-        picker.set_model_value("served-b")
-        modal._model_picker_selected(ModelSearchPicker.ModelSelected("served-b"))
+        modal._model_picked(("llama_cpp", "served-b"))  # pick mode's result
         await pilot.pause()
+        assert modal._current_model_value() == "served-b"
 
         evidence = modal._connection_evidence_store.evidence_for(
             modal._current_connection_probe_identity()
@@ -15870,85 +13938,6 @@ async def test_selecting_another_listed_model_rebinds_connection_evidence() -> N
         assert evidence.endpoint == "reachable"
         assert evidence.model_ids == ("served-a", "served-b")
         assert evidence.generation == "not_tested"
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_shows_current_catalog_model_provenance() -> None:
-    """A selected catalog model must expose its source beside the control."""
-    app = ModalHarness()
-    app.llm_provider_catalog_scope_service = FakeConsoleModelDiscoveryScope(
-        (_merged_model("gpt-5.6-terra", source="runtime_discovered"),)
-    )
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="openai", model="gpt-5.6-terra"),
-        app,
-        providers_models={"openai": ["gpt-5.6-terra"]},
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        provenance = modal.query_one("#console-settings-model-provenance", Static)
-        for _ in range(40):
-            if str(provenance.renderable) == "Current provider catalog":
-                break
-            await pilot.pause(0.01)
-
-        assert str(provenance.renderable) == "Current provider catalog"
-        picker = modal.query_one(ModelSearchPicker)
-        picker.focus_input()
-        await pilot.pause()
-        picker.query_one("#model-search-picker-input", Input).value = "gpt"
-        await pilot.pause()
-        assert [
-            str(option.prompt)
-            for option in modal.query_one(
-                "#model-search-picker-results", OptionList
-            ).options
-        ] == ["Current catalog", f"gpt-5.6-terra  {CURRENT_MARK}"]  # TASK-33004.6
-
-
-@pytest.mark.asyncio
-async def test_console_settings_modal_unfenced_probe_stays_custom_unverified() -> None:
-    """Before identity fencing, a manual probe must not claim Served now."""
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(
-            provider="llama_cpp",
-            model="saved-model",
-            base_url="http://127.0.0.1:9099",
-        ),
-        app,
-        providers_models={"llama_cpp": ["saved-model"]},
-    )
-
-    async with app.run_test(size=(120, 60)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        modal._apply_model_discovery_result(
-            "llama_cpp",
-            LocalModelProbeResult(
-                ok=True,
-                base_url="http://127.0.0.1:9099",
-                model_ids=("probe-model",),
-            ),
-        )
-        await pilot.pause()
-
-        provenance = modal.query_one("#console-settings-model-provenance", Static)
-        assert str(provenance.renderable) == (
-            "Custom model ID; generation not verified."
-        )
-        picker = modal.query_one(ModelSearchPicker)
-        picker.focus_input()
-        await pilot.pause()
-        prompts = [
-            str(option.prompt)
-            for option in modal.query_one(
-                "#model-search-picker-results", OptionList
-            ).options
-        ]
-        assert "Served now" not in prompts
-        assert "Custom / unverified" in prompts
 
 
 def _visible_enabled_primary_buttons(modal: ConsoleSettingsModal) -> list[Button]:
@@ -16479,13 +14468,12 @@ async def test_generation_test_requires_fresh_confirmation_for_every_paid_reques
         assert confirmation.display
 
 
-@pytest.mark.parametrize(
-    "change_path", ("select", "input", "picker_selected", "picker_value")
-)
 @pytest.mark.asyncio
-async def test_generation_test_model_edit_cancels_and_rejects_late_result(
-    change_path: str,
-) -> None:
+async def test_generation_test_model_edit_cancels_and_rejects_late_result() -> None:
+    """A model pick cancels the paid test and fences its late result.
+
+    TASK-33006.4: pick mode's result is the one model edit path left.
+    """
     entered = asyncio.Event()
     release = asyncio.Event()
 
@@ -16507,6 +14495,7 @@ async def test_generation_test_model_edit_cancels_and_rejects_late_result(
         app,
         providers_models={"llama_cpp": ["model-a", "model-b"]},
         generation_tester=cancellation_resistant_tester,
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -16516,17 +14505,7 @@ async def test_generation_test_model_edit_cancels_and_rejects_late_result(
         modal.query_one("#console-settings-confirm-generation", Button).press()
         await asyncio.wait_for(entered.wait(), 1)
 
-        if change_path == "select":
-            model_select = modal.query_one("#console-settings-model-select", Select)
-            modal._model_select_changed(Select.Changed(model_select, "model-b"))
-        elif change_path == "input":
-            modal.query_one("#console-settings-model-input", Input).value = "model-b"
-        elif change_path == "picker_selected":
-            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
-        else:
-            modal._model_picker_value_changed(
-                ModelSearchPicker.ModelValueChanged("model-b", custom=True)
-            )
+        modal._model_picked(("llama_cpp", "model-b"))  # pick mode's result
         await pilot.pause()
         button = modal.query_one("#console-settings-test-generation", Button)
         assert str(button.label) == "Test generation"
@@ -16590,6 +14569,7 @@ async def test_implicit_generation_cancellation_keeps_billing_warning_and_fences
         },
         generation_tester=cancellation_resistant_tester,
         connection_tester=connection_tester,
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -16600,7 +14580,7 @@ async def test_implicit_generation_cancellation_keeps_billing_warning_and_fences
         await asyncio.wait_for(entered.wait(), 1)
 
         if change_path == "provider":
-            modal._switch_provider("openai")
+            modal._model_picked(("openai", "gpt-4.1"))  # pick mode's result
         elif change_path == "endpoint":
             modal.query_one("#console-settings-base-url", Input).value = (
                 "http://127.0.0.1:9199"
@@ -16724,11 +14704,11 @@ async def test_generation_test_unsupported_provider_has_fixed_copy_and_no_action
         )
 
 
-@pytest.mark.parametrize("change_path", ["legacy_select", "provider_picker"])
 @pytest.mark.asyncio
-async def test_provider_switch_syncs_generation_test_action_bidirectionally(
-    change_path: str,
-) -> None:
+async def test_provider_switch_syncs_generation_test_action_bidirectionally() -> None:
+    """A pick re-decides the paid-test action both ways (TASK-33006.4: the
+    pair changes only through pick mode's result, landing in
+    ``_apply_rebased_state``)."""
     app = ModalHarness()
     modal = _basic_modal(
         ConsoleSessionSettings(
@@ -16741,19 +14721,12 @@ async def test_provider_switch_syncs_generation_test_action_bidirectionally(
             "llama_cpp": ["model-a"],
             "openai": ["gpt-4.1"],
         },
+        draft_rebaser=real_rebase,
     )
 
-    async def switch(provider: str) -> None:
+    async def switch(provider: str, model: str) -> None:
         sync_trace.clear()
-        if change_path == "legacy_select":
-            provider_select = modal.query_one("#console-settings-provider", Select)
-            with provider_select.prevent(Select.Changed):
-                provider_select.value = provider
-            modal._provider_changed(Select.Changed(provider_select, provider))
-        else:
-            modal._provider_picker_selected(
-                ConsoleProviderPicker.ProviderSelected(provider)
-            )
+        modal._model_picked((provider, model))
         await pilot.pause()
         assert sync_trace[-2:] == [
             ("generation_controls", provider),
@@ -16785,7 +14758,7 @@ async def test_provider_switch_syncs_generation_test_action_bidirectionally(
         assert action.disabled is False
         assert unavailable.display is False
 
-        await switch("openai")
+        await switch("openai", "gpt-4.1")
         assert action.display is False
         assert action.disabled is True
         assert unavailable.display
@@ -16793,50 +14766,10 @@ async def test_provider_switch_syncs_generation_test_action_bidirectionally(
             "Generation test unavailable for this provider."
         )
 
-        await switch("llama_cpp")
+        await switch("llama_cpp", "model-a")
         assert action.display
         assert action.disabled is False
         assert unavailable.display is False
-
-
-@pytest.mark.asyncio
-async def test_switch_provider_explicitly_syncs_generation_test_controls() -> None:
-    app = ModalHarness()
-    modal = _basic_modal(
-        ConsoleSessionSettings(provider="llama_cpp", model="model-a"),
-        app,
-        providers_models={
-            "llama_cpp": ["model-a"],
-            "openai": ["gpt-4.1"],
-        },
-    )
-
-    async with app.run_test(size=(120, 40)) as pilot:
-        await app.push_screen(modal)
-        await pilot.pause()
-        calls: list[str] = []
-        modal.query_one(
-            "#console-settings-provider-picker", ConsoleProviderPicker
-        ).set_provider = lambda _provider: None
-        modal._cancel_connection_probe = lambda: None
-        modal._invalidate_model_discovery_for_provider = lambda _provider: None
-        modal._store_current_model_for_provider = lambda _provider: None
-        modal._store_current_base_url_for_provider = lambda _provider: None
-        modal._sync_model_controls = lambda _provider, _model: None
-        modal._sync_base_url_control = lambda _provider, _base_url: None
-        modal._advance_model_discovery_generation = lambda: False
-        modal._sync_model_discover_controls = lambda _provider: None
-        modal._sync_provider_choice_placeholders = lambda: None
-        modal._sync_generation_control_support = lambda: None
-        modal._sync_readiness_display = lambda: None
-        modal._sync_visual_representation_availability = lambda: None
-        modal._sync_generation_test_controls = lambda: calls.append(
-            modal._active_provider
-        )
-
-        modal._switch_provider("openai")
-
-        assert calls == ["openai"]
 
 
 @pytest.mark.asyncio
@@ -16912,6 +14845,7 @@ async def test_succeeded_generation_evidence_is_invalidated_by_relevant_edit(
             "ollama": ["model-a"],
         },
         generation_tester=generation_tester,
+        draft_rebaser=real_rebase,
     )
 
     async with app.run_test(size=(120, 40)) as pilot:
@@ -16927,13 +14861,13 @@ async def test_succeeded_generation_evidence_is_invalidated_by_relevant_edit(
                 break
 
         if edit_kind == "provider":
-            modal._switch_provider("ollama")
+            modal._model_picked(("ollama", "model-a"))  # pick mode's result
         elif edit_kind == "endpoint":
             modal.query_one("#console-settings-base-url", Input).value = (
                 "http://127.0.0.1:9199"
             )
         elif edit_kind == "model":
-            modal._model_picker_selected(ModelSearchPicker.ModelSelected("model-b"))
+            modal._model_picked(("llama_cpp", "model-b"))  # pick mode's result
         else:
             modal.query_one("#console-settings-temperature", Input).value = "0.3"
         await pilot.pause()

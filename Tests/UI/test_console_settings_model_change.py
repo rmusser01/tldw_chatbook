@@ -1,0 +1,378 @@
+"""Chat settings changes the model only in Switch model's pick mode (TASK-33006.4).
+
+Spec rule 1, pairs only: the MODEL row's Change (or Alt+M) opens the real
+pick-only switcher over the modal, and the picked provider·model pair rebases
+the draft through the controller's rebaser. Nothing is applied until Apply.
+Every test mounts the real modal under the production stylesheets and drives
+it with real keypresses; ``pick_mode_opener`` builds the switcher exactly as
+``model_switcher.open_model_picker`` does, from the harness's configuration.
+"""
+
+from __future__ import annotations
+
+import pytest
+from textual import events
+from textual.widgets import Button, Input, Select
+
+from Tests.UI.test_console_settings_core_first import (
+    CoreFirstHarness,
+    _open,
+    _painted,
+    _settings,
+)
+from tldw_chatbook.Chat.console_session_settings import (
+    CONSOLE_VALUE_SOURCE_WORDS,
+    ConsoleSettingsContextEstimate,
+    ConsoleValueLayer,
+    build_console_settings_readiness,
+    build_target_default_console_session_settings,
+    readiness_words,
+)
+from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
+from tldw_chatbook.Widgets.Console.console_settings_field_row import (
+    CONNECTION_DISCLOSURE_ID,
+    MODEL_CHANGE_ID,
+    MODEL_CHANGE_LABEL,
+    NAME_DISCLOSURE_ID,
+    REQUEST_ESTIMATE_DISCLOSURE_ID,
+    SAMPLING_DISCLOSURE_ID,
+    field_control_id,
+)
+from tldw_chatbook.Widgets.Console.console_settings_modal import ConsoleSettingsModal
+
+# Census-gated (scripts/ui_pr_gate_census.txt): Tests/UI/conftest.py imports
+# tldw_chatbook.app per test, which fails closed with
+# RecoveryRequired("raw_source_selection_changed") under the per-test sandbox.
+pytestmark = pytest.mark.bootstrap_profile
+
+#: The harness's saved model lists, which pick mode lists from.
+PROVIDERS_MODELS = {
+    "llama_cpp": ["model-a", "model-b"],
+    "anthropic": ["claude-sonnet-4-5"],
+    "openai": ["gpt-5"],
+}
+
+
+def _never(*_args, **_kwargs):
+    raise AssertionError("pick mode never rebases, applies or opens Settings")
+
+
+def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
+    """Return the Change opener the Console passes: the real pick-only switcher.
+
+    Args:
+        app: The harness app the switcher is pushed on.
+        app_config: The configuration its rows and readiness read.
+        providers_models: The saved model lists it lists.
+
+    Returns:
+        A ``model_picker`` for ``ConsoleSettingsModal``.
+    """
+
+    def readiness(provider, model):
+        settings = build_target_default_console_session_settings(
+            app_config, provider, model
+        )
+        return build_console_settings_readiness(settings, app_config=app_config)
+
+    def open_picker(origin, draft, query, on_pick):
+        app.push_screen(
+            ConsoleModelPopover(
+                origin=origin,
+                app_config=app_config,
+                initial_draft=draft,
+                providers_models=providers_models,
+                scope_copy="",
+                durability_copy="",
+                draft_rebaser=_never,
+                live_committer=_never,
+                default_readiness_resolver=readiness,
+                pick_only=True,
+                query=query,
+            ),
+            callback=on_pick,
+        )
+
+    return open_picker
+
+
+def real_rebase(state, **kwargs):
+    """The controller's rebaser: the seam a pick lands on (AC#2)."""
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    return ConsoleChatController.rebase_console_settings_draft(object(), state, **kwargs)
+
+
+def pick_modal(app, settings, **kwargs):
+    """A Chat settings modal wired like the Console's: picker and rebaser."""
+    kwargs.setdefault("draft_rebaser", real_rebase)
+    kwargs.setdefault("model_picker", pick_mode_opener(app, app.app_config))
+    kwargs.setdefault(
+        "context_estimate", ConsoleSettingsContextEstimate(10, 4096, "10 / 4k")
+    )
+    return ConsoleSettingsModal(
+        settings=settings,
+        app_config=app.app_config,
+        providers_models=PROVIDERS_MODELS,
+        can_save=True,
+        **kwargs,
+    )
+
+
+async def settle(pilot, app, rounds: int = 4) -> None:
+    for _ in range(rounds):
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
+async def press_change(pilot, app, modal) -> ConsoleModelPopover:
+    """Press the MODEL row's Change with real keys; return the pick-mode switcher."""
+    modal.query_one(f"#{MODEL_CHANGE_ID}", Button).focus()
+    await pilot.press("enter")
+    await settle(pilot, app)
+    switcher = app.screen
+    assert isinstance(switcher, ConsoleModelPopover), switcher
+    return switcher
+
+
+async def pick(pilot, app, modal, text: str) -> None:
+    """Change, type ``text`` in Find, Enter: the pick lands back in the modal."""
+    await press_change(pilot, app, modal)
+    await pilot.press(*text)
+    await settle(pilot, app)
+    await pilot.press("enter")
+    await settle(pilot, app)
+    assert app.screen is modal
+
+
+def _model_row_line(app, modal) -> str:
+    return _painted(app.screen)[modal.query_one("#console-settings-model-row").region.y]
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_model_row_paints_pair_source_readiness_context_and_change(size) -> None:
+    """AC#1: model · provider name | Source | readiness · context | Change."""
+    app = CoreFirstHarness()
+    settings = _settings("anthropic", "claude-sonnet-4-5", temperature=0.7)
+    estimate = ConsoleSettingsContextEstimate(
+        10, 200_000, "10 / 200k", token_limit_verified=True
+    )
+    modal = pick_modal(app, settings, context_estimate=estimate)
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        readiness = build_console_settings_readiness(
+            settings, app_config=app.app_config
+        )
+        line = _model_row_line(app, modal)
+        parts = (
+            "Model",
+            "claude-sonnet-4-5 · Anthropic",
+            CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.THIS_CHAT],
+            f"{readiness_words(readiness)} · 200k context",
+            MODEL_CHANGE_LABEL,
+        )
+        positions = [line.find(part) for part in parts]
+        assert -1 not in positions and positions == sorted(positions), (line, parts)
+        change = modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        assert change.region.height == 1
+        container = modal.query_one("#console-settings-modal")
+        assert container.region.contains_region(change.region)
+
+
+@pytest.mark.asyncio
+async def test_change_opens_pick_mode_and_the_pick_rebases_without_applying() -> None:
+    """AC#2: Change opens pick-only Switch model over the modal; the pick
+    rebases the draft through the controller's rebaser to that exact pair,
+    the row says "edited *", and nothing is applied until Apply."""
+    app = CoreFirstHarness()
+    rebased: list[tuple[str, str]] = []
+    committed: list[object] = []
+
+    def recording_rebase(state, **kwargs):
+        rebased.append((kwargs["provider"], kwargs["model"]))
+        return real_rebase(state, **kwargs)
+
+    def commit(submission):
+        committed.append(submission)
+        return modal._transitional_live_commit(submission)
+
+    modal = pick_modal(
+        app, _settings(), draft_rebaser=recording_rebase, live_committer=commit
+    )
+    results: list[object] = []
+    async with app.run_test(size=(211, 44)) as pilot:
+        await app.push_screen(modal, callback=results.append)
+        await settle(pilot, app)
+        switcher = await press_change(pilot, app, modal)
+        assert switcher._pick_only is True
+        assert modal in app.screen_stack  # over the modal, not instead of it
+        await pilot.press(*"claude-sonnet")
+        await settle(pilot, app)
+        await pilot.press("enter")
+        await settle(pilot, app)
+        assert app.screen is modal and results == [] and committed == []
+        assert rebased == [("anthropic", "claude-sonnet-4-5")]
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "anthropic",
+            "claude-sonnet-4-5",
+        )
+        line = _model_row_line(app, modal)
+        assert "claude-sonnet-4-5 · Anthropic" in line
+        assert CONSOLE_VALUE_SOURCE_WORDS[ConsoleValueLayer.EDITED_DRAFT] in line
+        assert app.focused is modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+
+        modal.query_one("#console-settings-save", Button).focus()
+        await pilot.press("enter")
+        await settle(pilot, app)
+    assert len(committed) == 1
+    applied = committed[0].draft.settings
+    assert (applied.provider, applied.model) == ("anthropic", "claude-sonnet-4-5")
+
+
+@pytest.mark.asyncio
+async def test_alt_m_opens_pick_mode_from_a_focused_field() -> None:
+    """AC#2: Alt+M inside Chat settings is Change, even from a typing field.
+
+    A terminal delivers Alt+M as key "alt+m" carrying the character "m"
+    (Textual's xterm parser), which a focused Input would type; the event is
+    posted as the driver posts it, since ``pilot.press`` sends no character.
+    """
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        temperature = modal.query_one("#console-settings-temperature", Input)
+        assert app.focused is temperature
+        app.post_message(events.Key("alt+m", "m"))
+        await settle(pilot, app)
+        assert isinstance(app.screen, ConsoleModelPopover)
+        assert app.screen._pick_only is True
+        assert temperature.value == "0.4"  # Alt+M typed nothing into the field
+
+
+@pytest.mark.asyncio
+async def test_no_provider_picker_or_model_search_and_a_typed_id_still_picks() -> None:
+    """AC#3: the modal hosts no provider picker or model search, so no
+    provider is chosen without a model; an unlisted model id is still
+    chosen through pick mode's typed row (TASK-30012 AC#4)."""
+    from tldw_chatbook.Widgets.model_search_picker import ModelSearchPicker
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        assert not modal.query(ModelSearchPicker)
+        for gone in (
+            "#console-settings-provider",
+            "#console-settings-provider-picker",
+            "#console-settings-model-picker",
+            "#console-settings-model-select",
+            "#console-settings-model-input",
+            "#console-settings-model-custom",
+            "#console-settings-keep-unverified-model",
+        ):
+            assert not modal.query(gone), gone
+        choices = {
+            field_control_id(name)
+            for name in (
+                "streaming",
+                "reasoning_effort",
+                "reasoning_summary",
+                "verbosity",
+                "thinking_effort",
+            )
+        }
+        for select in modal.query(Select):  # value choices only, no provider
+            assert select.id in choices or select.id.startswith("console-context-")
+
+        await pick(pilot, app, modal, "my-own-gguf")
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "llama_cpp",
+            "my-own-gguf",
+        )
+        assert "my-own-gguf · llama.cpp" in _model_row_line(app, modal)
+
+
+@pytest.mark.asyncio
+async def test_tab_order_runs_change_then_core_then_disclosures_to_apply() -> None:
+    """R7: the final Model view order, from the view tabs: Change, the shown
+    CORE fields, the four disclosure titles, then Apply."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal.query_one("#console-settings-view-model", Button).focus()
+        await pilot.pause()
+        seen: list[str] = []
+        for _ in range(20):
+            await pilot.press("tab")
+            focused = app.focused
+            seen.append(focused.id or focused.parent.id)
+            if focused.id == "console-settings-save":
+                break
+        shown_core = [
+            field_control_id(name)
+            for name in (
+                "temperature",
+                "max_tokens",
+                "streaming",
+                "reasoning_effort",
+                "reasoning_summary",
+                "verbosity",
+                "thinking_effort",
+                "thinking_budget_tokens",
+            )
+            if modal.query_one(f"#{field_control_id(name)}-row").display
+        ]
+        body = [
+            "console-settings-view-context",
+            MODEL_CHANGE_ID,
+            *shown_core,
+            SAMPLING_DISCLOSURE_ID,
+            CONNECTION_DISCLOSURE_ID,
+            REQUEST_ESTIMATE_DISCLOSURE_ID,
+            NAME_DISCLOSURE_ID,
+        ]
+        assert seen[: len(body)] == body
+        footer = seen[len(body) :]  # the shown footer actions, Apply last
+        assert footer[-1] == "console-settings-save"
+        assert set(footer[:-1]) <= {
+            "console-settings-save-default",
+            "console-settings-make-default",
+        }
+
+
+@pytest.mark.asyncio
+async def test_new_endpoint_lands_on_a_pair_never_on_a_provider_alone() -> None:
+    """R9: a created entry opens pick mode on it; the pick lands on the
+    entry and one of its models, and Esc leaves the old pair."""
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings())
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal._pick_created_endpoint("custom-ep:gpu-box")
+        await settle(pilot, app)
+        switcher = app.screen
+        assert isinstance(switcher, ConsoleModelPopover) and switcher._pick_only
+        assert switcher.query_one("#console-popover-find", Input).value == "GPU box "
+        await pilot.press("escape")
+        await settle(pilot, app)
+        assert app.screen is modal
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "llama_cpp",
+            "model-a",
+        )
+
+        modal._pick_created_endpoint("custom-ep:gpu-box")
+        await settle(pilot, app)
+        row = app.screen.highlighted_row()
+        assert (row.provider, row.model) == ("custom-ep:gpu-box", "model-a")
+        await pilot.press("enter")
+        await settle(pilot, app)
+        assert app.screen is modal
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "custom-ep:gpu-box",
+            "model-a",
+        )

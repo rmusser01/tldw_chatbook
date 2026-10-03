@@ -164,8 +164,6 @@ def _conversation_settings_return_snapshot(
             custom_budget_tokens=2048,
         ),
         raw_values={
-            "console-settings-provider": provider,
-            "console-settings-model-picker": model,
             "console-settings-temperature": "0.7.2",
             "console-context-custom-budget": "2048",
         },
@@ -863,7 +861,7 @@ async def test_conversation_settings_return_success_preserves_replacement_staged
             nonlocal replacement_target, replacement_snapshot
             if target.return_revision == first_target.return_revision:
                 replacement_snapshot = _conversation_settings_return_snapshot(
-                    focus_control_id="console-settings-model-picker"
+                    focus_control_id="console-settings-model-change"
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 36
@@ -962,7 +960,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
                 )
                 replacement_snapshot = _conversation_settings_return_snapshot(
                     model="replacement-model",
-                    focus_control_id="console-settings-model-picker",
+                    focus_control_id="console-settings-model-change",
                 )
                 console._suspended_conversation_settings = replacement_snapshot
                 console._suspended_conversation_settings_token = 136
@@ -1057,10 +1055,7 @@ async def test_conversation_settings_return_settles_at_transfer_before_status_an
             await pilot.pause(0.05)
 
         assert replacement_modal is not None
-        assert (
-            replacement_modal.query_one("#console-settings-model-picker").value
-            == "replacement-model"
-        )
+        assert replacement_modal._current_model_value() == "replacement-model"
         assert console._suspended_conversation_settings is None
         assert (
             app.pending_handoffs.exact_revision_status(
@@ -1307,7 +1302,7 @@ async def test_conversation_settings_return_missing_environment_credential_stays
         snapshot = _conversation_settings_return_snapshot(
             provider="openai",
             model="gpt-5",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         store.replace_session_settings(session.id, snapshot.settings)
         console._suspended_conversation_settings = snapshot
@@ -1339,7 +1334,9 @@ async def test_conversation_settings_return_missing_environment_credential_stays
 
 
 @pytest.mark.asyncio
-async def test_conversation_settings_return_unavailable_focus_falls_back_to_connection():
+async def test_conversation_settings_return_unavailable_focus_falls_back_to_change():
+    """TASK-33006.4: an unavailable restored target falls back to the MODEL
+    row's Change (Connection's provider picker and model search are gone)."""
     app = _build_test_app()
     _configure_native_ready_console(app)
     host = ConsoleHarness(app)
@@ -1365,19 +1362,13 @@ async def test_conversation_settings_return_unavailable_focus_falls_back_to_conn
         for _ in range(80):
             if isinstance(host.screen_stack[-1], ConsoleSettingsModal):
                 focused = host.focused
-                if focused is not None and focused.id in {
-                    "console-settings-provider-picker-input",
-                    "model-search-picker-input",
-                }:
+                if focused is not None and focused.id == "console-settings-model-change":
                     break
             await pilot.pause(0.05)
 
         assert isinstance(host.screen_stack[-1], ConsoleSettingsModal)
         assert host.focused is not None
-        assert host.focused.id in {
-            "console-settings-provider-picker-input",
-            "model-search-picker-input",
-        }
+        assert host.focused.id == "console-settings-model-change"
 
 
 async def _click_configure_credential(pilot, modal: ConsoleSettingsModal) -> None:
@@ -1442,7 +1433,7 @@ async def test_conversation_settings_return_real_navigation_restores_fresh_conso
             await pilot.pause(0.05)
         assert isinstance(app.screen, ConsoleSettingsModal)
         original_modal = app.screen
-        original_modal.query_one("#console-settings-model-picker").focus_input()
+        original_modal.query_one("#console-settings-model-change", Button).focus()
         await _click_configure_credential(pilot, original_modal)
 
         fresh_settings = None
@@ -1845,7 +1836,7 @@ async def test_conversation_settings_return_status_fault_blocks_replacement_unti
         first_snapshot = _conversation_settings_return_snapshot(model="first-model")
         replacement_snapshot = _conversation_settings_return_snapshot(
             model="replacement-model",
-            focus_control_id="console-settings-model-picker",
+            focus_control_id="console-settings-model-change",
         )
         console._suspended_conversation_settings = first_snapshot
         console._suspended_conversation_settings_token = 161
@@ -15164,7 +15155,7 @@ async def test_console_settings_save_fires_success_toast():
         await _wait_for_selector(
             modal,
             pilot,
-            "#console-settings-model-select",
+            "#console-settings-model-change",
         )
         modal.query_one("#console-settings-save", Button).press()
         for _ in range(40):

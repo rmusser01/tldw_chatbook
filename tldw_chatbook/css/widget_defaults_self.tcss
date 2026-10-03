@@ -1448,26 +1448,6 @@
 
     ProjectInstructionNoticeModal { align: center middle; }
 
-/* ===== WIDGET: ConsoleProviderPicker (Widgets/Console/console_provider_picker.py) ===== */
-
-    ConsoleProviderPicker {
-        height: auto;
-        width: 1fr;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-input {
-        width: 100%;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-status {
-        height: auto;
-        color: $text-muted;
-    }
-
-    ConsoleProviderPicker #console-settings-provider-picker-results {
-        max-height: 12;
-    }
-
 /* ===== WIDGET: ConsoleReactionPickerModal (Widgets/Console/console_reaction_picker_modal.py) ===== */
 
     ConsoleReactionPickerModal {

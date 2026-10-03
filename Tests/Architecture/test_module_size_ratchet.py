@@ -116,7 +116,10 @@ _BUDGETS: dict[str, int] = {
     # review fix lowers it to 7,445: the required check and the control
     # support reads moved there as well. TASK-33006.3 lowers it to 7,410:
     # the Request estimate and name disclosures are built there now.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 7466,
+    # TASK-33006.4 lowers it to 6,201: the provider picker, the model search
+    # and their adapters, Custom model and Keep unverified are gone; the
+    # model changes only through Switch model's pick mode.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6268,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

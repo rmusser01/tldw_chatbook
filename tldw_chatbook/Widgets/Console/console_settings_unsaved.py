@@ -13,8 +13,9 @@ transfer), otherwise the value the controls showed once the modal finished its
 initial sync. The second half keeps values the controls merely normalize at
 mount (a blank committed endpoint shown as its configured default) from
 reading as edits. A suspended draft (credential round-trip) carries the first
-modal's baseline, because the reopened modal composes its Provider, Model,
-Endpoint and Streaming controls from the draft's edits.
+modal's baseline, because the reopened modal composes its pair, Endpoint and
+Streaming controls from the draft's edits. The provider·model pair is one
+field, "Model", the MODEL row's label (spec rule 1, TASK-33006.4).
 
 Ctrl+Q asks too (TASK-33622.10): it is a priority binding, so the app's quit
 flow can start while this modal is open, and ``confirm_quit`` asks before
@@ -45,10 +46,10 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 )
 from tldw_chatbook.Chat.console_settings_apply import ConsoleSettingsAction
 
+#: The provider·model pair: one field, labelled as the MODEL row shows it.
+_PAIR_LABEL = "Model"
 #: Session-settings fields Apply commits, with the label each editor shows.
 _SETTINGS_FIELDS = {
-    "provider": "Provider",
-    "model": "Model",
     "base_url": MODEL_FIELD_LABELS["endpoint"],
     **{name: MODEL_FIELD_LABELS[name] for name in GENERATION_FIELD_REQUEST_KEYS},
 }
@@ -69,7 +70,7 @@ _NAME_LABEL = "Your name in this chat"
 _CONTEXT_INVALID_LABEL = "Context and memory"
 _BASELINE_LABELS = frozenset(
     (*_SETTINGS_FIELDS.values(), *_CONTEXT_FIELDS.values())
-) | {_NAME_LABEL, _CONTEXT_INVALID_LABEL}
+) | {_PAIR_LABEL, _NAME_LABEL, _CONTEXT_INVALID_LABEL}
 _MISSING = object()
 _GUARD_BUTTONS = "#console-settings-close-guard Button"
 
@@ -89,8 +90,10 @@ def chat_settings_values(
     Returns:
         Effective values keyed by the field label the editors show.
     """
+    # A scalar, so a baseline can travel in a suspended draft.
     values: dict[str, object] = {
-        label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()
+        _PAIR_LABEL: f"{settings.provider or ''}\x1f{settings.model or ''}",
+        **{label: getattr(settings, name) for name, label in _SETTINGS_FIELDS.items()},
     }
     if context_overrides is None:
         # The key's presence is the signal; a primitive value lets a baseline

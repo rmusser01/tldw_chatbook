@@ -683,6 +683,19 @@ a test written with it is green by construction. Post the keys yourself with no 
 one `pause()`. A task that says "1 s gaps behave" is telling you the drained-loop
 harness cannot see it.
 
+## A terminal's Alt+letter carries the letter, so a focused field types it — `pilot.press` sends none
+
+**TASK-33006.4, 2026-10-02.** Chat settings bound `Binding("alt+m", "change_model")` on
+the modal and a pilot test pressed `alt+m` with Temperature focused: green. Live in tmux
+(`send-keys M-m`), Alt+M typed an "m" into Temperature and nothing opened. Textual's
+xterm parser names the key `alt+m` but passes the letter through as `character="m"`, so
+the focused `Input` handles it as text before a non-priority screen binding is reached;
+`pilot.press("alt+m")` builds the `Key` with no character, so the test cannot see it (the
+composer met the same trap as TASK-1800, `console_composer_bar._is_modified_chord`). A
+screen-level Alt chord that must work from a text field needs `priority=True`, and its
+test should post the event the driver posts: `app.post_message(events.Key("alt+m",
+"m"))`, which failed before the fix and passes after (`test_alt_m_opens_pick_mode_from_a_focused_field`).
+
 ## `run_worker(exclusive=True)` CANCELS the group — it never queues behind it
 
 **schedules-redesign PR-3 Qodo round, 2026-09-03.** The Automations pane's in-place
