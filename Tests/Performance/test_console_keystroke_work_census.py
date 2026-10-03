@@ -32,6 +32,8 @@ import inspect
 import json
 import os
 import sys
+import threading
+import traceback
 from pathlib import Path
 from typing import Any
 
@@ -105,6 +107,35 @@ async def _settle(pilot: Any, passes: int = 30) -> None:
 #: ran 27-69 guarded ``load_settings`` calls).
 IO_UNITS = ("config_admissions", "storage_admissions", "helper_spawns", "os_opens")
 
+#: TASK-33802: who paid each storage admission and helper spawn billed to the
+#: typing burst, so an over-ceiling burst names its caller in the failure.
+_TYPING_BURST_CALLERS: list[str] = []
+#: The app package's own frames (not the venv's, whose path also names the
+#: repository).
+_APP_PACKAGE = str(Path(__file__).resolve().parents[2] / "tldw_chatbook") + os.sep
+
+
+def _caller(unit: str) -> str:
+    """One line per unit: the unit, the thread and the innermost app frames.
+
+    Args:
+        unit: The storage unit being billed.
+
+    Returns:
+        ``"<unit> on <thread>: file:line fn <- ..."`` for the last six
+        ``tldw_chatbook`` frames, innermost first.
+    """
+    frames = [
+        frame
+        for frame in traceback.extract_stack()[:-3]
+        if frame.filename.startswith(_APP_PACKAGE)
+    ][-6:]
+    where = " <- ".join(
+        f"{frame.filename[len(_APP_PACKAGE):]}:{frame.lineno} {frame.name}"
+        for frame in reversed(frames)
+    )
+    return f"{unit} on {threading.current_thread().name}: {where or '(no app frame)'}"
+
 
 _OS_OPEN_AUDIT: dict[str, Any] = {"installed": False, "bump": None}
 
@@ -163,6 +194,8 @@ def _count_storage_units(
         if counting["on"]:
             with lock:
                 counts[key] += 1
+            if counting.get("burst") and key in ("storage_admissions", "helper_spawns"):
+                _TYPING_BURST_CALLERS.append(_caller(key))
 
     real_operation = config_participants.operation
 
@@ -378,11 +411,12 @@ async def _census(
         # instead of scheduled; the ``trace`` phase bills it per tick.
         from tldw_chatbook.Chat.console_runtime import ConsoleRuntime
 
+        real_schedule = ConsoleRuntime._schedule_legacy_trace_maintenance
         monkeypatch.setattr(
             ConsoleRuntime,
             "_schedule_legacy_trace_maintenance",
-            lambda _runtime, database, normalizer_factory: trace_maintenance.append(
-                (database, normalizer_factory)
+            lambda runtime, database, normalizer_factory: trace_maintenance.append(
+                (database, normalizer_factory, runtime, real_schedule)
             ),
         )
 
@@ -443,13 +477,18 @@ async def _census(
             # fires it exactly once.
             screen._console_draft_spend_refresh.delay_seconds = 3600.0
 
+        _TYPING_BURST_CALLERS.clear()
+        counting["burst"] = True
         counting["on"] = True
         for _ in range(KEYSTROKES):
             await pilot.press("a")
         counting["on"] = False
+        counting["burst"] = False
 
         if storage_units:
-            await _census_idle_and_visit(pilot, counts, counting, trace_maintenance)
+            await _census_idle_and_visit(
+                pilot, counts, counting, trace_maintenance, monkeypatch
+            )
 
     return counts
 
@@ -499,7 +538,8 @@ async def _census_idle_and_visit(
     pilot: Any,
     counts: dict[str, int],
     counting: dict[str, Any],
-    trace_maintenance: list[tuple[Any, Any]],
+    trace_maintenance: list[tuple[Any, Any, Any, Any]],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Census the typing pause, idle ticks and a warm visit in storage units.
 
@@ -518,6 +558,9 @@ async def _census_idle_and_visit(
     * ``trace:`` -- the 1 Hz legacy trace-maintenance batch, driven exactly
       as its loop does (per tick; a helper spawn/s, via
       ``run_owned_db_call``'s owned connection).
+    * ``gc:`` -- one eligible GC interval of the production maintenance loop
+      after it parked (TASK-33644): from the pass's graph-epoch read through
+      its collection and compaction.
     * ``visit:`` -- Console -> Library (uncounted) -> Console. The route is
       reusable (TASK-31520), so the return is a warm resume: no mount, only
       ``on_screen_resume`` and what it schedules.
@@ -592,7 +635,7 @@ async def _census_idle_and_visit(
             console._poll_console_credential_readiness()
 
     assert trace_maintenance, "the Console never armed legacy trace maintenance"
-    database, normalizer_factory = trace_maintenance[0]
+    database, normalizer_factory, runtime, real_schedule = trace_maintenance[0]
     maintenance = LegacyTraceMaintenance(
         database, normalizer=normalizer_factory(), provider_active=lambda: False
     )
@@ -600,6 +643,70 @@ async def _census_idle_and_visit(
     async def trace_ticks() -> None:
         for _ in range(IDLE_TICKS):
             await run_owned_db_call(database, maintenance.run_batch)
+
+    async def gc_pass() -> None:
+        """Bill one eligible GC interval of the real maintenance loop.
+
+        The loop runs with a 2 s GC interval. Its first pass collects
+        (uncounted) and it parks; the graph epoch is then advanced with no
+        exchange signal, so the interval wake's pass collects and compacts.
+        Only that pass is billed, from its epoch read to its compaction.
+        """
+        from tldw_chatbook.Chat import console_runtime as runtime_module
+
+        real_owned = runtime_module.run_owned_db_call
+        finished: list[str] = []
+        window = {"armed": False}
+        billed = asyncio.Event()
+
+        async def owned(database_: Any, operation: Any, *args: Any, **kwargs: Any) -> Any:
+            name = getattr(operation, "__name__", "")
+            if name == "current_graph_epoch" and window["armed"]:
+                for unit in IO_UNITS:
+                    counts[unit] = 0
+                counting["on"] = True
+            try:
+                return await real_owned(database_, operation, *args, **kwargs)
+            finally:
+                if name == "run_after_gc":
+                    finished.append(name)
+                    if window["armed"]:
+                        counting["on"] = False
+                        window["armed"] = False
+                        phases.update({f"gc:{unit}": counts[unit] for unit in IO_UNITS})
+                        billed.set()
+
+        def advance_graph_epoch() -> None:
+            with database.transaction() as cursor:
+                cursor.execute(
+                    "UPDATE console_trace_graph_epoch SET epoch = epoch + 1"
+                    " WHERE singleton_id = 1"
+                )
+
+        monkeypatch.setattr(runtime_module, "run_owned_db_call", owned)
+        monkeypatch.setattr(
+            runtime_module, "LEGACY_TRACE_MAINTENANCE_READY_DELAY_SECONDS", 0.0
+        )
+        monkeypatch.setattr(
+            runtime_module, "TRACE_PHYSICAL_MAINTENANCE_INTERVAL_SECONDS", 2.0
+        )
+        real_schedule(runtime, database, normalizer_factory)
+        try:
+            for _ in range(600):
+                if finished:
+                    break
+                await asyncio.sleep(0.05)
+            assert finished, "the maintenance loop never ran its first GC pass"
+            await real_owned(database, advance_graph_epoch)
+            window["armed"] = True
+            await asyncio.wait_for(billed.wait(), 60)
+        finally:
+            task = runtime._legacy_trace_maintenance_task
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                runtime._legacy_trace_maintenance_task = None
+            monkeypatch.setattr(runtime_module, "run_owned_db_call", real_owned)
 
     async def navigate(target: str) -> None:
         await app.handle_screen_navigation(NavigateToScreen(target))
@@ -623,6 +730,7 @@ async def _census_idle_and_visit(
         await phase("pause", typing_pause)
         await phase("idle", credential_ticks)
         await phase("trace", trace_ticks)
+        await gc_pass()
         await phase(None, lambda: navigate("library"))
         assert app.screen is not console, "census never left the Console"
         await phase("visit", lambda: navigate("chat"))
@@ -872,6 +980,17 @@ MAX_VISIT_STORAGE_UNITS = {
     "helper_spawns": 9,
     "os_opens": 35_351,
 }
+#: TASK-33644: one eligible GC interval of the production maintenance loop
+#: (graph-epoch read, collection, compaction), billed on its own. Pinned
+#: 2026-10-03 at dev 2612fc56b2: 0 / 5 / 2 / 34 in every run (three runs,
+#: both evidence variants) -- three owned database calls, two of them on a
+#: fresh helper.
+MAX_TRACE_GC_PASS_STORAGE_UNITS = {
+    "config_admissions": 0,
+    "storage_admissions": 5,
+    "helper_spawns": 2,
+    "os_opens": 34,
+}
 #: Upward timing jitter allowance on ``os_opens`` only (see above).
 OS_OPENS_JITTER_SLACK = 1.05
 
@@ -934,14 +1053,29 @@ async def test_console_storage_units_stay_within_their_ratchets(
             {unit: counts[f"trace:{unit}"] / IDLE_TICKS for unit in IO_UNITS},
             MAX_TRACE_MAINTENANCE_STORAGE_UNITS_PER_TICK,
         ),
+        "trace GC pass": (
+            {unit: counts[f"gc:{unit}"] for unit in IO_UNITS},
+            MAX_TRACE_GC_PASS_STORAGE_UNITS,
+        ),
         "visit": (
             {unit: counts[f"visit:{unit}"] for unit in IO_UNITS},
             MAX_VISIT_STORAGE_UNITS,
         ),
     }
-    request.node.user_properties.append(
-        ("storage_units", json.dumps({k: v[0] for k, v in measured.items()}))
-    )
+    census = {k: v[0] for k, v in measured.items()}
+    request.node.user_properties.append(("storage_units", json.dumps(census)))
+    # TASK-33643: a passing run reports its census too, so CI ceilings can be
+    # pinned from measurements; perf-guard.yml names the file and prints it.
+    census_log = os.environ.get("TLDW_STORAGE_UNIT_CENSUS_LOG")
+    if census_log:
+        with open(census_log, "a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps(
+                    {"case": request.node.name, "platform": sys.platform, "census": census},
+                    sort_keys=True,
+                )
+                + "\n"
+            )
     for unit in IO_UNITS:
         assert counts[f"canary:{unit}"] >= 1, (
             f"census is blind: the canary (a guarded get_user_data_dir() plus "
@@ -961,10 +1095,18 @@ async def test_console_storage_units_stay_within_their_ratchets(
         for unit, value in values.items()
         if unit in gated and value > ceilings[unit] * slack.get(unit, 1)
     ]
+    callers = (
+        " Typing-burst callers: " + " | ".join(_TYPING_BURST_CALLERS) + "."
+        if any(entry.startswith("typing (whole burst)") for entry in over)
+        and _TYPING_BURST_CALLERS
+        else ""
+    )
     assert not over, (
         "Console storage units rose above their ratchet: "
         + "; ".join(over)
-        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}. "
+        + f". Full census: {json.dumps({k: v[0] for k, v in measured.items()})}."
+        + callers
+        + " "
         "Each unit is a real cost on a user path (an admission re-walks "
         "directory chains with one open() per component; a helper spawn is a "
         "python child, ~45-75 ms). Take the new cost off the path; never "
