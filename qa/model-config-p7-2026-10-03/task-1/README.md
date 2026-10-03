@@ -44,3 +44,22 @@ Every file in `after/` is byte-identical to the file of the same name in `before
 - `05-pm`, `06-pm`: Automatic refresh and the per-provider refresh toggles.
 - `07-pm`, `08-pm`: Custom endpoints (two built-in slots), Generation defaults (closed), and
   the catalog and policy rows at the end of the card.
+
+## Widget tree (AC#2: every id renders, under the same classes)
+
+`widget-tree-211x44-rest.txt` and `widget-tree-211x44-open.txt` list every widget under
+`#settings-detail-pane-body` with Providers & Models selected, one row per widget: type, id,
+sorted classes, `display`, `disabled`, region, and for text widgets the first 120 characters
+of the rendered text. `-rest` is the card as it mounts. `-open` is the card after every
+`Collapsible` in it was opened.
+
+- A throwaway pilot test (not committed) produced them. It built `_build_test_app()` inside
+  `_SettingsCssHarness` (the real `APP_STYLESHEETS`) at 211x44 under `@private_profile_test`,
+  then ran `_settle_settings` and `_click_settings_category(pilot, "providers-models")`. These
+  are the same helpers that `Tests/UI/test_settings_providers_models_card_geometry.py` uses.
+- It ran once at `9b28ce1479` and once at the task's head, each from its own tree with
+  `PYTHONPATH` set to that tree. Each file has 282 rows, and base and head are byte-identical,
+  so only one copy is committed. The sha256 values on both sides:
+  - rest: `e33377e3234aebaaf4b4463b0051624f240df9343ad7447b7483faef21a2b06b`
+  - open: `32da6c2658450fbf274bc807daa10fd36b5c29e20243fab894240501aabec3de`
+- The implementer's run and the review fix run produced the same hashes.
