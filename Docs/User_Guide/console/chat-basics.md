@@ -477,10 +477,11 @@ of the next prompt, and **Manage** plus a state-specific action such as
   **Resume next**, **Try again**, and **Retry** (or **Retry failed** and
   **Retry stopped** in Manage) send nothing: a notice says the conversation
   has changed, and the shelf switches to `Context changed` with **Review**.
-  A pending response's **Retry response**, **Retry anyway**, or **Discard**
-  still settles that response, but the prompts waiting behind it stop at the
-  same review. **Use current** then sends the next waiting prompt; it does
-  not re-run the failed or stopped turn.
+  A pending response's **Retry response**, **Retry anyway**, and **Discard**
+  sit on its recovery card above the composer, never on the shelf. Any of
+  them still settles that response, but the prompts waiting behind it stop
+  at the same review. **Use current** then sends the next waiting prompt; it
+  does not re-run the failed or stopped turn.
 
 Queue text is process-memory-only until its turn is accepted. It is not saved
 to conversation history, prompt history, screen snapshots, or the database.
