@@ -10,6 +10,8 @@ Handles the import and validation of chatbooks into the application.
 
 from tldw_chatbook.Backup_Recovery.local_content_lifetime import call as content_call, own_database
 
+import base64
+import binascii
 import codecs
 import hashlib
 import heapq
@@ -2559,6 +2561,19 @@ class ChatbookImporter:
                     for key, value in raw_char_data["card"].items():
                         if key not in card_data and value is not None:
                             card_data[key] = value
+
+                # Server archives mark binary portraits explicitly; the card
+                # format parser omits these transport fields.
+                if "image_encoding" in raw_char_data:
+                    image = raw_char_data.get("image")
+                    if raw_char_data["image_encoding"] != "base64" or not isinstance(
+                        image, str
+                    ):
+                        raise ValueError("Invalid character image encoding")
+                    try:
+                        card_data["image"] = base64.b64decode(image, validate=True)
+                    except (binascii.Error, ValueError):
+                        raise ValueError("Invalid base64 character image") from None
 
                 new_char_id = db.add_character_card(card_data)
                 logger.debug(
