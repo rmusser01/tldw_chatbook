@@ -8,7 +8,7 @@
                          Conte│ Estimated fallback only; model capacity is unverified. Set the actual context window in F4 Settings > Providers & Models.                          │                    │
    Terminal                   │                                                                                                                                                    │                    │
  ─────────────────────────────│ Conversation budget                                                                                                                                │                    │
- Workspaces                   │ Budget strategy         │ Automatic ▼                                                                                                            ▆ │                    │
+ Workspaces                   │ Budget strategy         █ Automatic ▼                                                                                                            ▆ │                    │
  ─────────────────────────────│ Conversation max tokens │ if Custom                                                                                                                │                    │
  Conversations                │ Effective           193,952 tokens                                                                                                                 │                    │
         Archive this chat     │ Next request        0 tokens                                                                                                                       │                    │
