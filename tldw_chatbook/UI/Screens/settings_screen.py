@@ -1594,6 +1594,21 @@ QWENCLOUD_API_MODE_HELP_COPY = (
     "replay; existing function tools work in both; QwenCloud built-in tools are "
     "excluded."
 )
+#: TASK-34201: Anthropic's "Sign in with" choice (owner-approved design,
+#: 2026-10-03) -- an API key, or the Claude subscription Claude Code holds.
+ANTHROPIC_AUTH_SOURCE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("API key", "api_key"),
+    ("Claude subscription", "claude_subscription"),
+)
+ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY = (
+    "Uses the credential Claude Code already holds (Keychain or "
+    "~/.claude/.credentials.json). Chatbook reads it, never stores or "
+    "refreshes it. Bills your Claude plan, not API credits."
+)
+ANTHROPIC_API_KEY_GUIDANCE_COPY = (
+    "Choose Claude subscription to use the plan Claude Code is signed in "
+    "with instead of an API key."
+)
 QWENCLOUD_API_MODE_INVALID_COPY = (
     "QwenCloud API mode is invalid. Open API mode and choose Responses or Chat "
     "Completions, then Save."
@@ -2636,6 +2651,7 @@ def overlay_provider_draft_config(
     draft_env_var: str | None,
     draft_api_key: str | None,
     draft_api_mode: object | None = None,
+    draft_auth_source: str | None = None,
 ) -> dict:
     """Return a deep copy of ``app_config`` with unsaved draft provider fields overlaid.
 
@@ -2647,6 +2663,8 @@ def overlay_provider_draft_config(
         draft_env_var: Draft credential env-var name, or ``None`` to leave saved.
         draft_api_key: Draft API key (``""`` models an explicit clear), or ``None``.
         draft_api_mode: Draft QwenCloud API mode, or ``None`` to leave saved.
+        draft_auth_source: Draft Anthropic sign-in choice, or ``None`` to leave
+            saved (TASK-34201).
 
     Returns:
         A new config dict; ``app_config`` is never mutated.
@@ -2668,6 +2686,8 @@ def overlay_provider_draft_config(
         section["api_key"] = draft_api_key
     if draft_api_mode is not None:
         section["api_mode"] = draft_api_mode
+    if draft_auth_source is not None:
+        section["auth_source"] = draft_auth_source
     return merged
 
 
@@ -3291,6 +3311,7 @@ class SettingsScreen(BaseAppScreen):
         self._custom_endpoints_status = ""
         self._syncing_provider_endpoint = False
         self._syncing_provider_api_mode = False
+        self._syncing_provider_auth_source = False
         # Input.Changed is delivered after a programmatic value assignment
         # returns, so a synchronous boolean cannot suppress that deferred
         # message. Consume exact expected values once instead.
@@ -12446,15 +12467,21 @@ class SettingsScreen(BaseAppScreen):
         draft = self._provider_draft()
         if draft is None:
             return {}, {}
-        excluded_key = (
+        excluding_key = provider_config_key(str(excluding_provider or ""))
+        excluded_keys = {
             self._provider_api_mode_draft_key(excluding_provider)
-            if provider_config_key(str(excluding_provider or "")) == "qwencloud"
-            else ""
-        )
+            if excluding_key == "qwencloud"
+            else "",
+            # TASK-34201: Anthropic's sign-in choice is provider-scoped too.
+            self._provider_auth_source_draft_key(excluding_provider)
+            if excluding_key == "anthropic"
+            else "",
+        }
         values = {
             key: value
             for key, value in draft.values.items()
-            if key.startswith("provider_api_mode:") and key != excluded_key
+            if key.startswith(("provider_api_mode:", "provider_auth_source:"))
+            and key not in excluded_keys
         }
         originals = {
             key: value for key, value in draft.originals.items() if key in values
@@ -12486,6 +12513,52 @@ class SettingsScreen(BaseAppScreen):
             ), True
         except ChatConfigurationError:
             return Select.NULL, False
+
+    @staticmethod
+    def _provider_auth_source_draft_key(provider: object) -> str:
+        """Return the provider-scoped draft key for Anthropic's sign-in choice."""
+        return f"provider_auth_source:{provider_config_key(str(provider or ''))}"
+
+    def _provider_saved_auth_source(self, provider: object) -> str:
+        """Return the saved sign-in choice; only Anthropic has one (TASK-34201)."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return "api_key"
+        from ...LLM_Calls.anthropic_subscription import anthropic_auth_source
+
+        return anthropic_auth_source(self._provider_config("anthropic"))
+
+    def _provider_auth_source_value(self, provider: object) -> str:
+        """Resolve Anthropic's sign-in choice from the draft, then saved config."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return "api_key"
+        draft = self._provider_draft()
+        draft_key = self._provider_auth_source_draft_key("anthropic")
+        if draft is not None and draft_key in draft.values:
+            return str(draft.values[draft_key])
+        return self._provider_saved_auth_source("anthropic")
+
+    def _stage_provider_auth_source(self, provider: object, value: str) -> None:
+        """Stage Anthropic's sign-in choice as an ordinary unsaved edit."""
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return
+        category = SettingsCategoryId.PROVIDERS_MODELS
+        draft = self._settings_drafts.setdefault(
+            category, SettingsDraft(category=category)
+        )
+        self._pin_provider_draft_selection(
+            draft, self._provider_setting_values_mapping()
+        )
+        draft_key = self._provider_auth_source_draft_key("anthropic")
+        original = draft.originals.get(
+            draft_key, self._provider_saved_auth_source("anthropic")
+        )
+        draft.set_value(draft_key, original, value)
+        if value == original:
+            draft.values.pop(draft_key, None)
+            draft.originals.pop(draft_key, None)
+        if not draft.is_dirty:
+            self._settings_drafts.pop(category, None)
+        self._mark_provider_test_result_stale()
 
     def _resolve_provider_model_for_settings(self):
         draft = self._provider_draft()
@@ -12536,6 +12609,7 @@ class SettingsScreen(BaseAppScreen):
             "api_key": "",
             "credential_env_var": self._provider_credential_env_var(provider),
             "api_mode": self._provider_saved_api_mode_value(provider),
+            "auth_source": self._provider_saved_auth_source(provider),
             "model_context_window": self._provider_model_context_window(provider, model)
             or "",
             "model_profile_temperature": profile.get("temperature", ""),
@@ -12570,6 +12644,7 @@ class SettingsScreen(BaseAppScreen):
             for key, value in loaded.items()
         }
         values["api_mode"] = self._provider_api_mode_value(values.get("provider"))
+        values["auth_source"] = self._provider_auth_source_value(values.get("provider"))
         return values
 
     def _provider_setting_values_mapping(self) -> Mapping[str, object]:
@@ -12696,6 +12771,8 @@ class SettingsScreen(BaseAppScreen):
             label = labels.get(key)
             if label is None and key.startswith("provider_api_mode:"):
                 label = "API mode"
+            if label is None and key.startswith("provider_auth_source:"):
+                label = "Sign in with"
             if label is not None and label not in names:
                 names.append(label)
         return tuple(names)
@@ -13238,6 +13315,7 @@ class SettingsScreen(BaseAppScreen):
             Input,
         ).value.strip()
         api_mode = self._provider_api_mode_value(provider)
+        auth_source = self._provider_auth_source_value(provider)
         model_context_window = self._normalise_model_context_window(
             self.query_one("#settings-model-context-window", Input).value
         )
@@ -13308,6 +13386,7 @@ class SettingsScreen(BaseAppScreen):
             "api_key": api_key,
             "credential_env_var": credential_env_var,
             "api_mode": api_mode,
+            "auth_source": auth_source,
             "model_context_window": model_context_window,
             "model_profile_temperature": model_profile_temperature,
             "model_profile_top_p": model_profile_top_p,
@@ -14695,6 +14774,77 @@ class SettingsScreen(BaseAppScreen):
             )
         )
 
+    def _sync_provider_auth_source_widget(self, provider: str) -> None:
+        """Show Anthropic's sign-in select; disable the key rows on subscription.
+
+        Runs after ``_sync_provider_registry_lock``, which resets the key and
+        env-var inputs, so the subscription choice is applied on top of it.
+        The rows stay visible and keep their values, so switching back to an
+        API key loses nothing (TASK-34201).
+        """
+        try:
+            row = self.query_one("#settings-provider-auth-source-row", Horizontal)
+            selector = self.query_one("#settings-provider-auth-source", Select)
+            guidance = self.query_one(
+                "#settings-provider-auth-source-guidance", Static
+            )
+        except QueryError:
+            return
+        is_anthropic = provider_config_key(provider) == "anthropic"
+        value = self._provider_auth_source_value(provider)
+        subscription = is_anthropic and value == "claude_subscription"
+        row.set_class(not is_anthropic, "settings-gated-profile-hidden")
+        guidance.set_class(not is_anthropic, "settings-gated-profile-hidden")
+        selector.disabled = not is_anthropic
+        if is_anthropic and selector.value != value:
+            self._syncing_provider_auth_source = True
+            try:
+                with selector.prevent(Select.Changed):
+                    selector.value = value
+            finally:
+                self._syncing_provider_auth_source = False
+        guidance.update(
+            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+            if subscription
+            else ANTHROPIC_API_KEY_GUIDANCE_COPY
+        )
+        locked = self._provider_is_registry_id(provider)
+        for selector_id in (
+            "#settings-provider-api-key",
+            "#settings-provider-credential-env-var",
+        ):
+            try:
+                self.query_one(selector_id).disabled = locked or subscription
+            except QueryError:
+                continue
+        try:
+            clear = self.query_one("#settings-provider-api-key-clear", Button)
+            api_key = self.query_one("#settings-provider-api-key", Input).value
+        except QueryError:
+            return
+        clear.disabled = subscription or (
+            not self._provider_saved_api_key_present(provider)
+            and not api_key.strip()
+        )
+
+    def _snapshot_provider_auth_source_widget(self, provider: object) -> None:
+        """Capture the visible sign-in choice before switching providers or saving.
+
+        A provider switch or Save can run before the select's queued Changed
+        event; without this the choice would be lost (as for the API mode).
+        """
+        if provider_config_key(str(provider or "")) != "anthropic":
+            return
+        try:
+            selector = self.query_one("#settings-provider-auth-source", Select)
+        except QueryError:
+            return
+        value = self._select_value_text(selector.value)
+        if value in {"api_key", "claude_subscription"} and value != (
+            self._provider_auth_source_value(provider)
+        ):
+            self._stage_provider_auth_source(provider, value)
+
     def _snapshot_provider_api_mode_widget(self, provider: object) -> None:
         """Capture the visible QwenCloud selector before switching providers."""
         if provider_config_key(str(provider or "")) != "qwencloud":
@@ -15219,8 +15369,16 @@ class SettingsScreen(BaseAppScreen):
         dirty = draft.dirty_keys if draft is not None else set()
         provider_key = provider_config_key(provider)
         api_mode_draft_key = self._provider_api_mode_draft_key(provider)
+        auth_source_draft_key = self._provider_auth_source_draft_key(provider)
         if not (
-            {"endpoint", "credential_env_var", "api_key", api_mode_draft_key} & dirty
+            {
+                "endpoint",
+                "credential_env_var",
+                "api_key",
+                api_mode_draft_key,
+                auth_source_draft_key,
+            }
+            & dirty
         ):
             return app_config
         provider_save_key, _config = self._provider_config_entry(provider)
@@ -15255,6 +15413,11 @@ class SettingsScreen(BaseAppScreen):
             draft_api_mode=(
                 draft_api_mode
                 if provider_key == "qwencloud" and provider_save_key == "qwencloud"
+                else None
+            ),
+            draft_auth_source=(
+                self._provider_auth_source_value(provider)
+                if provider_key == "anthropic" and auth_source_draft_key in dirty
                 else None
             ),
         )
@@ -16722,6 +16885,7 @@ class SettingsScreen(BaseAppScreen):
         self._refresh_generation_support_summary(provider, model)
         self._sync_provider_api_mode_widget(provider)
         self._sync_provider_registry_lock(provider)
+        self._sync_provider_auth_source_widget(provider)
         self._refresh_provider_field_guidance()
 
     def _detail_row(
@@ -17924,6 +18088,41 @@ class SettingsScreen(BaseAppScreen):
                 id="settings-provider-credential-status",
                 classes="settings-status-row",
             )
+            # TASK-34201: Anthropic only -- an API key or the Claude subscription.
+            is_anthropic = provider_config_key(provider) == "anthropic"
+            subscription_selected = (
+                is_anthropic
+                and self._provider_auth_source_value(provider) == "claude_subscription"
+            )
+            with Horizontal(
+                id="settings-provider-auth-source-row",
+                classes=(
+                    "settings-input-row settings-select-row"
+                    if is_anthropic
+                    else "settings-input-row settings-select-row settings-gated-profile-hidden"
+                ),
+            ):
+                yield Static("Sign in with", classes="settings-input-label")
+                yield Select(
+                    ANTHROPIC_AUTH_SOURCE_OPTIONS,
+                    value=self._provider_auth_source_value(provider),
+                    id="settings-provider-auth-source",
+                    classes="settings-compact-select",
+                    allow_blank=False,
+                    compact=True,
+                    disabled=not is_anthropic,
+                )
+            yield Static(
+                ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+                if subscription_selected
+                else ANTHROPIC_API_KEY_GUIDANCE_COPY,
+                id="settings-provider-auth-source-guidance",
+                classes=(
+                    "settings-status-row"
+                    if is_anthropic
+                    else "settings-status-row settings-gated-profile-hidden"
+                ),
+            )
             with Horizontal(classes="settings-input-row"):
                 yield Static("API key", classes="settings-input-label")
                 yield Input(
@@ -17932,14 +18131,14 @@ class SettingsScreen(BaseAppScreen):
                     classes="settings-compact-input",
                     placeholder=self._provider_api_key_placeholder(provider),
                     password=True,
-                    disabled=registry_locked,
+                    disabled=registry_locked or subscription_selected,
                 )
             with Horizontal(classes="settings-input-row"):
                 yield Static("", classes="settings-input-label")
                 yield Button(
                     "Clear saved key",
                     id="settings-provider-api-key-clear",
-                    disabled=(
+                    disabled=subscription_selected or (
                         not self._provider_saved_api_key_present(provider)
                         and not bool(str(values.get("api_key") or "").strip())
                     ),
@@ -17952,7 +18151,7 @@ class SettingsScreen(BaseAppScreen):
                     id="settings-provider-credential-env-var",
                     classes="settings-compact-input",
                     placeholder=self._provider_credential_placeholder(provider),
-                    disabled=registry_locked,
+                    disabled=registry_locked or subscription_selected,
                 )
             yield Static(
                 "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
@@ -30063,6 +30262,7 @@ class SettingsScreen(BaseAppScreen):
             return
         self._clear_navigation_provider_context()
         self._snapshot_provider_api_mode_widget(previous_provider)
+        self._snapshot_provider_auth_source_widget(previous_provider)
         provider_changed = bool(provider) and provider_config_key(
             provider
         ) != provider_config_key(previous_provider)
@@ -30350,6 +30550,24 @@ class SettingsScreen(BaseAppScreen):
             return
         self._stage_provider_value("endpoint", event.value.strip())
         self._reset_provider_model_discovery_state()
+        self._update_provider_dynamic_widgets()
+        self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
+
+    @on(Select.Changed, "#settings-provider-auth-source")
+    def handle_provider_auth_source_changed(self, event: Select.Changed) -> None:
+        """Stage Anthropic's sign-in choice as an ordinary unsaved edit."""
+        event.stop()
+        if self._syncing_provider_auth_source:
+            return
+        provider = str(
+            self._provider_setting_values_mapping().get("provider") or ""
+        ).strip()
+        if provider_config_key(provider) != "anthropic":
+            return
+        value = self._select_value_text(event.value)
+        if value not in {"api_key", "claude_subscription"}:
+            return
+        self._stage_provider_auth_source(provider, value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
 
@@ -31723,6 +31941,7 @@ class SettingsScreen(BaseAppScreen):
                 self._provider_setting_values_mapping().get("provider") or ""
             ).strip()
             self._snapshot_provider_api_mode_widget(current_provider)
+            self._snapshot_provider_auth_source_widget(current_provider)
             try:
                 values = self._provider_form_values_from_widgets()
             except ValueError as exc:
@@ -31840,6 +32059,14 @@ class SettingsScreen(BaseAppScreen):
                 and api_mode_draft_key in dirty_keys
                 and normalized_api_mode != self._provider_saved_api_mode_value(provider)
             )
+            auth_source = str(values.get("auth_source") or "api_key")
+            auth_source_dirty = bool(
+                provider_key == "anthropic"
+                and draft is not None
+                and self._provider_auth_source_draft_key(provider) in dirty_keys
+                and auth_source in {"api_key", "claude_subscription"}
+                and auth_source != self._provider_saved_auth_source(provider)
+            )
             selected_profile = self._provider_model_profile(provider, model)
             model_profile_dirty = any(
                 key in dirty_keys
@@ -31881,6 +32108,7 @@ class SettingsScreen(BaseAppScreen):
                 and not dirty_values
                 and not endpoint_dirty
                 and not api_mode_dirty
+                and not auth_source_dirty
                 and not model_profile_dirty
                 and not context_window_dirty
             )
@@ -31965,6 +32193,7 @@ class SettingsScreen(BaseAppScreen):
                 and not credential_dirty
                 and not api_key_dirty
                 and not api_mode_dirty
+                and not auth_source_dirty
                 and not model_profile_dirty
                 and not context_window_dirty
             ):
@@ -32096,6 +32325,12 @@ class SettingsScreen(BaseAppScreen):
                         delete_keys.setdefault(
                             f"api_settings.{alias_section}", []
                         ).append("api_mode")
+            if auth_source_dirty:
+                # TASK-34201: Anthropic's sign-in choice; the setup mutation
+                # admits it as a routing key of [api_settings.anthropic].
+                section_values.setdefault(provider_section, {})["auth_source"] = (
+                    auth_source
+                )
             if next_model_defaults is not None:
                 section_values.setdefault(provider_section, {})["model_defaults"] = (
                     next_model_defaults
