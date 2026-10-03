@@ -1541,6 +1541,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_ROOT_CHANGED_REFUSAL,
         LOCAL_TIMEOUT_REFUSAL,
         LOCAL_USER_DENY_REFUSAL,
+        LOCAL_WORKER_FAILED_REFUSAL,
     )
     from tldw_chatbook.Agents.raw_shell_tool_provider import RAW_SHELL_DENY_REFUSAL
 
@@ -1568,6 +1569,7 @@ def _refusal_statuses() -> Mapping[str, ConsoleActivityStatus]:
         LOCAL_GATE_ERROR_REFUSAL: "blocked",
         LOCAL_ROOT_CHANGED_REFUSAL: "blocked",
         LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL: "blocked",
+        LOCAL_WORKER_FAILED_REFUSAL: "blocked",
         MCP_UNRESOLVED_REFUSAL: "blocked",
         MCP_TIMEOUT_REFUSAL: "blocked",
     })
@@ -4763,6 +4765,60 @@ def _console_first_request_runtime_context(
     return definitions, max_live if budget.max_subagents > 0 else 1
 
 
+def _advertised_path_root_aliases(
+    allowed_tools: Sequence[str],
+    *,
+    local_provider: Any | None,
+    virtual_cli_provider: Any | None,
+) -> tuple[str, ...] | None:
+    """Return the root aliases the model's offered path tools accept.
+
+    TASK-33940.1: feeds ``workspace_context_note`` so it names folders by the
+    aliases the fs_*/git_*/virtual_cli schemas actually carry. A provider whose
+    tools were filtered out of the allow-list contributes nothing.
+
+    Returns:
+        The union of the advertised providers' aliases, ``()`` when no path
+        tool is offered, or ``None`` when only legacy alias-free providers are.
+    """
+    from tldw_chatbook.Agents.local_tool_provider import PATH_AUTHORITY_TOOL_NAMES
+    from tldw_chatbook.Agents.virtual_cli_provider import VIRTUAL_CLI_TOOL_NAME
+
+    offered = set(allowed_tools)
+    aliases: set[str] = set()
+    alias_free = False
+    for provider, names in (
+        (local_provider, PATH_AUTHORITY_TOOL_NAMES),
+        (virtual_cli_provider, frozenset({VIRTUAL_CLI_TOOL_NAME})),
+    ):
+        if provider is None or not offered & names:
+            continue
+        provider_aliases = provider.path_root_aliases()
+        if provider_aliases is None:
+            alias_free = True
+            continue
+        aliases.update(provider_aliases)
+    if alias_free and not aliases:
+        return None
+    return tuple(sorted(aliases))
+
+
+def _advertised_scratch_relative_tools(
+    allowed_tools: Sequence[str], builtin_names: Sequence[str]
+) -> tuple[str, ...]:
+    """Return offered built-ins whose relative paths resolve in scratch."""
+    from tldw_chatbook.Tools.file_operation_tools import SCRATCH_RELATIVE_PATH_TOOLS
+
+    builtins = set(builtin_names)
+    return tuple(
+        sorted(
+            name
+            for name in allowed_tools
+            if name in SCRATCH_RELATIVE_PATH_TOOLS and name in builtins
+        )
+    )
+
+
 def build_console_first_request_plan(
     *,
     shared_registry: ToolCatalogRegistry,
@@ -4944,17 +5000,28 @@ def build_console_first_request_plan(
         get_remote_binding_status_cache,
     )
 
-    workspace_note = workspace_context_note(
-        workspace_id,
-        binding_authority=workspace_binding_authority,
-        status_cache=get_remote_binding_status_cache(),
-    )
     response_reserve = (
         getattr(resolution, "max_tokens", None) or DEFAULT_RESPONSE_RESERVATION
     )
     from tldw_chatbook.Agents.agent_models import plugin_tool_ceiling
 
     allowed_tools = plugin_tool_ceiling(agent_messages, allowed_tools)
+    # TASK-33940.1: built AFTER the final allow-list so the note describes only
+    # tools the model is actually offered -- the root_alias values its path
+    # tools accept and which built-ins resolve relative paths in scratch.
+    workspace_note = workspace_context_note(
+        workspace_id,
+        binding_authority=workspace_binding_authority,
+        status_cache=get_remote_binding_status_cache(),
+        path_tool_aliases=_advertised_path_root_aliases(
+            allowed_tools,
+            local_provider=local_provider,
+            virtual_cli_provider=virtual_cli_provider,
+        ),
+        scratch_relative_tools=_advertised_scratch_relative_tools(
+            allowed_tools, builtin_names
+        ),
+    )
     config = AgentConfig(
         model=resolved_model,
         system_prompt=direct_prompt,
