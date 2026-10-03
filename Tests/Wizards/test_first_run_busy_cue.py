@@ -176,6 +176,62 @@ async def test_choosing_full_names_the_work_then_counts_the_seconds(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_choosing_full_never_blocks_the_screen_on_local_discovery(monkeypatch):
+    """The loop stays free while the localhost scan does its blocking setup.
+
+    Review round 1: choosing Full lands on Provider, whose first show starts
+    the localhost scan. Its storage admission and TLS client setup are
+    synchronous file and SSL work. On the UI loop they froze Welcome for
+    0.4-1.3 s after the Next itself had finished, so neither Provider nor the
+    busy line (a timer) could paint. A slow path that awaits
+    (``asyncio.sleep``) leaves the loop free and cannot catch that; this one
+    blocks whichever thread runs it.
+    """
+    import threading
+    import time
+
+    started = threading.Event()
+
+    async def blocking_discovery(*_args, **_kwargs):
+        started.set()
+        time.sleep(1.0)  # synchronous, like admission and SSL context setup
+        return ()
+
+    monkeypatch.setattr(
+        "tldw_chatbook.Chat.local_server_discovery.discover_local_servers",
+        blocking_discovery,
+    )
+    wizard = _wizard()
+    app = _Host(wizard)
+
+    async with app.run_test(size=(120, 40)) as pilot:
+        await pilot.pause(0.2)
+        container = wizard.query_one(SetupWizardContainer)
+        wizard.query_one("#setup-track-full", RadioButton).value = True
+        await pilot.pause(0.05)
+
+        container.action_next()
+        gaps: list[float] = []
+        last = time.monotonic()
+        deadline = last + 1.6
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.02)
+            now = time.monotonic()
+            gaps.append(now - last)
+            last = now
+
+        assert started.is_set(), "Provider never started the localhost scan"
+        assert max(gaps) < 0.5, f"the UI loop was blocked for {max(gaps):.2f} s"
+        assert isinstance(container.steps[container.current_step], ProviderStep)
+        provider = container.steps[container.current_step]
+        for _ in range(60):
+            if provider._local_discovery_state == "complete":
+                break
+            await pilot.pause(0.05)
+        assert provider._local_discovery_state == "complete"
+
+
+@pytest.mark.asyncio
 async def test_each_step_names_its_own_work():
     from tldw_chatbook.UI.Wizards.first_run_busy_status import busy_label_for
 
@@ -229,6 +285,10 @@ async def test_back_and_forward_reuse_the_providers_model_discovery(outcome: str
     the 8 s discovery guard, each Back and Forward could cost up to 8 s
     (review: "reruns on every Forward/Back"). Model's explicit Retry is
     still the way to ask again.
+
+    Only ``[failure]`` was RED on the base code; ``[models]`` already passed
+    there (a completed discovery was reused before TASK-34100.1) and stays
+    as a regression pin for that path.
     """
     wizard = _wizard()
     wizard.app_instance.app_config = {

@@ -259,3 +259,50 @@ def test_a_production_app_never_records_a_worker_error() -> None:
 
     assert app._exception is None
 
+
+@pytest.mark.asyncio
+async def test_off_loop_work_runs_on_another_thread_and_returns_its_result():
+    """``off_loop`` keeps blocking setup off the UI loop (review round 1)."""
+    import threading
+
+    from tldw_chatbook.UI.Wizards.first_run_step_guard import off_loop
+
+    async def work(value: int) -> tuple[int, threading.Thread]:
+        await asyncio.sleep(0)
+        return value, threading.current_thread()
+
+    async def fails() -> None:
+        raise ValueError("off-loop failure")
+
+    value, thread = await off_loop(work)(7)
+
+    assert value == 7
+    assert thread is not threading.current_thread()
+    with pytest.raises(ValueError, match="off-loop failure"):
+        await off_loop(fails)()
+
+
+@pytest.mark.asyncio
+async def test_cancelling_off_loop_work_cancels_it_on_its_thread():
+    """Leaving Provider cancels the scan; its thread must not run on for long."""
+    import threading
+
+    from tldw_chatbook.UI.Wizards.first_run_step_guard import off_loop
+
+    started = threading.Event()
+    finished = threading.Event()
+
+    async def slow() -> None:
+        started.set()
+        try:
+            await asyncio.sleep(10)
+        finally:
+            finished.set()
+
+    task = asyncio.ensure_future(off_loop(slow)())
+    assert await asyncio.to_thread(started.wait, 5.0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert await asyncio.to_thread(finished.wait, 3.0), "the work kept running"
