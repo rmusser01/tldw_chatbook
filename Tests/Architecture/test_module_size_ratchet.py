@@ -112,8 +112,9 @@ _BUDGETS: dict[str, int] = {
     # the Request estimate and name disclosures are built there now.
     # TASK-33006.4 lowers it to 6,201: the provider picker, the model search
     # and their adapters, Custom model and Keep unverified are gone; the
-    # model changes only through Switch model's pick mode.
-    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6201,
+    # model changes only through Switch model's pick mode. Its review fix
+    # lowers it to 6,189: a created entry's landing moved to the field rows.
+    "tldw_chatbook/Widgets/Console/console_settings_modal.py": 6189,
     "tldw_chatbook/UI/MCP_Modules/mcp_workbench.py": 6760,
     # Tier-2 review S03/S04: the two largest TTS modules had no row at all,
     # though both are larger in CLASS terms than every row above them

@@ -6093,10 +6093,9 @@ class ChatScreen(BaseAppScreen):
     def action_open_console_new_endpoint(self) -> None:
         """Open the endpoint-template creation flow on top of session settings.
 
-        ``/endpoint`` (H6): the same flow the Conversation-settings provider
-        list's "New custom endpoint…" sentinel row opens. The settings modal
-        is pushed first so the created entry lands as its selected provider
-        (``EndpointCreated`` is announced to the opener screen).
+        ``/endpoint`` (H6): the same flow as Chat settings' New endpoint….
+        The settings modal is pushed first and receives the created entry,
+        which it lands on a pair through pick mode (TASK-33006.4).
         """
         if self._console_setup_modal_blocking():
             return
@@ -6106,15 +6105,14 @@ class ChatScreen(BaseAppScreen):
         """Push Conversation settings, then its endpoint template modal.
 
         PR-2646 review: the template must layer on the *exact* settings
-        modal this flow opened -- ``EndpointCreated`` is delivered to the
-        screen directly beneath the template (``screen_stack[-2]``), so a
-        template that lands over ChatScreen would orphan the creation (no
-        provider selection, no model discovery). The exact modal is retained
-        through ``_pushed_modal_sink``, its already-resolved provider models
-        and app config are reused (no second async resolution window while
-        the user could dismiss settings), and the stack is rechecked
-        immediately before the push: abort if the modal was dismissed or
-        covered by an unrelated screen.
+        modal this flow opened -- its result goes to that modal's
+        ``pick_created_endpoint`` (TASK-33006.4), which lists the entry's
+        models and opens pick mode on it, so the creation is never orphaned.
+        The exact modal is retained through ``_pushed_modal_sink``, its
+        already-resolved provider models and app config are reused (no
+        second async resolution window while the user could dismiss
+        settings), and the stack is rechecked immediately before the push:
+        abort if the modal was dismissed or covered by an unrelated screen.
         """
         retained: list["ConsoleSettingsModal"] = []
 
@@ -6140,10 +6138,8 @@ class ChatScreen(BaseAppScreen):
         except Exception:
             settings_directly_beneath = False
         if not settings_directly_beneath:
-            # Dismissed (or covered by an unrelated screen) between the
-            # settings push settling and now: layering the template here
-            # would deliver EndpointCreated to whatever currently sits
-            # beneath it, so abort the flow instead.
+            # Dismissed or covered between the settings push settling and
+            # now: the created entry would land on no Chat settings, so abort.
             return
         self.app.push_screen(
             ConsoleEndpointTemplateModal(
@@ -6152,7 +6148,8 @@ class ChatScreen(BaseAppScreen):
                 app_config=settings_modal._app_config,
                 providers_models=settings_modal._providers_models,
                 template_provider=settings_modal._active_provider or None,
-            )
+            ),
+            callback=settings_modal.pick_created_endpoint,
         )
 
     def action_open_console_prompt_insert(self) -> None:

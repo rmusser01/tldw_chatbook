@@ -69,13 +69,7 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
         A ``model_picker`` for ``ConsoleSettingsModal``.
     """
 
-    def readiness(provider, model):
-        settings = build_target_default_console_session_settings(
-            app_config, provider, model
-        )
-        return build_console_settings_readiness(settings, app_config=app_config)
-
-    def open_picker(origin, draft, query, on_pick):
+    def open_picker(origin, draft, query, on_pick, served):
         app.push_screen(
             ConsoleModelPopover(
                 origin=origin,
@@ -86,14 +80,34 @@ def pick_mode_opener(app, app_config, providers_models=PROVIDERS_MODELS):
                 durability_copy="",
                 draft_rebaser=_never,
                 live_committer=_never,
-                default_readiness_resolver=readiness,
+                default_readiness_resolver=readiness_resolver(app_config),
                 pick_only=True,
                 query=query,
+                served_models=served,
             ),
             callback=on_pick,
         )
 
     return open_picker
+
+
+def readiness_resolver(app_config):
+    """Return the configuration-only readiness pick mode reads, as the Console's.
+
+    Args:
+        app_config: The configuration the readiness is built from.
+
+    Returns:
+        A ``default_readiness_resolver`` for ``ConsoleModelPopover``.
+    """
+
+    def readiness(provider, model):
+        settings = build_target_default_console_session_settings(
+            app_config, provider, model
+        )
+        return build_console_settings_readiness(settings, app_config=app_config)
+
+    return readiness
 
 
 def real_rebase(state, **kwargs):
@@ -181,6 +195,83 @@ async def test_model_row_paints_pair_source_readiness_context_and_change(size) -
         assert container.region.contains_region(change.region)
 
 
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.parametrize(
+    ("provider", "model"),
+    [
+        ("fireworks", "accounts/fireworks/models/deepseek-v3-0324"),
+        ("together", "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free-Long"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_model_row_shows_a_long_id_and_the_provider_name_whole(
+    size, provider, model
+) -> None:
+    """Review round 1 (AC#1): the pair takes the row's free width, so ids
+    that passed the old 48-cell cap render whole with the provider name."""
+    from tldw_chatbook.Chat.provider_catalog import provider_display_name
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(provider, model))
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        name = provider_display_name(provider, app.app_config)
+        line = _model_row_line(app, modal)
+        assert f"{model} · {name} " in line, line
+        assert MODEL_CHANGE_LABEL in line
+
+
+@pytest.mark.parametrize("size", [(211, 44), (235, 52)])
+@pytest.mark.asyncio
+async def test_model_row_shortens_only_an_id_wider_than_the_row(size) -> None:
+    """Review round 1: an id wider than the free width gives way in the
+    middle, so its prefix and its quant suffix stay; the provider name,
+    the readiness words and Change are never cut."""
+    model = (
+        "bartowski/Meta-Llama-3.1-70B-Instruct-GGUF/"
+        "Meta-Llama-3.1-70B-Instruct-abliterated-Q4_K_M.gguf"
+    )
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings("llama_cpp", model))
+    async with app.run_test(size=size) as pilot:
+        await _open(pilot, app, modal)
+        line = _model_row_line(app, modal)
+        assert model not in line
+        assert "bartowski/Meta-Llama" in line and "…" in line, line
+        assert "Q4_K_M.gguf · llama.cpp " in line, line
+        status = modal.query_one("#console-settings-model-status")
+        assert str(status.render()) in line
+        change = modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        container = modal.query_one("#console-settings-modal")
+        assert container.region.contains_region(change.region)
+        assert MODEL_CHANGE_LABEL in line
+
+
+@pytest.mark.asyncio
+async def test_compact_model_row_keeps_the_pair_and_change_and_names_the_window() -> None:
+    """Review round 1 (finding 7): below 100 columns, not redesigned, the
+    MODEL row shows the pair and Change only; the context window still reads
+    in Request estimate's one-row title."""
+    from textual.widgets import Collapsible
+
+    app = CoreFirstHarness()
+    estimate = ConsoleSettingsContextEstimate(10, 200_000, "10 / 200k")
+    modal = pick_modal(app, _settings(), context_estimate=estimate)
+    async with app.run_test(size=(80, 24)) as pilot:
+        await _open(pilot, app, modal)
+        assert modal.has_class("-conversation-settings-compact")
+        line = _model_row_line(app, modal)
+        assert "model-a · llama.cpp" in line and MODEL_CHANGE_LABEL in line, line
+        for hidden in ("#console-settings-model-source", "#console-settings-model-status"):
+            assert modal.query_one(hidden).display is False
+        change = modal.query_one(f"#{MODEL_CHANGE_ID}", Button)
+        assert modal.query_one("#console-settings-modal").region.contains_region(
+            change.region
+        )
+        title = modal.query_one(f"#{REQUEST_ESTIMATE_DISCLOSURE_ID}", Collapsible).title
+        assert "200k" in str(title)
+
+
 @pytest.mark.asyncio
 async def test_change_opens_pick_mode_and_the_pick_rebases_without_applying() -> None:
     """AC#2: Change opens pick-only Switch model over the modal; the pick
@@ -229,6 +320,55 @@ async def test_change_opens_pick_mode_and_the_pick_rebases_without_applying() ->
     assert len(committed) == 1
     applied = committed[0].draft.settings
     assert (applied.provider, applied.model) == ("anthropic", "claude-sonnet-4-5")
+
+
+@pytest.mark.asyncio
+async def test_the_consoles_pick_opener_never_rebases_and_its_committer_refuses(
+    monkeypatch,
+) -> None:
+    """Review round 1 (finding 6): the Console's own opener
+    (``model_switcher.open_model_picker``) hands the pair back. Pick mode
+    never calls the rebaser it is given, even as highlights move, and its
+    committer refuses, so no pick can commit to the chat behind the modal."""
+    from functools import partial
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import model_switcher
+
+    app = CoreFirstHarness()
+    calls: list[str] = []
+
+    def recording_rebase(state, **kwargs):
+        calls.append("rebase")
+        return real_rebase(state, **kwargs)
+
+    def sources(_screen, _session_id, _before):
+        return {
+            "app_config": app.app_config,
+            "providers_models": PROVIDERS_MODELS,
+            "draft_rebaser": recording_rebase,
+            "default_readiness_resolver": readiness_resolver(app.app_config),
+        }
+
+    monkeypatch.setattr(model_switcher, "_switcher_sources", sources)
+    console = SimpleNamespace(
+        app=app, _commit_console_settings_submission_live=lambda _s: calls.append("commit")
+    )
+    opener = partial(model_switcher.open_model_picker, console)
+    modal = pick_modal(app, _settings(), model_picker=opener)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        switcher = await press_change(pilot, app, modal)
+        with pytest.raises(ValueError):
+            switcher._live_committer(object())
+        await pilot.press("down", "down", "up", *"claude")
+        await settle(pilot, app)
+        assert calls == []  # an apply-mode highlight rebases; pick mode never
+        await pilot.press("enter")
+        await settle(pilot, app)
+        assert app.screen is modal
+        assert modal._draft.settings.provider == "anthropic"
+    assert calls == []
 
 
 @pytest.mark.asyncio
@@ -346,17 +486,30 @@ async def test_tab_order_runs_change_then_core_then_disclosures_to_apply() -> No
 
 @pytest.mark.asyncio
 async def test_new_endpoint_lands_on_a_pair_never_on_a_provider_alone() -> None:
-    """R9: a created entry opens pick mode on it; the pick lands on the
-    entry and one of its models, and Esc leaves the old pair."""
+    """R9: a created entry is listed first, then pick mode opens on it with
+    what it serves beside its configured models; the pick lands on the entry
+    and one of its models, and Esc leaves the old pair (review round 1:
+    pick mode lists a new entry's served models before the pick)."""
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+
+    listed: list[object] = []
+
+    async def connection(identity):
+        listed.append((identity.custom_endpoint_id, identity.connection_identity))
+        return ProviderProbeResult("reachable", ("served-x",))
+
     app = CoreFirstHarness()
-    modal = pick_modal(app, _settings())
+    modal = pick_modal(app, _settings(), connection_tester=connection)
     async with app.run_test(size=(211, 44)) as pilot:
         await _open(pilot, app, modal)
-        modal._pick_created_endpoint("custom-ep:gpu-box")
+        modal.pick_created_endpoint("custom-ep:gpu-box")
         await settle(pilot, app)
+        assert listed == [("custom-ep:gpu-box", ("llama_cpp", "http://192.168.1.9:8080"))]
         switcher = app.screen
         assert isinstance(switcher, ConsoleModelPopover) and switcher._pick_only
         assert switcher.query_one("#console-popover-find", Input).value == "GPU box "
+        pairs = {(row.provider, row.model) for row in switcher._rows}
+        assert {("custom-ep:gpu-box", "model-a"), ("custom-ep:gpu-box", "served-x")} <= pairs
         await pilot.press("escape")
         await settle(pilot, app)
         assert app.screen is modal
@@ -365,14 +518,39 @@ async def test_new_endpoint_lands_on_a_pair_never_on_a_provider_alone() -> None:
             "model-a",
         )
 
-        modal._pick_created_endpoint("custom-ep:gpu-box")
+        modal.pick_created_endpoint("custom-ep:gpu-box")
         await settle(pilot, app)
-        row = app.screen.highlighted_row()
-        assert (row.provider, row.model) == ("custom-ep:gpu-box", "model-a")
-        await pilot.press("enter")
+        await pilot.press(*"served-x", "enter")
         await settle(pilot, app)
         assert app.screen is modal
         assert (modal._draft.settings.provider, modal._draft.settings.model) == (
             "custom-ep:gpu-box",
-            "model-a",
+            "served-x",
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_listing_feeds_pick_mode_but_never_picks() -> None:
+    """Review round 1: what Test connection lists is offered in pick mode
+    (Change), and still nothing changes until a pick lands."""
+    from tldw_chatbook.Chat.provider_test_evidence import ProviderProbeResult
+
+    async def connection(_identity):
+        return ProviderProbeResult("reachable", ("model-a", "served-y"))
+
+    app = CoreFirstHarness()
+    modal = pick_modal(app, _settings(), connection_tester=connection)
+    async with app.run_test(size=(211, 44)) as pilot:
+        await _open(pilot, app, modal)
+        modal.query_one("#console-settings-model-discover", Button).press()
+        await settle(pilot, app)
+        assert modal._current_model_value() == "model-a"
+        switcher = await press_change(pilot, app, modal)
+        pairs = {(row.provider, row.model) for row in switcher._rows}
+        assert ("llama_cpp", "served-y") in pairs
+        await pilot.press(*"served-y", "enter")
+        await settle(pilot, app)
+        assert (modal._draft.settings.provider, modal._draft.settings.model) == (
+            "llama_cpp",
+            "served-y",
         )

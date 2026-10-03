@@ -144,9 +144,8 @@ from .console_context_controls import (
     build_console_context_control_state,
     format_context_tokens,
 )
-# Imports the endpoint-template modal for the EndpointCreated wiring; that
-# module imports ConsoleSettingsInput only lazily (inside compose) so this
-# edge cannot cycle.
+# New endpoint… pushes the endpoint-template modal; that module imports
+# ConsoleSettingsInput only lazily (inside compose) so this edge cannot cycle.
 from .console_endpoint_template_modal import ConsoleEndpointTemplateModal
 from .console_settings_field_row import (
     CONNECTION_DISCLOSURE_ID, CONNECTION_FOCUS_IDS, CONNECTION_TITLE, CORE_FIELDS,
@@ -1230,8 +1229,10 @@ class ConsoleSettingsModal(
         ) = None
         self._default_recovery_layout_phase: ConsoleDefaultSavePhase | None = None
         # Entry-creation follow-up probe (provider, base_url), consumed once
-        # a pick lands on the created entry (TASK-33006.4).
+        # a pick lands on the created entry; and what each listing served,
+        # which pick mode lists beside the saved models (TASK-33006.4).
         self._pending_entry_discovery: tuple[str, str] | None = None
+        self._served_models: dict[str, tuple[str, ...]] = {}
         streaming_field = self._draft_field("streaming")
         self._model_discovery_generation = 0
         self._current_model_discovery_identity: (
@@ -4011,8 +4012,8 @@ class ConsoleSettingsModal(
         """Open the registry's template-creation modal for a new endpoint.
 
         A created entry lands on a pair, never on a provider alone (spec rule
-        1, TASK-33006.4): pick mode opens filtered to it, and its first probe
-        runs once a pick lands there.
+        1, TASK-33006.4): ``pick_created_endpoint`` lists what it serves and
+        opens pick mode on it.
         """
         event.stop()
         await self.app.push_screen(
@@ -4021,20 +4022,8 @@ class ConsoleSettingsModal(
                 providers_models=self._providers_models,
                 template_provider=self._active_provider or None,
             ),
-            callback=self._pick_created_endpoint,
+            callback=self.pick_created_endpoint,
         )
-
-    def _pick_created_endpoint(self, provider_id: str | None) -> None:
-        """Open pick mode on a just-created entry; a cancel changes nothing.
-
-        Args:
-            provider_id: The created ``custom-ep:<slug>`` id, or None.
-        """
-        entry = entry_for(self._app_config, provider_id) if provider_id else None
-        if entry is None:
-            return
-        self._pending_entry_discovery = (provider_id, entry.base_url)
-        self._open_model_picker(f"{entry.display_name} ")
 
     def _probe_entry_models(self, provider: str, base_url: str) -> None:
         """Probe a just-created entry's models list (evidence identity path).
@@ -4543,12 +4532,10 @@ class ConsoleSettingsModal(
     def _defer_pending_entry_discovery(self, provider: str) -> None:
         """Schedule the follow-up probe past the switch's control echoes.
 
-        Projecting the switched-to draft rebuilds the model Select's
-        options, which queues a transient blank ``Select.Changed`` that the
-        model-change handler treats as a draft edit -- a probe started
-        inside the switch would be cancelled by its own echo. Deferring one
-        refresh lets those echoes drain first; the probe then captures its
-        nonce against the settled draft.
+        Projecting the switched-to draft re-syncs the field controls, whose
+        echoes must not cancel a probe started inside the switch; deferring
+        one refresh lets them drain, so the probe captures its nonce against
+        the settled draft.
         """
         self.call_after_refresh(self._run_pending_entry_discovery, provider)
 
@@ -5312,7 +5299,7 @@ class ConsoleSettingsModal(
 
         Chat settings changes the model only through Change's pick mode
         (spec rule 1, TASK-33006.4), so a listing of one model no longer
-        selects it.
+        selects it; pick mode lists what it found.
 
         Args:
             identity: Exact request identity. A legacy provider string is
@@ -5348,7 +5335,8 @@ class ConsoleSettingsModal(
                 f"Could not list models from {endpoint_display(result.base_url)}."
             )
             return
-        count = len(dict.fromkeys(result.model_ids))
+        self._served_models[provider] = tuple(dict.fromkeys(result.model_ids))
+        count = len(self._served_models[provider])
         self._set_model_discover_status(_model_availability_copy(count, ""))
         if fenced:
             self._current_model_discovery_identity = identity

@@ -22,7 +22,7 @@ import asyncio
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, NoReturn
 
 from loguru import logger
 
@@ -380,19 +380,34 @@ async def open_model_switcher(screen: ChatScreen, query: str = "") -> None:
     )
 
 
+def refuse_live_commit(submission: object) -> NoReturn:
+    """Pick mode's committer: it applies nothing, ever (TASK-33006.4).
+
+    Args:
+        submission: The submission pick mode must never commit.
+
+    Raises:
+        ValueError: Always; the switcher shows it and keeps the chat as is.
+    """
+    del submission
+    raise ValueError("Pick mode applies nothing; Chat settings' Apply does.")
+
+
 def open_model_picker(
     screen: ChatScreen,
     origin: ConsoleSettingsOrigin,
     draft: ConsoleSettingsDraftState,
     query: str,
     on_pick: Callable[[tuple[str, str] | None], None],
+    served: Mapping[str, Sequence[str]],
 ) -> None:
     """Open Switch model in pick-only mode over Chat settings (TASK-33006.4).
 
-    It lists the pairs Alt+M lists and hands the chosen one to ``on_pick``
-    (``None`` on Esc); Chat settings rebases its own draft, and nothing is
-    applied until its Apply. Pick mode never calls the rebaser, the committer
-    or Settings, so the committer here is only the type's placeholder.
+    It lists the pairs Alt+M lists, plus the models Chat settings' listings
+    found, and hands the chosen one to ``on_pick`` (``None`` on Esc); Chat
+    settings rebases its own draft, and nothing is applied until its Apply.
+    Pick mode never calls the rebaser, the committer or Settings, and its
+    committer refuses, so a regression there cannot reach the chat.
 
     Args:
         screen: The Console screen under Chat settings.
@@ -400,6 +415,7 @@ def open_model_picker(
         draft: Chat settings' draft; its pair is marked current.
         query: Text Find opens with ("" lists everything).
         on_pick: Receives ``(provider, model)``, or ``None`` on Esc.
+        served: Models Chat settings' listings found, per provider.
     """
     from ...Widgets.Console.console_model_popover import ConsoleModelPopover
 
@@ -410,9 +426,10 @@ def open_model_picker(
             initial_draft=draft,
             scope_copy="",
             durability_copy="",
-            live_committer=screen._commit_console_settings_submission_live,
+            live_committer=refuse_live_commit,
             pick_only=True,
             query=query,  # "<entry name> " keeps its space for the model id
+            served_models=served,
             **_switcher_sources(  # type: ignore[arg-type]
                 screen, origin.session_id, (settings.provider, settings.model)
             ),

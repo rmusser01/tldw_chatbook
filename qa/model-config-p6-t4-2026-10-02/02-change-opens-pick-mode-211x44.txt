@@ -7,28 +7,28 @@
                                     │ Conversation | Chat 1                                                                                                                                             │
                          Context ◂  │         Chat 1         ✕    New tab     Temporary                                                                                                                 │
    Terminal                        ╭─ Switch model · now: Anthropic · claude-sonnet-4-5 ──────────────────────────────────────────────────────────────────────────────────────╮                         │
- ───────────────────────────────── │ Find type to search 21 models in 3 providers · Enter picks                                                                               │                         │
+ ───────────────────────────────── │ Find type to search 19 models in 3 providers · Enter picks                                                                               │                         │
  Workspaces                    ▸   │ RECENT · your last 50 chats                                                                                                              │                         │
  ─────────────────────────────╭────│ ▶ claude-sonnet-4-5            Anthropic            ~200k  Ready · not tested           ● CURRENT                                        │────╮                    │
  Conversations                │  Co│ READY PROVIDERS · top 3 each · typing searches every provider's catalog                                                                  │    │                    │
         Archive this chat     │    │   claude-sonnet-5              Anthropic            ~200k  Ready · not tested                                                            │    │                    │
           Archived chats      │  Mo│   claude-opus-5                Anthropic            ~200k  Ready · not tested                                                            │    │                    │
         Search all chats…     │ Use│   claude-fable-5               Anthropic            ~200k  Ready · not tested                                                            │    │                    │
-   Chat 1                     │ Mod│     … 13 more Anthropic models                                                                                                           │M   │                    │
+   Chat 1                     │ Mod│     … 12 more Anthropic models                                                                                                           │M   │                    │
                               │ Tem│     MLX-LM (Apple silicon) · no models reported · type its name and an id                                                                │    │                    │
   ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  Cle│ Max│   vllm-model-z                 vLLM                  ~32k  Ready · not tested                                                            │    │                    │
   ▊  Filter visible     ▎     │ Str│   vllm-model-x                 vLLM                  ~32k  Ready · not tested                                                            │    │                    │
   ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎     │ Thi│   vllm-model-y                 vLLM                  ~32k  Ready · not tested                                                            │ m… │                    │
                               │ Thi│     … 1 more vLLM models                                                                                                                 │wh… │                    │◂ Inspect
    New conversation           │  ▶ │ NEEDS SETUP · set up in Settings first                                                                                                   │    │                    │
-  Chats                       │  pr│   (any model)                  llama.cpp                   Not ready · refused :9199                                                     │    │                    │
-   Chat 1                     │  ▶ │   (any model)                  Arcee AI                    Not ready · no key                                                            │    │                    │
-                              │  ▶ │   (any model)                  Azure OpenAI                Not ready · no key                                                            │    │                    │
- ─────────────────────────────│  ▶ │   (any model)                  Baidu Qianfan               Not ready · no key                                                            │    │                    │
- Character · No chats         │    │   (any model)                  Baseten                     Not ready · no key                                                            │    │                    │
- ─────────────────────────────│    │   (any model)                  ByteDance Seed (…us)        Not ready · no key                                                            │    │                    │
- Model                        │    │   (any model)                  Cerebras                    Not ready · no key                                                            │ic. │                    │
- ─────────────────────────────│    │   (any model)                  Cloudflare Worke… AI        Not ready · no key                                                            │    │                    │
+  Chats                       │  pr│   (any model)                  Arcee AI                    Not ready · no key                                                            │    │                    │
+   Chat 1                     │  ▶ │   (any model)                  Azure OpenAI                Not ready · no key                                                            │    │                    │
+                              │  ▶ │   (any model)                  Baidu Qianfan               Not ready · no key                                                            │    │                    │
+ ─────────────────────────────│  ▶ │   (any model)                  Baseten                     Not ready · no key                                                            │    │                    │
+ Character · No chats         │    │   (any model)                  ByteDance Seed (…us)        Not ready · no key                                                            │    │                    │
+ ─────────────────────────────│    │   (any model)                  Cerebras                    Not ready · no key                                                            │    │                    │
+ Model                        │    │   (any model)                  Cloudflare Worke… AI        Not ready · no key                                                            │ic. │                    │
+ ─────────────────────────────│    │   (any model)                  Cohere                      Not ready · no key                                                            │    │                    │
  Agent                        │    │     … 39 more providers need setup · type a name to find one                                                                             │on  │                    │
  ─────────────────────────────╰────│ NOT RUNNING · local servers never set up · rechecked on open                                                                             │────╯                    │
  Details                       ▸   │   Aphrodite Engine · Ollama · TabbyAPI · Custom OpenAI-compatible · Custom OpenAI-compatible #2                                          │                         │

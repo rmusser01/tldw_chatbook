@@ -28,11 +28,13 @@ module sits at its ADR-097 size ceiling; the modal keeps only the wiring.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+import asyncio
+from collections.abc import Callable, Iterable, Mapping
 from typing import TYPE_CHECKING, Any
 from urllib.parse import urlsplit
 
 from textual import events
+from textual.app import RenderResult
 from textual.containers import Horizontal
 from textual.content import Content
 from textual.css.query import NoMatches, QueryError
@@ -52,7 +54,9 @@ from tldw_chatbook.Chat.console_roleplay_identity import (
 )
 from tldw_chatbook.Chat.console_session_settings import (
     CONSOLE_VALUE_SOURCE_WORDS,
+    ConsoleSessionSettings,
     ConsoleValueLayer,
+    console_send_connection,
     normalize_console_model_value,
     resolve_console_value_layers,
 )
@@ -70,9 +74,16 @@ if TYPE_CHECKING:
     )
 
 #: Opens Switch model in pick-only mode for Change: (origin, draft, Find
-#: text, callback); the callback gets ``(provider, model)`` or ``None`` on Esc.
+#: text, callback, served models by provider); the callback gets
+#: ``(provider, model)`` or ``None`` on Esc.
 ModelPicker = Callable[
-    ["ConsoleSettingsOrigin", "ConsoleSettingsDraftState", str, Callable[..., None]],
+    [
+        "ConsoleSettingsOrigin",
+        "ConsoleSettingsDraftState",
+        str,
+        Callable[..., None],
+        Mapping[str, tuple[str, ...]],
+    ],
     None,
 ]
 
@@ -278,6 +289,31 @@ def _show(widget: Static, text: str) -> None:
         widget.update(text)
 
 
+class ModelPairSummary(Static):
+    """The MODEL row's ``model · provider``; the provider name is never cut.
+
+    It takes the row's free width. Only a model id longer than that gives
+    way, in the middle, so its prefix and its suffix (a GGUF quant) both
+    stay, as Switch model keeps ids whole (TASK-33006.4 review).
+    """
+
+    pair: tuple[str, str] = ("", "")
+
+    def render(self) -> RenderResult:
+        """Return the pair, shortening only the model id to fit the width.
+
+        Returns:
+            The full ``model · provider`` text when it fits (or before
+            layout), else the id shortened in the middle.
+        """
+        model, provider = self.pair
+        room = self.size.width - len(provider) - 3
+        if not self.size.width or len(model) <= room:
+            return super().render()
+        keep = max(room, 8) - 1
+        return f"{model[: keep - keep // 2]}…{model[-(keep // 2):]} · {provider}"
+
+
 class ConsoleSettingsFieldRowsMixin:
     """The Model view's field rows, MODEL row and open focus.
 
@@ -354,7 +390,7 @@ class ConsoleSettingsFieldRowsMixin:
         change.tooltip = "Choose a provider·model pair (Switch model, pick mode)"
         return Horizontal(
             Static(MODEL_ROW_LABEL, classes="console-settings-field-label"),
-            Static("", id="console-settings-model-summary", markup=False),
+            ModelPairSummary("", id="console-settings-model-summary", markup=False),
             Static(
                 "",
                 id="console-settings-model-source",
@@ -383,7 +419,7 @@ class ConsoleSettingsFieldRowsMixin:
                 the last readiness word (a context-window refresh).
         """
         try:
-            summary = self.query_one("#console-settings-model-summary", Static)
+            summary = self.query_one("#console-settings-model-summary", ModelPairSummary)
         except (NoMatches, QueryError):
             return
         if readiness is not None:
@@ -399,6 +435,7 @@ class ConsoleSettingsFieldRowsMixin:
         ) == (provider_config_key(provider), model)
         layer = ConsoleValueLayer.THIS_CHAT if own else ConsoleValueLayer.EDITED_DRAFT
         name = provider_display_name(provider, self._app_config)
+        summary.pair = (model or "no model", name)
         _show(summary, f"{model or 'no model'} · {name}")
         source = self.query_one("#console-settings-model-source", Static)
         _show(source, CONSOLE_VALUE_SOURCE_WORDS[layer])
@@ -413,12 +450,57 @@ class ConsoleSettingsFieldRowsMixin:
     def _open_model_picker(self, query: str = "") -> None:
         """Open Switch model in pick-only mode over Chat settings (Change, Alt+M).
 
+        Pick mode lists the models this modal's listings found beside the
+        saved ones; a listing never picks one (spec rule 1).
+
         Args:
             query: Text Find opens with; New endpoint… names the new entry.
         """
         if self._model_picker is None or not self.is_current:
             return
-        self._model_picker(self._origin, self._draft, query, self._model_picked)
+        self._model_picker(
+            self._origin, self._draft, query, self._model_picked, self._served_models
+        )
+
+    def pick_created_endpoint(self, provider_id: str | None) -> None:
+        """Land a just-created entry on a pair (New endpoint… and ``/endpoint``).
+
+        The entry's models listing runs first, so pick mode lists what it
+        serves even when the template named no model; pick mode then opens
+        on it, and its evidence probe runs once a pick lands there. A cancel
+        changes nothing (spec rule 1, TASK-33006.4).
+
+        Args:
+            provider_id: The created ``custom-ep:<slug>`` id, or None.
+        """
+        entry = self._custom_endpoint_entry_for(provider_id)
+        if entry is None:
+            return
+        self._pending_entry_discovery = (provider_id, entry.base_url)
+        self.run_worker(
+            self._list_then_pick(provider_id, entry.display_name),
+            group="console-settings-created-endpoint",
+            exit_on_error=False,
+        )
+
+    async def _list_then_pick(self, provider_id: str, name: str) -> None:
+        """List a created entry's served models, then open pick mode on it.
+
+        Args:
+            provider_id: The created ``custom-ep:<slug>`` id.
+            name: Its display name, which Find opens with.
+        """
+        identity = await asyncio.to_thread(
+            console_send_connection,
+            ConsoleSessionSettings(provider=provider_id, model=None),
+            app_config=self._app_config,
+        )
+        try:  # the connection a send onto the entry uses; nothing is recorded
+            result = await self._connection_tester(identity) if identity else None
+        except Exception:  # noqa: BLE001 - an unlisted entry still opens pick mode
+            result = None
+        self._served_models[provider_id] = tuple(result.model_ids) if result else ()
+        self._open_model_picker(f"{name} ")
 
     def _model_picked(self, pair: tuple[str, str] | None) -> None:
         """Rebase the draft to the picked pair; Esc (None) changes nothing.

@@ -477,7 +477,7 @@ class ConsoleEndpointTemplateModal(SafeModalDismissMixin, ModalScreen[str | None
     def compose(self) -> ComposeResult:
         """Build the template picker, prefilled form, and actions."""
         # Lazy import: this module is imported (module-level) by
-        # console_settings_modal for the EndpointCreated wiring, so importing
+        # console_settings_modal for New endpoint…, so importing
         # ConsoleSettingsInput eagerly would cycle. By compose time that
         # module is fully loaded.
         from tldw_chatbook.Widgets.Console.console_settings_modal import (
