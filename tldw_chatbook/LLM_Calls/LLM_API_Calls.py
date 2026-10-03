@@ -647,7 +647,7 @@ def chat_with_openai(
         # stores only api_key_env_var or an empty local fallback.
         openai_config["api_key"] = legacy_openai_config.get("api_key")
 
-    final_api_key = api_key or openai_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(openai_config.get("api_key"))
     if not final_api_key:
         logger.error("OpenAI: API key is missing.")
         raise ChatConfigurationError(
@@ -1448,7 +1448,7 @@ def chat_with_anthropic(
     # Assuming load_settings is defined elsewhere
     loaded_config_data = load_settings()
     anthropic_config = loaded_config_data.get("anthropic_api", {})
-    final_api_key = api_key or anthropic_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(anthropic_config.get("api_key"))
     # TASK-26022: explicit opt-in subscription auth. Read-only borrow of the
     # Claude Code credential; a missing/expired credential FAILS with a clear
     # message rather than silently falling back to (and billing) an API key.
@@ -2593,7 +2593,7 @@ def chat_with_cohere(
         "cohere", {}
     )  # Get the [api_settings.cohere] sub-table
 
-    final_api_key = api_key or cohere_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(cohere_config.get("api_key"))
     if not final_api_key:
         raise ChatAuthenticationError(
             provider="cohere", message="Cohere API key is missing."
@@ -4147,7 +4147,7 @@ def chat_with_huggingface(
         "huggingface_api", loaded_config_data.get("API", {}).get("huggingface", {})
     )
 
-    final_api_key = api_key or hf_config.get("api_key")
+    final_api_key = api_key or resolve_provider_api_key(hf_config.get("api_key"))
     if final_api_key:
         logger.debug("HuggingFace: API key provided.")
     else:
