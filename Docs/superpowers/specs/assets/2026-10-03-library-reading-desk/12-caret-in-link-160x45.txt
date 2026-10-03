@@ -18,14 +18,14 @@
 │      │ ┃                                                    ┃ │     │   Discussion. Effects held across subject areas.                                  ▄▄ │ │
 │ ---> │ ┃ > Results. Retrieval practice improved 7-day       ┃ │     │                                                                                      │ │
 │      │ ┃ retention by 21 percentage points.                 ┃ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
-│      │ ┃ > — paper-retrieval-practice, ¶12 ↗                ┃ │     │                                                                                      │ │
-│      │ ┃                                                    ┃ │     │ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ ┃ > — [paper-retrieval-practice,                     ┃ │     │                                                                                      │ │
+│      │ ┃ ¶12](media://2e9fe89e-7451-4ed2-94d2-3141918cfa6a  ┃ │     │ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ ┃ #p12)                                              ┃ │     │                                                                                      │ │
+│      │ ┃                                                    ┃ │<--- │   Discussion. Effects held across subject areas.                                     │ │
 │      │ ┃ > Spacing the same study time across several       ┃ │     │                                                                                      │ │
-│      │ ┃ days produced better recall at one month than      ┃ │<--- │   Discussion. Effects held across subject areas.                                     │ │
+│      │ ┃ days produced better recall at one month than      ┃ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
 │      │ ┃ massing it into one session.                       ┃ │     │                                                                                      │ │
-│      │ ┃ > — Spaced repetition, explained, ¶3 ↗             ┃ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
-│      │ ┃                                                    ┃ │     │                                                                                      │ │
-│      │ ┃                                                    ┃ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ ┃ > — Spaced repetition, explained, ¶3 ↗             ┃ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
 │      │ ┃                                                    ┃ │     │                                                                                      │ │
 │ ---> │ ┃                                                    ┃ │     │   Discussion. Effects held across subject areas.                                     │ │
 │      │ ┃                                                    ┃ │     │                                                                                      │ │
@@ -39,7 +39,7 @@
 │      │ ┃                                                    ┃ │     │                                                                                      │ │
 │      │ ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
 │      │                                                        │     │                                                                                      │ │
-│      │                                        58 words · 8:1  │     └──────────────────────────────────────────────────────────────────────────────────────┘ │
+│      │                                       58 words · 7:32  │     └──────────────────────────────────────────────────────────────────────────────────────┘ │
 │      └────────────────────────────────────────────────────────┘                                                                                              │
 └──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
   esc back to reader | ctrl+s save | ctrl+end end of note | F1 help · F6 next pane · Ctrl+P palette · Ctrl+Q quit

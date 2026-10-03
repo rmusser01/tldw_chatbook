@@ -1,6 +1,6 @@
 # Library reading desk — design
 
-Status: Draft for owner approval (TASK-34000.42)
+Status: Draft for owner approval (TASK-34000.42) — revision 2 (working-note model, tidy links)
 Date: 2026-10-03
 Origin: Library + Notes UX review 2026-10-02 (`qa/notes-library-ux-review-2026-10-02/`), findings S-02, S-03,
 L-16, L-25; improvement proposals IA-04 / R-28 (`improvements/ia-loop.md`, `improvements/ranked.md`).
@@ -26,11 +26,12 @@ The product's core loop is "ingest or select sources, reason over them, preserve
 ## 2. Goals and non-goals
 
 Goals (v1):
-1. From a document in the Media reader, one key (`n`) opens that document's note beside it.
+1. From a document in the Media reader, one key (`n`) opens your working note beside it; the note stays
+   open as you move through several documents, so one note can synthesise many sources.
 2. Typing in the note and scrolling the document never cost either side its state.
 3. One key (`q`) quotes a passage into the note with a link that opens that passage again.
 4. The note ↔ source relationship is portable (travels with the note's text) and queryable
-   ("Notes about this (N)", "Sources (N)").
+   ("Notes that cite this (N)", "Sources (N)").
 5. Side by side at 120x36 and wider; a lossless stacked fallback below that.
 6. Fully keyboard-operable, with visible buttons for mouse-first users; no colour-only meaning.
 
@@ -44,31 +45,43 @@ a new server sync domain (ADR-105).
 | # | Question | Ruling |
 |---|---|---|
 | Q1 | Which readers in v1? | **Media first.** Collections/Conversations adopt the slot in follow-ups. |
-| Q2 | Which note opens? | **Linked companion**: the document's own note, reopened next time; a note→source relationship is stored. |
+| Q2 | Which note opens? | ~~Linked companion per document~~ — **revised 2026-10-03: the working note.** The owner: one note per document "doesn't line up with people doing actual research across multiple items." The desk holds the note *you* are working in; it stays open across documents and cites each one it quotes. |
 | Q3 | Where does the link live? | **In the note text + a device-local derived index.** No new server domain (ADR-105 unchanged). |
 | Q4 | Layout | **The note takes the Items slot**; the reader stays the work pane and keeps its width. |
 | Q5 | What does `q` quote? | **The mouse selection if any, else a keyboard paragraph cursor** (`j`/`k`). |
+| Q6 | How do links look while editing? | **Tidy links**: the editor shows `title ↗` and reveals the raw Markdown when the caret enters the link (also serves the `[[` note links of TASK-34000.11). |
 | — | Sections 1-5 below | Approved in conversation 2026-10-03; this document awaits approval with the mockups. |
 
 ## 4. Behaviour
 
-### 4.1 Opening the desk
+### 4.1 Opening the desk — the working note
 - In the Media reader, `n` (and a visible **Note** button in the reader toolbar) swaps the Items list
-  for the document's companion note. The document does not move; it keeps its width and scroll.
-- Which note:
-  - One or more notes link to this document → open the most recently edited. The note header reads
-    `Note · Notes — <title> · 1 of 2 ▾`; the `▾` chooser lists every linked note (title · age).
-  - None → create `Notes — <document title>` in a `Reading notes` folder (an ordinary note folder),
-    whose body starts with `Source: [<title>](media://<media-uuid>)`, caret on the next line.
-- `q` with the desk closed opens it the same way, then quotes (§4.3) — one key from reading to quoted.
+  for your **working note**. The document does not move; it keeps its width and scroll.
+- The working note is the note you are writing in — one note that can cite many documents. It is not
+  tied to the open document.
+  - If you already have a working note this session, `n` opens it straight away.
+  - Otherwise `n` opens the **Write in…** picker in the note slot:
+    1. `Notes that cite this document (N)` — notes whose text already links here;
+    2. `Recent notes` — the notes you edited most recently;
+    3. **+ New note** — asks for a title (the field is pre-filled with the document title, ready to
+       overwrite with your topic, e.g. "Retrieval practice — lit review"); it is created where New note
+       puts notes today.
+    The picker opens with a filter field (placeholder `Type to filter notes`, no separate hint line);
+    `Enter` picks; `Esc` cancels and leaves the Items list in place.
+- The header's `▾` reopens the picker to **swap** the working note at any time (the current note is
+  saved first).
+- `q` with the desk closed opens it the same way, then quotes (§4.3) — one key from reading to quoted
+  once a working note is set.
 
 ### 4.2 Working in the desk
 - `n` toggles focus note ↔ reader; F6 cycles panes as everywhere.
 - While the note's text field has focus every printable key types; desk keys never fire there.
 - Ctrl+S saves now (amended ADR-031). Autosave, the max-wait (TASK-34000.1), flush-on-leave and the
   quit guard come from the existing note session (ADR-027) unchanged.
-- `]`/`[` move to the next/previous document; the note slot follows to that document's companion, or
-  shows `No note yet · n to start one` — nothing is created until `n`.
+- `]`/`[` (or opening another item from the list, search or a Set) change the **document**; the working
+  note stays. Reading three papers and quoting each into one synthesis note never leaves the desk.
+- The header shows how many documents the working note cites (`cites 3`), and the note's Info tab
+  lists them (§5.4).
 
 ### 4.3 Quoting
 - In the reader, `q` inserts at the note's caret, without moving focus:
@@ -80,22 +93,29 @@ a new server sync domain (ADR-105).
   > Retrieval practice improved 7-day retention by 21 percentage points.
   > — [paper-retrieval-practice, ¶12](media://4b0e…-uuid#p12)
   ```
-- Receipt in the note status line: `Quoted ¶12 into Notes — paper-retrieval-practice`.
+- Receipt in the note status line: `Quoted ¶12 of paper-retrieval-practice`.
+- A quote from a document the note has not cited before needs nothing extra: the attribution link is
+  the citation, so the note's `Sources` list and the document's `Notes that cite this` update on save.
 - An item with no text (image, audio without transcript): Quote disabled with a reason,
   `○ Quote — no text in this item`.
 
 ### 4.4 Leaving and returning
 - Escape ladder (ADR-031): note → reader; reader → close the desk (Items list returns, receipt
-  `Saved to "Notes — <title>" · n to reopen`); then the existing Library ladder.
+  `Saved to "<working note title>" · n to reopen`); then the existing Library ladder. Closing the desk
+  does not forget the working note — the next `n` reopens it.
 - A refused or failing save never closes silently: closing asks `Keep editing / Discard changes`
   (Keep focused); a refused autosave reports at the note without moving focus (TASK-34000.10).
 - Leaving Library or switching rail destination keeps the desk for the session: returning restores the
-  document, its scroll, the note, and the caret (on top of TASK-34000.25).
+  document, its scroll, the working note, and the caret (on top of TASK-34000.25). The working note is
+  remembered for the session only (ADR-033); after a relaunch the first `n` opens the picker, with the
+  last working note at the top of `Recent notes`.
 
 ### 4.4a Companion header
-- Row 1: `Note · <note title> · 1 of N ▾` and a **‹ Items** button that closes the desk (the reader's
+- Row 1: `Working note · <note title> · cites N ▾` and a **‹ Items** button. When the row does not fit,
+  it compacts in this order: drop the `Working note · ` prefix, then truncate the title with `…`;
+  `cites N ▾` and `‹ Items` never drop that closes the desk (the reader's
   `‹ Back` is hidden while the desk is open — Escape and ‹ Items are the two ways out).
-- Row 2: save state (`Saved 20:12 · ctrl+s save`, or the last receipt such as `Quoted ¶12 into …`).
+- Row 2: save state (`Saved 20:12 · ctrl+s save`, or the last receipt such as `Quoted ¶12 of paper-retrieval-practice`).
 - Row 3: the mode strip `Edit · Preview · Info` and **Save**. **Save never drops off**: when the
   companion has fewer than 46 content cells the strip compacts (shorter labels / active marker only)
   so Save stays visible — Ctrl+S performs the *visible* commit action (amended ADR-031), and a hidden
@@ -140,17 +160,17 @@ a new server sync domain (ADR-105).
 - Index failure never blocks a save: Info shows `Sources: couldn't refresh — Rebuild`.
 
 ### 5.4 What the index powers
-- Media Info: `Notes about this (N)` — each opens in the desk.
+- Media Info: `Notes that cite this (N)` — each opens in the desk.
 - Note Info: `Sources (N)` — each opens its document (in the desk when it is a Media item).
-- The desk's `▾` chooser.
-- A note is "about" a document whenever its body links to it — quoting a paper into any note counts.
+- The desk's **Write in…** picker (its `Notes that cite this document` group).
+- A note "cites" a document whenever its body links to it — one working note typically cites many.
 
 ### 5.5 Edge states
 | State | What the user sees |
 |---|---|
 | Source in Trash | Link shows `In Trash · Restore` (ADR-055 reversibility seam) |
 | Source not in this Library (other device, deleted forever) | `Not in this Library — <title>`; no destructive action |
-| Companion note deleted | Dropped from the index on the next rebuild; `n` creates a new companion |
+| Working note deleted (elsewhere, or by Undo window expiry) | The desk shows `This note was deleted · Restore · Choose another`; nothing is written to a deleted note |
 | Companion moved into a synced folder | Ordinary note: lasting-sync rules apply (TASK-34000.2/.4 semantics) |
 
 ## 6. Layout (ADR-086 / ADR-084 amendment)
@@ -180,7 +200,8 @@ a new server sync domain (ADR-105).
 ### 6.3 Stacked faces
 - When companion floor (40) + reader floor (48) + grips (~10) do not fit (~98 cells), the shell stacks
   the two as **faces** of the work region. A one-row header names both, active first:
-  `Reading · paper-retrieval-practice ⇄ Note · Notes — paper… (saved 20:12)`.
+  `‹ Items  Reading · paper-retrieval-practice ⇄ Note · Retrieval practice… (saved 20:12)`; in stacked
+  mode the `cites N ▾` picker moves to the status row.
 - `n` flips faces; nothing closes; both scroll positions and the caret survive.
 - In stacked mode the list-region grip is hidden and the inactive face in the header is a button that
   flips to it.
@@ -193,12 +214,14 @@ a new server sync domain (ADR-105).
 - **ADR-084** — add: "With a companion open, the Reader keeps width priority beyond the companion's
   share (`clamp(0.40 × available, 40, 72)`)."
 
-### 5.6 How links look while editing (owner decision pending)
+### 5.6 How links look while editing (owner ruling Q6: tidy links)
 The note editor today is a plain text area: the source line and quote attributions appear as raw
 Markdown (`[paper-retrieval-practice](media://4b0e…-36-char-uuid)`), which wraps over two or three lines
 in a 42-cell companion. Preview renders them as `paper-retrieval-practice ↗`. The mockups show the
 `↗` form in Edit; that requires an editor capability that does not exist yet (concealing the link
-target, revealing raw Markdown when the caret enters the link). See the approval questions.
+target, revealing raw Markdown when the caret enters the link). **Ruled: build it** — the editor shows
+`title ↗` for `[title](media://…)` and `[[Title]](note://…)` links and reveals the raw Markdown while
+the caret is inside the link; copy and save always use the raw text. It is delivery slice D7.
 
 ## 7. Keyboard, errors, accessibility, performance
 - Desk keys (`n`, `q`, `j`/`k`, `]`/`[`) bind through `check_action` and only act while the reader has
@@ -224,6 +247,7 @@ isolated profile.
 | D3 Shell companion | List region hosts a companion; width rule; stacked faces; grip label; ADR-086/084 amendments accepted | — |
 | D4 Desk in Media | `n` open/create/toggle, `▾` chooser, `]`/`[`, Escape ladder, ‹ Items, navigation survival, footer/F1, Note button | D2, D3, TASK-34000.25, TASK-34000.39 (L-25 one-row byline) |
 | D5 Quoting | Paragraph cursor, selection path, `q`, attribution, receipt | D1, D4 |
+| D7 Tidy links in the editor | Render `[title](media://…)` / `[[Title]](note://…)` as `title ↗` in the note editor, raw while the caret is inside; copy/save use raw text | D1, TASK-34000.11 |
 | D6 Loop UAT + docs | Live rerun of the researcher journey at 120x36 / 160x45 / 235x52; User Guide (Media, Notes); ADR status | D1-D5 |
 
 Tests: real-app Pilot tests per behaviour; **rendered-geometry assertions** (actual `region.width`, not
@@ -233,6 +257,8 @@ for D1 (UUID vs integer, moved paragraph, missing source, trashed source).
 
 ## 9. Success measures
 - Read → note → back: ~13 inputs → **1** (`n`).
+- Research across documents: quoting from three documents into one note takes **no note switches**
+  (`]` and `q` only), and the note's Sources lists all three.
 - Quote with a working source link: **1** key.
 - Reader scroll and note caret survive every switch (desk toggle, `]`/`[`, rail switch, leaving Library).
 - Review journey j7 task 2 ("read and take notes together"): **fail → success** in the D6 rerun.
@@ -240,7 +266,7 @@ for D1 (UUID vs integer, moved paragraph, missing source, trashed source).
 ## 10. Mockups (for approval)
 Rendered with a throwaway Textual mockup using the app's real stylesheet and Library chrome:
 235x52, 160x45, 120x36 (side by side); 100x30 and 60x24 (stacked faces); plus the empty-note state
-(`No note yet · n to start one`), the `▾` chooser open, the paragraph cursor with a quote just
+(the **Write in…** picker), a working note citing two documents, the paragraph cursor with a quote just
 inserted, and a link in the `In Trash · Restore` state. Location:
 `Docs/superpowers/specs/assets/2026-10-03-library-reading-desk/`.
 

@@ -1,21 +1,26 @@
-# Library reading desk: mockups (2026-10-03, revision 2)
+# Library reading desk: mockups (2026-10-03, revision 3: the working note)
 
 These mockups are for owner approval of
-[`2026-10-03-library-reading-desk-design.md`](../../2026-10-03-library-reading-desk-design.md) (§10).
-Each state has three files: `.png` (for viewing), `.svg` (Textual's own screenshot) and `.txt` (a plain-text frame).
+[`2026-10-03-library-reading-desk-design.md`](../../2026-10-03-library-reading-desk-design.md), spec revision 2,
+§10. Each state has three files: `.png` (for viewing), `.svg` (Textual's own screenshot) and `.txt` (a plain-text
+frame).
 
-Revision 2 applies the coordinator's rulings of 2026-10-03:
+**What changed in revision 3.** The owner ruled (§3 Q2) that the desk holds your **working note**: one note that
+stays open while you move between documents and cites each document it quotes. It replaces the per-document
+companion note.
 
-- §4.4a: Save never drops off the mode strip.
-- §4.4a: the companion header gains `‹ Items`.
-- §5.2: paragraphs are the blank-line blocks of the stored text.
-- Privacy: the document's stored path now shows a neutral `file:///Users/you/…` path.
+- The note here is **"Retrieval practice — lit review"**. It has a short `## Key claims` section and two
+  attributed quotes:
+  - `paper-retrieval-practice`, ¶12
+  - `Spaced repetition, explained`, ¶3
+- Links show as `title ↗` while editing (§3 Q6 / §5.6, slice D7). State 12 shows how the raw Markdown appears when
+  the caret is inside a link.
 
 ## How they were made
 
 - **The running app.** The real app (this worktree at `200202cdcf`, Textual 8.2.8) was started headless with
-  `run_test`. It used an isolated copy of the 2026-10-02 review profile, the j7 run that had already imported the
-  paper. Library › Media › `paper-retrieval-practice` was opened through real clicks.
+  `run_test`. It used an isolated copy of the 2026-10-02 review profile. Library › Media › the document was opened
+  through real clicks.
 - **Grafted desk pieces.** Only the desk-specific parts were added to the live widget tree:
   - the companion pane
   - the grip label `Note`
@@ -28,38 +33,45 @@ Revision 2 applies the coordinator's rulings of 2026-10-03:
 - **The companion reuses the note editor's own ids.** These are `#library-note-body`, `#library-note-chrome-facts`
   and `#library-note-context-*`. The Library stylesheet therefore styles the companion the way it styles the note
   editor today.
-- **Labels come from the app's own helpers.** `‹ Items` uses the app's `back_cue_label()`. The compact mode strip
-  uses `LIBRARY_CHOICE_ACTIVE_MARKER` (`✓`).
-- **The footer uses the real footer API** (`set_workbench_shortcuts`). It shrinks with the window the same way the
-  real footer does.
+- **Labels and rows come from the app's own helpers:**
+  - `‹ Items` uses `back_cue_label()`.
+  - The compact mode strip and the current-note mark use `LIBRARY_CHOICE_ACTIVE_MARKER` (`✓`).
+  - Picker rows are built with `library_row_button` and the Media list's row classes.
+- **The footer uses the real footer API** (`set_workbench_shortcuts`).
 - **Pane widths come from the spec formula** `clamp(round(0.40 × available), 40, 72)`. They are applied through
-  the shell's own `sync_layout`. The widths below were measured from the rendered regions.
+  the shell's own `sync_layout` and measured from the rendered regions.
 - **PNG files** are the SVGs rendered by headless Chromium and reduced to a 256-colour palette. The window title
   bar ("tldw chatbook") comes from Textual's SVG template.
 - **Fixture data**, in the profile copy only:
-  - The paper's stored source path was replaced with `file:///Users/you/Papers/paper-retrieval-practice.pdf`. The
-    review fixture's path contained a scratch directory and the host user name.
-  - Paragraphs (§5.2) are the blank-line blocks of the stored text, and the heading counts as ¶1. In the paper
-    (31 blocks), ¶12 is the Results paragraph.
+  - The paper's stored path is the neutral `file:///Users/you/Papers/paper-retrieval-practice.pdf` (privacy).
+  - The paper's text is the capture's abstract split into blank-line blocks (31 blocks, so ¶12 is the Results
+    paragraph).
+  - The seeded article "Spaced repetition, explained" (plain text, Raw view only) had its filler sentences
+    replaced with seven short paragraphs, so the quoted ¶3 reads naturally.
+  - The picker shows the seeded notes with the ages the review captures show (Ideas inbox 1h, Reading list 2h,
+    Thesis outline 3h).
+  - "Exam prep — memory techniques" was invented as the one older note that cites the paper.
   - The list's "updated" ages were shifted so they match the capture's clock.
 
 ## Files
 
 | State | Terminal | What it shows | Focus |
 |---|---|---|---|
-| `00-before-media-reader-160x45` | 160x45 | **Today, unchanged** (apart from the stored path, see Fidelity check). The Media reader with the PDF open: Navigation, Items and Reader | Navigation rail |
-| `01-desk-235x52` | 235x52 | The desk side by side. Navigation is collapsed to its grip, the companion is 72 cells and the reader 149. Header row: `‹ Items  Note · Notes — paper-retrieval-practice · 1 of 2 ▾`. The note has a source line, `## Key claims`, a bullet and the ¶12 quote | Note body |
-| `02-desk-160x45` | 160x45 | The desk just after a quote. The note status shows the receipt `Quoted ¶12 into Notes — paper-retrieval-practice`. The reader's ¶12 bar is muted because the reader is not focused | Note body |
-| `03-desk-120x36` | 120x36 | The smallest side-by-side size: companion 42, reader 64. The **compact mode strip** reads `✓ Edit  Preview  Info … Save`, so Save stays visible. The header drops its `Note · ` prefix to keep the title legible. The reader is focused (blue bar on ¶12) | Reader |
-| `04-stacked-note-100x30` | 100x30 | Stacked faces, Note face active. Header: `‹ Items  Note · Notes — paper… (saved 20:12) ⇄ Reading · paper-retrieval-practice` | Note body |
-| `05-stacked-reading-100x30` | 100x30 | Stacked faces, Reading face active, with the header order reversed and the ¶12 cursor | Reader |
-| `06-stacked-60x24` | 60x24 | Stacked faces at 60x24, Note face. Header: `‹ Items  Note · paper… (saved 20:12) ⇄ Reading`. The mode strip still shows Save | Note body |
-| `07-desk-empty-note-160x45` | 160x45 | After `]` to the next document, a **plain-text (Raw-only) item**. The note slot reads `‹ Items  Note` / `No note yet · n to start one` with a **Start a note** button. Per §5.2 the paragraph cursor works in Raw: `¶1 of 5 · Quote` sits on its own row because a Raw-only item has no Rendered/Raw strip | Reader |
-| `08-desk-chooser-160x45` | 160x45 | The `1 of 2 ▴` chooser open. It lists the two linked notes with their ages, the current one marked `▸` | Chooser row |
-| `09-note-info-sources-trash-160x45` | 160x45 | The note's Info tab. `Sources (2)` lists one live source (`paper-retrieval-practice ↗ · pdf`) and one in Trash (`Spaced repetition, explained · In Trash · Restore`) | Restore |
+| `00-before-media-reader-160x45` | 160x45 | **Today, unchanged** (apart from the stored path). The Media reader with the PDF open: Navigation, Items and Reader | Navigation rail |
+| `01-desk-235x52` | 235x52 | The desk side by side. Header row 1: `‹ Items  Working note · Retrieval practice — lit review  cites 2 ▾`. The note has Key claims plus two attributed quotes from two documents. Status: `Saved 20:12 · ctrl+s save` | Note body |
+| `02-desk-160x45` | 160x45 | Just after `q` on ¶12. Status: `Quoted ¶12 of paper-retrieval-practice`, with the caret after that quote. The reader's ¶12 bar is muted because the reader is not focused | Note body |
+| `03-desk-120x36` | 120x36 | The smallest side-by-side size. Header: `‹ Items  Retrieval pra… ·  cites 2 ▾`. Compact mode strip: `✓ Edit  Preview  Info … Save`. The reader is focused (blue bar on ¶12) | Reader |
+| `04-stacked-note-100x30` | 100x30 | Stacked faces, Note face. Header: `‹ Items  Note · Retrieval practice… (saved 20:12) ⇄ Reading · paper-retrieval-practice`. The `cites 2 ▾` chooser sits on the status row | Note body |
+| `05-stacked-reading-100x30` | 100x30 | Stacked faces, Reading face, with the header order reversed and the ¶12 cursor | Reader |
+| `06-stacked-60x24` | 60x24 | Stacked faces at 60x24, Note face. Header: `‹ Items  Note · Retrieval… (saved 20:12) ⇄ Reading`. Save and `cites 2 ▾` are both still visible | Note body |
+| `07-write-in-picker-160x45` | 160x45 | **No working note yet, so `n` opens Write in…** (§4.1). It has a filter field and three groups. `Notes that cite this document (1)` has one row, highlighted `▸` because Enter picks it. `Recent notes` has three seeded notes with ages. `New` has `+ New note` with its Title field pre-filled `paper-retrieval-practice`. Footer: `enter pick \| esc cancel` | Filter field |
+| `08-swap-working-note-160x45` | 160x45 | **The `cites 2 ▴` picker reopened to swap the working note.** The current note is listed first and marked `▸ ✓ Retrieval practice — lit review · now`. The groups are the same as in 07 | Filter field |
+| `09-note-info-sources-trash-160x45` | 160x45 | The note's Info tab (header `cites 3 ▾`). `Sources (3)` lists `paper-retrieval-practice ↗ · pdf`, `Spaced repetition, explained ↗ · article` and `Make It Stick — chapter 2… · In Trash · Restore` | Restore |
 | `10-reader-paragraph-cursor-160x45` | 160x45 | The paragraph cursor moved with `j` to ¶13 (`¶13 of 31`). Footer: `n note beside \| q quote \| j/k paragraph \| ]/[ next item \| esc close desk` | Reader |
+| `11-second-document-160x45` | 160x45 | **Research across items.** The reader now shows "Spaced repetition, explained" (byline N. Ahmed; plain text, Raw view, cursor on ¶3, `¶3 of 7`). The **same** working note stays on the left with both quotes. Status: `Quoted ¶3 of Spaced repetition, explained` | Reader |
+| `12-caret-in-link-160x45` | 160x45 | Same as 02, but the caret is inside the ¶12 attribution. Only that link shows its raw Markdown, `[paper-retrieval-practice, ¶12](media://2e9fe89e-…#p12)`, which wraps over three rows at this width. The ¶3 link stays tidy (`… ¶3 ↗`). Caret position: `7:32` | Note body |
 
-**Measured pane widths** (cells; unchanged from revision 1):
+**Measured pane widths** (cells; unchanged since revision 1):
 
 | Terminal | Nav grip | Companion | Note grip | Reader |
 |---|---|---|---|---|
@@ -80,39 +92,47 @@ the review capture, a stray huggingface `WARNING` log line was printed over the 
 
 - **Control render, with the fixture's original path: 0 cells differ.**
 - **The render shipped here: 1167 cells differ, all inside the reader pane** (columns 101–160, rows 7–34). The
-  neutral path fits on one byline row instead of four, so the reader body moves up three rows. Everything left of
-  the reader is identical, including the navigation rail, the Items list, the grips, the header and the footer.
+  neutral path fits on one byline row instead of four, so the reader body moves up three rows. Everything outside
+  the reader is identical.
 
 ## Rulings applied
 
-- **§4.4a Save never drops off: applied.** Below 46 content cells (120x36), the strip drops the `(selected)` word
-  and marks the active mode with the Library choice marker (`✓ Edit`).
-- **§4.4a `‹ Items`: applied.** It appears on companion header row 1, in the empty-note state, and at the start of
-  the stacked-faces header. Without it, the stacked Reading face would have no visible way out. The reader's
-  `‹ Back` stays hidden while the desk is open.
-- **§5.2 blank-line blocks: no numbering change.** The paper's blocks already matched. State 07 now shows a real
-  Raw-only item instead of revision 1's workaround (a Markdown heading added to the fixture).
-
-## Open owner decision
-
-**Links while editing.** As the brief asked, the note body shows `Source: paper-retrieval-practice ↗` and
-`— paper-retrieval-practice, ¶12 ↗`. Today's note editor is a plain TextArea and shows the raw Markdown
-(`[title](media://uuid)`). Showing `title ↗` in Edit would be a new editor capability. Otherwise the shipped Edit
-view shows the raw link and only Preview shows `title ↗`.
+- **§3 Q2, the working note.** One note across documents, shown with `cites N ▾`.
+  - When no note is set, `n` opens Write in… (07).
+  - `▾` reopens the picker to swap the working note (08).
+  - `]` or opening another item keeps the note on screen (11).
+- **§3 Q6 / §5.6, tidy links.** Links show as `title ↗` in Edit, and the raw Markdown appears only while the caret
+  is inside the link (12).
+- **§4.4a, Save never drops off.** Below 46 content cells the mode strip becomes `✓ Edit  Preview  Info … Save`.
+- **§4.4a, `‹ Items`.** It is on header row 1, in the Write in… picker, and at the start of the stacked-faces
+  header. The reader's `‹ Back` is hidden while the desk is open.
+- **§5.2, paragraphs.** Paragraphs are the blank-line blocks of the stored text, and the heading counts as ¶1. The
+  cursor and `¶n of N` also work on Raw-only items (11).
 
 ## Mockup choices the spec does not state yet (please confirm)
 
-1. **Same focus border in both panes** (§7, review S-14). When the reader is focused it uses the heavy blue edge the
+1. **Header row 1 compaction.** The full row `‹ Items  Working note · <title> · cites 2 ▾` needs 70 cells:
+   - At 235 columns it fits once the trailing `·` is dropped.
+   - At 160 (54 content cells) the `Working note · ` prefix goes first, so the note's full title stays readable.
+   - At 120 the title is shortened (`Retrieval pra… ·`).
+2. **Stacked faces.** The face header follows the §6.3 shape, `Note · <title…> (saved 20:12)`. The `cites N ▾`
+   chooser moves to the status row so the swap stays reachable.
+3. **Picker marks.** `▸` marks the row Enter picks (the Media list's marker). `✓` marks the current working note
+   (the Library choice marker). Recent notes leave out notes already shown in the cite group.
+4. **Same focus border in both panes** (§7, review S-14). When the reader is focused it uses the heavy blue edge the
    note body uses. Today's reader uses an amber border (`$accent`).
-2. **Wide-pane mode strip** uses the reader's `(selected)` wording. The compact form is described under Rulings
-   applied.
-3. **Header row 1 below 46 content cells** drops the `Note · ` prefix, because the grip already says `Note`.
-4. **Paragraph cursor** is the app's row-focus edge: a thick `█` in the focus colour when the reader has focus,
-   muted when the note has focus.
-5. **Raw view gutter.** In Raw the paragraph cursor needs a two-cell gutter, so text there starts two cells further
-   right than in today's Raw view (07).
-6. **Stacked layout.** The list region's grip is hidden, and the inactive face is a button that flips to it. At
-   60x24 the active face shortens its title (`Note · paper…`) and the inactive face shows only `Reading`.
+5. **Wide mode strip** uses the reader's `(selected)` wording.
+6. **Paragraph cursor.** It uses the app's row-focus edge (a thick `█` in the focus colour) when the reader has
+   focus, and a muted edge when the note has focus.
+7. **Raw view gutter.** In Raw the cursor needs a two-cell gutter, so text there starts two cells further right
+   than in today's Raw view (11).
+
+## Spec wording to reconcile
+
+- **Receipt wording.** §4.3 gives the receipt as `Quoted ¶12 of <document>`, and the mockups follow it. §4.4a row 2
+  still says `Quoted ¶12 into …`.
+- **Stacked header example.** §6.3's example still reads `Note · Notes — paper… (saved 20:12)`, from the
+  per-document design. The mockups use the working note's title.
 
 ## Known render artifacts
 
