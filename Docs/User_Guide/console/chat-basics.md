@@ -104,11 +104,13 @@ only when it really isn't; a known window that the reply limit fills asks
 you to lower the reply limit (max tokens) instead.
 
 The recovery card above the composer then reads "Not sent — this message
-doesn't fit the selected model. Change a setting above, then retry."
-**Retry response** stays disabled until something that could change the
-outcome changes — the chat's model, endpoint or reply limit, or a saved
-context window — and **Discard** is always available. A refused retry never
-adds a second copy of the same line.
+doesn't fit the selected model. Change a setting above, then Discard and
+Resend the message." **Retry response** stays disabled: it would replay the
+message exactly as it was accepted, with the same model and reply limit, so
+it could only be refused again. Change the model (Alt+M) or the limit, press
+**Discard**, then select your message and press **r** (Resend), which sends
+it with the current settings. A refused message never adds a second copy of
+the same line.
 
 ### When a reply fails
 

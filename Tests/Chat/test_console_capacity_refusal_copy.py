@@ -108,13 +108,15 @@ async def test_a_known_window_refusal_never_claims_the_size_is_unknown(
 
 
 @pytest.mark.asyncio
-async def test_a_refused_send_reads_not_sent_and_retry_waits_for_a_setting(
+async def test_a_refused_send_reads_not_sent_and_names_the_working_path(
     tmp_path, monkeypatch
 ) -> None:
     """The live first send showed 'Response accepted; waiting for dispatch.'
-    with an enabled Retry under a refusal that no Retry could change. The
-    recovery surface now says the message was not sent, and Retry stays
-    disabled -- with the hint -- until a setting that could fix it changes."""
+    with an enabled Retry under a refusal that no Retry could change. Retry
+    replays the accepted turn with its frozen model and limit (live: Retry
+    after Alt+M failed again under the old model), so the card says the
+    message was not sent, keeps Retry disabled even after a setting changes,
+    and names the path that works: Discard, then Resend."""
     from tldw_chatbook.Chat.console_chat_models import (
         ConsoleDispatchRecoveryActionId,
     )
@@ -130,29 +132,27 @@ async def test_a_refused_send_reads_not_sent_and_retry_waits_for_a_setting(
 
     await controller.submit_draft("hello there", session_id="session-1")
 
-    shown = store.dispatch_recovery_for_presentation("session-1")
-    assert shown is not None, "the turn still needs Retry or Discard"
+    def shown_actions():
+        shown = store.dispatch_recovery_for_presentation("session-1")
+        assert shown is not None, "the turn still needs Discard"
+        return shown, {action.action_id: action for action in shown.actions}
+
+    shown, actions = shown_actions()
     assert "accepted" not in shown.visible_copy.lower(), shown.visible_copy
     assert "waiting for dispatch" not in shown.visible_copy
     assert "Not sent" in shown.visible_copy
+    assert "Discard and Resend" in shown.visible_copy
     assert shown.warning == ""
-    actions = {action.action_id: action for action in shown.actions}
     retry = actions[ConsoleDispatchRecoveryActionId.RETRY_RESPONSE]
     assert retry.enabled is False
-    assert retry.disabled_reason == "Change a setting above, then retry"
+    assert "Discard, then Resend" in retry.disabled_reason
     assert actions[ConsoleDispatchRecoveryActionId.DISCARD].enabled is True
 
-    # Switching the model is a change that could fix it: Retry comes back.
+    # A changed model cannot reach this frozen turn: Retry stays disabled.
     store.replace_session_settings(
         "session-1",
         ConsoleSessionSettings(provider="openai", model="gpt-4.1-mini"),
     )
-    shown = store.dispatch_recovery_for_presentation("session-1")
-    assert shown is not None
-    retry = next(
-        action
-        for action in shown.actions
-        if action.action_id is ConsoleDispatchRecoveryActionId.RETRY_RESPONSE
-    )
-    assert retry.enabled is True
+    _shown, actions = shown_actions()
+    assert actions[ConsoleDispatchRecoveryActionId.RETRY_RESPONSE].enabled is False
     assert gateway.stream_calls == 0
