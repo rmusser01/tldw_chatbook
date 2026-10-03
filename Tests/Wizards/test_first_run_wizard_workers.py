@@ -350,3 +350,59 @@ async def test_a_localhost_scan_that_lands_after_its_list_is_gone_is_dropped(
 
         assert provider._local_discovery_state == "complete"
         assert app._exception is None, "a late scan result raised into a torn-down step"
+
+
+def test_the_recovery_prompts_worker_never_exits_the_app() -> None:
+    """Review round 2: Resume / Start over runs in app.py, not UI/Wizards/.
+
+    It started with Textual's default ``exit_on_error=True``, so an error
+    reading the draft or building the wizard quit the whole app at relaunch.
+    """
+    from tldw_chatbook.app import TldwCli
+
+    fake = MagicMock()
+    for result in ("resume", "start_over"):
+        fake.run_worker.reset_mock()
+        TldwCli._handle_first_run_recovery_result(fake, result)
+        work = fake.run_worker.call_args.args[0]
+        work.close()  # the coroutine is not run here
+        assert fake.run_worker.call_args.kwargs["exit_on_error"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_recovery_failure_after_its_save_reprompts_instead_of_raising(
+    monkeypatch,
+) -> None:
+    from functools import partial
+    from types import SimpleNamespace
+
+    from tldw_chatbook.app import TldwCli
+
+    class _Broken:
+        def __init__(self, *_args, **_kwargs) -> None:
+            raise RuntimeError("the wizard could not be built")
+
+    monkeypatch.setattr(
+        "tldw_chatbook.UI.Wizards.FirstRunSetupWizard.FirstRunSetupWizard", _Broken
+    )
+    monkeypatch.setattr(
+        "tldw_chatbook.config.save_settings_to_cli_config",
+        lambda *_args, **_kwargs: True,
+    )
+    fake = SimpleNamespace(app_config={"first_run": {}})
+    fake._mirror_first_run_setup_mutation = MagicMock()
+    fake._handle_first_run_wizard_result = MagicMock()
+    fake.push_screen = MagicMock()
+    fake.notify = MagicMock()
+    fake._schedule_first_run_recovery_retry = MagicMock()
+    fake._apply_first_run_recovery_result = partial(
+        TldwCli._apply_first_run_recovery_result, fake
+    )
+    fake.run_worker = MagicMock()
+
+    TldwCli._handle_first_run_recovery_result(fake, "start_over")
+    await fake.run_worker.call_args.args[0]  # the worker's body, run here
+
+    fake.push_screen.assert_not_called()
+    assert fake.notify.call_args.kwargs.get("severity") == "error"
+    fake._schedule_first_run_recovery_retry.assert_called_once()

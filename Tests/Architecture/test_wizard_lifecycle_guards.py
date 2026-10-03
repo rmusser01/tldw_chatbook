@@ -159,3 +159,30 @@ def test_the_shared_helper_never_lets_a_worker_exit_the_app() -> None:
     flags = {kw.arg: kw.value for kw in calls[0].keywords}
     assert isinstance(flags.get("exit_on_error"), ast.Constant)
     assert flags["exit_on_error"].value is False
+
+
+def test_app_side_first_run_workers_never_exit_the_app() -> None:
+    """Review round 2: the first-run workers app.py starts follow the rule too.
+
+    The recovery prompt's Resume / Start over worker ran with Textual's
+    default and could quit the app at relaunch. Every ``run_worker`` in
+    app.py whose group starts ``first-run`` must pass ``exit_on_error=False``.
+    """
+    tree = _tree(_REPO / "tldw_chatbook" / "app.py")
+    groups, offenders = [], []
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Call) and _called_name(node) == "run_worker"):
+            continue
+        flags = {kw.arg: kw.value for kw in node.keywords}
+        group = flags.get("group")
+        if not (
+            isinstance(group, ast.Constant) and str(group.value).startswith("first-run")
+        ):
+            continue
+        groups.append(group.value)
+        keep = flags.get("exit_on_error")
+        if not (isinstance(keep, ast.Constant) and keep.value is False):
+            offenders.append(f"app.py:{node.lineno} group={group.value!r}")
+
+    assert "first-run-recovery" in groups, "the scan no longer finds the recovery worker"
+    assert offenders == [], "pass exit_on_error=False:\n  " + "\n  ".join(offenders)

@@ -3741,7 +3741,12 @@ class TldwCli(
                     "(category=persistence, error_type=save_returned_false)"
                 )
 
-        self.run_worker(_write, thread=True, group="first-run-env-key-notice-flag")
+        self.run_worker(
+            _write,
+            thread=True,
+            group="first-run-env-key-notice-flag",
+            exit_on_error=False,
+        )
 
     def _push_first_run_wizard(self) -> None:
         from tldw_chatbook.UI.Wizards.FirstRunSetupWizard import FirstRunSetupWizard
@@ -3823,10 +3828,21 @@ class TldwCli(
     def _handle_first_run_recovery_result(self, result: str | None) -> None:
         if result not in {"resume", "start_over", "later"}:
             return
+
+        async def apply() -> None:
+            # TASK-34100.1: setup work never exits the app. A failure reading
+            # the draft or opening the wizard re-offers the prompt instead.
+            try:
+                await self._apply_first_run_recovery_result(result)
+            except Exception as exc:  # noqa: BLE001 - the prompt is the recovery
+                logger.error(
+                    "First-run recovery failed (error_type={})", type(exc).__name__
+                )
+                self.notify("Setup could not open. Try again.", severity="error")
+                self._schedule_first_run_recovery_retry()
+
         self.run_worker(
-            self._apply_first_run_recovery_result(result),
-            exclusive=True,
-            group="first-run-recovery",
+            apply(), exclusive=True, group="first-run-recovery", exit_on_error=False
         )
 
     async def _apply_first_run_recovery_result(self, result: str) -> None:
