@@ -547,11 +547,14 @@ a closed disclosure; **Shift+Tab** from Temperature reaches **Change**, then
 the view tabs. A focus target that a credential round trip cannot restore
 lands on **Change**.
 The **Context and memory** view keeps its taller frame and scrolls.
-Switching views always opens the other view at its top, however far the one
-you left was scrolled, so **Context and memory** starts at **Model
-capacity** with **Budget strategy** focused, and **Model and generation**
-starts at the **Model** row with **Temperature** focused. A chat that is not
-ready focuses its fix instead, as it does when Chat settings opens.
+Switching views opens the other view at its top, however far the one you
+left was scrolled, so **Context and memory** starts at **Model capacity**
+with **Budget strategy** focused, and **Model and generation** starts at the
+**Model** row with **Temperature** focused. A chat that is not ready opens on
+its fix instead, as it does when Chat settings opens: **Change** when no
+model is chosen, or the open **Connection** disclosure's fix (such as
+**Configure credential…**) below the tuning rows. Pressing the tab of the
+view already shown does nothing.
 
 The footer reads, left to right: the Esc hint (below), **Use saved
 defaults**, **Save as model default**, **Default for new chats (Ctrl+N)** and
