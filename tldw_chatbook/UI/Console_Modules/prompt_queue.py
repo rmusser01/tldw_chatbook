@@ -28,8 +28,6 @@ from textual.widgets import Button, Static
 
 from tldw_chatbook.Chat.console_chat_models import (
     ConsoleControllerActivity,
-    ConsoleDispatchRecoveryAction,
-    ConsoleDispatchRecoveryState,
     ConsoleMessageRole,
 )
 from tldw_chatbook.Chat.console_display_state import (
@@ -144,7 +142,6 @@ class ConsolePromptQueuePresentation:
     pause_label: str
     primary_action: str
     pause_enabled: bool
-    recovery_actions: tuple[ConsoleDispatchRecoveryAction, ...] = ()
     turn_recovery_id: str | None = field(default=None, repr=False)
 
 
@@ -153,7 +150,6 @@ def derive_prompt_queue_presentation(
     activity: ConsoleControllerActivity,
     *,
     composer_collapsed: bool = False,
-    dispatch_recovery: ConsoleDispatchRecoveryState | None = None,
     dispatch_recovery_blocked: bool = False,
     turn_recovery_id: str | None = None,
     failed_turn_preview: str | None = None,
@@ -167,10 +163,10 @@ def derive_prompt_queue_presentation(
         activity: The session's controller activity; a live accepted turn or
             an occupied agent slot decides the Send/Queue/Preparing label.
         composer_collapsed: True hides the shelf whatever its state.
-        dispatch_recovery: A pending dispatch recovery, whose copy and typed
-            actions replace the queue's own state and primary action.
         dispatch_recovery_blocked: True when a response recovery blocks the
-            queue; the shelf shows a disabled Resume.
+            queue; the shelf shows a disabled Resume. The recovery's own
+            actions live only on the #console-dispatch-recovery card: the
+            shelf never carries them (TASK-33625.5).
         turn_recovery_id: An unsent turn needing attention. It outranks every
             other state and keeps the shelf visible with no queued entries.
         failed_turn_preview: Bounded one-line preview of the prompt whose turn
@@ -186,8 +182,8 @@ def derive_prompt_queue_presentation(
 
     Returns:
         The immutable shelf/composer presentation: Send label and gate, shelf
-        visibility, state label, next waiting preview, primary action and its
-        label, and any dispatch-recovery actions.
+        visibility, state label, next waiting preview, and primary action and
+        its label.
     """
 
     count = snapshot.total_count
@@ -274,22 +270,13 @@ def derive_prompt_queue_presentation(
         pause_label = ""
         primary_action = "turn-recovery"
         pause_enabled = False
-        recovery_actions = ()
-    elif dispatch_recovery is not None:
-        state_label = dispatch_recovery.visible_copy
-        pause_label = ""
-        primary_action = "dispatch-recovery"
-        pause_enabled = False
-        recovery_actions = dispatch_recovery.actions
     elif dispatch_recovery_blocked:
         state_label = "Paused for response recovery"
         pause_label = "Resume"
         primary_action = "toggle-pause"
         pause_enabled = False
-        recovery_actions = ()
     else:
         pause_enabled = count > 0
-        recovery_actions = ()
     return ConsolePromptQueuePresentation(
         revision=snapshot.revision,
         count=count,
@@ -304,7 +291,6 @@ def derive_prompt_queue_presentation(
         pause_label=pause_label,
         primary_action=primary_action,
         pause_enabled=pause_enabled,
-        recovery_actions=recovery_actions,
         turn_recovery_id=turn_recovery_id,
     )
 
@@ -453,31 +439,6 @@ class ConsolePromptQueueRegion(Widget):
             pause.label = "Discard"
             pause.disabled = False
             pause.tooltip = "Discard this unsent turn."
-        elif presentation.primary_action == "dispatch-recovery":
-            first = (
-                presentation.recovery_actions[0]
-                if presentation.recovery_actions
-                else None
-            )
-            second = (
-                presentation.recovery_actions[1]
-                if len(presentation.recovery_actions) > 1
-                else None
-            )
-            manage.label = first.label if first is not None else "Unavailable"
-            manage.disabled = first is None or not first.enabled
-            manage.tooltip = (
-                first.disabled_reason or first.label
-                if first is not None
-                else presentation.state_label
-            )
-            pause.label = second.label if second is not None else "Unavailable"
-            pause.disabled = second is None or not second.enabled
-            pause.tooltip = (
-                second.disabled_reason or second.label
-                if second is not None
-                else presentation.state_label
-            )
         else:
             manage.label = "Manage"
             manage.disabled = presentation.count == 0
@@ -516,16 +477,6 @@ class ConsolePromptQueueRegion(Widget):
                     presentation.revision,
                     f"turn-recovery:restore:{presentation.turn_recovery_id}",
                 )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and presentation.recovery_actions
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[0].action_id.value,
-                )
             elif self._on_manage_requested is not None:
                 self._on_manage_requested(self._session_id, presentation.revision)
             else:
@@ -543,16 +494,6 @@ class ConsolePromptQueueRegion(Widget):
                     self._session_id,
                     presentation.revision,
                     f"turn-recovery:discard:{presentation.turn_recovery_id}",
-                )
-            elif (
-                presentation.primary_action == "dispatch-recovery"
-                and len(presentation.recovery_actions) > 1
-                and self._on_primary_requested is not None
-            ):
-                self._on_primary_requested(
-                    self._session_id,
-                    presentation.revision,
-                    presentation.recovery_actions[1].action_id.value,
                 )
             elif presentation.primary_action == "review":
                 if self._on_manage_requested is not None:
@@ -630,6 +571,10 @@ class ConsolePromptQueueUIController:
         on_recovery_complete: Callable[[], None] | None = None,
     ) -> None:
         """Apply the shelf's state-specific primary action and repaint.
+
+        Response recovery actions (retry_response, retry_anyway, discard) come
+        only from the #console-dispatch-recovery card; the shelf never offers
+        them (TASK-33625.5).
 
         Args:
             session_id: Session whose recovery or queue action is requested.
