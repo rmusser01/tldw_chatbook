@@ -22,6 +22,17 @@ on:
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [dev, main]
+  # Merge queue (Docs/superpowers/specs/2026-10-03-merge-queue-design.md): the queue
+  # dispatches this workflow on a rebased PR head with `pr` set, so the required check
+  # runs on exactly the head that merges. A dispatch without `pr` is a manual queue
+  # kick: the lanes skip and only queue-tick runs.
+  workflow_dispatch:
+    inputs:
+      pr:
+        description: PR number (set by the merge queue)
+        required: false
+        type: string
+        default: ''
 
 # Deliberately NOT path-filtered.
 #
@@ -63,7 +74,7 @@ permissions:
 jobs:
   pr-fast-lane:
     name: PR Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')
     runs-on: ubuntu-latest
     # TASK-32831: the main and admission-sensitive invocations measured 14m45s
     # and 4m59s, plus setup; keep both required steps within one bounded job.
@@ -157,7 +168,7 @@ jobs:
     # a particular predecessor was relying on leaked state, which is a bug the
     # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
     name: UI Fast Lane
-    if: github.event_name == 'pull_request'
+    if: github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -216,7 +227,7 @@ jobs:
           python-version: '3.12.11'
 
       - name: Require successful PR fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.pr-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) && needs.pr-fast-lane.result != 'success' }}
         run: |
           echo "PR Fast Lane result: ${{ needs.pr-fast-lane.result }}"
           echo "::error::The required PR fast lane did not succeed."
@@ -227,7 +238,7 @@ jobs:
       # which is the "guard nobody is gated on" failure this workflow exists to
       # avoid.
       - name: Require successful UI fast lane
-        if: ${{ github.event_name == 'pull_request' && needs.ui-fast-lane.result != 'success' }}
+        if: ${{ (github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')) && needs.ui-fast-lane.result != 'success' }}
         run: |
           echo "UI Fast Lane result: ${{ needs.ui-fast-lane.result }}"
           echo "::error::The required UI fast lane did not succeed."
@@ -347,4 +358,34 @@ jobs:
           # being the cheapest way to make the gate green. Pure path check;
           # milliseconds.
           python scripts/check_ui_pr_gate_census.py
+
+  queue-tick:
+    # Wakes the merge queue after CI finishes, for the queue's own dispatched runs and for
+    # armed same-repo PRs. NOT a required check and NOT in the aggregate's needs: a queue
+    # failure can never turn `Derived artifacts reproduce from their sources` red. Pushes to
+    # dev are merge-queue.yml's job. Spec: Docs/superpowers/specs/2026-10-03-merge-queue-design.md
+    name: Merge queue tick
+    needs: [derived-artifacts]
+    if: >-
+      always() &&
+      (vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on') &&
+      (github.event_name == 'workflow_dispatch' ||
+       (github.event_name == 'pull_request' &&
+        github.event.pull_request.auto_merge != null &&
+        github.event.pull_request.head.repo.full_name == github.repository))
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dev
+      - name: Advance the queue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MERGE_QUEUE: ${{ vars.MERGE_QUEUE }}
+        run: python3 scripts/merge_queue.py
 

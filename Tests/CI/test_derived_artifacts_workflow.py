@@ -21,6 +21,7 @@ yaml = pytest.importorskip("yaml")
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 WORKFLOW_PATH = PROJECT_ROOT / ".github" / "workflows" / "derived-artifacts.yml"
+LANES = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')"
 CHECKERS = (
     "tldw_chatbook/css/check_bundle_sync.py",
     "scripts/check_canvas_mermaid_assets.py",
@@ -69,11 +70,15 @@ def test_workflow_has_one_fast_prerequisite_and_one_required_aggregator():
     protection. `derived-artifacts` stays the single required context, and
     `needs` + its two verdict steps are what make a red lane fail it -- see
     `test_required_aggregator_fails_when_either_lane_fails`.
+
+    `queue-tick` (the merge queue, spec 2026-10-03) runs after the aggregate and
+    is never a required context.
     """
     assert list(_workflow()["jobs"]) == [
         "pr-fast-lane",
         "ui-fast-lane",
         "derived-artifacts",
+        "queue-tick",
     ]
 
 
@@ -93,10 +98,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
             if step.get("name")
             == f"Require successful {'PR' if lane == 'pr-fast-lane' else 'UI'} fast lane"
         )
-        assert verdict["if"] == (
-            "${{ github.event_name == 'pull_request' && "
-            f"needs.{lane}.result != 'success' }}}}"
-        )
+        assert verdict["if"] == f"${{{{ ({LANES}) && needs.{lane}.result != 'success' }}}}"
         assert "exit 1" in verdict["run"]
 
 
@@ -116,7 +118,7 @@ def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     """
     job = _workflow()["jobs"]["ui-fast-lane"]
 
-    assert job["if"] == "github.event_name == 'pull_request'"
+    assert job["if"] == LANES
     strategy = job["strategy"]
     assert strategy["fail-fast"] is False  # one red shard must not hide another
     assert list(strategy["matrix"]) == ["shard"]
@@ -222,7 +224,7 @@ def test_triggers_are_not_path_filtered():
     would brick merges without failing anything.
     """
     triggers = _workflow()[True]  # PyYAML parses the bare `on:` key as True
-    assert set(triggers) == {"pull_request", "push"}
+    assert set(triggers) == {"pull_request", "push", "workflow_dispatch"}
     for event, config in triggers.items():
         assert not (config or {}).get("paths"), f"{event} must not be path-filtered"
         assert not (config or {}).get("paths-ignore"), f"{event} must not path-ignore"
@@ -282,3 +284,28 @@ def test_derived_artifact_checkers_use_mermaid_builder_python_pin():
 def test_required_check_name_is_stable():
     """Renaming this silently detaches branch protection from the job."""
     assert _job()["name"] == "Derived artifacts reproduce from their sources"
+
+
+def test_dispatch_input_lets_the_queue_name_the_pr():
+    """A queue dispatch names its PR; a manual kick names none, so the lanes skip."""
+    dispatch = _workflow()[True]["workflow_dispatch"]
+    assert dispatch["inputs"]["pr"] == {"description": "PR number (set by the merge queue)", "required": False,
+                                        "type": "string", "default": ""}
+
+
+def test_queue_tick_runs_after_ci_and_is_never_required():
+    jobs = _workflow()["jobs"]
+    tick = jobs["queue-tick"]
+    assert tick["needs"] == ["derived-artifacts"]
+    assert "queue-tick" not in jobs["derived-artifacts"].get("needs", [])
+    assert tick["if"].startswith("always() &&")
+    assert "vars.MERGE_QUEUE == 'dry' || vars.MERGE_QUEUE == 'on'" in tick["if"]
+    assert "github.event.pull_request.auto_merge != null" in tick["if"]
+    assert "github.event.pull_request.head.repo.full_name == github.repository" in tick["if"]
+    assert "push" not in tick["if"], "pushes to dev are merge-queue.yml's job"
+    assert tick["permissions"] == {"contents": "write", "pull-requests": "write", "actions": "write"}
+    assert _workflow()["permissions"] == {"contents": "read"}
+    checkout = tick["steps"][0]
+    assert checkout["uses"] == "actions/checkout@v4" and checkout["with"] == {"ref": "dev"}
+    assert tick["steps"][1]["run"] == "python3 scripts/merge_queue.py"
+    assert tick["steps"][1]["env"] == {"GH_TOKEN": "${{ github.token }}", "MERGE_QUEUE": "${{ vars.MERGE_QUEUE }}"}

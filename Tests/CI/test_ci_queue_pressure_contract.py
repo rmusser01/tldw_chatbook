@@ -17,6 +17,7 @@ PULL_REQUEST_TYPES = ["opened", "synchronize", "reopened", "ready_for_review"]
 PUSH_ONLY_CANCELLATION = (
     "${{ github.event_name == 'push' && github.ref != 'refs/heads/main' }}"
 )
+LANES = "github.event_name == 'pull_request' || (github.event_name == 'workflow_dispatch' && inputs.pr != '')"
 FAST_LANE_TARGETS = (
     "Tests/CI",
     "Tests/test_smoke.py",
@@ -88,19 +89,13 @@ def _assert_required_aggregation(workflow: dict) -> None:
 
     verdict = _named_step(required, "Require successful PR fast lane")
     assert not verdict.get("continue-on-error", False)
-    assert verdict["if"] == (
-        "${{ github.event_name == 'pull_request' && "
-        "needs.pr-fast-lane.result != 'success' }}"
-    )
+    assert verdict["if"] == f"${{{{ ({LANES}) && needs.pr-fast-lane.result != 'success' }}}}"
     assert "needs.pr-fast-lane.result" in verdict["run"]
     assert "exit 1" in verdict["run"]
 
     ui_verdict = _named_step(required, "Require successful UI fast lane")
     assert not ui_verdict.get("continue-on-error", False)
-    assert ui_verdict["if"] == (
-        "${{ github.event_name == 'pull_request' && "
-        "needs.ui-fast-lane.result != 'success' }}"
-    )
+    assert ui_verdict["if"] == f"${{{{ ({LANES}) && needs.ui-fast-lane.result != 'success' }}}}"
     assert "needs.ui-fast-lane.result" in ui_verdict["run"]
     assert "exit 1" in ui_verdict["run"]
 
@@ -196,7 +191,7 @@ def test_fast_lane_is_one_serial_minimal_python_312_job() -> None:
     fast = _workflow("derived-artifacts.yml")["jobs"]["pr-fast-lane"]
 
     assert fast["name"] == "PR Fast Lane"
-    assert fast["if"] == "github.event_name == 'pull_request'"
+    assert fast["if"] == LANES
     assert fast["runs-on"] == "ubuntu-latest"
     assert fast["timeout-minutes"] == 30
     assert "strategy" not in fast
