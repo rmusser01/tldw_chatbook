@@ -37,7 +37,12 @@ CHARACTERS = [
         "character_version": "1.0",
         "version": 1,
     },
-    {"id": 2, "name": "Lab Assistant", "description": "A meticulous research assistant.", "version": 1},
+    {
+        "id": 2,
+        "name": "Lab Assistant",
+        "description": "A meticulous research assistant.",
+        "version": 1,
+    },
 ]
 
 PROFILES = [
@@ -63,7 +68,10 @@ CONVERSATIONS = [
 ]
 
 MESSAGES = [
-    ("Who hired you for the Marlowe case?", "A dame with expensive shoes and cheaper excuses."),
+    (
+        "Who hired you for the Marlowe case?",
+        "A dame with expensive shoes and cheaper excuses.",
+    ),
     ("Did you take the job?", "Rent doesn't pay itself. Of course I took it."),
 ]
 
@@ -93,9 +101,9 @@ async def main() -> None:
         dict(c) for c in CHARACTERS if str(c["id"]) == str(cid)
     )
     chm._default_character_db = lambda: object()
-    pcc.list_character_conversations = (
-        lambda db, character_id, limit=50, offset=0: [dict(c) for c in CONVERSATIONS]
-    )
+    pcc.list_character_conversations = lambda db, character_id, limit=50, offset=0: [
+        dict(c) for c in CONVERSATIONS
+    ]
     pcc.retrieve_conversation_messages_for_ui = (
         lambda db, conversation_id, character_name, user_name, limit=200: list(MESSAGES)
     )
@@ -112,7 +120,9 @@ async def main() -> None:
             self.character_persona_scope_service = mock.character_persona_scope_service
 
         def __getattr__(self, name):
-            if name.startswith(("_", "watch_", "compute_", "validate_", "action_", "key_", "on_")):
+            if name.startswith(
+                ("_", "watch_", "compute_", "validate_", "action_", "key_", "on_")
+            ):
                 raise AttributeError(name)
             return getattr(self._mock, name)
 

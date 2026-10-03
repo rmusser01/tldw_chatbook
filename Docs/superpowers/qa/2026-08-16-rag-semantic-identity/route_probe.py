@@ -60,6 +60,7 @@ import time
 
 MODE = sys.argv[1] if len(sys.argv) > 1 else ""
 
+
 # ---------------------------------------------------------------------------
 # Scratch environment. This block MUST run before any tldw_chatbook import --
 # `tldw_chatbook.config` resolves the data/config directories at import time,
@@ -88,9 +89,7 @@ def _validated_scratch_path(raw: str) -> pathlib.Path:
     resolved = pathlib.Path(raw).resolve()
     repo_root = pathlib.Path(__file__).resolve().parents[3]
     if resolved == repo_root or repo_root in resolved.parents:
-        raise SystemExit(
-            f"refusing repo-tree target {resolved} (repo: {repo_root})"
-        )
+        raise SystemExit(f"refusing repo-tree target {resolved} (repo: {repo_root})")
     return resolved
 
 
@@ -233,8 +232,7 @@ LONG_DOCS = (
         "seam": "note",
         "title": "Tindalos encoder fault history",
         "marker": (
-            "The tindalos encoder logged a quadrature fault every fourth index "
-            "pulse."
+            "The tindalos encoder logged a quadrature fault every fourth index pulse."
         ),
         "context": (
             "Tindalos encoder diagnostics. Quadrature faults on the tindalos "
@@ -270,8 +268,7 @@ LONG_DOCS = (
         "seam": "media",
         "title": "Catafract lathe commissioning transcript",
         "marker": (
-            "The catafract lathe headstock showed spiral scoring after the dry "
-            "run."
+            "The catafract lathe headstock showed spiral scoring after the dry run."
         ),
         "context": (
             "Catafract lathe commissioning. The dry run was cut short when the "
@@ -306,8 +303,7 @@ LONG_DOCS = (
         "seam": "conversation",
         "title": "Starling gantry descent test debrief",
         "marker": (
-            "The starling gantry brake pads glazed over after the descent "
-            "test."
+            "The starling gantry brake pads glazed over after the descent test."
         ),
         "context": (
             "Starling gantry descent test debrief. The brake pads came off the "
@@ -742,7 +738,9 @@ def _run_one(scratch: pathlib.Path, index_kind: str, out_json: pathlib.Path) -> 
             # receives. `library_rows` is the same call one layer down, kept
             # only so the probe can read the provenance the payload (by
             # design) never carries.
-            tool_result = provider.invoke(RAG_TOOL_NAME, {"query": spec["query"], "top_k": 10})
+            tool_result = provider.invoke(
+                RAG_TOOL_NAME, {"query": spec["query"], "top_k": 10}
+            )
             payload = json.loads(tool_result.content) if tool_result.ok else {}
             projected_rows = payload.get("results", [])
             library_rows = list(outcome.results or ())
@@ -790,8 +788,11 @@ def _run_one(scratch: pathlib.Path, index_kind: str, out_json: pathlib.Path) -> 
             # keys removed from every row.
             stripped_payload = dict(payload)
             stripped_payload["results"] = [
-                {key: value for key, value in row.items()
-                 if key not in ("note_id", "doc_id")}
+                {
+                    key: value
+                    for key, value in row.items()
+                    if key not in ("note_id", "doc_id")
+                }
                 for row in projected_rows
             ]
             query_record: dict = {
@@ -809,8 +810,7 @@ def _run_one(scratch: pathlib.Path, index_kind: str, out_json: pathlib.Path) -> 
                 ),
                 "payload_ceiling_bytes": MAX_RESULT_BYTES,
                 "rows_carrying_fallbacks": sum(
-                    1 for row in projected_rows
-                    if "note_id" in row or "doc_id" in row
+                    1 for row in projected_rows if "note_id" in row or "doc_id" in row
                 ),
                 "rows": [],
             }
@@ -866,8 +866,7 @@ def _run_one(scratch: pathlib.Path, index_kind: str, out_json: pathlib.Path) -> 
                                 and _norm(spec["marker"]) in _norm(window_text)
                             ),
                             "window_has_snippet_head": bool(
-                                snippet
-                                and _norm(snippet)[:160] in _norm(window_text)
+                                snippet and _norm(snippet)[:160] in _norm(window_text)
                             ),
                         }
                 query_record["rows"].append(row_record)
@@ -965,9 +964,11 @@ def _count_route(record: dict) -> dict:
     counts["fallback_bytes_total"] = (
         counts["payload_bytes_total"] - counts["payload_bytes_without_fallbacks_total"]
     )
-    counts["fallback_bytes_per_carrying_row"] = round(
-        counts["fallback_bytes_total"] / counts["fallbacks_carried"], 2
-    ) if counts["fallbacks_carried"] else 0.0
+    counts["fallback_bytes_per_carrying_row"] = (
+        round(counts["fallback_bytes_total"] / counts["fallbacks_carried"], 2)
+        if counts["fallbacks_carried"]
+        else 0.0
+    )
     return counts
 
 
@@ -1036,8 +1037,14 @@ def _run_all(scratch: pathlib.Path, out_dir: pathlib.Path) -> None:
         target = out_dir / f"probe-{kind}.json"
         print(f"== running {kind} ==", flush=True)
         completed = subprocess.run(
-            [sys.executable, str(pathlib.Path(__file__).resolve()), "one",
-             str(scratch), kind, str(target)],
+            [
+                sys.executable,
+                str(pathlib.Path(__file__).resolve()),
+                "one",
+                str(scratch),
+                kind,
+                str(target),
+            ],
             env=child_env,
             check=False,
         )
@@ -1065,7 +1072,9 @@ def main() -> None:
     if MODE == "one":
         _run_one(SCRATCH, INDEX_KIND, OUT_JSON)
     elif MODE == "all":
-        _run_all(pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve())
+        _run_all(
+            pathlib.Path(sys.argv[2]).resolve(), pathlib.Path(sys.argv[3]).resolve()
+        )
     else:
         raise SystemExit(__doc__)
 

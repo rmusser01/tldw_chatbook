@@ -151,7 +151,9 @@ class _DeterministicGateway:
             ),
         )
 
-    async def stream_chat(self, _resolution: Any, _messages: Any, **_kwargs: Any) -> Any:
+    async def stream_chat(
+        self, _resolution: Any, _messages: Any, **_kwargs: Any
+    ) -> Any:
         await asyncio.sleep(MOCK_FIRST_TOKEN_DELAY_SECONDS)
         self.first_chunk_ns = time.perf_counter_ns()
         midpoint = max(1, len(self.answer) // 2)
