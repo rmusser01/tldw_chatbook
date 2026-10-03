@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 00:47'
+updated_date: '2026-10-03 01:02'
 labels:
   - agents
   - console
@@ -72,6 +72,16 @@ Reason: compose landed TASK-33801 known-work idle-check avoidance with existing 
 3. Prove exact hunk composition, all unchanged hashes and twelve-line AGENT_WAKE preflight refund. Run both bounded legacy migration/parking modules, affected runtime scheduling/GC/admission controls and exact wake/refund/nonreplay/close custody neighbors. Verify source-loaded cwd/PYTHONPATH; preserve non-green evidence and all earlier limitations. Incoming TASK33801 remains Done and TASK33802 typing helper-spawn flake remains To Do; no closure or deterministic cause claim for that separate flake.
 4. Obtain focused independent immutable review of source, SQL/core/cleanup, signalling/work-flag semantics, wake/refund and artifact/test preservation. After root functional runs and reviewer finish, run the original five storage/import/UI-ready/boot-CSS cases with exact incoming sources and unchanged pins/ceilings/counts/warmup/timeouts/work. Check fatal/added-line/new-file static, CSS and relevant diagnostic/worker/task artifacts; no full suite/dependency installation or foreign cleanup.
 5. Recheck AC3/close through CLI only after qualification; update existing plan/review/follow-up/task/PR body with exact evidence and inherited limits. Doc-only closure preserves reviewed hashes. Publish once EXACT observed a0708ef lease, then require fresh current-head Qodo/all four CI jobs/up-to-date protection before normal --match-head-commit merge, verify actual MERGED parents/tree, pause heartbeat.
+
+## Cold worker qualification fixture repair — October 2
+
+ADR required: no new ADR
+ADR path: backlog/decisions/097-console-reference-backed-semantic-trace-ledger.md; backlog/decisions/097-boot-budget-ratchets.md
+Reason: test-only separation of admission-count behavior from the existing legal elapsed-time yield; no production or Performance guard change.
+1. Retain initial root54 selection NON-GREEN53pass/1failure154.235s, unchanged isolated1pass5.280s and external real-clock boundary observations. The failure did not record its clock, so do not claim a deterministic load cause; the unchanged contract explicitly permits zero-row yield before first normalization.
+2. The owned cold admission-count case keeps every original assertion and real SQLite/worker/admission/retirement behavior, using the existing injected clock seam to remove unrelated wall-clock variability. Production100ms bound and all original Performance sources remain exact.
+3. Add a real private-profile fresh-worker controlled-clock zero-row yield and second admitted retry regression. Assert pending row/checkpoint preservation, normalization only on retry, at most two admissions per attempt, and zero registered worker handles after both attempts. This detects ignoring the elapsed guard, deleting/claiming an unprocessed row, dropping pending work, duplicate admission or lost physical cleanup.
+4. Verify the controlled yield catches a temporary external ignore-time mutation; run the owned repair and bounded legacy/parking neighbors without changing production. Get fresh independent immutable review with original assertion AST and production/Performance hash preservation; retain all earlier non-green evidence before final original budgets and closure.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
