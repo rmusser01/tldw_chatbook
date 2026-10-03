@@ -671,13 +671,13 @@ class PromptCollectionManagerModal(
         """Stay while a collection change is saved, as close does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, mid-change; else True.
+            refuse_quit_while_working's answer mid-change; else True.
         """
         if not self._mutation_in_flight:
             return True
         from ...Widgets.quit_while_working import refuse_quit_while_working
 
-        return refuse_quit_while_working(
+        return await refuse_quit_while_working(
             self, "A prompt collection change is still being saved."
         )
 

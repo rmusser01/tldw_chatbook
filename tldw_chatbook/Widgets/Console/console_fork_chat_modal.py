@@ -426,7 +426,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         """Stay while the fork commits, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, while committing; else True.
+            refuse_quit_while_working's answer while committing; else True.
         """
         if self.state != "committing":
             return True
@@ -434,7 +434,7 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             refuse_quit_while_working,
         )
 
-        return refuse_quit_while_working(self, "The fork is still being created.")
+        return await refuse_quit_while_working(self, "The fork is still being created.")
 
     def show_validating(self) -> None:
         self.state = "validating"

@@ -363,9 +363,9 @@ class PersonalContextProposalReviewModal(
         """Stay while a review choice is saved, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, while busy; else True.
+            refuse_quit_while_working's answer while busy; else True.
         """
-        return _quit_unless_busy(self)
+        return await _quit_unless_busy(self)
 
     def _set_status(self, copy: str) -> None:
         if self.is_mounted:
@@ -765,9 +765,9 @@ class PersonalContextReviewModal(
         """Stay while review changes are saved, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, while busy; else True.
+            refuse_quit_while_working's answer while busy; else True.
         """
-        return _quit_unless_busy(self)
+        return await _quit_unless_busy(self)
 
     def _run_thread(
         self,
@@ -871,7 +871,7 @@ class PersonalContextReviewModal(
             }
 
 
-def _quit_unless_busy(
+async def _quit_unless_busy(
     modal: PersonalContextProposalReviewModal | PersonalContextReviewModal,
 ) -> bool:
     """Answer the quit walk for a review modal that refuses Escape while busy.
@@ -880,12 +880,12 @@ def _quit_unless_busy(
         modal: The open review modal.
 
     Returns:
-        True when nothing is being saved; False (with a notice) otherwise.
+        True when nothing is being saved; else refuse_quit_while_working's answer.
     """
     if not modal._busy:
         return True
     from ..quit_while_working import refuse_quit_while_working
 
-    return refuse_quit_while_working(
+    return await refuse_quit_while_working(
         modal, "Personal context changes are still being saved."
     )

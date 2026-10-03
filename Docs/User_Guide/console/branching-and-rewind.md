@@ -71,7 +71,8 @@ the source tab stays open with the same title, selected variants, active leaf,
 history, and live work it had before. While the dialog shows **Forking…** the
 fork can no longer be cancelled: Escape is refused, and **Ctrl+Q** says the
 fork is still being created and stays open; press it again once the fork has
-opened.
+opened. Pressed again before that, it asks **Quit while still working?**
+(**Wait** keeps the dialog).
 
 - A saved source creates a saved fork in the same Chats or named Workspace
   section, with durable ancestry back to the source and boundary.

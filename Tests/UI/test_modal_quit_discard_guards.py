@@ -304,6 +304,14 @@ async def test_console_prompts_modal_refuses_quit_while_an_apply_is_in_flight(
     assert asked == [], "an apply in flight is not a discard prompt"
     assert len(notices) == 1 and "applying" in notices[0].lower()
 
+    # A stuck apply must not make the app unquittable (TASK-33622.15): the
+    # next Ctrl+Q asks whether to quit anyway; Wait (this fixture) stays.
+    assert await modal.confirm_quit() is False
+    [(screen, message, copy)] = asked
+    assert screen is modal and "applying" in message.lower()
+    assert copy["title"] == "Quit while still working?"
+    assert len(notices) == 1
+
 
 @pytest.mark.asyncio
 async def test_console_settings_unsaved_quit_prompt_names_the_edited_fields(asked):

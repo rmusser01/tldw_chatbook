@@ -43,7 +43,10 @@ from tldw_chatbook.Widgets.Persona_Widgets.buddy_character_review import (
 )
 from tldw_chatbook.Widgets.quit_while_working import (
     QUIT_AGAIN_HINT,
+    QUIT_ANYWAY_RISK,
+    QUIT_ANYWAY_TITLE,
     STILL_WORKING_TITLE,
+    refuse_quit_while_working,
 )
 from tldw_chatbook.Widgets.Settings_Widgets.personal_context_review_modal import (
     PersonalContextProposalReviewModal,
@@ -84,6 +87,74 @@ async def test_mid_operation_ctrl_q_says_still_working_and_stays(modal, flag, wh
     assert what in message.lower()
     assert message.endswith(QUIT_AGAIN_HINT)
     assert kwargs == {"title": STILL_WORKING_TITLE, "severity": "warning"}
+
+
+@pytest.fixture
+def quit_anyway(monkeypatch):
+    """Record the quit-anyway prompt instead of pushing it; answer ``.answer``."""
+    record = SimpleNamespace(calls=[], answer=False)
+
+    async def _ask(screen, message: str, **copy: str) -> bool:
+        record.calls.append((screen, message, copy))
+        return record.answer
+
+    monkeypatch.setattr(confirmation_dialog, "confirm_quit_discarding_edits", _ask)
+    return record
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("modal", "flag", "what"), _IN_FLIGHT, ids=_IDS)
+async def test_a_repeated_ctrl_q_mid_operation_asks_to_quit_anyway(
+    modal, flag, what, quit_anyway
+):
+    """A flag that never clears must not make the app unquittable.
+
+    BulkSourcesModal's owner skips a covered modal's result, so its batch
+    flag can stay set for good; any operation can also hang (a fork behind a
+    held SQLite lock). Escape is refused there too, so before this answer
+    Ctrl+Q was the only way out, and the still-working refusal closed it.
+    The first Ctrl+Q only says it is still working; a later one asks.
+    """
+    screen, notices = _stand_in(**{flag: True})
+
+    assert await modal.confirm_quit(screen) is False
+    assert len(notices) == 1
+    assert quit_anyway.calls == [], "the first Ctrl+Q only says it is still working"
+
+    # Wait: still nothing is lost, and no second toast stacks up.
+    assert await modal.confirm_quit(screen) is False
+    assert len(notices) == 1
+    [(asked, message, copy)] = quit_anyway.calls
+    assert asked is screen
+    assert what in message.lower()
+    assert message.endswith(QUIT_ANYWAY_RISK)
+    assert copy == {
+        "title": QUIT_ANYWAY_TITLE,
+        "confirm_label": "Quit anyway",
+        "cancel_label": "Wait",
+    }
+
+    # Quit anyway: the user chose it, so the quit runs.
+    quit_anyway.answer = True
+    assert await modal.confirm_quit(screen) is True
+    assert len(quit_anyway.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_a_new_activity_is_announced_before_anything_is_asked(quit_anyway):
+    """Each distinct operation gets its own still-working notice first."""
+    screen, notices = _stand_in()
+
+    assert (
+        await refuse_quit_while_working(screen, "The draft is being discarded.")
+        is False
+    )
+    assert await refuse_quit_while_working(screen, "Draft cleanup is running.") is False
+    assert [message for message, _kwargs in notices] == [
+        f"The draft is being discarded. {QUIT_AGAIN_HINT}",
+        f"Draft cleanup is running. {QUIT_AGAIN_HINT}",
+    ]
+    assert quit_anyway.calls == []
 
 
 @pytest.mark.asyncio

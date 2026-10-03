@@ -367,10 +367,12 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
         """Stay while the export runs, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, mid-export; else True.
+            refuse_quit_while_working's answer mid-export; else True.
         """
         if not self._exporting:
             return True
         from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
 
-        return refuse_quit_while_working(self, "The export is still being written.")
+        return await refuse_quit_while_working(
+            self, "The export is still being written."
+        )

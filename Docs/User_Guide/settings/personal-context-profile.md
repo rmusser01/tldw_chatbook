@@ -115,7 +115,8 @@ continue or discard, and **Ctrl+Q** during one asks **Discard interview and
 quit?** first (**Continue interview** returns to it). Once you have chosen
 **Discard draft**, or a draft cleanup is running, Ctrl+Q does not ask again: it
 says the interview is still being discarded (or cleaned up) and stays open;
-press it again once the interview has closed. An encrypted draft
+press it again once the interview has closed (pressed again before that, it asks
+**Quit while still working?**; **Wait** stays). An encrypted draft
 already holds your submitted answers, so quitting keeps it without asking;
 text typed but not yet submitted is not kept, the same as **Keep draft**. You may also
 finish early. The draft and transcript objects

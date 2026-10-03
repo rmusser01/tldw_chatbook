@@ -9,7 +9,9 @@ binding, so the quit flow runs while any modal is open and asks each modal's
   the project-skills offer mid-import. Escape is refused there, but they had
   no ``confirm_quit``, so Ctrl+Q quit straight past the operation. Now Ctrl+Q
   says the dialog is still working and stays; once the operation settles, the
-  next Ctrl+Q quits as usual.
+  next Ctrl+Q quits as usual. Pressed again while it still runs, Ctrl+Q asks
+  whether to quit anyway, so an operation that never settles (a stuck Watchlists
+  bulk-sources batch, driven here) cannot make the app impossible to quit.
 * The generated video's Save-to-disk picker and its Replace confirmation.
   The capacity choice that asks "Discard generated video and quit?" is
   already closed by then, so the quit walk found no hook and the video was
@@ -288,6 +290,81 @@ async def test_ctrl_q_waits_for_a_project_skills_import(monkeypatch, tmp_path):
         )
 
 
+async def test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit(monkeypatch):
+    """A refusal whose flag never clears must not make the app unquittable.
+
+    BulkSourcesModal refuses Cancel and Escape until its owner answers the
+    batch, and its owner skips the answer when the modal is covered, so the
+    flag can stay set for good. Ctrl+Q was then the only way out; the
+    still-working refusal must not close it. Here nothing answers the batch
+    at all. The first Ctrl+Q says it is still working; the next asks, Wait
+    keeps the dialog, and Quit anyway quits.
+    """
+    from textual.widgets import TextArea
+
+    from tldw_chatbook.UI.Watchlists_Modules.bulk_sources_modal import (
+        BulkSourcesModal,
+    )
+
+    title = "Quit while still working?"
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        # No owner: the batch request reaches the app, which never answers.
+        modal = BulkSourcesModal()
+        await app.push_screen(modal)
+        await _until(pilot, lambda: app.screen is modal, "the bulk sources dialog")
+        await pilot.pause(0.2)
+        modal.query_one(
+            "#bulk-sources-draft", TextArea
+        ).text = "https://example.com/feed.xml"
+        modal.query_one("#bulk-sources-create", Button).press()
+        await _until(pilot, lambda: modal._batch_posted, "the batch to be posted")
+
+        await _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, "sources")
+        await pilot.press("escape")
+        await pilot.pause(0.2)
+        assert app.screen is modal, "the stuck dialog refuses Escape too"
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, title)) or bool(cleanups),
+            "the repeated Ctrl+Q to ask before quitting past the operation",
+            timeout=5.0,
+        )
+        assert cleanups == [], "a repeated Ctrl+Q quit without asking"
+        assert app.screen is _dialogs_titled(app, title)[0]
+        assert len(_still_working_notices(app)) == 1
+
+        # Wait: back to the dialog, nothing quit.
+        await pilot.press("escape")
+        await _until(pilot, lambda: app.screen is modal, "Wait to restore the dialog")
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Wait",
+        )
+        assert cleanups == []
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, title)),
+            "Ctrl+Q to ask again",
+            timeout=5.0,
+        )
+        await pilot.click("#confirm-button")
+        await _until(
+            pilot,
+            lambda: cleanups == [True],
+            "Quit anyway to reach the approved shutdown",
+            timeout=5.0,
+        )
+
+
 # --- The generated video's Save-to-disk picker (AC #2) ------------------------
 
 
@@ -429,10 +506,14 @@ def held_discard_coordinator():
             super().__init__(session)
             self.discard_started = threading.Event()
             self.release_discard = threading.Event()
+            #: Raised by the held discard once released, when set.
+            self.discard_error: Exception | None = None
 
         def discard(self, session_id):
             self.discard_started.set()
             self.release_discard.wait(10.0)
+            if self.discard_error is not None:
+                raise self.discard_error
             super().discard(session_id)
 
     coordinator = _HeldDiscardCoordinator(
@@ -532,6 +613,65 @@ async def test_ctrl_q_while_the_interview_discard_runs_waits_then_quits(
         await _assert_ctrl_q_quits(
             app, pilot, cleanups, "Ctrl+Q to quit once the interview closed"
         )
+
+
+async def test_a_failed_interview_discard_lets_ctrl_q_ask_again(
+    monkeypatch, held_discard_coordinator
+):
+    """A discard that fails leaves the interview open, so quitting asks again.
+
+    While the discard runs Ctrl+Q waits for it. When it fails the interview
+    is back in front of the user with its answers, nothing is running, and
+    quitting would lose a memory-only interview -- so Ctrl+Q must ask
+    "Discard interview and quit?" again, not keep saying it is still being
+    discarded.
+    """
+    title = "Discard interview and quit?"
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    coordinator = held_discard_coordinator
+    coordinator.discard_error = RuntimeError("discard failed")
+    results: list[object] = []
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        screen = await _interview_discarding(app, pilot, coordinator, results)
+        await _assert_ctrl_q_waits_for(app, pilot, screen, cleanups, "interview")
+
+        coordinator.release_discard.set()
+        await _until(
+            pilot,
+            lambda: not screen._busy,
+            "the failed discard to hand the interview back",
+        )
+        assert app.screen is screen and results == []
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: (
+                bool(_dialogs_titled(app, title))
+                or bool(_dialogs_titled(app, "Quit while still working?"))
+                or len(_still_working_notices(app)) > 1
+                or bool(cleanups)
+            ),
+            "Ctrl+Q after the failed discard to answer",
+            timeout=5.0,
+        )
+        assert _dialogs_titled(app, title), (
+            "Ctrl+Q still treats a failed discard as running"
+        )
+        assert cleanups == []
+
+        # Continue interview: the interview and its answers stay.
+        await pilot.press("escape")
+        await _until(pilot, lambda: app.screen is screen, "Continue interview")
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Continue interview",
+        )
+        assert cleanups == [] and results == []
 
 
 async def test_an_interview_discard_finishing_while_covered_still_closes_it(

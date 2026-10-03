@@ -291,7 +291,7 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
         ``_import_in_flight`` exists to prevent, with no way to know.
 
         Returns:
-            False, with a still-working notice, mid-import; else True.
+            refuse_quit_while_working's answer mid-import; else True.
         """
         if not self._import_in_flight():
             return True
@@ -299,7 +299,7 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             refuse_quit_while_working,
         )
 
-        return refuse_quit_while_working(
+        return await refuse_quit_while_working(
             self, "Project skills are still being imported."
         )
 

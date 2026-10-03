@@ -639,7 +639,7 @@ class ProfileInterviewScreen(
         if self._closing_activity is not None:
             from ...Widgets.quit_while_working import refuse_quit_while_working
 
-            return refuse_quit_while_working(self, self._closing_activity)
+            return await refuse_quit_while_working(self, self._closing_activity)
         if not self._quit_discards_interview():
             return True
         from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits

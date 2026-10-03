@@ -754,7 +754,9 @@ The keys, printed under the values, work while you type in Find:
 - **Ctrl+O** opens Chat settings on the highlighted pair with your
   unapplied edits, without applying or discarding them.
 - **Esc** closes without changing anything. If you edited a value, it asks
-  first: "Enter apply · d discard · Esc keep editing".
+  first: "Enter apply · d discard · Esc keep editing". **Ctrl+Q** with edited
+  values asks **Discard changes and quit?** (**Keep editing** returns to the
+  popover).
 
 Context and compaction settings live in Chat settings only; Apply here
 keeps the chat's compaction setting as it is.

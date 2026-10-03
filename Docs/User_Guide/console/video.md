@@ -68,7 +68,8 @@ What that means in practice:
   open (**Discard generated video and quit?**; **Stay** keeps the choice).
   After **Save to disk**, Ctrl+Q asks the same question while the file picker
   or its **Replace existing file?** / **Destination changed** question is
-  open; **Stay** returns you there.
+  open; **Stay** returns you there. Cancelling the file picker itself (Escape or
+  **Cancel**) discards the video without asking, so choose a file to keep it.
 - **"Save"** on a ready video card copies the file to
   `[chat.videos] save_location` (default `~/Downloads`) — the only way a
   video escapes ephemerality, and always an explicit act.

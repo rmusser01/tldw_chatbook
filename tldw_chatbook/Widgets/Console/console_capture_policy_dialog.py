@@ -839,9 +839,9 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
         """Stay while a change is applied, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, while applying; else True.
+            refuse_quit_while_working's answer while applying; else True.
         """
-        return _quit_unless_applying(
+        return await _quit_unless_applying(
             self, "Capture policy changes are still being saved."
         )
 
@@ -1080,14 +1080,14 @@ class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
         """Stay while a change is applied, as Escape does (TASK-33622.15).
 
         Returns:
-            False, with a still-working notice, while applying; else True.
+            refuse_quit_while_working's answer while applying; else True.
         """
-        return _quit_unless_applying(
+        return await _quit_unless_applying(
             self, "Trace privacy changes are still being saved."
         )
 
 
-def _quit_unless_applying(
+async def _quit_unless_applying(
     dialog: ConsoleCapturePolicyDialog | ConsoleTracePrivacyDialog, activity: str
 ) -> bool:
     """Answer the quit walk for a policy dialog that refuses Escape mid-apply.
@@ -1097,10 +1097,10 @@ def _quit_unless_applying(
         activity: What is still being saved, for the still-working notice.
 
     Returns:
-        True when nothing is being applied; False (with the notice) otherwise.
+        True when nothing is being applied; else refuse_quit_while_working's answer.
     """
     if not dialog._applying:
         return True
     from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
 
-    return refuse_quit_while_working(dialog, activity)
+    return await refuse_quit_while_working(dialog, activity)
