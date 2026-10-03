@@ -30,6 +30,11 @@
 # follow-up. --write carries a note forward for as long as its row
 # survives, so a re-pin never erases a review.
 #
+# A row `path::[Class.]function -> callee#N => ...` is instead a waiting
+# callable handed as positional argument N to a callee W003 cannot bind
+# to a parameter (defined outside the package, or a `*args`): what the
+# callee does with it is invisible here.
+#
 # path::[Class.]entry point[->scheduled callable] => path::[Class.]function
 # holding the push	occurrences[	note]
 tldw_chatbook/UI/ChatbookExportManagementWindow.py::ChatbookExportManagementWindow.on_button_pressed => tldw_chatbook/UI/ChatbookExportManagementWindow.py::ChatbookExportManagementWindow._delete_selected	1

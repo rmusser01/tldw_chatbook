@@ -1,5 +1,22 @@
 # Lessons: what counts as evidence a change works
 
+## A parametrize id of `live` skips the test unless `--run-live` is given
+
+**TASK-33621.33, 2026-10-03.** A new W003 checker test used
+`@pytest.mark.parametrize(..., ids=["live", "dead"])`. In scratch runs (a
+copy of the file outside the repo, used for red-on-dev and mutation checks)
+both cases ran, and the `live` case caught a mutation. In the worktree the
+same file reported `140 passed, 1 skipped`: `Tests/conftest.py`'s
+`pytest_collection_modifyitems` adds `skip("Need --run-live option to run")`
+to every item with `"live" in item.keywords`, and an exact param id is a
+keyword. The mutation evidence came from a run the repo's own command never
+reproduces. Renaming the ids to `live-def-takes-pick`/`dead-def-takes-pick`
+made both run. A test name such as `test_live_x` is not affected: only the
+exact keyword `live` (a param id, a marker, a class or module named `live`)
+is. **What to do:** read the skip count in the summary, not just the pass
+count, and run `-rs` once when it is nonzero. Never use `live` as a param id
+unless the case really needs a live server.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
