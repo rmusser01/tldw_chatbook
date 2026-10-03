@@ -97,26 +97,61 @@ def _say(message: str) -> None:
     print(message, file=sys.stderr, flush=True)
 
 
+def _open_tty():
+    """The controlling terminal, opened the way getpass opens it, or None.
+
+    None when there is no terminal (a service, CI, Windows).
+    """
+    try:
+        return open("/dev/tty", "r+", encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+
 def _choice(prompt: str) -> str:
     """Ask a non-secret, echoed question before the TUI starts.
 
+    Reads standard input when it is a terminal, else the controlling terminal
+    -- where getpass already read the password. With stdin redirected
+    (``tldw-cli < /dev/null``, some IDE run configurations) a person is still
+    at the keyboard (review round 2, R2-F7). Without any terminal it falls
+    back to standard input.
+
     Raises:
-        EOFError: Standard input is closed.
+        EOFError: Nothing more can be read.
     """
-    sys.stderr.write(prompt)
-    sys.stderr.flush()
-    line = sys.stdin.readline()
+    terminal = None if _stdin_is_terminal() else _open_tty()
+    if terminal is None:
+        sys.stderr.write(prompt)
+        sys.stderr.flush()
+        line = sys.stdin.readline()
+    else:
+        with terminal:
+            terminal.write(prompt)
+            terminal.flush()
+            line = terminal.readline()
     if not line:
         raise EOFError
     return line
 
 
 def _stdin_is_terminal() -> bool:
-    """Whether a person can answer an echoed question on standard input."""
+    """Whether standard input is a terminal."""
     try:
         return bool(sys.stdin) and sys.stdin.isatty()
     except (AttributeError, OSError, ValueError):
         return False
+
+
+def _can_answer() -> bool:
+    """Whether a person can answer an echoed question (stdin or the terminal)."""
+    if _stdin_is_terminal():
+        return True
+    terminal = _open_tty()
+    if terminal is None:
+        return False
+    terminal.close()
+    return True
 
 
 def _served_child() -> bool:
@@ -181,7 +216,7 @@ def startup_preflight() -> tuple[str | None, str | None]:
             # No password can unlock this file, but the reset needs none:
             # offer it where someone can answer (review round 1; the old copy
             # sent the user to hand-edit config.toml).
-            if not _stdin_is_terminal():
+            if not _can_answer():
                 return "configuration_unlock_unavailable", None
             _say(UNLOCK_VERIFIER_MISSING)
             return _give_up_choice(UNLOCK_RESET_EXPLAINED), None

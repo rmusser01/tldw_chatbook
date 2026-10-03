@@ -99,7 +99,7 @@ def secret(prompt):
     return answers.pop(0)
 seen = set()
 launcher.getpass.getpass = secret
-launcher._stdin_is_terminal = lambda: condition != 'no-verifier-headless'
+launcher._can_answer = lambda: condition != 'no-verifier-headless'
 launcher._choice = lambda prompt: (sys.stderr.write(prompt), choices.pop(0))[1]
 observed = []
 launcher.minimal_recovery = lambda reason: observed.append(reason) or 17
@@ -370,6 +370,64 @@ def test_unexpected_unlock_crash_prints_no_secret(tmp_path):
     assert result.returncode != 0
     assert "TypeError" in result.stderr
     _secrets_absent(result, verifier)
+
+
+class _FakeTerminal:
+    """Stands in for /dev/tty: answers lines, records what was written."""
+
+    def __init__(self, answers: list[str]) -> None:
+        self._answers = list(answers)
+        self.written: list[str] = []
+        self.closed = False
+
+    def write(self, text: str) -> int:
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        pass
+
+    def readline(self) -> str:
+        return self._answers.pop(0) if self._answers else ""
+
+    def close(self) -> None:
+        self.closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self.close()
+
+
+def test_the_reset_choice_reads_the_terminal_when_stdin_is_redirected(monkeypatch):
+    # Review round 2 (R2-F7): the password comes from /dev/tty (getpass), but
+    # the [R]eset/[Q]uit answer was read from stdin. With stdin redirected
+    # (`tldw-cli < /dev/null`, some IDE run configs) the choice hit EOF and
+    # quit at once, so a person at the terminal could never reach reset.
+    import io
+
+    from tldw_chatbook.Backup_Recovery import launcher
+
+    monkeypatch.setattr(launcher.sys, "stdin", io.StringIO(""))
+    terminal = _FakeTerminal(["r\n"])
+    monkeypatch.setattr(launcher, "_open_tty", lambda: terminal, raising=False)
+
+    assert launcher._give_up_choice() == launcher.UNLOCK_RESET_REASON
+    assert launcher.UNLOCK_CHOICE_PROMPT in "".join(terminal.written)
+    assert terminal.closed
+
+
+def test_without_any_terminal_the_choice_still_reads_stdin(monkeypatch):
+    import io
+
+    from tldw_chatbook.Backup_Recovery import launcher
+
+    monkeypatch.setattr(launcher.sys, "stdin", io.StringIO("q\n"))
+    monkeypatch.setattr(launcher, "_open_tty", lambda: None, raising=False)
+
+    assert launcher._give_up_choice() == launcher.UNLOCK_QUIT_REASON
+    assert launcher._can_answer() is False
 
 
 async def test_opening_a_profile_where_the_terminal_cannot_suspend_reports_it():
