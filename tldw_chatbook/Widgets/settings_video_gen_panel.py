@@ -146,7 +146,10 @@ class VideoGenSettingsPanel(Vertical):
         with Horizontal(classes="settings-input-row settings-select-row"):
             yield Static("Default backend", classes="settings-input-label")
             yield Select(
-                [(BACKEND_LABELS[backend_id], backend_id) for backend_id in BACKEND_IDS],
+                [
+                    (BACKEND_LABELS[backend_id], backend_id)
+                    for backend_id in BACKEND_IDS
+                ],
                 value=(
                     effective_default_backend
                     if effective_default_backend in BACKEND_IDS
@@ -255,9 +258,13 @@ class VideoGenSettingsPanel(Vertical):
                                 )
                             else:
                                 raw_value = raw_backend.get(spec.toml_key)
-                                default_value = "" if raw_value is None else str(raw_value)
+                                default_value = (
+                                    "" if raw_value is None else str(raw_value)
+                                )
                                 yield Input(
-                                    value=str(overlay.get(field_overlay_key, default_value)),
+                                    value=str(
+                                        overlay.get(field_overlay_key, default_value)
+                                    ),
                                     id=f"settings-videogen-field-{backend_id}-{spec.toml_key}",
                                     classes="settings-compact-input",
                                     placeholder=effective_placeholder(
@@ -281,7 +288,10 @@ class VideoGenSettingsPanel(Vertical):
             yield Static("Retention", classes="settings-input-label")
             retention_value = str(overlay.get("retention", cfg.retention))
             yield Select(
-                [("session (wipe on app start)", "session"), ("ttl (keep N hours)", "ttl")],
+                [
+                    ("session (wipe on app start)", "session"),
+                    ("ttl (keep N hours)", "ttl"),
+                ],
                 value=(
                     retention_value
                     if retention_value in RETENTION_CHOICES
@@ -295,9 +305,15 @@ class VideoGenSettingsPanel(Vertical):
         yield Checkbox(
             toggle_label(
                 "Confirm cost before paid generation",
-                bool(overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))),
+                bool(
+                    overlay.get(
+                        "confirm_cost_estimate", bool(cfg.confirm_cost_estimate)
+                    )
+                ),
             ),
-            value=bool(overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))),
+            value=bool(
+                overlay.get("confirm_cost_estimate", bool(cfg.confirm_cost_estimate))
+            ),
             id="settings-videogen-confirm_cost_estimate",
             tooltip="Ask before spending on a paid (cloud) video generation.",
         )

@@ -306,7 +306,9 @@ async def test_preset_load_prefills_unsaved_editable_definition(runs_db, preset)
         assert panel.query_one("#agents-description-input").value == preset.description
         assert panel.query_one("#agents-instructions-area").text == preset.instructions
         assert panel.query_one("#agents-model-input").value == ""
-        assert panel.query_one("#agents-tools-input").value == ", ".join(preset.tool_allowlist)
+        assert panel.query_one("#agents-tools-input").value == ", ".join(
+            preset.tool_allowlist
+        )
         assert panel.query_one("#agents-wall-seconds-input").value == ""
         assert "save" in _static_text(panel.query_one("#agents-status")).lower()
         if preset.name == BULK_READER_NAME:

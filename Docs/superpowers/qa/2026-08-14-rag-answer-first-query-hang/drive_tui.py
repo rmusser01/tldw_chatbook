@@ -81,7 +81,13 @@ while time.time() - t0 < TIMEOUT_S:
     el = time.time() - t0
     pane = "\n".join(capture())
     status = None
-    for token in ("searching · ", "Answering", "results for '", "No matches", "Blocked"):
+    for token in (
+        "searching · ",
+        "Answering",
+        "results for '",
+        "No matches",
+        "Blocked",
+    ):
         if token in pane:
             status = token
             break
@@ -103,6 +109,12 @@ print("final cpu:", cpu(), flush=True)
 for line in capture():
     if any(
         t in line
-        for t in ("results for '", "searching ·", "Evidence · top", "Answering", "Blocked")
+        for t in (
+            "results for '",
+            "searching ·",
+            "Evidence · top",
+            "Answering",
+            "Blocked",
+        )
     ):
         print("  |", line.strip()[:170], flush=True)

@@ -292,9 +292,7 @@ class ChangeTurnTracker:
                     repo = self.service.repo_for_root(root)
                     eligible = self._eligible_touched_paths(root, touched_paths)
                     if eligible:
-                        baseline = repo.snapshot(
-                            "turn baseline", force_paths=eligible
-                        )
+                        baseline = repo.snapshot("turn baseline", force_paths=eligible)
                     else:
                         baseline = repo.snapshot("turn baseline")
                     oversize = repo.last_oversize_excluded
@@ -481,15 +479,11 @@ class ChangeTurnTracker:
                         adds=sum(c.adds for c in changed),
                         dels=sum(c.dels for c in changed),
                     )
-                    self._defer_to_successor(
-                        successor_handle, key, provided, eligible
-                    )
+                    self._defer_to_successor(successor_handle, key, provided, eligible)
                     records.append(record)
                     continue
                 force_paths = list(
-                    dict.fromkeys(
-                        (*eligible, *handle.force_paths_for_root(key))
-                    )
+                    dict.fromkeys((*eligible, *handle.force_paths_for_root(key)))
                 )
                 if force_paths:
                     end = repo.snapshot("turn end", force_paths=force_paths)
@@ -501,9 +495,7 @@ class ChangeTurnTracker:
                 # disclosure covers exactly what is not tracked.
                 registered = handle.auto_registered.get(key, ())
                 nested = tuple(
-                    rel
-                    for rel in repo.last_nested_repos
-                    if rel not in registered
+                    rel for rel in repo.last_nested_repos if rel not in registered
                 )
                 if end == baseline:
                     # TASK-1975 (AC#6): an oversized file CREATED during
@@ -515,9 +507,7 @@ class ChangeTurnTracker:
                     )
                     # TASK-1976: a repo cloned mid-turn is a NEW hole —
                     # same disclosure rule as new oversize.
-                    new_nested = set(nested) - set(
-                        handle.baseline_nested.get(key, ())
-                    )
+                    new_nested = set(nested) - set(handle.baseline_nested.get(key, ()))
                     if new_oversize or new_nested:
                         records.append(
                             TurnChangeRecord(
@@ -584,9 +574,7 @@ class ChangeTurnTracker:
         # TASK-1975: force-add exists to defeat IGNORE rules, not the size
         # cap -- a tool-written oversized file is disclosed, never committed.
         cap = change_review_setting("max_file_bytes", DEFAULT_MAX_FILE_BYTES)
-        return [
-            rel for rel in in_root if not self._over_cap(root, rel, cap)
-        ]
+        return [rel for rel in in_root if not self._over_cap(root, rel, cap)]
 
     @staticmethod
     def _over_cap(root: Path, rel: str, cap: int) -> bool:

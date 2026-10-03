@@ -53,9 +53,7 @@ _DENY_LABEL = "Deny"
 _RAW_APPROVE_ONCE_LABEL = "Run once"
 _FAST_APPROVE_CLASS = "approval-row-fast-approve"
 _FAST_DENY_CLASS = "approval-row-fast-deny"
-_FAST_APPROVE_TOOLTIP = (
-    "Approve once and resume immediately (skips Select + Submit)."
-)
+_FAST_APPROVE_TOOLTIP = "Approve once and resume immediately (skips Select + Submit)."
 _FAST_DENY_TOOLTIP = "Deny and resume immediately (skips Select + Submit)."
 
 #: Per-row decision options, in display order. Values are the exact
@@ -112,6 +110,7 @@ def _is_raw_shell_row(call: Mapping[str, Any]) -> bool:
         call.get("server_key") == _RAW_SHELL_SERVER_KEY
         and call.get("tool_name") == _RAW_SHELL_TOOL_NAME
     )
+
 
 _EFFECT_LABELS: dict[str, str] = {
     "private_read": "may read private local data",
@@ -405,12 +404,32 @@ _ARGS_MIN_VALUE_LIMIT = 10
 #: `urinal` is not a URL.
 _DESTINATION_TOKENS: frozenset[str] = frozenset(
     {
-        "path", "paths", "filepath", "file", "files", "filename",
-        "dir", "dirs", "directory", "folder",
-        "dest", "destination", "target", "output", "out",
-        "src", "source", "input",
-        "url", "uri", "endpoint", "host", "hostname",
-        "cmd", "command", "script",
+        "path",
+        "paths",
+        "filepath",
+        "file",
+        "files",
+        "filename",
+        "dir",
+        "dirs",
+        "directory",
+        "folder",
+        "dest",
+        "destination",
+        "target",
+        "output",
+        "out",
+        "src",
+        "source",
+        "input",
+        "url",
+        "uri",
+        "endpoint",
+        "host",
+        "hostname",
+        "cmd",
+        "command",
+        "script",
     }
 )
 
@@ -1375,9 +1394,7 @@ class ChatApprovalCard(Container):
             return
         text = self._batch_summary or ""
         if text:
-            summary.update(
-                f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]"
-            )
+            summary.update(f"[dim italic]{SUMMARY_LABEL} {escape(text)}[/dim italic]")
             summary.display = True
         else:
             summary.update("")

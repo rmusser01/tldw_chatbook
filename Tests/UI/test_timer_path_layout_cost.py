@@ -102,10 +102,7 @@ class _LayoutCounter:
         return False
 
     def __repr__(self) -> str:  # pragma: no cover - only on failure
-        return (
-            f"layout={self.layout} reflow={self.reflow} "
-            f"ms={self.seconds * 1000:.2f}"
-        )
+        return f"layout={self.layout} reflow={self.reflow} ms={self.seconds * 1000:.2f}"
 
 
 async def _settle(pilot) -> None:
@@ -460,9 +457,7 @@ async def test_persona_buddy_frame_geometry_is_content_independent() -> None:
                 "one-row-at-width": "x" * width,
                 "one-past-width": "x" * (width + 1),
                 "full-box": "\n".join("." * width for _ in range(height)),
-                "taller-than-box": "\n".join(
-                    "." * width for _ in range(height * 3)
-                ),
+                "taller-than-box": "\n".join("." * width for _ in range(height * 3)),
                 "cjk-double-width": "漢" * width,
                 "rich-text": Text("\n".join("pet" for _ in range(height))),
             },

@@ -179,9 +179,9 @@ class PersonasPreviewPane(Vertical):
     def expand(self) -> None:
         """Show the collapsible body."""
         self.query_one("#personas-preview-body").display = True
-        self.query_one("#personas-preview-toggle", Button).label = (
-            f"▾ {PREVIEW_TOGGLE_LABEL}"
-        )
+        self.query_one(
+            "#personas-preview-toggle", Button
+        ).label = f"▾ {PREVIEW_TOGGLE_LABEL}"
 
     async def seed_greeting(self, text: str) -> None:
         """Store the greeting and restart the transcript from it.
@@ -253,7 +253,10 @@ class PersonasPreviewPane(Vertical):
             # same-character reload (task-438 review). prevent() suppresses both.
             with self.prevent(Select.Changed):
                 select.set_options(
-                    [(self._greeting_option_label(i, g), i) for i, g in enumerate(greetings)]
+                    [
+                        (self._greeting_option_label(i, g), i)
+                        for i, g in enumerate(greetings)
+                    ]
                 )
                 select.value = target
             row.display = True
@@ -286,7 +289,7 @@ class PersonasPreviewPane(Vertical):
                 continue
             line = self._lines[index]
             if line.startswith(full_old):
-                new_line = f"{new_label}: {line[len(full_old):]}"
+                new_line = f"{new_label}: {line[len(full_old) :]}"
             elif line == bare_old:
                 new_line = f"{new_label}:"
             else:
@@ -439,9 +442,7 @@ class PersonasPreviewPane(Vertical):
         # The toggle doubles as the section header, so it carries the
         # expand/collapse state (F-039).
         self.query_one("#personas-preview-toggle", Button).label = (
-            f"▾ {PREVIEW_TOGGLE_LABEL}"
-            if body.display
-            else f"▸ {PREVIEW_TOGGLE_LABEL}"
+            f"▾ {PREVIEW_TOGGLE_LABEL}" if body.display else f"▸ {PREVIEW_TOGGLE_LABEL}"
         )
 
     def _submit_preview_message(self) -> None:

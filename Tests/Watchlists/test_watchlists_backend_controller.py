@@ -66,7 +66,9 @@ def test_create_form_source_types_degrades_when_capability_is_absent(
         server_service=None,
     )
 
-    assert ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+    assert (
+        ctrl.create_form_source_types(runtime_backend=runtime_backend) == expected_types
+    )
 
 
 def test_create_form_source_types_fallback_does_not_log_exception_payload():

@@ -38,7 +38,9 @@ def test_wired_backfill_makes_preexisting_items_searchable(db):
     """task-688: the upgrade path end to end. A database with items that
     predate the FTS index becomes fully searchable after the wired
     (looping-to-completion) path runs, not just after a single chunk."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     for index in range(12):
         _insert_legacy_item(
@@ -51,23 +53,31 @@ def test_wired_backfill_makes_preexisting_items_searchable(db):
 
     # Confirm the rows really are unindexed first, or this test would pass
     # vacuously.
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts_docsize"
-    ).fetchone()[0] == 0
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts_docsize"
+        ).fetchone()[0]
+        == 0
+    )
 
     total = backfill_subscription_items_fts(db, chunk_size=5)
 
     assert total == 12
-    assert db.conn.execute(
-        "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
-        ("rubric",),
-    ).fetchone()[0] == 12
+    assert (
+        db.conn.execute(
+            "SELECT COUNT(*) FROM subscription_items_fts WHERE subscription_items_fts MATCH ?",
+            ("rubric",),
+        ).fetchone()[0]
+        == 12
+    )
 
 
 def test_wired_backfill_is_idempotent_once_complete(db):
     """A second call after completion indexes nothing and does not corrupt
     the index (fts5 'integrity-check' stays clean)."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _drop_ai_trigger(db)
     _insert_legacy_item(db, source_id, "https://a.example/1", "Item", "alpha content")
 
@@ -87,7 +97,9 @@ def test_wired_backfill_on_already_fully_indexed_db_is_a_noop(db):
     """A database with no legacy backlog at all (the common case, since the
     `_ai` trigger indexes every item going forward) should not error and
     should report nothing to do."""
-    source_id = db.add_subscription(name="ArXiv", type="rss", source="https://a.example/f")
+    source_id = db.add_subscription(
+        name="ArXiv", type="rss", source="https://a.example/f"
+    )
     _insert_legacy_item(db, source_id, "https://a.example/1", "Item", "alpha content")
 
     assert backfill_subscription_items_fts(db) == 0

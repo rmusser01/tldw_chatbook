@@ -400,7 +400,9 @@ def select_briefing_items(
     # The cap squeezes the auto side first. Only when featured items alone
     # exceed the cap do featured items themselves overflow -- newest kept.
     kept_featured = featured[:item_cap]
-    remaining_cap = item_cap - len(kept_featured) if len(kept_featured) < item_cap else 0
+    remaining_cap = (
+        item_cap - len(kept_featured) if len(kept_featured) < item_cap else 0
+    )
 
     if mode == MODE_CURATED:
         # Curated never reads the coverage window at all -- `curated` IS the

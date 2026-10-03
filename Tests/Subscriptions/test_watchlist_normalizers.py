@@ -75,8 +75,7 @@ def test_normalize_tolerates_a_row_with_no_body():
     assert item["content_kind"] is None
 
 
-def test_normalize_marks_a_paused_source_paused_and_says_so_in_status(
-) -> None:
+def test_normalize_marks_a_paused_source_paused_and_says_so_in_status() -> None:
     """task-2050 AC#1: a paused source must be distinguishable from
     inactive/healthy -- both `paused` and `status_summary` carry it."""
     from tldw_chatbook.Subscriptions.watchlist_normalizers import (
@@ -101,8 +100,7 @@ def test_normalize_marks_a_paused_source_paused_and_says_so_in_status(
     )
 
 
-def test_normalize_a_paused_source_with_a_last_error_still_says_paused(
-) -> None:
+def test_normalize_a_paused_source_with_a_last_error_still_says_paused() -> None:
     """task-2050: precedence is paused > error, not error > paused.
 
     A source auto-paused by repeated failures (task-1410) always still
@@ -137,8 +135,7 @@ def test_normalize_a_paused_source_with_a_last_error_still_says_paused(
     assert "error" not in source["status_summary"]
 
 
-def test_normalize_a_healthy_or_merely_inactive_source_is_unchanged(
-) -> None:
+def test_normalize_a_healthy_or_merely_inactive_source_is_unchanged() -> None:
     """Regression: task-2050 must not touch the two pre-existing statuses."""
     from tldw_chatbook.Subscriptions.watchlist_normalizers import (
         normalize_local_subscription_row,
@@ -302,9 +299,7 @@ def test_duration_is_measured_between_the_runs_own_timestamps():
     ],
 )
 def test_duration_scales_its_units(finished, expected):
-    run = _run(
-        started_at="2026-08-04T10:00:00+00:00", finished_at=finished, stats={}
-    )
+    run = _run(started_at="2026-08-04T10:00:00+00:00", finished_at=finished, stats={})
 
     assert run["duration"] == expected
 

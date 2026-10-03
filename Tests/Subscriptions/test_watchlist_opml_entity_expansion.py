@@ -63,8 +63,7 @@ _KNOWN_UNHARDENED: dict[str, str] = {
         "bytes if the endpoint or the transport is."
     ),
     "Utils/file_extraction.py": (
-        "Parses XML pulled out of user-supplied archives/documents during "
-        "extraction."
+        "Parses XML pulled out of user-supplied archives/documents during extraction."
     ),
 }
 
@@ -246,7 +245,9 @@ def _unhardened_modules() -> dict[str, list[tuple[int, str]]]:
     """Every module under `tldw_chatbook/` that parses XML unhardened."""
     found: dict[str, list[tuple[int, str]]] = {}
     for path in sorted(PACKAGE_ROOT.rglob("*.py")):
-        hits = unhardened_xml_parsers(path.read_text(encoding="utf-8", errors="replace"))
+        hits = unhardened_xml_parsers(
+            path.read_text(encoding="utf-8", errors="replace")
+        )
         if hits:
             found[path.relative_to(PACKAGE_ROOT).as_posix()] = hits
     return found

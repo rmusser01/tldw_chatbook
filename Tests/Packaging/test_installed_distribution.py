@@ -1762,38 +1762,48 @@ def test_built_artifacts_match_distribution_contract(
     sdist_members = _sdist_members(built_distributions.sdist)
     wheel_members = _wheel_members(built_distributions.wheel)
 
-    required_sdist = {
-        "LICENSE",
-        "README.md",
-        "CLAUDE.md",
-        "CHANGELOG.md",
-        "MANIFEST.in",
-        "pyproject.toml",
-        "requirements.txt",
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/css/components/stats_screen.css",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        *APACHE_SUBTREE_LICENSE_PATHS,
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        "tldw_chatbook/Backup_Recovery/native_qualification.json",
-        SEMANTIC_TRACE_MIGRATION_PATH,
-        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
-    required_wheel = {
-        "tldw_chatbook/css/tldw_cli_modular.tcss",
-        "tldw_chatbook/Config_Files/rag_pipelines.toml",
-        "tldw_chatbook/Evals/config/eval_config.yaml",
-        "tldw_chatbook/Third_Party/aider/LICENSE.txt",
-        "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
-        *APACHE_SUBTREE_LICENSE_PATHS,
-        AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
-        "tldw_chatbook/Backup_Recovery/native_qualification.json",
-        SEMANTIC_TRACE_MIGRATION_PATH,
-        SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
-    } | RUNTIME_MIGRATION_PATHS | SAMIRA_RESOURCE_PATHS | TIKTOKEN_RESOURCE_PATHS
+    required_sdist = (
+        {
+            "LICENSE",
+            "README.md",
+            "CLAUDE.md",
+            "CHANGELOG.md",
+            "MANIFEST.in",
+            "pyproject.toml",
+            "requirements.txt",
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/css/components/stats_screen.css",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
+            SEMANTIC_TRACE_MIGRATION_PATH,
+            SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+        | TIKTOKEN_RESOURCE_PATHS
+    )
+    required_wheel = (
+        {
+            "tldw_chatbook/css/tldw_cli_modular.tcss",
+            "tldw_chatbook/Config_Files/rag_pipelines.toml",
+            "tldw_chatbook/Evals/config/eval_config.yaml",
+            "tldw_chatbook/Third_Party/aider/LICENSE.txt",
+            "tldw_chatbook/Third_Party/textual_fspicker/LICENSE",
+            *APACHE_SUBTREE_LICENSE_PATHS,
+            AUDIO_CPP_ARTIFACT_MANIFEST_PATH,
+            "tldw_chatbook/Backup_Recovery/native_qualification.json",
+            SEMANTIC_TRACE_MIGRATION_PATH,
+            SEMANTIC_MUTATION_GUARD_MIGRATION_PATH,
+        }
+        | RUNTIME_MIGRATION_PATHS
+        | SAMIRA_RESOURCE_PATHS
+        | TIKTOKEN_RESOURCE_PATHS
+    )
     assert not required_sdist - sdist_members
     assert not required_wheel - wheel_members
     development_launcher = "scripts/run_speculative_voice_dev.py"
@@ -2707,9 +2717,7 @@ def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
             )
             target_stream = source.extractfile(target)
             assert target_stream is not None
-            payload = _weaken_tiktoken_requirement(
-                target_stream.read().decode("utf-8")
-            )
+            payload = _weaken_tiktoken_requirement(target_stream.read().decode("utf-8"))
             for member in members:
                 stream = source.extractfile(member) if member.isfile() else None
                 destination.addfile(member, stream)
@@ -2726,9 +2734,7 @@ def test_release_checker_rejects_metadata_trailing_dot_or_space_alias(
                 for name in archive.namelist()
                 if name.endswith(".dist-info/METADATA")
             )
-            payload = _weaken_tiktoken_requirement(
-                archive.read(target).decode("utf-8")
-            )
+            payload = _weaken_tiktoken_requirement(archive.read(target).decode("utf-8"))
             alias = f"{target}{suffix}"
             archive.writestr(alias, payload)
 
@@ -3037,7 +3043,9 @@ print("installed-app-only-voice-gate-ok")
 """
     with _read_only_installed_tree(target):
         results = [_run_child([sys.executable, "-c", INSTALLED_PROBE], run_root, env)]
-        results.append(_run_child([sys.executable, "-c", app_only_probe], run_root, env))
+        results.append(
+            _run_child([sys.executable, "-c", app_only_probe], run_root, env)
+        )
 
         script_path = os.pathsep.join(
             str(path) for path in (target / "bin", target / "Scripts")
@@ -3130,7 +3138,9 @@ def test_installed_tiktoken_bundle_missing_or_corrupt_falls_back_without_writes(
         / "tiktoken_cache"
         / "9b5ad71b2ce5302211f9c61530b329a4922fc6a4"
     )
-    assert asset.is_file(), "the installed wheel did not contain the reviewed cl100k table"
+    assert asset.is_file(), (
+        "the installed wheel did not contain the reviewed cl100k table"
+    )
     if mutation == "missing":
         asset.unlink()
     else:
