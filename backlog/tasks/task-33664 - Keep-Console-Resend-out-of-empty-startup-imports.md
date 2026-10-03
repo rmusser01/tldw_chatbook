@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 01:02'
+updated_date: '2026-10-03 01:20'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -100,4 +100,8 @@ Preserving release integration is independently approved at immutable source 353
 Root 46 incoming evaluation schema/client, synchronized metadata, app-only native authority, source-digest and two real mounted initial-hook polling/readiness refusal/restored Resend checks pass in 35.230s, exit 0. Independent immutable review is Ready with no actionable findings: every original API assertion survives, explicit True/False and partial omission remain covered, and removing only the incoming three-line Resend absence entry reproduces the original census bytes. Final original five budgets: 5 passes in 75.284s, exit 0, zero failures/errors/skips; app imports 681/686 and UI-ready 1033/1033. Original drift and stale pytest cleanup warnings remain, with zero UI headroom. All four actual guard sources are exact incoming f3, including the added Resend absence assertion; no pins, ceilings, counts, warmup, timeout or measured-work changes.
 Final 93 patch Python fatal/added-line, ten new full Ruff/format and whitespace checks pass; all CSS bundles reproduce. Diagnostics remain 638 owners/16 sinks (1429/56/7604 calls); workers remain 340 lookups/161 functions, 69 waits/27 roots, with no new sites. All 4,791 task IDs/paths are unique/readable. Evidence: /private/tmp/pr2918-release-*. Selections overlap and are not summed. Incoming TASK-33645 and TASK-33803 retain shipped In Progress statuses; no package/index/installed/native release is performed or certified. TASK-33266/33648/33662/33560 and all earlier positive and NON-GREEN limits remain unchanged.
 The initial ENOSPC rebase attempt left a clean plan HEAD and no rebase/index-lock state. Only 176 ignored regenerable bytecode cache directories (87,919,735 bytes) in the authorized checkout were removed; all source/evidence and other work were preserved. The same rebase completed 30 commits when disk space became available. No aggregate-resource or performance-cause qualification follows. Fresh published-head Qodo/all four jobs and protected head-pinned merge remain delivery gates; no merge is claimed.
+
+Preserving known-work trace integration qualifies immutable source e963c33d0476ba3ac8c868a8202232e44acfe1a4 on actual dev2612fc. After all four prior a0708ef jobs/Qodo passed, strict protection required the actual conflict update. Upstream initialization/generation/conditional probe compose within the existing admitted batch; all production SQL/100ms bound, runtime/schema/privacy/refund/nonreplay/physical custody and original Performance bytes stay exact. ADR097/199 apply; no new ADR/owner/gate/ceiling.
+Initial root54 selection is NON-GREEN53pass/1cold first-row assertion failure154.235s, retained with unchanged isolated1pass5.280s. The admission-count fixture now uses the existing clock seam with all86 original assertions exact; a separate real cold-worker0-row/checkpoint/retry/≤2admissions/zerohandle control detects an external ignore-time mutation at the intended assertion. Both affected modules29PASS37.151s. The original failure clock was unrecorded; no deterministic host-load cause is claimed. Append-only incident lesson preserves the entire prior prefix.
+Independent final review approves all131 hashes,129 unchanged entries and test/lesson qualification, no findings. Original5budgets PASS107.723s at681/686imports,1033/1033UI-ready with exact sources/limits/workload and original warnings. Original93/10 static plus owned fixture/whitespace, CSS12, diagnostics638/16, workers340/161/69/27 and4793 task guards pass; inherited whole-fileI001/format remains exact. Incoming TASK33801 Done/TASK33802 To Do/QA artifacts retain shipped status/content; no wider audit or separate program closure. All earlier positive/NON-GREEN limits remain. Documentation closure preserves approved hashes; exact observeda0708ef lease publication and fresh-head Qodo/four jobs/protected merge remain delivery gates.
 <!-- SECTION:NOTES:END -->
