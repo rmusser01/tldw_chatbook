@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  ┌──────────────────────────────────────────────────────────────┐  S  Select a skill to inspect it here.               │
+│ │ Navigation                     │  a  │ Skills (4)                                                   │  k                                                   │
+│ │     Import…                    │  v  │ Skill trust isn't set up, so every skill you added reads     │  i                                                   │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ │     │ "needs review" — built-in skills don't need it. Set it up to │  l                                                   │
+│ │ ▊ Search Library…         ▎▊x▎ │     │ review and use yours.                                        │  l                                                   │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ │     │   Set up skill trust                                         │  s                                                   │
+│ │                                │     │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │                                                      │
+│ │ ────────────────────────────── │     │ ▊ Filter skills… (Enter)                                   ▎ │                                                      │
+│ │ Browse                     ▾   │     │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │                                                      │
+│ │    Media (23) — your files     │     │                                                              │                                                      │
+│ │    Conversations (12)          │     │    sort: Name                                                │                                                      │
+│ │    Notes (122)                 │     │    Import skill…                                             │                                                      │
+│ │    Prompts (10) — reuse        │     │  › ⚠ character-creator · needs review · overrides built-in   │                                                      │
+│ │  ▸ Skills (4) — AI add-ons     │<--- │ invocable: user & agent · Create or edit roleplay character  │                                                      │
+│ │    Collections (6)             │     │ cards with the user — interview, draft every field, confirm, │                                                      │
+│ │    Search / RAG — find all     │     │ then save with the character tools.                          │                                                      │
+│ │ ────────────────────────────── │     │                                                              │                                                      │
+│ │ Artifacts                  ▾   │     │  ⚠ daily-log-digest · needs review                           │                                                      │
+│ │    All artifacts               │     │ invocable: user & agent · Summarise the last seven "Daily    │<---                                                  │
+│ │    Chatbooks                   │     │ log" notes into a weekly digest.                             │                                                      │
+│ │    Reports                     │     │                                                              │                                                      │
+│ │ ────────────────────────────── │     │  ⚠ literature-synthesis · needs review                       │                                                      │
+│ │ Create                     ▾   │     │ invocable: user & agent · Group paper summaries from Library │                                                      │
+│ │    New note                    │     │ notes into themes with citations.                            │                                                      │
+│ │    New prompt                  │<--- │                                                              │                                                      │
+│ │    New skill                   │     │  ⚠ meeting-notes-cleanup · needs review                      │                                                      │
+│ │ ────────────────────────────── │     │ invocable: user & agent · Turn raw meeting notes into        │                                                      │
+│ │ Study                      ▾   │     │ decisions, action items and open questions.                  │                                                      │
+│ │    Study decks (0)             │     │                                                              │                                                      │
+│ │    Flashcards due: 0           │     │                                                              │                                                      │
+│ │    Quizzes (0)                 │     │                                                              │                                                      │
+│ │ ────────────────────────────── │     │                                                        ╭──────────────────────────────────────────────────────────╮ │
+│ │ Import / Export            ▾   │     │                                                        │                                                          │ │
+│ │    Import…                     │     │                                                        │ Copied to your skills — edit your copy. It needs review  │ │
+│ │    Export                      │     │                                                        │ before the assistant can use it.                         │ │
+│ │ ────────────────────────────── │     │                                                        │                                                          │ │
+│ │ Details                    ▸   │     │                           1-4 of 4                     ╰──────────────────────────────────────────────────────────╯ │
+│ └────────────────────────────────┘     └──────────────────────────────────────────────────────────────┘                                                      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

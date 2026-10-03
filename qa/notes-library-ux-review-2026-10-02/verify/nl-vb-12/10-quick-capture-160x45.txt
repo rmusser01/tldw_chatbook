@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐  N  Collections                                         I   Local Collections · example.org                               │
+│ │ Navigation                     │  a     Quick Capture    Filters                         t                                                                 │
+│ │     Import…                    │  v     Sort: saved desc                                 e   Zettelkasten in practice                                      │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎  │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  m   A. Writer · 2 min read · Reading · Local                      │
+│ │ ▊ Search Library…        ▎▊x▎  │     ▊                                                ▎  s                                                                 │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎  │     ▊ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▎        Mark Read    Favorite    Move to Archive                    │
+│ │                                │     ▊ ▊  https://example.com/article               ▎ ▎                                                                    │
+│ │ ─────────────────────────────  │     ▊ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▎      ───────────────────────────────────────────────────────────   │
+│ │ Browse                    ▾    │     ▊                                                ▎         Open Original    More                                      │
+│ │    Media (23) — your files     │     ▊ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▎                                                                    │
+│ │    Conversations (12)          │     ▊ ▊  Title (optional)                          ▎ ▎         ✓ Read    Highlights    Notes    Info                      │
+│ │    Notes (122)                 │     ▊ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▎                                                                    │
+│ │    Prompts (10) — reuse        │     ▊                                                ▎      Atomic notes, each with one idea, linked densely. Atomic      │
+│ │    Skills (4) — AI add-ons     │<--- ▊ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▎      notes, each with one idea, linked densely. Atomic notes,      │
+│ │  ▸ Collections (1)             │     ▊ ▊  Tags, comma separated (optional)          ▎ ▎      each with one idea, linked densely. Atomic notes, each with   │
+│ │          All Captures          │     ▊ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▎      one idea, linked densely. Atomic notes, each with one idea,   │
+│ │              Saved             │     ▊                                                ▎      linked densely. Atomic notes, each with one idea, linked      │
+│ │         ▸ Reading (1)          │     ▊ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ ▎      densely. Atomic notes, each with one idea, linked densely.    │
+│ │              Read              │     ▊ ▊                                            ▎ ▎<---  Atomic notes, each with one idea, linked densely. Atomic      │
+│ │            Archived            │     ▊ ▊                                            ▎ ▎      notes, each with one idea, linked densely. Atomic notes,      │
+│ │            Favorites           │     ▊ ▊                                            ▎ ▎      each with one idea, linked densely. Atomic notes, each with   │
+│ │         Study material         │     ▊ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ ▎      one idea, linked densely. Atomic notes, each with one idea,   │
+│ │        Unread favourites       │     ▊                                                ▎      linked densely. Atomic notes, each with one idea, linked   ▆  │
+│ │    Search / RAG — find all     │     ▊    Save capture     Cancel                     ▎      densely. Atomic notes, each with one idea, linked densely.    │
+│ │ ─────────────────────────────  │<--- ▊                                                ▎      Atomic notes, each with one idea, linked densely. Atomic      │
+│ │ Artifacts                 ▾    │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎      notes, each with one idea, linked densely. Atomic notes,      │
+│ │    All artifacts               │                                                             each with one idea, linked densely. Atomic notes, each with   │
+│ │    Chatbooks                   │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎      one idea, linked densely. Atomic notes, each with one idea,   │
+│ │    Reports                     │     ▊  Filter captures                               ▎      linked densely. Atomic notes, each with one idea, linked      │
+│ │ ─────────────────────────────▁ │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎      densely. Atomic notes, each with one idea, linked densely.    │
+│ │ Create                    ▾    │        ▸ Loaded in Reader  Zettelkasten in practice         Atomic notes, each with one idea, linked densely. Atomic      │
+│ │    New note                    │              example.org · 2026-10-03 · Reading ·           notes, each with one idea, linked densely. Atomic notes,      │
+│ │    New prompt                  │                                                             each with one idea, linked densely. Atomic notes, each with   │
+│ │    New skill                   │                                                             one idea, linked densely. Atomic notes, each with one idea,   │
+│ │ ─────────────────────────────  │                                                             linked densely. Atomic notes, each with one idea, linked      │
+│ │ Study                     ▾    │                                                             densely. Atomic notes, each with one idea, linked densely.    │
+│ │  ▾ scroll for more             │                                                             Atomic notes, each with one idea, linked densely. Atomic      │
+│ └────────────────────────────────┘     1–1 of 1                                                notes, each with one idea, linked densely. Atomic notes,      │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  / focus search | F6 next pane | esc focus rail | F1 help · Ctrl+P palette · Ctrl+Q quit

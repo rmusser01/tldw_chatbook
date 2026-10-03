@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ ┌────────────────────────────────┐┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐ │
+│ │ Navigation        Collapse     ││ ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────  │ │
+│ │     Import…                    ││                                                                                                                        │ │
+│ │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎▊▔▎ ││  openai · gpt-5.6-terra · $0.0006 (94 tok)                                                                             │ │
+│ │ ▊ retrieval practice      ▎▊x▎ ││                                                                                                                        │ │
+│ │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎▊▁▎ ││                                                                                                                        │ │
+│ │                                ││ Evidence · top 15                                                                                                      │ │
+│ │ ────────────────────────────── ││  2 results for 'retrieval practice'.                                                                                   │ │
+│ │ Browse                     ▾   ││                                                                                                                        │ │
+│ │    Media (24) — your files     ││  Semantic search found nothing from: Notes, Conversations.                                                             │ │
+│ │    Conversations (12)          ││                                                                                                                        │ │
+│ │    Notes (122)                 ││ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │    Prompts (10) — reuse        ││ │                                                                                                                   │  │ │
+│ │    Skills (4) — AI add-ons     ││ │ 1. paper-retrieval-practice | match: strong                                                                       │  │ │
+│ │    Collections (6)             ││ │ Media · 4 citations                                                                                               │  │ │
+│ │  ▸ Search / RAG — find all     ││ │ Retrieval practice improves long-term retention Abstract. We compare rereading with retrieval practice in 120     │  │ │
+│ │ ────────────────────────────── ││ │ undergraduates. Results. Retrieval practice improved 7-day retention by 21 percentage points. Discussion. Effects │  │ │
+│ │ Artifacts                  ▾   ││ │ held across subject areas. Abstract. We compare rereading with retrieval practice in 120…                         │  │ │
+│ │    All artifacts               ││ │Citations: paper-retrieval-practice, paper-retrieval-practice, paper-retrieval-practice, paper-retrieval-practice  │  │ │
+│ │    Chatbooks                   ││ │                                                                                                                   │▃ │ │
+│ │    Reports                     ││ │   Open      Select evidence                                                                                       │  │ │
+│ │ ────────────────────────────── ││ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │ │
+│ │ Create                     ▾   ││ ┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐  │ │
+│ │    New note                    ││ │                                                                                                                   │  │ │
+│ │    New prompt                  ││ │ 2. Make It Stick — chapter 2 (PDF excerpt) | keyword match                                                        │  │ │
+│ │    New skill                   ││ │ Media · 3 citations                                                                                               │  │ │
+│ │ ────────────────────────────── ││ │ Several open problems remain, especially around evaluation. This section summarises the most cited findings.      │  │ │
+│ │ Study                      ▾   ││ │ Retrieval practice has changed significantly over the past decade. Practical guidance often lags behind the       │  │ │
+│ │    Study decks (0)             ││ │ evidence. Readers should treat early results with caution. Retrieval practice has changed…                        │  │ │
+│ │    Flashcards due: 0           ││ │Citations: Make It Stick — chapter 2 (PDF excerpt), Make It Stick — chapter 2 (PDF excerpt), Make It Stick —       │  │ │
+│ │    Quizzes (0)                 ││ │chapter 2 (PDF excerpt)                                                                                            │  │ │
+│ │ ────────────────────────────── ││ │                                                                                                                   │  │ │
+│ │ Import / Export            ▾   ││ │   Open      Select evidence                                                                                       │  │ │
+│ │    Import…                     ││ └───────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘  │ │
+│ │    Export                      ││                                                                                                                        │ │
+│ │ ────────────────────────────── ││ ╭───────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮  │ │
+│ │ Details                    ▸   ││ │  ▶ Recent searches                                                                                                │▇ │ │
+│ └────────────────────────────────┘└────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  u use Library context in Console | o open evidence | / focus search | F6 next pane | F1 help · Ctrl+P palette · Ctrl+Q quit

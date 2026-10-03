@@ -1,0 +1,45 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP  F2 Lab  F3 Logs  F4 Settings  F5 Researc  More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+  Library notes  |  Folder files
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│ Folder files · Folder: gitvault · Git · 1 change                                                                                                             │
+│ Linked · Local folder: gitvault                                                                              Details    Change…   Review recovered pairing…  │
+│   N  Folder files                                           │  F   README.md                                                                                 │
+│   a  Lists .md, .markdown, .txt and .text. Other files stay │  o   Saved                                                                                     │
+│   v  on disk.                                               │  l                                                                                             │
+│              ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  d   File details & path                                                                       │
+│      Search  ▊  File contents…                            ▎ │  e   $TMPROOT/9a661…README.md │
+│              ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  r   File actions                                                                              │
+│      ▼ gitvault                                             │  f   Session Git                                                                               │
+│      ├── ▶ Areas                                            │  i     ‹ Files    Refresh                                                                      │
+│      ├── ▶ attachments                                      │  l   Review session changes                                                                    │
+│      ├── ▶ Daily                                            │  e   Repository: $TMPROOT/…          │
+│      ├── ▶ Inbox                                            │  s   tbook/9a6612d8-88a3-469a-a5da-1307bdff44b8/scratchpad/vb4/gitvault · Branch: main         │
+│      ├── ▶ Projects                                         │      Review and commit only notes changed during this Chatbook session.                        │
+│ ---> ├── ▶ Templates                                        │      Up/Down select · Tab actions · Enter run · Esc back                                       │
+│      └── README.md                                          │       EDITED    README.md                                                                      │
+│                                                             │       READY TO STAGE · Git: unstaged                                                           │
+│                                                             │      Status: CURRENT · READY — 1 can be staged · 0 can be unstaged.                            │
+│                                                             │      Selected note: README.md                                                                  │
+│                                                             │<---    Stage                                                                                   │
+│                                                             │        Show bulk · 1 stage                                                                     │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │      Stage at least one session note to commit                                                 │
+│ --->                                                        │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │                                                                                                │
+│                                                             │      Danger                                                                                    │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  F6 next pane | esc notes | F1 help · Ctrl+P palette · Ctrl+Q quit

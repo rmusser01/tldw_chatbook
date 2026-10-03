@@ -1,0 +1,36 @@
+                       ╭────────────╮
+ ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflows  ⌃9 MCP  ⌃0 ACP    More ▾
+────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ Library | Local
+┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   N  ┌──────────────────────────────────────────────────────┐  P    ‹ Back to list                                   │
+│   a  │ Prompts (10)                                         │  r  Name                                               │
+│   v  │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │  o  ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │ ▊ Filter prompts… (Enter)                          ▎ │  m  ▊ SQL query explainer v16                       ▎  │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │  p  ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│      │                                                      │  t                                                     │
+│      │   collection: All prompts                            │  s  Description                                        │
+│      │    sort: Newest        Select                        │     ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎  │
+│      │      Import…          Export…                        │     ▊ Explain a query line by line.                 ▎  │
+│      │  Release notes from commits                          │     ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎  │
+│ ---> │  Local · User only                                   │                                                        │
+│      │                                                   ▂  │          Basic           Advanced           Info       │
+│      │  Weekly review coach                                 │                                                        │
+│      │  Local · has system and user text                    │     Modified 4h · v1 · • Unsaved changes               │
+│      │                                                      │<---                                                    │
+│      │  SQL query explainer                                 │     Persisted source: Local · Prompt · text format     │
+│      │  Local · has system and user text                    │     History and collection memberships describe the    │
+│      │                                                      │     saved Prompt; unsaved Basic or Advanced edits      │
+│ ---> │ 1-10 of 10                                           │     remain draft-only until Save.                      │
+│      │                                                      │                                                        │
+│      │                                                      │                                                        │
+│      │                                                      │     Collections                                        │
+│      │                                                      │     No collections                                     │
+│      │                                                   ╭─────────────────────────────────────────────────────────╮ │
+│      │                                                   │                                                         │ │
+│      │                                                   │ Unsaved Prompt changes — Save or Discard changes first. │ │
+│      │                                                   │                                                         │ │
+│      │                                                   ╰─────────────────────────────────────────────────────────╯ │
+│      └──────────────────────────────────────────────────────┘                      Discard changes                   │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+  typing in field | esc save or discard first | after esc: / focus search | F6 next pane | F1 · Ctrl+P · Ctrl+Q
