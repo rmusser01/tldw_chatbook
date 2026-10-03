@@ -1314,3 +1314,8 @@ passes remain separately recorded, no fresh whole24/37/native/full-suite
 claim. All three selected tasks remain In Progress until exact clean/resolved
 Qodo/all four hosted gates, final Done metadata-head review/checks and verified
 normal protected merge. Auto-merge stays off.
+
+
+Backlog-only dev rebase (2026-10-03 UTC)
+
+Dev af138397408d596a1c72c1e8e9987ea95d497b94 adds only unimplemented TASK-34117, a separate trace-GC maintenance follow-up. All50 preceding PR patches are exact; whole old/new tree delta is only that inherited task. All262 qualified source pins, every production/test/fixture/guard/CI/derived-artifact source and existing passing evidence retain exact identities. Fresh Backlog ID/readability checks pass on the only changed input. No repeat full preflight/performance/mounted/native/full-suite claim. QA oct03_gc_followup_task_dev_rebase records complete range/tree proof. No new ADR: documentation-only integration. All three selected tasks stay In Progress; fresh exact-head clean/resolved Qodo and all four hosted gates, final Done metadata-head review/checks and protected normal merge remain required. Auto-merge off.
