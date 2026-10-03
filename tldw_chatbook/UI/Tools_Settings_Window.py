@@ -102,6 +102,7 @@ from ..Chat.provider_readiness import (
     chat_api_key_field_state,
     chat_api_key_value_to_persist,
 )
+
 #
 # Local Imports
 #
@@ -2523,7 +2524,10 @@ class ToolsSettingsWindow(Container):
     def _compose_notes_config_form(self) -> ComposeResult:
         """Point legacy settings users to the lasting-sync Library flow."""
         yield Container(
-            Static("Notes folder sync is managed from Library → Notes → Add from files…", classes="form-section-title"),
+            Static(
+                "Notes folder sync is managed from Library → Notes → Add from files…",
+                classes="form-section-title",
+            ),
             classes="config-form",
         )
 
@@ -3222,9 +3226,7 @@ class ToolsSettingsWindow(Container):
                 with Horizontal(classes="tool-item"):
                     with Container(classes="tool-info"):
                         yield Label(tool_name, classes="tool-name")
-                        yield Static(
-                            "Always available", classes="tool-description"
-                        )
+                        yield Static("Always available", classes="tool-description")
 
             for entry in gateable_builtin_tools():
                 try:
@@ -3345,7 +3347,9 @@ class ToolsSettingsWindow(Container):
                 "Database Tools", id="ts-nav-db-tools", classes="ts-nav-button"
             )
             yield Button("Appearance", id="ts-nav-appearance", classes="ts-nav-button")
-            yield Button("Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button")
+            yield Button(
+                "Tool Settings", id="ts-nav-tool-settings", classes="ts-nav-button"
+            )
             yield Button("Outputs", id="ts-nav-outputs", classes="ts-nav-button")
             yield Button("Sharing", id="ts-nav-sharing", classes="ts-nav-button")
             yield Button("About", id="ts-nav-about", classes="ts-nav-button")
@@ -3903,9 +3907,7 @@ class ToolsSettingsWindow(Container):
             self.query_one(
                 "#general-character-provider", Select
             ).value = default_char_provider
-            self.query_one(
-                "#general-character-model", Input
-            ).value = "claude-haiku-4-5"
+            self.query_one("#general-character-model", Input).value = "claude-haiku-4-5"
             self.query_one("#general-character-temperature", Input).value = "0.8"
 
             # Reset Encryption
@@ -3957,7 +3959,8 @@ class ToolsSettingsWindow(Container):
                     streaming=False,
                 ),
                 thread=True,
-                exclusive=True, group="tools-settings-test-chat-connection",
+                exclusive=True,
+                group="tools-settings-test-chat-connection",
             )
             test_response = extract_response_content(raw)
 
@@ -4082,19 +4085,25 @@ class ToolsSettingsWindow(Container):
                     model = models[0]
 
                     # Test with a simple message
-                    from ..Chat.Chat_Functions import chat_api_call, extract_response_content
+                    from ..Chat.Chat_Functions import (
+                        chat_api_call,
+                        extract_response_content,
+                    )
 
                     raw = await self.run_worker(
                         lambda: chat_api_call(
                             api_endpoint=provider,
-                            messages_payload=[{"role": "user", "content": "Test. Reply OK."}],
+                            messages_payload=[
+                                {"role": "user", "content": "Test. Reply OK."}
+                            ],
                             model=model,
                             temp=0.1,
                             max_tokens=10,
                             streaming=False,
                         ),
                         thread=True,
-                        exclusive=True, group="tools-settings-test-all-api-keys",
+                        exclusive=True,
+                        group="tools-settings-test-all-api-keys",
                     )
 
                     if extract_response_content(raw):
@@ -4638,9 +4647,7 @@ class ToolsSettingsWindow(Container):
                 "#config-anthropic-env-var", Input
             ).value = "ANTHROPIC_API_KEY"
             self.query_one("#config-anthropic-api-key", Input).value = "<API_KEY_HERE>"
-            self.query_one(
-                "#config-anthropic-model", Input
-            ).value = "claude-sonnet-5"
+            self.query_one("#config-anthropic-model", Input).value = "claude-sonnet-5"
             self.query_one("#config-anthropic-temperature", Input).value = "0.7"
 
             self.app_instance.notify("API configuration reset to defaults!")
@@ -5434,9 +5441,7 @@ class ToolsSettingsWindow(Container):
         """Reset character configuration form to defaults."""
         try:
             self.query_one("#config-character-provider", Select).value = "Anthropic"
-            self.query_one(
-                "#config-character-model", Input
-            ).value = "claude-haiku-4-5"
+            self.query_one("#config-character-model", Input).value = "claude-haiku-4-5"
             self.query_one(
                 "#config-character-system-prompt", TextArea
             ).text = "You are roleplaying as a witty pirate captain."
@@ -5619,7 +5624,7 @@ class ToolsSettingsWindow(Container):
             "ts-view-db-tools": "ts-nav-db-tools",
             "ts-view-appearance": "ts-nav-appearance",
             "ts-view-tool-settings": "ts-nav-tool-settings",
-            "ts-view-about": "ts-nav-about"
+            "ts-view-about": "ts-nav-about",
         }
 
         for v_id, btn_id in nav_buttons.items():
@@ -6123,8 +6128,10 @@ class ToolsSettingsWindow(Container):
             # Report results
             all_ok = bool(results) and all(r.endswith("OK") for r in results)
             severity = "success" if all_ok else "error"
-            message = "Integrity check results:\n" + "\n".join(results) if results else (
-                "No databases found to check"
+            message = (
+                "Integrity check results:\n" + "\n".join(results)
+                if results
+                else ("No databases found to check")
             )
 
             self.app.call_from_thread(
@@ -6493,9 +6500,7 @@ class ToolsSettingsWindow(Container):
         if resolver is None:
             return ""
         try:
-            db_path = (
-                resolver(ignore_override=True) if ignore_override else resolver()
-            )
+            db_path = resolver(ignore_override=True) if ignore_override else resolver()
         except Exception as e:
             logger.error(
                 "Could not resolve {}display path for {} database: {}",

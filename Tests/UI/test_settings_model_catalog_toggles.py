@@ -58,7 +58,9 @@ async def _open_providers_category(host, pilot):
     return screen
 
 
-async def _wait_for_save_calls(save_mock, pilot, count: int, *, timeout: float = 2.0) -> None:
+async def _wait_for_save_calls(
+    save_mock, pilot, count: int, *, timeout: float = 2.0
+) -> None:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if save_mock.call_count >= count:

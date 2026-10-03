@@ -22,17 +22,17 @@ class ToolsSettingsScreen(BaseAppScreen):
     """
     Tools & Settings screen wrapper.
     """
-    
-    def __init__(self, app_instance: 'TldwCli', **kwargs):
+
+    def __init__(self, app_instance: "TldwCli", **kwargs):
         super().__init__(app_instance, "tools_settings", **kwargs)
         self.tools_window = None
-    
+
     def compose_content(self) -> ComposeResult:
         """Compose the tools settings window content."""
         self.tools_window = ToolsSettingsWindow(self.app_instance, classes="window")
         # Yield the window widget directly
         yield self.tools_window
-    
+
     async def handle_runtime_backend_changed(self, runtime_backend: str) -> None:
         """Refresh runtime-sensitive child content when the active source changes."""
         if self.tools_window:
@@ -42,7 +42,7 @@ class ToolsSettingsScreen(BaseAppScreen):
         """Forward button events to the ToolsSettingsWindow handler."""
         if self.tools_window:
             await self.tools_window.on_button_pressed(event)
-    
+
     async def on_markdown_link_clicked(self, event: Markdown.LinkClicked) -> None:
         """Forward markdown link clicks to the ToolsSettingsWindow handler."""
         if self.tools_window:
