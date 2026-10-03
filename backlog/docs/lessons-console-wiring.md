@@ -447,3 +447,42 @@ cleared the 21-case strict gate. Trace unpublished allocations and the first ope
 (including requester attribution before later source reads), not just caches or
 registry counts. Preserve the original error and failed-close evidence; do not
 invent a global closer or GC policy to hide a failed initialization owner.
+
+## Local not-sent copy must stay separate from agent diagnostic custody
+
+**PR2918 strict-base integration, 2026-10-03.** Shipped TASK32369 introduced
+Anthropic/Cohere pre-network refusals and a field-only `not sent` presentation.
+Its two stream tests read the former generic-wrapper copy through
+`describe_stream_failure`. The existing ADR211 composition projects typed
+errors to content-free diagnostics and carries sanitized Console presentation
+separately. The unchanged incoming selection therefore had **3 passes / 2
+failures in 1.580s XML**. Moving the local wrapper ahead of the typed payload
+would make those assertions pass by putting presentation into exception
+message/STEP_ERROR, violating the approved custody boundary.
+
+The preserving queue composition carries both values and consumes the typed
+payload first. Only the two incoming display oracles now read
+`describe_console_stream_failure`; status/no-HTTP checks, real handlers,
+bootstrap admission, no-network fixture and the three passing cases stay
+intact. Separate diagnostic checks and two actual Console controls exercise
+direct toast/row and default-agent row, real SQLite STEP_ERROR and admitted
+run-log files. The initial new selection was **4 passes / 3 failures in
+2.104s XML**: its expected `ChatConfigurationError()` defaults to HTTP500,
+whereas these failures explicitly have `status_code=None`. Correcting only
+those three expected constructors yields **7 passes in 1.819s XML**; unchanged
+typed status/redaction/audit neighbors pass **16 in 4.072s XML**. No production
+repair, diagnostic leak, marker/config/readiness bypass or live provider run
+followed. Raw/XML and command/exit receipts remain
+`/private/tmp/pr2918-localcheck-{original-local,local-green,local-final,provider-neighbors}.*`.
+
+The adjacent unchanged Voice selection is **NON-GREEN: 58 passes / one summary
+failure in 32.607s XML**. The exact incoming failed node reproduces the same
+`RecoveryRequired('raw_source_selection_changed')` message in **3.539s XML**.
+That is source/baseline evidence, not a timing/profile cause or broad wizard
+certificate. The moved class AST, eight registered handlers and six logger
+call ASTs are exact; the wizard's lowered 9866 pin passes both scoped size
+cases. Artifact counting corrected the prospective thirteen test-patch count
+to fourteen actual calls (thirteen OmniVoice plus one setup-resume) before
+review, with stopped metadata invocations retained. All positive/NON-GREEN
+raw/XML, late stale-cleanup tails and physical/service/provisioning/playback
+limits remain. Overlapping selections are never summed.
