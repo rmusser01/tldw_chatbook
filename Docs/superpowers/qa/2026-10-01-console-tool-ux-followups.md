@@ -1131,3 +1131,27 @@ mounted/host/37-Perf/native/queue evidence retains original source/fixture
 identity, without fresh broad/native replay claims. Keep TASK32367 In Progress
 until latest-dev publication, exact-head clean resolved Qodo/all four hosted
 gates, final metadata-head review/checks and verified protected normal merge.
+
+
+Compact approval class naming (2026-10-03 UTC)
+
+Qodo7d8b4330 requests one name for the four approval-compact references.
+_COMPACT_APPROVAL_CLASS joins the existing fast-control class constants; its
+value remains exactly approval-compact. Full widget module AST equals published
+d346275a after substituting only that scalar and removing its declaration.
+All imports, stylesheet/token/test bytes and252 other source pins remain exact
+(253 current). No layout, focus, permission, deadline or visual value changes.
+Existing ADR043/150/161 apply; no new ADR is required.
+
+Both complete approval-card/compact Console modules, design-token governance
+and CSS byte budget pass42 top-level cases with zero failures/errors/skips
+(77.78s), preserving ordinary private wrappers
+and their caps. Fresh artifact preflight passes in
+87.36s with all253 pins stable. All five changed
+ranges format cleanly and zero-new Ruff35/Backlog/diff checks pass.
+QA oct03_compact_approval_class_review preserves exact proof/receipts. Prior
+broad/native/37-Perf evidence retains its original identities; no fresh replay
+of it is claimed. TASK33625.2 is reopened In Progress for final review
+qualification, alongside TASK32367. Both need exact published-head clean/resolved
+Qodo/all four hosted gates, followed by final Done-metadata-head review/checks
+and verified protected normal merge.

@@ -54,6 +54,7 @@ _DENY_LABEL = "Deny"
 _RAW_APPROVE_ONCE_LABEL = "Run once"
 _FAST_APPROVE_CLASS = "approval-row-fast-approve"
 _FAST_DENY_CLASS = "approval-row-fast-deny"
+_COMPACT_APPROVAL_CLASS = "approval-compact"
 _FAST_APPROVE_TOOLTIP = (
     "Approve once and resume immediately (skips Select + Submit)."
 )
@@ -805,9 +806,9 @@ class ChatApprovalCard(Container):
         compact = self.content_size.width < 55 or any(
             node.has_class("-console-compact") for node in self.ancestors
         )
-        if compact == self.has_class("approval-compact"):
+        if compact == self.has_class(_COMPACT_APPROVAL_CLASS):
             return
-        self.set_class(compact, "approval-compact")
+        self.set_class(compact, _COMPACT_APPROVAL_CLASS)
         actions = self.query_one("#approval-batch-actions", Horizontal)
         approve = actions.query_one("#approval-approve-all", Button)
         deny = actions.query_one("#approval-deny-all", Button)
@@ -1000,7 +1001,7 @@ class ChatApprovalCard(Container):
                 allow_blank=False,
                 id=f"approval-row-decision-{generation}-{index}",
                 classes="approval-row-decision",
-                compact=self.has_class("approval-compact"),
+                compact=self.has_class(_COMPACT_APPROVAL_CLASS),
             )
             select.disabled = finishing
             selects.append(select)
@@ -1324,7 +1325,7 @@ class ChatApprovalCard(Container):
             allow_blank=False,
             id=f"approval-row-decision-{generation}-0",
             classes="approval-row-decision",
-            compact=self.has_class("approval-compact"),
+            compact=self.has_class(_COMPACT_APPROVAL_CLASS),
         )
         select.disabled = finishing
         base_header = _format_row_header(entry)
