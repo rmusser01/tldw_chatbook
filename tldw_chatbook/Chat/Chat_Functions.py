@@ -122,7 +122,7 @@ from tldw_chatbook.Utils.sensitive_llm_logging import (  # noqa: E402
 )
 from tldw_chatbook.Metrics.metrics_logger import log_counter, log_histogram  # noqa: E402
 from tldw_chatbook.config import (  # noqa: E402
-    ENCRYPTED_CONFIG_VALUE_PREFIX,
+    is_encrypted_config_value,
     load_settings,
 )
 from .console_project_instructions import EPHEMERAL_ORIGIN_KEY  # noqa: E402
@@ -1238,9 +1238,7 @@ def chat_api_call(
     # TASK-34100.4: still-encrypted `enc:` ciphertext (a locked or undecrypted
     # config) is never a credential. Dropping it lets the handler report the
     # key as missing instead of sending ciphertext as a bearer token.
-    if isinstance(api_key, str) and api_key.strip().startswith(
-        ENCRYPTED_CONFIG_VALUE_PREFIX
-    ):
+    if is_encrypted_config_value(api_key):
         logger.warning(
             "Chat API Call - ignoring an API key that is still encrypted; "
             "unlock or re-enter the key."

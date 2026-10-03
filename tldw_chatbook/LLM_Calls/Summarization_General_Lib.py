@@ -45,7 +45,7 @@ from tldw_chatbook.LLM_Calls.Local_Summarization_Lib import (
     summarize_with_custom_openai_2,
 )
 from tldw_chatbook.Logging_Config import logging
-from tldw_chatbook.config import get_cli_setting
+from tldw_chatbook.config import get_cli_setting, without_ciphertext
 from tldw_chatbook.Internal_Prompts import get_internal_prompt
 from tldw_chatbook.Utils.egress import create_default_session, default_session_timeout
 from tldw_chatbook.Chat.Chat_Deps import (
@@ -343,6 +343,9 @@ def _dispatch_to_api(
     Internal function to call the appropriate API-specific summarization function.
     Handles the mapping from api_name to the actual function call.
     """
+    # TASK-34100.4: still-encrypted `enc:` ciphertext is never a credential;
+    # each summarizer then reports its key as missing (mirrors chat_api_call).
+    api_key = without_ciphertext(api_key)
     try:
         api_name_lower = api_name.lower()
         api_name_lower = _CHAT_DISPATCH_NAME_ALIASES.get(api_name_lower, api_name_lower)
@@ -863,7 +866,9 @@ def summarize_with_openai(
         if not api_key or api_key.strip() == "":
             logging.info("OpenAI Summarize: API key not provided as parameter")
             logging.info("OpenAI Summarize: Attempting to use API key from config file")
-            api_key = get_cli_setting("openai_api", "api_key", "")
+            api_key = without_ciphertext(
+                get_cli_setting("openai_api", "api_key", ""), absent=""
+            )
             logging.debug("OpenAI Summarize: Config credential lookup completed")
 
         if not api_key or not api_key.strip():
@@ -1087,7 +1092,9 @@ def summarize_with_anthropic(
             logging.info("Anthropic: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            anthropic_api_key = get_cli_setting("anthropic_api", "api_key")
+            anthropic_api_key = without_ciphertext(
+                get_cli_setting("anthropic_api", "api_key")
+            )
             if anthropic_api_key:
                 logging.info("Anthropic: Using API key from config file")
             else:
@@ -1324,7 +1331,9 @@ def summarize_with_cohere(
             logging.info("Cohere: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            cohere_api_key = get_cli_setting("cohere_api", "api_key")
+            cohere_api_key = without_ciphertext(
+                get_cli_setting("cohere_api", "api_key")
+            )
             if cohere_api_key:
                 logging.info("Cohere: Using API key from config file")
             else:
@@ -1555,7 +1564,9 @@ def summarize_with_groq(
             logging.info("Groq: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            groq_api_key = get_cli_setting("groq_api", "api_key")
+            groq_api_key = without_ciphertext(
+                get_cli_setting("groq_api", "api_key")
+            )
             if groq_api_key:
                 logging.info("Groq: Using API key from config file")
             else:
@@ -1709,7 +1720,9 @@ def summarize_with_openrouter(
             logging.info("OpenRouter: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            openrouter_api_key = get_cli_setting("openrouter_api", "api_key")
+            openrouter_api_key = without_ciphertext(
+                get_cli_setting("openrouter_api", "api_key")
+            )
             if openrouter_api_key:
                 logging.info("OpenRouter: Using API key from config file")
             else:
@@ -1924,7 +1937,9 @@ def summarize_with_huggingface(
         logging.info("HuggingFace: Using API key provided as parameter")
     else:
         # If no parameter is provided, use the key from the config
-        huggingface_api_key = get_cli_setting("huggingface_api", "api_key")
+        huggingface_api_key = without_ciphertext(
+            get_cli_setting("huggingface_api", "api_key")
+        )
         if huggingface_api_key:
             logging.info("HuggingFace: Using API key from config file")
         else:
@@ -2101,7 +2116,9 @@ def summarize_with_deepseek(
             logging.info("DeepSeek: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            deepseek_api_key = get_cli_setting("deepseek_api", "api_key")
+            deepseek_api_key = without_ciphertext(
+                get_cli_setting("deepseek_api", "api_key")
+            )
             if deepseek_api_key:
                 logging.info("DeepSeek: Using API key from config file")
             else:
@@ -2274,7 +2291,9 @@ def summarize_with_mistral(
             logging.info("Mistral: Using API key provided as parameter")
         else:
             # If no parameter is provided, use the key from the config
-            mistral_api_key = get_cli_setting("mistral_api", "api_key")
+            mistral_api_key = without_ciphertext(
+                get_cli_setting("mistral_api", "api_key")
+            )
             if mistral_api_key:
                 logging.info("Mistral: Using API key from config file")
             else:
@@ -2450,7 +2469,7 @@ def summarize_with_google(
         if not api_key or api_key.strip() == "":
             logging.info("Google: #1 API key not provided as parameter")
             logging.info("Google: Attempting to use API key from config file")
-            api_key = get_cli_setting("google_api", "api_key")
+            api_key = without_ciphertext(get_cli_setting("google_api", "api_key"))
 
         if not api_key or api_key.strip() == "":
             logging.error("Google: #2 API key not found or is empty")
