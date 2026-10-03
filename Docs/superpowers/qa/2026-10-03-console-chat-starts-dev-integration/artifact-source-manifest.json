@@ -323,6 +323,15 @@
     "readable_path": "conflict-dispositions.json",
     "readable_sha256": "5e3c5b86532769f9562d7f996ae075cd67f706c262eba9eafa7a7e2049b574a6"
   },
+  "controller-draft-publication.json": {
+    "source_bytes": 1108,
+    "source_sha256": "de9dae24c7a6e6a39d04fbded367702878646a36734d77d9010d392c1097115f",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-draft-publication.json",
+    "archive_path": "source-archives/controller-draft-publication.json.gz",
+    "archive_sha256": "1818ce7f3b3f948144a834cd76c08e4f3a328b6c02ee6415b6d5c95b9714d57c",
+    "readable_path": "controller-draft-publication.json",
+    "readable_sha256": "de9dae24c7a6e6a39d04fbded367702878646a36734d77d9010d392c1097115f"
+  },
   "controller-final-live-qualification.json": {
     "source_bytes": 2035,
     "source_sha256": "aa8964adbd6d2a166d53f7a69a6ba6f354e13cd027f3305bf0c5bc81364734aa",
@@ -565,6 +574,24 @@
     "archive_sha256": "3ebdb48a079342f7fe4a4e5a9a70f15720ed53573c016746b12b6f4bd4b4049f",
     "readable_path": "verification-logs/controller-qa-git-blob-proof.log",
     "readable_sha256": "681db337cc897ab9aabb9ddd1d1fca51abd74d733c05496aa8a92ca55ebfa95e"
+  },
+  "controller-qa-publication-blob-proof.json": {
+    "source_bytes": 870,
+    "source_sha256": "b598e4b4a389565b85fb44a226d49946be3e6dfd8918b7ca580e70f993a7eded",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-qa-publication-blob-proof.json",
+    "archive_path": "source-archives/controller-qa-publication-blob-proof.json.gz",
+    "archive_sha256": "58735ba56f52ed7949a825aae3ebaaf5af303eb5ed500d9c40e44af0b94b3edd",
+    "readable_path": "controller-qa-publication-blob-proof.json",
+    "readable_sha256": "b598e4b4a389565b85fb44a226d49946be3e6dfd8918b7ca580e70f993a7eded"
+  },
+  "controller-qa-publication-blob-proof.log": {
+    "source_bytes": 435,
+    "source_sha256": "57ccb3dc15ca49cd278437c339885f4f58c2334c3fac239e06b7aac66197873e",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/controller-qa-publication-blob-proof.log",
+    "archive_path": "source-archives/controller-qa-publication-blob-proof.log.gz",
+    "archive_sha256": "965a3177537607df2c8b9792a1fb08a53644b0d94fff85016e2e6488ad758d79",
+    "readable_path": "verification-logs/controller-qa-publication-blob-proof.log",
+    "readable_sha256": "57ccb3dc15ca49cd278437c339885f4f58c2334c3fac239e06b7aac66197873e"
   },
   "core-catalog-install.json": {
     "source_bytes": 472,
@@ -4365,13 +4392,13 @@
     "readable_sha256": "78ddb4939fb533a5a1f81ad01eb25095e4f8837473de539efe1e1455118544fa"
   },
   "progress.md": {
-    "source_bytes": 21085,
-    "source_sha256": "fc36139516f5edd2183642821ec254be3f0604618bdc3b46db21fbb95beeb8cc",
+    "source_bytes": 21757,
+    "source_sha256": "8cd0a495820fb6f42a85221b077e5ef11e7bb918192d600a2c83b64d3261eb10",
     "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/progress.md",
     "archive_path": "source-archives/progress.md.gz",
-    "archive_sha256": "1c847e25ac196cdad77fef19a680b3dd2abd87abef4b48a77dafa628c83a7fbc",
+    "archive_sha256": "ec05fea39e7973f45b2facdc7aaf988aef6ece082e961f08fc89342d7dd38bdc",
     "readable_path": "progress.md",
-    "readable_sha256": "fc36139516f5edd2183642821ec254be3f0604618bdc3b46db21fbb95beeb8cc"
+    "readable_sha256": "8cd0a495820fb6f42a85221b077e5ef11e7bb918192d600a2c83b64d3261eb10"
   },
   "provenance-red.json": {
     "source_bytes": 36237,
@@ -5686,6 +5713,15 @@
     "archive_sha256": "e46f182000f26395c5207559e0f1e7c05c6cdecfc358a1497a41d8315a561c34",
     "readable_path": "task-1-review.md",
     "readable_sha256": "c820c47fdbf07f26a1e840c5faab1045a5d335f798111da76739949f2b024035"
+  },
+  "task-id-before-push-verified.json": {
+    "source_bytes": 987,
+    "source_sha256": "4f63fa08d13b41ddec9b812b6c86a4b0a667eb766229a1d03074777dd735896c",
+    "source_path": ".superpowers/sdd/2026-10-03-console-chat-starts-dev-integration/task-id-before-push-verified.json",
+    "archive_path": "source-archives/task-id-before-push-verified.json.gz",
+    "archive_sha256": "3c5c6ef9d08608d32c31317f75bd3be093899d82e514be3a0f1f223cf6953134",
+    "readable_path": "task-id-before-push-verified.json",
+    "readable_sha256": "4f63fa08d13b41ddec9b812b6c86a4b0a667eb766229a1d03074777dd735896c"
   },
   "task-id-final-sweep.json": {
     "source_bytes": 589,

@@ -177,3 +177,5 @@ The complete telemetry owners exposed stale fixture protocols and one inherited 
 ## Publication status after final scoped review
 
 Step8 remains open. Final source3c4c522 has passing recorded21baseline nodes, final runtime owner, scoped static/formatter and derived preflight evidence. The scoped review marks I1 addressed and retains Important I2: caret/selection-only navigation changes the full composer snapshot without authoring a new draft revision, so acceptance can leave the accepted opening visible and resave it. The user-authorized PR is published as a draft, with TASK34215.2 In Progress; this is publication for review, not readiness or task completion. The final-review SDD cap permits one consolidated repair and one scoped review. Remaining load-bearing repair and successor dev qualification must precede readiness. Latest remote dev advanced toefea5e45 after integratedaf138397; existing evidence retains its exact revision.
+
+Draft publication: [PR #2995](https://github.com/rmusser01/tldw_chatbook/pull/2995), base dev, head codex/console-chat-starts-dev; attached to this chat. Step8 remains open for Important I2 and successor qualification.

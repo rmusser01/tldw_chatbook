@@ -845,8 +845,8 @@
     "qa_path": "live/helpers/pack_qa.py"
   },
   "verify_qa_blobs.py": {
-    "source_sha256": "0bd2c7ff2a8cd2afdc3e7bb85f6609e0720a075766f6e6337f69232d70d2905b",
-    "source_bytes": 1873,
+    "source_sha256": "8d22a6e30a1e18e2bdd594876d6955995027def62da1f220a948a9f60a36f3d3",
+    "source_bytes": 1904,
     "qa_path": "live/helpers/verify_qa_blobs.py"
   },
   "sweep_task_ids.py": {
