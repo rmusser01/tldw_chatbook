@@ -1282,3 +1282,35 @@ hosted latency success remains required, no speculative production/CI change.
 The Close task is reopened alongside the pending/compact tasks until fresh
 exact-head clean/resolved Qodo/all four hosted gates, then final task metadata
 review/checks and verified protected normal merge. Auto-merge remains off.
+
+
+Latest-dev storage/GC ratchets (2026-10-03 UTC)
+
+Rebase onto dev a5600366381f19d99dbd0dada655113316ede9f7 consumes PR2969's platform open
+ceilings, per-run census log and first eligible GC pass, including collection.
+47 preceding patches are exact; two differ only in surrounding context:
+the additive upstream lesson before our existing containment section, and
+upstream burst-count lines after our real media-cleanup pass. Removing only
+the upstream lesson restores the whole prior lesson document. Removing only
+the same four unchanged owned settlement blocks makes the full census module
+exact dev, both before and after rebase. The workflow is exact dev, no own
+CI change. All260 other prior source pins, production/UI/guard/fixtures and
+paint-readiness/test scenarios stay exact; add workflow pin for262 total.
+
+Both exact hosted storage-ratchet variants plus platform/log-path controls
+pass4 cases (86.13s), normal pytest-equivalent path depth, no pin/cap change.
+Each first GC pass records0 config admissions/9 storage admissions/3 helpers/
+54 opens, matching the canonical macOS pins. The census retains upstream
+held backup-probe, completed collection/owned-call/drain assertions and Linux
+ceilings. Fresh artifact preflight passes (162.75s), zero-new Ruff35/
+Backlog/diff checks pass with262 stable pins; changed public-test signature
+audit remains clean. No new ADR: existing ADR097/125/126 apply to inherited
+measurement, production contracts unchanged. QA oct03_gc_census_dev_integration records proof/counts.
+
+Earlier22 startup/13 latency and all24 mounted-node passing evidence retain
+their explicit original source identities; production/fixtures/test scenarios
+are exact across this rebase. The earlier RED3 and corrected Close/routing
+passes remain separately recorded, no fresh whole24/37/native/full-suite
+claim. All three selected tasks remain In Progress until exact clean/resolved
+Qodo/all four hosted gates, final Done metadata-head review/checks and verified
+normal protected merge. Auto-merge stays off.
