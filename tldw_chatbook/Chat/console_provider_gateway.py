@@ -156,6 +156,7 @@ from tldw_chatbook.Chat.thinking_blocks import (
     THINKING_ENVELOPE_VERSION,
     ThinkingHistoryPolicy,
 )
+from tldw_chatbook.Chat.provider_catalog import provider_display_name
 from tldw_chatbook.Chat.provider_readiness import get_provider_readiness
 from tldw_chatbook.Chat.provider_readiness import provider_config_key
 from tldw_chatbook.Chat.provider_usage import ProviderUsage
@@ -1484,7 +1485,13 @@ def safe_provider_error_copy(provider: str, exc: BaseException) -> str:
         category = "configuration error"
     elif isinstance(exc, ChatProviderError):
         category = "provider unavailable"
-    provider_copy = _sanitized_provider_diagnostic(provider or "unknown")
+    if isinstance(exc, ChatBadRequestError) and getattr(exc, "status_code", None) == 404:
+        category = "model or endpoint not found"
+    # The catalog name the user sees elsewhere ("NVIDIA NIM", not "nvidia");
+    # an unmapped or custom-endpoint id stays as given (TASK-33002.14).
+    provider_copy = _sanitized_provider_diagnostic(
+        provider_display_name(provider) if provider else "unknown"
+    )
     if provider_copy == _PROVIDER_REQUEST_FAILED_COPY:
         return provider_copy
     status_code = getattr(exc, "status_code", None)
@@ -1685,23 +1692,25 @@ def _provider_error_copy_with_model_recovery(
     """Add safe recovery to provider bad-request copy.
 
     A rejected tool definition gets tool copy (see
-    ``_tool_definition_rejection_copy``); any other 400 names the model.
+    ``_tool_definition_rejection_copy``); any other 400 names the model. A
+    404 names the model and says what to check: Fireworks, SambaNova, Nous
+    and GMI answer an unknown model, or one the key cannot use, that way
+    (no-key probes 2026-09-30, TASK-33640).
     """
+    if status_code == 404:
+        model_id = _safe_model_id(model)
+        named = f" Selected model: {escape_markup(model_id)}." if model_id else ""
+        return (
+            f"{copy}{named} The provider could not find this model or "
+            "endpoint, or this key cannot use it. Check the model name and "
+            "the key, or choose another model from the model picker."
+        )
     if status_code != 400:
         return copy
     tool_copy = _tool_definition_rejection_copy(provider_message, tools)
     if tool_copy is not None:
         return f"{copy} {tool_copy}"
-    model_result = CredentialSanitizer().sanitize(model or "")
-    if (
-        not model_result.available
-        or model_result.redacted
-        or type(model_result.value) is not str
-    ):
-        return copy
-    model_id = "".join(
-        character for character in model_result.value.strip() if character.isprintable()
-    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
+    model_id = _safe_model_id(model)
     if not model_id:
         return copy
     return (
@@ -1709,6 +1718,27 @@ def _provider_error_copy_with_model_recovery(
         "The provider rejected this request. Confirm the model is still "
         "available, or choose another model from the model picker."
     )
+
+
+def _safe_model_id(model: str | None) -> str:
+    """The model id fit for user copy, or "" when it is absent or redacted.
+
+    Args:
+        model: The selected model identifier.
+
+    Returns:
+        A printable, bounded model id; empty when it cannot be shown.
+    """
+    model_result = CredentialSanitizer().sanitize(model or "")
+    if (
+        not model_result.available
+        or model_result.redacted
+        or type(model_result.value) is not str
+    ):
+        return ""
+    return "".join(
+        character for character in model_result.value.strip() if character.isprintable()
+    )[:PROVIDER_ERROR_MODEL_ID_MAX_CHARS]
 
 
 def normalize_llamacpp_base_url(api_url: str | None) -> str:

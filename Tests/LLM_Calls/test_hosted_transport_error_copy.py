@@ -15,6 +15,7 @@ from typing import Any
 import pytest
 
 from tldw_chatbook.Chat.Chat_Deps import (
+    ChatAPIError,
     ChatAuthenticationError,
     ChatBadRequestError,
     ChatProviderError,
@@ -92,19 +93,31 @@ def test_engine_errors_use_the_display_name_but_keep_the_key_identity(
 
 
 def test_without_a_display_name_the_copy_keeps_the_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Legacy adapters pass no display name; their copy is unchanged."""
+    """Legacy adapters pass no display name; their copy is unchanged.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with one that answers 401.
+    """
     error = _post(monkeypatch, 401, None)
     assert "nvidia authentication failed. Check the API key." in str(error)
 
 
 def test_a_404_tells_the_user_what_to_check(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A 404 names the likely cause instead of a bare status."""
+    """A 404 names the likely cause instead of a bare status.
+
+    Args:
+        monkeypatch: Replaces the HTTP session with one that answers 404.
+    """
     error = _post(monkeypatch, 404, "Fireworks")
     assert "Check the model name and that your key can use it." in str(error)
 
 
 def test_the_engine_passes_its_record_display_name_to_the_transport(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The engine hands every preset's catalog name to the transport."""
+    """The engine hands every preset's catalog name to the transport.
+
+    Args:
+        monkeypatch: Replaces request resolution and the transport call.
+    """
     from tldw_chatbook.LLM_Calls import hosted_provider_engine
     from tldw_chatbook.LLM_Calls.hosted_provider_engine import HostedProviderResolution
     from tldw_chatbook.provider_registry import RECORDS_BY_KEY
@@ -127,3 +140,48 @@ def test_the_engine_passes_its_record_display_name_to_the_transport(monkeypatch:
             input_data=[{"role": "user", "content": "hi"}], api_key="secret", streaming=False,
         )
     assert captured["config"].display_name == "NVIDIA NIM"
+
+
+@pytest.mark.parametrize(
+    ("status", "category"),
+    [(401, "authentication failed"), (404, "model or endpoint not found")],
+)
+def test_an_engine_failure_reaches_console_with_the_display_name(
+    monkeypatch: pytest.MonkeyPatch, status: int, category: str
+) -> None:
+    """Engine -> real transport -> Console copy, with only the session faked.
+
+    Args:
+        monkeypatch: Replaces request resolution and the HTTP session.
+        status: The provider's HTTP status.
+        category: The failure Console names.
+    """
+    from tldw_chatbook.Chat.console_provider_gateway import (
+        _provider_error_copy_with_model_recovery,
+        safe_provider_error_copy,
+    )
+    from tldw_chatbook.LLM_Calls import hosted_provider_engine
+    from tldw_chatbook.LLM_Calls.hosted_provider_engine import HostedProviderResolution
+    from tldw_chatbook.provider_registry import RECORDS_BY_KEY
+
+    record = RECORDS_BY_KEY["nvidia"]
+    resolution = HostedProviderResolution(
+        provider="nvidia", model="m", api_key="secret", base_url=record.default_base_url,
+        timeout=5.0, retries=0, retry_delay=0.0, streaming=False,
+    )
+    monkeypatch.setattr(hosted_provider_engine, "resolve_hosted_request", lambda _r, **_k: resolution)
+    _Session.status = status
+    monkeypatch.setattr(hosted_chat, "create_default_session", _Session)
+
+    with pytest.raises(ChatAPIError) as caught:
+        hosted_provider_engine.build_hosted_chat_handler(record)(
+            input_data=[{"role": "user", "content": "hi"}], api_key="secret", streaming=False,
+        )
+    error = caught.value
+    assert error.provider == "nvidia"
+    assert "NVIDIA NIM" in str(error)
+    copy = safe_provider_error_copy("nvidia", error)
+    assert copy.startswith(f"Provider error from NVIDIA NIM: {category}.")
+    if status == 404:
+        copy = _provider_error_copy_with_model_recovery(copy, model="m", status_code=404)
+        assert "could not find this model or endpoint" in copy

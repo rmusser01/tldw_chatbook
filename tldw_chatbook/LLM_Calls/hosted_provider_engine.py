@@ -1098,6 +1098,7 @@ def build_hosted_chat_payload(
         toggle_key = thinking_toggle_key(record, resolution.model)
         if record.reasoning_effort:
             level = _bounded_identifier(record, "reasoning effort", reasoning_effort)
+            level = record.reasoning_effort_map.get(level, level)
             if (
                 record.reasoning_effort_values is not None
                 and level not in record.reasoning_effort_values

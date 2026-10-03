@@ -820,8 +820,8 @@ models that support them, and **Discover models** reuses the chat credential
 Fireworks reasoning is kept private — it never appears in the transcript.
 Most of these presets take no reasoning-effort setting, so the settings modal
 hides that control for them. For NVIDIA NIM's Qwen3.5 models, **Reasoning
-effort** **None** turns thinking off. Fireworks takes every level except
-**Minimal**. When a provider answers 404, the error says to check the model
+effort** **None** turns thinking off. Fireworks has no **Minimal** level and
+sends it as **Low**. When a provider answers 404, the error says to check the model
 name and that the key can use it: several providers answer an unknown model,
 or a model the key cannot reach, with 404 rather than an auth error. Streamed NVIDIA
 NIM replies carry no token counts (NVIDIA does not report streamed usage).

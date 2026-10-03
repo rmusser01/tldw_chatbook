@@ -1420,6 +1420,7 @@ def _raise_http_error(provider: str, status: int, *, label: str | None = None) -
                 f"{name} could not find that model or endpoint (status 404). "
                 "Check the model name and that your key can use it."
             ),
+            status_code=404,
         ) from None
     if 400 <= status < 500:
         raise ChatBadRequestError(

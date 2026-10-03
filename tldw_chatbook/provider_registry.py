@@ -104,6 +104,9 @@ class ProviderRecord:
         reasoning_effort_values: For a preset that sends ``reasoning_effort``,
             the levels it accepts; any other level is refused locally (and
             left out of Settings). ``None`` forwards any level unchanged.
+        reasoning_effort_map: Console levels the provider spells differently,
+            mapped to the level actually sent (Fireworks has no ``minimal``, so
+            it sends ``low``); applied before ``reasoning_effort_values``.
         thinking_toggle_models: For a preset that refuses
             ``reasoning_effort``, model globs (``fnmatch``, case-sensitive)
             whose chat template switches thinking with one boolean
@@ -197,6 +200,7 @@ class ProviderRecord:
     )
     reasoning_effort_key: str | None = None
     reasoning_effort_values: frozenset[str] | None = None
+    reasoning_effort_map: Mapping[str, str] = field(default_factory=dict)
     thinking_toggle_models: Mapping[str, str] = field(default_factory=dict)
     max_tokens_key: str | None = None
     stream_annotation_key: str | None = None
@@ -364,9 +368,11 @@ FIREWORKS = ProviderRecord(
     # reasoning_effort takes none/low/medium/high/xhigh (plus max/adaptive,
     # which Console does not offer); there is no "minimal". Support varies by
     # model (some always think; DeepSeek V3.1 is off by default) -- not yet
-    # live-verified (TASK-33640).
+    # live-verified (TASK-33640). Console's "minimal" is sent as the smallest
+    # non-zero level, "low", so every level Console offers is really sent.
     reasoning_effort=True,
     reasoning_effort_values=frozenset({"none", "low", "medium", "high", "xhigh"}),
+    reasoning_effort_map={"minimal": "low"},
     auto_refresh=True,
     settings_defaults={
         "api_key_env_var": "FIREWORKS_API_KEY",

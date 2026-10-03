@@ -413,7 +413,8 @@ def reasoning_effort_values_sent(
     A local strict-template request drops a level its chat template rejects
     ("minimal" on llama.cpp) with only a debug log, so an editor offering it
     would save a value that is never sent (TASK-33002.1). An engine preset
-    with ``reasoning_effort_values`` (Fireworks) keeps only those levels.
+    with ``reasoning_effort_values`` (Fireworks) keeps the levels it sends,
+    after its ``reasoning_effort_map`` (Fireworks sends "minimal" as "low").
     Every other provider keeps ``values`` unchanged.
 
     Args:
@@ -429,7 +430,11 @@ def reasoning_effort_values_sent(
     ).execution_key
     engine_record = RECORDS_BY_KEY.get(execution_key or "")
     if engine_record is not None and engine_record.reasoning_effort_values is not None:
-        return tuple(value for value in values if value in engine_record.reasoning_effort_values)
+        mapped = engine_record.reasoning_effort_map
+        return tuple(
+            value for value in values
+            if mapped.get(value, value) in engine_record.reasoning_effort_values
+        )
     if not build_local_thinking_payload_fields(execution_key, "low", None):
         return values
     return tuple(

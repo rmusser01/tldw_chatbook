@@ -529,8 +529,8 @@ differs by provider. Most of these presets take no reasoning-effort setting,
 so Console hides that control for them rather than offering a level the
 request would refuse. Two exceptions: NVIDIA's Qwen3.5 models (below), and
 **Fireworks**, which takes **None**, **Low**, **Medium**, **High** and
-**X-High**. Fireworks has no **Minimal** level, so Settings leaves it out and a
-Console request with it is refused before it is sent. Whether a model honours
+**X-High**. Fireworks has no **Minimal** level, so a **Minimal** choice is sent
+as **Low**, its lightest. Whether a model honours
 the level varies: some Fireworks models always reason. **Fireworks** returns
 reasoning in a separate field that Chatbook keeps private: it stays off the
 live stream and out of transcripts, and is sent back on tool turns as
