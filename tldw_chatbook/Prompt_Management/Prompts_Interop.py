@@ -931,9 +931,7 @@ def _create_markdown_fallback_prompt(
     """
     original_name = str(prompt_data["name"]).strip()
     for suffix in range(1, _MARKDOWN_FALLBACK_NAME_ATTEMPTS + 1):
-        candidate_name = (
-            original_name if suffix == 1 else f"{original_name} ({suffix})"
-        )
+        candidate_name = original_name if suffix == 1 else f"{original_name} ({suffix})"
         try:
             prompt_id, prompt_uuid, message = add_prompt(
                 name=candidate_name,
@@ -1132,9 +1130,7 @@ def import_prompts_from_files(
                 # Ensure all expected fields are present, defaulting to None or []
                 # This is now handled by _normalize_prompt_data within each parser.
                 if structured_fallback:
-                    p_id, p_uuid, db_msg = _create_markdown_fallback_prompt(
-                        prompt_data
-                    )
+                    p_id, p_uuid, db_msg = _create_markdown_fallback_prompt(prompt_data)
                 else:
                     p_id, p_uuid, db_msg = add_or_update_prompt_interop(
                         name=prompt_name,

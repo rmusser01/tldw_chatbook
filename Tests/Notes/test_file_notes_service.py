@@ -75,8 +75,7 @@ def test_injected_owner_records_each_successful_disk_mutation_once(
     assert service.move_file("one.md", "moved.md").status == "ok"
     moved = service.open_file("moved.md")
     assert (
-        service.delete_file("moved.md", expected_hash=moved.content_hash).status
-        == "ok"
+        service.delete_file("moved.md", expected_hash=moved.content_hash).status == "ok"
     )
     assert service.restore_file("moved.md").status == "ok"
 
@@ -312,9 +311,7 @@ def test_a_file_indexed_under_a_dot_directory_is_forgotten_not_recently_deleted(
     )
     assert replica.search(service.root_key, "idea") == [".trash/Old idea.md"]
 
-    assert [entry.relative_path for entry in service.scan().entries] == [
-        "visible.md"
-    ]
+    assert [entry.relative_path for entry in service.scan().entries] == ["visible.md"]
     result = service.reconcile()
 
     assert [entry.relative_path for entry in result.entries] == ["visible.md"]
@@ -529,9 +526,9 @@ def test_open_and_save_preserve_bom_frontmatter_crlf_final_newline_and_mode(
     if os.name != "nt":
         assert stat.S_IMODE(path.stat().st_mode) == 0o640
     assert replica.get_bytes(str(root.resolve()), "note.md") == path.read_bytes()
-    assert [(change.action, change.relative_path) for change in service.session_changes] == [
-        ("modified", "note.md")
-    ]
+    assert [
+        (change.action, change.relative_path) for change in service.session_changes
+    ] == [("modified", "note.md")]
 
 
 def test_save_preserves_mode_when_fchmod_is_unavailable(
@@ -670,8 +667,7 @@ def test_open_keeps_unclosed_frontmatter_in_body_and_marks_unsafe_text_read_only
     assert unclosed.body == "---\ntitle: Open\nbody"
     assert unclosed.editable
     assert (
-        service.save_file(unclosed, "edited\n\n", session_key="no-final").status
-        == "ok"
+        service.save_file(unclosed, "edited\n\n", session_key="no-final").status == "ok"
     )
     assert (root / "unclosed.md").read_bytes() == b"\xef\xbb\xbfedited"
     assert service.open_file("mixed.md").read_only_reason == "mixed-newlines"
@@ -918,7 +914,9 @@ def test_create_is_exclusive_and_move_is_no_clobber_with_rollback(
 
     real_unlink = service_module.os.unlink
 
-    def fail_source_unlink(path: str | os.PathLike[str], *args: object, **kwargs: object) -> None:
+    def fail_source_unlink(
+        path: str | os.PathLike[str], *args: object, **kwargs: object
+    ) -> None:
         if Path(path) == root / "source.md":
             raise PermissionError("forced source failure")
         real_unlink(path, *args, **kwargs)
@@ -950,12 +948,9 @@ def test_move_replaces_replica_path_without_tombstoning_source(
         "unique move content"
     )
     assert [
-        item.relative_path
-        for item in replica.list_active_files(str(root.resolve()))
+        item.relative_path for item in replica.list_active_files(str(root.resolve()))
     ] == ["folder/moved.md"]
-    assert replica.search(str(root.resolve()), "unique move") == [
-        "folder/moved.md"
-    ]
+    assert replica.search(str(root.resolve()), "unique move") == ["folder/moved.md"]
     assert replica.list_deleted(str(root.resolve())) == []
     assert len(service.session_changes) == 1
     change = service.session_changes[0]
@@ -1281,10 +1276,7 @@ def test_double_dot_filename_is_safe_for_file_mutations(
     assert created.status == "ok"
     opened = service.open_file("meeting..draft.md")
     assert service.save_file(opened, "edited", session_key="double-dot").status == "ok"
-    assert (
-        service.move_file("meeting..draft.md", "meeting..final.md").status
-        == "ok"
-    )
+    assert service.move_file("meeting..draft.md", "meeting..final.md").status == "ok"
     moved = service.open_file("meeting..final.md")
     assert (
         service.delete_file(
@@ -1384,8 +1376,7 @@ def test_reconcile_does_not_tombstone_a_present_file_when_its_read_fails(
     assert result.deleted == ("gone.md",)
     assert replica.list_deleted(str(root.resolve())) == ["gone.md"]
     assert "keep.md" in {
-        item.relative_path
-        for item in replica.list_active_files(str(root.resolve()))
+        item.relative_path for item in replica.list_active_files(str(root.resolve()))
     }
 
 
@@ -1555,9 +1546,7 @@ def test_scan_stops_between_files_in_one_flat_directory(
     with pytest.raises(ScanCancelled):
         service.scan(should_cancel=should_cancel)
 
-    assert examined <= 1, (
-        f"the cancelled scan still examined {examined} of 200 files"
-    )
+    assert examined <= 1, f"the cancelled scan still examined {examined} of 200 files"
     assert service._operation_lock.acquire(blocking=False)
     service._operation_lock.release()
 

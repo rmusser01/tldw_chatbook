@@ -354,6 +354,7 @@ def _get_shared_rag_service(profile_name: str | None = None) -> Any | None:
 
     try:
         from .simplified import create_rag_service
+
         # Function-level import: active_config is consumed by
         # ingestion_indexing (Task 4 wires the reverse edge), so a
         # module-top import here would risk a circular import.
@@ -883,9 +884,7 @@ async def remove_entries(
         try:
             delete_document(removal.document_id)
         except Exception as e:
-            message = (
-                f"{removal.item_type} {removal.item_id} removal failed: {e}"
-            )
+            message = f"{removal.item_type} {removal.item_id} removal failed: {e}"
             logger.warning(message)
             summary["failed"] += 1
             summary["errors"].append(message)
@@ -905,9 +904,7 @@ async def remove_entries(
     for removal in deleted:
         if indexing_db is not None:
             try:
-                indexing_db.remove_indexed_item(
-                    removal.item_id, removal.item_type
-                )
+                indexing_db.remove_indexed_item(removal.item_id, removal.item_type)
             except Exception as e:
                 message = (
                     f"{removal.item_type} {removal.item_id} tracking cleanup "
@@ -1076,9 +1073,7 @@ class IngestionIndexer:
             snapshot["pending"] = self._pending
             return snapshot
 
-    def set_guidance_notifier(
-        self, notifier: Optional[Callable[[str], None]]
-    ) -> None:
+    def set_guidance_notifier(self, notifier: Optional[Callable[[str], None]]) -> None:
         """Set the sink for setup-gap messages, which are not failures.
 
         Args:
@@ -1231,7 +1226,6 @@ class IngestionIndexer:
                 self._report_index_summary(summary)
             position = end
 
-
     #: The error every item reports when embedding generation produced nothing.
     #: On a fresh install that means no model has been downloaded yet, which is
     #: a setup gap rather than a fault in the import that just succeeded.
@@ -1288,7 +1282,6 @@ class IngestionIndexer:
         self._notify_failure(
             f"RAG indexing failed for {summary['failed']} item(s): {errors[-1]}"
         )
-
 
     def _any_previously_indexed(self) -> bool:
         """Report whether anything has ever been indexed on this install.

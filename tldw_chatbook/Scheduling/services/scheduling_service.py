@@ -21,6 +21,7 @@ from croniter import croniter
 from loguru import logger
 from pydantic import ValidationError
 
+
 # ADR-097 boot ratchet: automation_health loads on first use. A thin module-
 # level proxy (not a plain deferred import) keeps `compute_local_health`
 # patchable as an attribute of THIS module -- Tests/Scheduling/test_run_now.py
@@ -31,6 +32,7 @@ def compute_local_health(app, row):
     )
 
     return _impl(app, row)
+
 
 # ADR-097: automation_preview / automation_validation / schedule_compute are
 # imported function-level in the authoring facade below -- this module is
@@ -530,7 +532,9 @@ class SchedulingService:
             assert self.server_client is not None
             try:
                 with self._remote_execution():
-                    response = await self.server_client.create_reminder(**server_payload)
+                    response = await self.server_client.create_reminder(
+                        **server_payload
+                    )
                     return await self._persist_server_reminder_response(
                         response, owner_id=owner_id
                     )
@@ -539,9 +543,7 @@ class SchedulingService:
                     f"Server unavailable while creating reminder for {owner_id}"
                 )
             except Exception as exc:  # noqa: BLE001 - server errors should fall back
-                logger.exception(
-                    f"Server create_reminder failed for {owner_id}: {exc}"
-                )
+                logger.exception(f"Server create_reminder failed for {owner_id}: {exc}")
 
         task_id = self.db.create_reminder_task(owner_id=owner_id, **db_fields)
         if use_server:
@@ -613,9 +615,7 @@ class SchedulingService:
                     self.watchlist_projection.list_jobs(owner_id=self.owner_id)
                 )
             if self.briefing_projection is not None:
-                tasks.extend(
-                    self.briefing_projection.list_jobs(owner_id=self.owner_id)
-                )
+                tasks.extend(self.briefing_projection.list_jobs(owner_id=self.owner_id))
         # Sort by next_run_at (None sorts last)
         tasks.sort(
             key=lambda t: t.next_run_at or datetime.max.replace(tzinfo=timezone.utc)
@@ -692,7 +692,9 @@ class SchedulingService:
 
         # Local path: compute next_run_at and clear stale schedule fields
         # when the schedule is being changed.
-        if any(key in payload for key in ("schedule_kind", "run_at", "cron", "timezone")):
+        if any(
+            key in payload for key in ("schedule_kind", "run_at", "cron", "timezone")
+        ):
             row_task = self._row_to_reminder(row)
             merged_data = row_task.model_dump()
             merged_data.update(payload)
@@ -779,7 +781,11 @@ class SchedulingService:
         if row is None:
             return ReminderEditOutcome(
                 status="error",
-                errors=[field_error("_row", "not_found", f"Reminder {task_id} was not found.")],
+                errors=[
+                    field_error(
+                        "_row", "not_found", f"Reminder {task_id} was not found."
+                    )
+                ],
             )
 
         locked = self.transfer_lock_reason(row)
@@ -984,7 +990,9 @@ class SchedulingService:
             self._notify_queue_changed()
             return outcome
 
-    async def run_reminder_now(self, task_id: str, loop: Any = None) -> ReminderTask | None:
+    async def run_reminder_now(
+        self, task_id: str, loop: Any = None
+    ) -> ReminderTask | None:
         """Dispatch a reminder immediately through the scheduler's own path.
 
         The service seam for the workbench's Run-now action (task-18938):
@@ -1211,7 +1219,9 @@ class SchedulingService:
         destination-owner rule).
         """
         app = self.app_getter() if self.app_getter is not None else None
-        active_server_id = getattr(app, "active_server_id", None) if app is not None else None
+        active_server_id = (
+            getattr(app, "active_server_id", None) if app is not None else None
+        )
         if not active_server_id:
             return None
         return f"server:{active_server_id}"
@@ -1432,7 +1442,9 @@ class SchedulingService:
             parsed = parsed.replace(tzinfo=timezone.utc)
         return parsed
 
-    async def begin_transfer_to_server(self, table_kind: str, row_id: str) -> "TransferOutcome":
+    async def begin_transfer_to_server(
+        self, table_kind: str, row_id: str
+    ) -> "TransferOutcome":
         """Start (or retry) a local -> server transfer (spec §6.1).
 
         Refuses via `transfer_refusal` first; then CASes `transfer_state`
@@ -1509,7 +1521,9 @@ class SchedulingService:
         self._notify_queue_changed()
         return TransferOutcome(status="pending")
 
-    async def begin_transfer_to_local(self, table_kind: str, row_id: str) -> "TransferOutcome":
+    async def begin_transfer_to_local(
+        self, table_kind: str, row_id: str
+    ) -> "TransferOutcome":
         """Start a server -> local release (spec §6.2).
 
         Refuses via `transfer_refusal` first (which already confirms
@@ -1553,9 +1567,10 @@ class SchedulingService:
             return TransferOutcome(status="refused", reason=reason)
 
         queued = self.db.get_pending_mutation_for_local_id(row_id, table_kind)
-        if queued is not None and (queued.get("payload") or {}).get(
-            "action"
-        ) == "release_from_server":
+        if (
+            queued is not None
+            and (queued.get("payload") or {}).get("action") == "release_from_server"
+        ):
             return TransferOutcome(
                 status="refused", reason=_TRANSFER_IN_PROGRESS_REASON
             )
@@ -1724,9 +1739,7 @@ class SchedulingService:
         if state == "to_server_sent":
             return too_late
 
-        return TransferOutcome(
-            status="refused", reason=_CANCEL_NOT_IN_PROGRESS_REASON
-        )
+        return TransferOutcome(status="refused", reason=_CANCEL_NOT_IN_PROGRESS_REASON)
 
     #: Which `lifecycle` value each lifecycle action lands the row on.
     #: The action names are the server's own endpoint verbs and the
@@ -2001,7 +2014,9 @@ class SchedulingService:
             return ResolveOutcome(status="error", reason=locked)
 
         owner_id = str(row.get("owner_id") or "local")
-        action_desc = "mark this definition solved" if solved else "reopen this definition"
+        action_desc = (
+            "mark this definition solved" if solved else "reopen this definition"
+        )
 
         if not self._owner_uses_server(owner_id):
             updated = await asyncio.to_thread(
@@ -2147,16 +2162,14 @@ class SchedulingService:
             self._recover_stuck_definitions()
         except Exception:
             logger.exception(
-                "Inflight-transfer recovery pass failed for primitive "
-                "{primitive}",
+                "Inflight-transfer recovery pass failed for primitive {primitive}",
                 primitive=_DEFINITION_PRIMITIVE,
             )
         try:
             await self._recover_stuck_reminders()
         except Exception:
             logger.exception(
-                "Inflight-transfer recovery pass failed for primitive "
-                "{primitive}",
+                "Inflight-transfer recovery pass failed for primitive {primitive}",
                 primitive=_REMINDER_PRIMITIVE,
             )
 
@@ -2406,7 +2419,9 @@ class SchedulingService:
         `agent_task` that is a scope cut, not real server parity, and must
         never reach a caller through this facade.
         """
-        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+        from tldw_chatbook.Scheduling.automation_preview import (
+            preview_automation_definition,
+        )
 
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
@@ -2482,14 +2497,18 @@ class SchedulingService:
         it does not author keeps that field's stored value instead of
         wiping it (final review I4).
         """
-        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+        from tldw_chatbook.Scheduling.automation_preview import (
+            preview_automation_definition,
+        )
         from tldw_chatbook.Scheduling.automation_validation import field_error
         from tldw_chatbook.Scheduling.schedule_vocabulary import to_server_schedule
 
         guard = self._reject_unsupported_family(payload)
         if guard is not None:
             return SaveDefinitionOutcome(
-                status="invalid", errors=guard.validation_errors or [], definition_id=definition_id
+                status="invalid",
+                errors=guard.validation_errors or [],
+                definition_id=definition_id,
             )
 
         local_row: dict[str, Any] | None = None
@@ -2535,9 +2554,7 @@ class SchedulingService:
                 if blocked is not None:
                     return SaveDefinitionOutcome(
                         status="error",
-                        errors=[
-                            field_error("_pending", "pending_mutation", blocked)
-                        ],
+                        errors=[field_error("_pending", "pending_mutation", blocked)],
                         definition_id=definition_id,
                     )
 
@@ -2566,7 +2583,9 @@ class SchedulingService:
         # server create even when a local row already exists (Task 3's
         # `_push_definition_mutation` precedent).
         server_mode = (
-            "create" if local_row is None or not local_row.get("server_id") else "update"
+            "create"
+            if local_row is None or not local_row.get("server_id")
+            else "update"
         )
         request = self._build_definition_request(
             payload,
@@ -2587,7 +2606,9 @@ class SchedulingService:
         # finding 2).
         network_request = dict(request)
         if isinstance(network_request.get("schedule"), dict):
-            network_request["schedule"] = to_server_schedule(network_request["schedule"])
+            network_request["schedule"] = to_server_schedule(
+                network_request["schedule"]
+            )
         try:
             response = await self.server_client.preview_automation_definition(
                 network_request
@@ -2658,7 +2679,9 @@ class SchedulingService:
         REPLACES the first with one carrying the drifted version -- which
         the server then rejects (409) forever.
         """
-        from tldw_chatbook.Scheduling.automation_preview import preview_automation_definition
+        from tldw_chatbook.Scheduling.automation_preview import (
+            preview_automation_definition,
+        )
 
         logger.warning(
             "Server unreachable while saving automation definition for "
@@ -2774,7 +2797,9 @@ class SchedulingService:
             saved_id: str | None = definition_id
         else:
             await asyncio.to_thread(
-                self.db.upsert_automation_definitions_from_server, owner_id, [server_item]
+                self.db.upsert_automation_definitions_from_server,
+                owner_id,
+                [server_item],
             )
             server_id = server_item.get("id")
             if server_id is None:
@@ -2785,9 +2810,7 @@ class SchedulingService:
             saved_id = mirrored.get("id") if mirrored else None
 
         if saved_id is not None:
-            await asyncio.to_thread(
-                self._clear_stale_edit_mutation, saved_id, owner_id
-            )
+            await asyncio.to_thread(self._clear_stale_edit_mutation, saved_id, owner_id)
         return saved_id
 
     @staticmethod
@@ -2864,7 +2887,9 @@ class SchedulingService:
         return request
 
     @staticmethod
-    def _definition_db_fields_from_preview(preview: AutomationPreview) -> dict[str, Any]:
+    def _definition_db_fields_from_preview(
+        preview: AutomationPreview,
+    ) -> dict[str, Any]:
         """Map a valid preview's normalized config onto automation-definition DB columns.
 
         `visibility_policy` comes from the preview's own top-level field
@@ -2892,7 +2917,9 @@ class SchedulingService:
         config = dict(normalized.get("config") or {})
         scope = config.get("scope")
         if isinstance(scope, dict) and "resolved_sources" in scope:
-            config["scope"] = {k: v for k, v in scope.items() if k != "resolved_sources"}
+            config["scope"] = {
+                k: v for k, v in scope.items() if k != "resolved_sources"
+            }
         fields: dict[str, Any] = {
             "name": normalized.get("name"),
             "description": normalized.get("description"),
@@ -2902,7 +2929,9 @@ class SchedulingService:
             "visibility_policy": preview.visibility_policy or {},
             "notification_policy": normalized.get("notification_policy") or {},
             "approval_policy": normalized.get("approval_policy") or {},
-            "next_run_at": compute_next_run_at(schedule, now=datetime.now(timezone.utc)),
+            "next_run_at": compute_next_run_at(
+                schedule, now=datetime.now(timezone.utc)
+            ),
         }
         # Dedicated DB columns, not merely `config` members: the executor
         # reads `row["finding_policy"]` (`automation_execution.py`'s

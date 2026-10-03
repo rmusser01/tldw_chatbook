@@ -35,6 +35,7 @@ Four properties, all deliberate:
   unfiltered -- pinned here, because "skip" and "run unfiltered" look
   identical on a corpus with one prompt.
 """
+
 import asyncio
 import sqlite3
 from pathlib import Path
@@ -474,9 +475,7 @@ def test_a_prompts_only_selection_gets_the_whole_keyword_budget(tmp_path):
 
     service = _make_service(media_db_path=media_path, prompts_db_path=prompts_path)
     results = asyncio.run(
-        service._keyword_search(
-            "bilby", top_k=4, keyword_source_types={"prompt"}
-        )
+        service._keyword_search("bilby", top_k=4, keyword_source_types={"prompt"})
     )
 
     assert len(results) == 4
@@ -594,9 +593,7 @@ def test_a_prompt_reaches_the_fused_top_k_as_an_fts_only_row(tmp_path):
         )
 
     fused = _fuse(rrf_k)
-    prompt_rows = [
-        row for row in fused if row.metadata.get("source_type") == "prompt"
-    ]
+    prompt_rows = [row for row in fused if row.metadata.get("source_type") == "prompt"]
     assert prompt_rows, (
         "the prompt row did not survive fusion into the top-10; prompts have "
         "no other path into hybrid results"

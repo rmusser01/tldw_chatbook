@@ -144,9 +144,7 @@ def test_imported_continuation_family_owner_rule_covers_versioned_kimi() -> None
         status=status,
     )
     assert dropped is None
-    assert status.warnings == [
-        "Exact tool continuation was discarded for message 2."
-    ]
+    assert status.warnings == ["Exact tool continuation was discarded for message 2."]
 
 
 def test_imported_continuation_keeps_pre_19170_family_tool_only_shape() -> None:
@@ -326,9 +324,10 @@ def test_v2_export_preserves_graph_and_private_owner(
         "continuation. Treat it as sensitive conversation data."
     )
     assert conversation["sensitive_data_warning"] == shared_warning
-    assert manifest["content_items"][0]["metadata"][
-        "sensitive_data_warning"
-    ] == shared_warning
+    assert (
+        manifest["content_items"][0]["metadata"]["sensitive_data_warning"]
+        == shared_warning
+    )
     assert shared_warning in readme
     assert conversation["active_leaf_message_id"] == ids["selected"]
     assert conversation["selected_path_message_ids"] == [
@@ -444,9 +443,7 @@ def test_v2_import_uses_actual_preserved_continuation_state(
     persisted_state: str,
     expected_state: str,
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
 
     def mutate(conversation: dict) -> None:
@@ -497,9 +494,7 @@ def test_v2_import_uses_actual_preserved_continuation_state(
 def test_v2_import_rejects_continuation_active_with_complete_checkpoint(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
 
     def mutate(conversation: dict) -> None:
@@ -537,9 +532,7 @@ def test_v2_import_rejects_continuation_active_with_complete_checkpoint(
 def test_v2_import_rejects_continuation_active_without_checkpoint(
     tmp_path: Path, chachanotes_template_db: Path
 ) -> None:
-    source_paths, conversation_id, _ = _source_graph(
-        tmp_path, chachanotes_template_db
-    )
+    source_paths, conversation_id, _ = _source_graph(tmp_path, chachanotes_template_db)
     export_path = _create_export(tmp_path, source_paths, conversation_id)
 
     def remove_checkpoint(conversation: dict) -> None:
@@ -987,7 +980,9 @@ def test_v1_flat_import_without_private_data_remains_supported(
 
     assert success, message
     assert status.warnings == []
-    destination = own_database(CharactersRAGDB(str(destination_path), "verify-legacy-state"))
+    destination = own_database(
+        CharactersRAGDB(str(destination_path), "verify-legacy-state")
+    )
     imported_id = str(destination.get_conversation_by_name("Graph")[0]["id"])
     rows = destination.execute_query(
         "SELECT assistant_generation_state FROM messages WHERE conversation_id = ?",

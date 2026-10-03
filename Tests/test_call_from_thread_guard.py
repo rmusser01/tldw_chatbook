@@ -23,6 +23,7 @@ the package.
 ``ALLOWLISTED_RELATIVE_PATHS`` and ``test_app_py_allowlisted_sites_are_still_safe``
 below for why their remaining bare sites are not bugs.
 """
+
 from __future__ import annotations
 
 import ast

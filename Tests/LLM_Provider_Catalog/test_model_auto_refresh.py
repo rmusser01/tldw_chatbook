@@ -32,9 +32,13 @@ _SIX = ("OpenAI", "Anthropic", "MistralAI", "Moonshot", "OpenRouter", "ZAI")
 def _discovered(list_key: str, *ids: str) -> tuple[DiscoveredModel, ...]:
     return tuple(
         DiscoveredModel(
-            provider=list_key, provider_list_key=list_key, model_id=m,
-            display_name=m, source="runtime_discovered",
-            endpoint_fingerprint="fp", discovered_at="2026-07-17T00:00:00Z",
+            provider=list_key,
+            provider_list_key=list_key,
+            model_id=m,
+            display_name=m,
+            source="runtime_discovered",
+            endpoint_fingerprint="fp",
+            discovered_at="2026-07-17T00:00:00Z",
         )
         for m in ids
     )
@@ -55,9 +59,7 @@ def _service(models_by_provider, saved_calls, **overrides):
         saved_calls.append(section_values)
         return True
 
-    default_settings = {
-        "providers": {k: ["saved-1"] for k in _SIX}
-    }
+    default_settings = {"providers": {k: ["saved-1"] for k in _SIX}}
 
     return LocalLLMProviderCatalogService(
         provider_catalog_loader=overrides.get(
@@ -67,9 +69,16 @@ def _service(models_by_provider, saved_calls, **overrides):
         settings_loader=overrides.get("settings_loader", lambda: default_settings),
         discovery_client=overrides.get("discovery_client", fake_client),
         save_discovered_models_callback=overrides.get("save_callback", fake_save),
-        environ=overrides.get("environ", {"OPENAI_API_KEY": "sk", "ANTHROPIC_API_KEY": "sk",
-                                          "MISTRAL_API_KEY": "sk", "MOONSHOT_API_KEY": "sk",
-                                          "ZAI_API_KEY": "sk"}),  # no OPENROUTER key: public catalog
+        environ=overrides.get(
+            "environ",
+            {
+                "OPENAI_API_KEY": "sk",
+                "ANTHROPIC_API_KEY": "sk",
+                "MISTRAL_API_KEY": "sk",
+                "MOONSHOT_API_KEY": "sk",
+                "ZAI_API_KEY": "sk",
+            },
+        ),  # no OPENROUTER key: public catalog
     )
 
 
@@ -108,7 +117,9 @@ async def test_baseline_guard_suppresses_oversized_first_write(tmp_path):
     service = _service({"OpenRouter": big}, saved_calls)
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
     report = await service.refresh_stale_configured_providers(
-        catalog_settings=ModelCatalogSettings(write_to_config=frozenset({"openrouter"})),
+        catalog_settings=ModelCatalogSettings(
+            write_to_config=frozenset({"openrouter"})
+        ),
         disk_store=store,
         provider_list_keys=("OpenRouter",),
     )
@@ -119,7 +130,9 @@ async def test_baseline_guard_suppresses_oversized_first_write(tmp_path):
 @pytest.mark.asyncio
 async def test_small_catalog_backfills_on_first_write(tmp_path):
     saved_calls = []
-    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1", "new-2")}, saved_calls)
+    service = _service(
+        {"OpenAI": _discovered("OpenAI", "saved-1", "new-1", "new-2")}, saved_calls
+    )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
     report = await service.refresh_stale_configured_providers(
         catalog_settings=ModelCatalogSettings(write_to_config=frozenset({"openai"})),
@@ -133,19 +146,29 @@ async def test_small_catalog_backfills_on_first_write(tmp_path):
 @pytest.mark.asyncio
 async def test_second_fetch_appends_only_new_since_baseline(tmp_path):
     saved_calls = []
-    service = _service({"OpenRouter": _discovered("OpenRouter", *[f"v/m{i}" for i in range(60)])}, saved_calls)
+    service = _service(
+        {"OpenRouter": _discovered("OpenRouter", *[f"v/m{i}" for i in range(60)])},
+        saved_calls,
+    )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
     settings = ModelCatalogSettings(write_to_config=frozenset({"openrouter"}))
     await service.refresh_stale_configured_providers(
-        catalog_settings=settings, disk_store=store, provider_list_keys=("OpenRouter",))
+        catalog_settings=settings, disk_store=store, provider_list_keys=("OpenRouter",)
+    )
     # second fetch adds one model
     service2 = _service(
-        {"OpenRouter": _discovered("OpenRouter", *[f"v/m{i}" for i in range(60)], "v/new")},
+        {
+            "OpenRouter": _discovered(
+                "OpenRouter", *[f"v/m{i}" for i in range(60)], "v/new"
+            )
+        },
         saved_calls,
     )
     service2.discovery_cache = service.discovery_cache  # share prior cache state
     report = await service2.refresh_stale_configured_providers(
-        catalog_settings=settings, disk_store=store, provider_list_keys=("OpenRouter",),
+        catalog_settings=settings,
+        disk_store=store,
+        provider_list_keys=("OpenRouter",),
         force=True,
     )
     assert report.outcomes[0].saved_model_ids == ("v/new",)
@@ -179,17 +202,23 @@ async def test_auth_failure_is_quiet_not_ready(tmp_path):
 
 
 def test_notification_none_when_nothing_happened():
-    report = RefreshReport((
-        ProviderRefreshOutcome(provider_list_key="OpenAI", status="skipped_fresh"),
-    ))
+    report = RefreshReport(
+        (ProviderRefreshOutcome(provider_list_key="OpenAI", status="skipped_fresh"),)
+    )
     assert format_refresh_notification(report) is None
 
 
 def test_notification_reports_cached_and_failed():
-    report = RefreshReport((
-        ProviderRefreshOutcome(provider_list_key="OpenAI", status="refreshed", new_model_ids=("gpt-x",)),
-        ProviderRefreshOutcome(provider_list_key="ZAI", status="failed", error_kind="request_failed"),
-    ))
+    report = RefreshReport(
+        (
+            ProviderRefreshOutcome(
+                provider_list_key="OpenAI", status="refreshed", new_model_ids=("gpt-x",)
+            ),
+            ProviderRefreshOutcome(
+                provider_list_key="ZAI", status="failed", error_kind="request_failed"
+            ),
+        )
+    )
     message = format_refresh_notification(report)
     assert "OpenAI" in message and "cached" in message
     assert "ZAI" in message and "using cached list" in message
@@ -202,11 +231,15 @@ async def test_opted_out_provider_is_skipped_without_calling_client(tmp_path):
     service = _service(
         {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")},
         saved_calls,
-        discovery_client=_tracking_client(client_calls, {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}),
+        discovery_client=_tracking_client(
+            client_calls, {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}
+        ),
     )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
     report = await service.refresh_stale_configured_providers(
-        catalog_settings=ModelCatalogSettings(auto_refresh_disabled=frozenset({"openai"})),
+        catalog_settings=ModelCatalogSettings(
+            auto_refresh_disabled=frozenset({"openai"})
+        ),
         disk_store=store,
         provider_list_keys=("OpenAI",),
     )
@@ -316,7 +349,9 @@ async def test_write_through_failure_is_flagged_and_notified(tmp_path):
 @pytest.mark.asyncio
 async def test_zero_stale_after_hours_refetches_fresh_entry(tmp_path):
     saved_calls = []
-    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
+    service = _service(
+        {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls
+    )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
     store.record(
         "OpenAI",
@@ -341,7 +376,9 @@ async def test_disk_save_failure_still_returns_truthful_report(
     tmp_path, monkeypatch, failure
 ):
     saved_calls = []
-    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
+    service = _service(
+        {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls
+    )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
 
     def failing_save():
@@ -370,7 +407,9 @@ async def test_disk_record_validation_failure_keeps_successful_refresh_truthful(
     tmp_path, monkeypatch
 ):
     saved_calls = []
-    service = _service({"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls)
+    service = _service(
+        {"OpenAI": _discovered("OpenAI", "saved-1", "new-1")}, saved_calls
+    )
     store = ModelCatalogDiskStore(tmp_path / "cache.json")
 
     def failing_record(*_args, **_kwargs):
@@ -497,7 +536,9 @@ async def test_prune_drops_providers_no_longer_configured(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_unexpected_client_error_becomes_failed_outcome_and_loop_continues(tmp_path):
+async def test_unexpected_client_error_becomes_failed_outcome_and_loop_continues(
+    tmp_path,
+):
     async def raising_client(**kwargs):
         if kwargs["provider_list_key"] == "OpenAI":
             raise RuntimeError("boom")
@@ -590,11 +631,16 @@ async def test_setup_error_becomes_failed_outcome_and_loop_continues(tmp_path):
 
 
 def test_notification_reports_baseline_diff_as_cached():
-    report = RefreshReport((
-        ProviderRefreshOutcome(
-            provider_list_key="OpenRouter", status="baseline", new_model_ids=("a/b", "c/d")),
-        ProviderRefreshOutcome(provider_list_key="ZAI", status="baseline"),
-    ))
+    report = RefreshReport(
+        (
+            ProviderRefreshOutcome(
+                provider_list_key="OpenRouter",
+                status="baseline",
+                new_model_ids=("a/b", "c/d"),
+            ),
+            ProviderRefreshOutcome(provider_list_key="ZAI", status="baseline"),
+        )
+    )
     message = format_refresh_notification(report)
     assert "OpenRouter: 2 new cached" in message
     assert "ZAI: catalog cached" in message

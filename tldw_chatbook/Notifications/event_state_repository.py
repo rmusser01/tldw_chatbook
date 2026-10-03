@@ -416,9 +416,7 @@ class EventStateRepository(BaseDB):
         try:
             conn.close()
         except Exception as exc:  # noqa: BLE001 - best-effort teardown
-            logger.debug(
-                "Event state connection close failed: {}", type(exc).__name__
-            )
+            logger.debug("Event state connection close failed: {}", type(exc).__name__)
 
     def _initialize_schema(self) -> None:
         # Raw connection: runs under _ensure_schema's lock (TASK-21105), so

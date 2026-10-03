@@ -128,19 +128,13 @@ def _ownership(
         repository=_repository(),
         head=HeadIdentity.attached("refs/heads/main", OID_B),
         approved_endpoint_topology=approved_endpoints,
-        approved_move_edges=(
-            ()
-            if topology is not None
-            else approved_group.move_edges
-        ),
+        approved_move_edges=(() if topology is not None else approved_group.move_edges),
         approved_current_path=(
             approved_endpoints[-1]
             if topology is not None
             else approved_group.current_path
         ),
-        original_baselines={
-            path: IndexBaseline(entry=None) for path in entries
-        },
+        original_baselines={path: IndexBaseline(entry=None) for path in entries},
         post_stage_entries=entries,
     )
 
@@ -316,8 +310,7 @@ def test_session_group_copies_endpoint_sequences_to_an_immutable_tuple() -> None
 def test_parse_porcelain_v2_z_preserves_all_supported_record_paths_as_bytes() -> None:
     non_utf8_path = os.fsdecode(b"bad-\xff.md")
     payload = (
-        f"1 .M N... 100644 100644 100644 {OID_A} {OID_A} "
-        "ordinary name.md\0"
+        f"1 .M N... 100644 100644 100644 {OID_A} {OID_A} ordinary name.md\0"
     ).encode()
     payload += (
         f"2 R. N... 100644 100644 100644 {OID_A} {OID_B} R100 "
@@ -708,9 +701,7 @@ def test_topology_changed_group_with_new_external_stage_cannot_stage_update() ->
 
 
 def test_move_reversal_changes_exact_topology_despite_same_endpoint_set() -> None:
-    staged_group = coalesce_session_changes(
-        (_change(1, "moved", "a.md", "b.md"),)
-    )[0]
+    staged_group = coalesce_session_changes((_change(1, "moved", "a.md", "b.md"),))[0]
     reversed_group = coalesce_session_changes(
         (
             _change(1, "moved", "a.md", "b.md"),
@@ -738,9 +729,7 @@ def test_move_reversal_changes_exact_topology_despite_same_endpoint_set() -> Non
 
 
 def test_newer_body_edit_preserves_move_topology_and_unstage_eligibility() -> None:
-    staged_group = coalesce_session_changes(
-        (_change(1, "moved", "a.md", "b.md"),)
-    )[0]
+    staged_group = coalesce_session_changes((_change(1, "moved", "a.md", "b.md"),))[0]
     edited_group = coalesce_session_changes(
         (
             _change(1, "moved", "a.md", "b.md"),
@@ -836,9 +825,7 @@ def test_inactive_historical_endpoint_without_effective_path_is_not_ambiguous() 
     assert [row.state for row in rows] == ["unstaged", "clean"]
     assert rows[0].stage_eligible
     assert not rows[1].stage_eligible
-    assert stage_pathspecs(groups[0], records, groups=groups) == (
-        os.fsencode("b.md"),
-    )
+    assert stage_pathspecs(groups[0], records, groups=groups) == (os.fsencode("b.md"),)
     assert stage_pathspecs(groups[1], records, groups=groups) == ()
 
 
@@ -1094,9 +1081,7 @@ def test_ownership_signature_preserves_an_exact_post_stage_absence() -> None:
         approved_endpoint_topology=group.endpoints,
         approved_move_edges=group.move_edges,
         approved_current_path=group.current_path,
-        original_baselines={
-            "deleted.md": IndexBaseline(_entry("deleted.md"))
-        },
+        original_baselines={"deleted.md": IndexBaseline(_entry("deleted.md"))},
         post_stage_entries={"deleted.md": None},
     )
 
@@ -1218,10 +1203,7 @@ def test_status_environment_and_argv_disable_side_channel_writes() -> None:
     assert environment["FILTER_HELPER_CONTEXT"] == "preserved"
     assert argv[:2] == ("/private/bin/git", "--literal-pathspecs")
     assert ("-c", "core.fsmonitor=false") == argv[2:4]
-    pairs = tuple(
-        argv[index : index + 2]
-        for index in range(len(argv) - 1)
-    )
+    pairs = tuple(argv[index : index + 2] for index in range(len(argv) - 1))
     assert ("-c", "status.renames=false") in pairs
     assert "--porcelain=v2" in argv
     assert "-z" in argv
@@ -1511,10 +1493,7 @@ async def test_discover_bounds_and_sanitizes_hostile_failure_stderr(
         GitCommandResult(
             128,
             b"",
-            (
-                b"fatal: detected dubious ownership\x00\x1b\n"
-                + (b"x" * 10_000)
-            ),
+            (b"fatal: detected dubious ownership\x00\x1b\n" + (b"x" * 10_000)),
         ),
     )
 
@@ -1614,8 +1593,7 @@ async def test_existing_unresolvable_branch_is_not_misclassified_as_unborn(
     assert discovery.message is not None
     assert "does not resolve to a commit" in discovery.message
     assert any(
-        "show-ref" in tuple(os.fsdecode(item) for item in call)
-        for call in runner.calls
+        "show-ref" in tuple(os.fsdecode(item) for item in call) for call in runner.calls
     )
 
 
@@ -3152,18 +3130,14 @@ def test_parse_index_entries_preserves_stage_and_semantic_flags() -> None:
 
 def test_unmerged_index_stages_are_preserved_and_classified_as_conflict() -> None:
     payload = b"".join(
-        b"H 100644 "
-        + object_id.encode("ascii")
-        + f" {stage}\tconflict.md\0".encode()
+        b"H 100644 " + object_id.encode("ascii") + f" {stage}\tconflict.md\0".encode()
         for stage, object_id in (
             (1, OID_A),
             (2, OID_B),
             (3, OID_C),
         )
     )
-    group = coalesce_session_changes(
-        (_change(1, "modified", "conflict.md"),)
-    )[0]
+    group = coalesce_session_changes((_change(1, "modified", "conflict.md"),))[0]
 
     entries = parse_index_entries_z(payload)
     (row,) = classify_session_rows((group,), (), entries, {})
@@ -3582,10 +3556,7 @@ class _ObservedMismatchThenFailureRunner(_DelayedStatusRunner):
         timeout: float | None = None,
     ) -> GitCommandResult:
         text = tuple(os.fsdecode(argument) for argument in argv)
-        if (
-            self.scenario == "head_then_index_failure"
-            and "HEAD^{commit}" in text
-        ):
+        if self.scenario == "head_then_index_failure" and "HEAD^{commit}" in text:
             self.calls.append(tuple(argv))
             self.mismatch_observed = True
             return GitCommandResult(0, OID_C.encode("ascii") + b"\n", b"")
@@ -3600,10 +3571,7 @@ class _ObservedMismatchThenFailureRunner(_DelayedStatusRunner):
                 b"H 100644 " + OID_C.encode("ascii") + b" 0\tnote.md\0",
                 b"",
             )
-        if (
-            self.scenario == "index_then_status_parse_failure"
-            and "status" in text
-        ):
+        if self.scenario == "index_then_status_parse_failure" and "status" in text:
             self.calls.append(tuple(argv))
             self.later_failure_observed = True
             return GitCommandResult(0, b"? note.md", b"")
@@ -3643,9 +3611,7 @@ def _status_service_with_owned_note(
                 approved_move_edges=group.move_edges,
                 approved_current_path=group.current_path,
                 original_baselines={"note.md": IndexBaseline(None)},
-                post_stage_entries={
-                    "note.md": _entry("note.md", object_id=OID_B)
-                },
+                post_stage_entries={"note.md": _entry("note.md", object_id=OID_B)},
             )
         },
     )
@@ -3680,9 +3646,7 @@ async def test_observed_head_mismatch_revokes_before_later_index_failure(
 async def test_observed_index_mismatch_revokes_before_later_status_parse_failure(
     tmp_path: Path,
 ) -> None:
-    runner = _ObservedMismatchThenFailureRunner(
-        "index_then_status_parse_failure"
-    )
+    runner = _ObservedMismatchThenFailureRunner("index_then_status_parse_failure")
     owner, binding, service = _status_service_with_owned_note(tmp_path, runner)
 
     result = await service.start_status(
@@ -3840,9 +3804,10 @@ async def test_hidden_change_invalidates_admitted_status_until_reopen(
     refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
 
     assert runner.query_count == 2
-    assert tuple(
-        row.group.current_path for row in refreshed_result.rows
-    ) == (first_path, second_path)
+    assert tuple(row.group.current_path for row in refreshed_result.rows) == (
+        first_path,
+        second_path,
+    )
     assert owner.snapshot(binding).git_status == refreshed_result
 
 
@@ -3862,9 +3827,7 @@ async def test_hidden_change_invalidates_earlier_coalesced_status_request(
     await asyncio.wait_for(runner.first_index_started.wait(), timeout=1)
 
     assert owner.record_change(binding, SessionChange("created", paths[1]))
-    assert (
-        service.start_status(binding, owner.snapshot(binding).changes) is first
-    )
+    assert service.start_status(binding, owner.snapshot(binding).changes) is first
     assert owner.record_change(binding, SessionChange("created", paths[2]))
 
     runner.release_first_index.set()
@@ -3881,9 +3844,7 @@ async def test_hidden_change_invalidates_earlier_coalesced_status_request(
     refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
 
     assert runner.query_count == 3
-    assert tuple(
-        row.group.current_path for row in refreshed_result.rows
-    ) == paths
+    assert tuple(row.group.current_path for row in refreshed_result.rows) == paths
     assert owner.snapshot(binding).git_status == refreshed_result
 
 
@@ -3978,9 +3939,7 @@ async def test_trigger_during_final_rerun_marks_result_stale_without_third_child
     refreshed_result = await asyncio.wait_for(refreshed, timeout=1)
     assert runner.query_count == 3
     assert refreshed_result.state == "ready"
-    assert tuple(
-        row.group.current_path for row in refreshed_result.rows
-    ) == (paths[2],)
+    assert tuple(row.group.current_path for row in refreshed_result.rows) == (paths[2],)
 
 
 @pytest.mark.asyncio
@@ -4447,7 +4406,7 @@ async def test_shutdown_seals_status_and_prevents_late_publication(
         service.start_status(
             binding,  # type: ignore[arg-type]
             (_change(2, "modified", "note.md"),),
-    )
+        )
     assert error.value.reason == "shutdown"
     assert inspect.isawaitable(settlement)
     cancelled_waiter = asyncio.ensure_future(settlement)
@@ -4651,8 +4610,7 @@ class _PreAddOwnedEndpointRaceRunner(_PreAddEndpointRaceRunner):
         if "status" in text:
             self.calls.append(tuple(argv))
             payload = (
-                f"1 .M N... 100644 100644 100644 {OID_B} {OID_B} "
-                "note.md\0"
+                f"1 .M N... 100644 100644 100644 {OID_B} {OID_B} note.md\0"
             ).encode()
             return GitCommandResult(0, payload, b"")
         return await super().run(
@@ -4730,9 +4688,7 @@ async def test_blocked_pre_add_stage_update_retains_existing_ownership(
         original_baselines={
             "note.md": IndexBaseline(_entry("note.md", object_id=OID_A))
         },
-        post_stage_entries={
-            "note.md": _entry("note.md", object_id=OID_B)
-        },
+        post_stage_entries={"note.md": _entry("note.md", object_id=OID_B)},
     )
     assert owner.publish_ownership(binding, {1: saved_ownership})
     runner = _PreAddOwnedEndpointRaceRunner(root=root)
@@ -4950,9 +4906,7 @@ class _PausedCommitLifecycleRunner:
         self.release_commit = asyncio.Event()
         self.commit_calls = 0
         self.cancel_with_retained_child = False
-        self.token = RetainedGitChildToken(
-            git_service._RETAINED_CHILD_TOKEN_SECRET
-        )
+        self.token = RetainedGitChildToken(git_service._RETAINED_CHILD_TOKEN_SECRET)
         self.claimed = False
 
     async def run(

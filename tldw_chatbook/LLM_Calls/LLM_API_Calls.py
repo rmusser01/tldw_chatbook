@@ -527,9 +527,7 @@ def get_openai_embeddings(input_data: str, model: str) -> List[float]:
         raise ValueError(f"OpenAI Embeddings: Unexpected error occurred: {str(e)}")
 
 
-def _openai_prompt_cache_key(
-    system_message: object, tools: object
-) -> str:
+def _openai_prompt_cache_key(system_message: object, tools: object) -> str:
     """A content-addressed, rotation-stable OpenAI ``prompt_cache_key``.
 
     TASK-26015. Digests the STABLE prefix -- the system message and the
@@ -558,9 +556,7 @@ def _openai_cache_key_enabled() -> bool:
     try:
         return bool(get_cli_setting("caching", "openai_cache_key", False))
     except Exception as exc:  # noqa: BLE001 -- fail safe to OFF (today's behavior)
-        logger.warning(
-            f"caching openai_cache_key read failed; defaulting OFF: {exc!r}"
-        )
+        logger.warning(f"caching openai_cache_key read failed; defaulting OFF: {exc!r}")
         return False
 
 
@@ -808,13 +804,9 @@ def chat_with_openai(
     # Anthropic cache_control path this one has no degrade-retry, so a
     # custom endpoint never receives it. Off by default reproduces today's
     # payload exactly (AC#6).
-    _canonical_openai_endpoint = not (
-        api_base_url or openai_config.get("api_base_url")
-    )
+    _canonical_openai_endpoint = not (api_base_url or openai_config.get("api_base_url"))
     if _canonical_openai_endpoint and _openai_cache_key_enabled():
-        payload["prompt_cache_key"] = _openai_prompt_cache_key(
-            system_message, tools
-        )
+        payload["prompt_cache_key"] = _openai_prompt_cache_key(system_message, tools)
 
     headers = {
         "Authorization": f"Bearer {final_api_key}",
@@ -859,7 +851,11 @@ def chat_with_openai(
                 try:
                     response = _provider_recovery.openai_post(
                         session,
-                        api_url, headers=headers, json=payload, stream=True, timeout=180
+                        api_url,
+                        headers=headers,
+                        json=payload,
+                        stream=True,
+                        timeout=180,
                     )
                     if (
                         response.status_code == 400
@@ -1177,9 +1173,7 @@ def _cache_control_marker(model: str) -> dict[str, str]:
     try:
         ttl = str(get_cli_setting("caching", "cache_ttl", "5m") or "5m").strip().lower()
     except Exception as exc:  # noqa: BLE001 -- fail safe to the 5m default
-        logger.warning(
-            f"caching cache_ttl read failed; defaulting to 5m: {exc!r}"
-        )
+        logger.warning(f"caching cache_ttl read failed; defaulting to 5m: {exc!r}")
         return marker
     if ttl == "1h" and _anthropic_supports_1h_ttl(model):
         return {"type": "ephemeral", "ttl": "1h"}
@@ -1462,10 +1456,12 @@ def chat_with_anthropic(
     # Qodo #5 (PR #2313): auth_source lives in the MODERN [api_settings.anthropic]
     # table (where it is documented and where readiness reads it) -- the legacy
     # anthropic_api mapping never receives it. Read the modern table first.
-    _modern_anthropic = (
-        loaded_config_data.get("api_settings") or {}
-    ).get("anthropic") or {}
-    _auth_config = _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
+    _modern_anthropic = (loaded_config_data.get("api_settings") or {}).get(
+        "anthropic"
+    ) or {}
+    _auth_config = (
+        _modern_anthropic if "auth_source" in _modern_anthropic else anthropic_config
+    )
     if anthropic_auth_source(_auth_config) == "claude_subscription":
         _sub_cred = read_claude_code_credential()
         if _sub_cred is None:
@@ -1559,9 +1555,7 @@ def chat_with_anthropic(
             ):
                 last["content"].append(text_block)
             else:
-                anthropic_messages.append(
-                    {"role": "user", "content": [text_block]}
-                )
+                anthropic_messages.append({"role": "user", "content": [text_block]})
             continue
         if role == "assistant" and msg.get("tool_calls"):
             # OpenAI assistant tool_calls echo -> Anthropic tool_use blocks

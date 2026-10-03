@@ -2889,10 +2889,10 @@ def test_nontransient_4xx_and_mode_model_mismatch_are_not_retried(
     for index, response in enumerate(responses):
         session = _RecordingSession(response)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: session,
+        )
         monkeypatch.setattr(
             qwencloud,
             "get_runtime_config_snapshot",
@@ -3070,10 +3070,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
         )
         status_session = _RecordingSession(status_response)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: status_session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: status_session,
+        )
         with (
             _captured_qwencloud_logs() as status_logs,
             pytest.raises(expected_type) as status_exc,
@@ -3099,10 +3099,10 @@ def test_qwencloud_errors_and_logs_redact_private_values(
     ):
         network_session = _RecordingSession(_TransportResponse({}), error=network_error)
         monkeypatch.setattr(
-        qwencloud,
-        "create_default_session",
-        lambda: network_session,
-    )
+            qwencloud,
+            "create_default_session",
+            lambda: network_session,
+        )
         with (
             _captured_qwencloud_logs() as network_logs,
             pytest.raises(ChatProviderError) as network_exc,

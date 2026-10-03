@@ -265,9 +265,7 @@ def _snapshot_diff(census: dict, ratchet) -> str:
     live_loc = {r["route"]: r["added_loc"] for r in census["routes"]}
     pinned_loc = {name: row["loc"] for name, row in pinned_routes.items()}
     live_modules = {m for r in census["routes"] for m in r.get("modules", [])}
-    pinned_modules = {
-        m for row in pinned_routes.values() for m in row["modules"]
-    }
+    pinned_modules = {m for row in pinned_routes.values() for m in row["modules"]}
     return (
         "vs pinned snapshot boot_budget_snapshots/preimport_payload.json:\n"
         + ratchet.format_byte_diff(live_loc, pinned_loc, "route")
@@ -277,16 +275,13 @@ def _snapshot_diff(census: dict, ratchet) -> str:
             live_modules,
             pinned_modules,
             "module",
-            added_note="these consumed the headroom; defer them or shed "
-            "elsewhere",
+            added_note="these consumed the headroom; defer them or shed elsewhere",
         )
     )
 
 
 @pytest.mark.integration
-def test_preimport_pass_payload_stays_within_budget(
-    tmp_path: Path, ratchet
-) -> None:
+def test_preimport_pass_payload_stays_within_budget(tmp_path: Path, ratchet) -> None:
     """The registry walk's total marginal payload stays at its pinned size.
 
     Args:

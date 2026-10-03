@@ -144,9 +144,13 @@ def _embeddings_rag_available() -> bool:
     calls internally) are honored.
     """
     optional_deps_module = sys.modules.get("tldw_chatbook.Utils.optional_deps")
-    lazy_available_fn = getattr(optional_deps_module, "lazy_embeddings_rag_available", None)
+    lazy_available_fn = getattr(
+        optional_deps_module, "lazy_embeddings_rag_available", None
+    )
     if not callable(lazy_available_fn):
-        from ..Utils.optional_deps import lazy_embeddings_rag_available as lazy_available_fn
+        from ..Utils.optional_deps import (
+            lazy_embeddings_rag_available as lazy_available_fn,
+        )
     return bool(lazy_available_fn())
 
 

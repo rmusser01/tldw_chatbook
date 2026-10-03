@@ -665,11 +665,13 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         try:
             self._collect_conversations_with_database(
                 conversation_ids,
@@ -696,8 +698,7 @@ class ChatbookCreator:
 
         conversation_service, _, _ = build_local_citation_conversation_service(
             db,
-            sidecar_path=get_user_data_dir()
-            / "tldw_chatbook_chat_rag_context.json",
+            sidecar_path=get_user_data_dir() / "tldw_chatbook_chat_rag_context.json",
         )
         conv_dir = work_dir / "content" / "conversations"
         conv_dir.mkdir(parents=True, exist_ok=True)
@@ -943,11 +944,7 @@ class ChatbookCreator:
             citation_messages: Accumulator for citation-bearing messages.
         """
         for order, msg in enumerate(chunk, start=len(exported_messages)):
-            timestamp = (
-                msg.get("timestamp")
-                or msg.get("created_at")
-                or utc_now_iso()
-            )
+            timestamp = msg.get("timestamp") or msg.get("created_at") or utc_now_iso()
             if hasattr(timestamp, "isoformat"):
                 timestamp = timestamp.isoformat()
             message_id = msg.get("id")
@@ -1417,11 +1414,13 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         notes_dir = work_dir / "content" / "notes"
         notes_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1504,11 +1503,13 @@ class ChatbookCreator:
         if not db_path:
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         chars_dir = work_dir / "content" / "characters"
         chars_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1807,11 +1808,13 @@ class ChatbookCreator:
             )
             return
 
-        db = own_database(CharactersRAGDB(
-            db_path,
-            "chatbook_creator",
-            console_library_migration_seed=load_console_library_migration_seed(),
-        ))
+        db = own_database(
+            CharactersRAGDB(
+                db_path,
+                "chatbook_creator",
+                console_library_migration_seed=load_console_library_migration_seed(),
+            )
+        )
         kept_dir = work_dir / "content" / "kept_briefings"
         kept_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1885,9 +1888,7 @@ class ChatbookCreator:
 
                 title = kept.get("watchlist_name") or f"Kept briefing {kept_id}"
                 report_file = kept_dir / f"kept_briefing_{kept_id}.md"
-                self._write_kept_briefing_report(
-                    report_file, kept_id, title, kept_data
-                )
+                self._write_kept_briefing_report(report_file, kept_id, title, kept_data)
 
                 content.kept_briefings.append(kept_data)
 
@@ -1913,9 +1914,7 @@ class ChatbookCreator:
                 )
 
             except Exception as e:
-                logger.error(
-                    f"Error collecting kept briefing {kept_id_raw}: {e}"
-                )
+                logger.error(f"Error collecting kept briefing {kept_id_raw}: {e}")
 
     def _write_kept_briefing_report(
         self,
@@ -1932,9 +1931,7 @@ class ChatbookCreator:
         with open(report_file, "w", encoding="utf-8") as f:
             f.write(f"# Kept Briefing: {self._markdown_report_text(title)}\n\n")
             f.write(f"- Kept briefing id (local): {kept_id}\n")
-            f.write(
-                f"- Source briefing id: {kept_data['source_briefing_id']}\n"
-            )
+            f.write(f"- Source briefing id: {kept_data['source_briefing_id']}\n")
             f.write(f"- Origin: {self._markdown_report_text(kept_data['origin'])}\n")
             if kept_data.get("model_used"):
                 f.write(
@@ -1999,11 +1996,13 @@ class ChatbookCreator:
                 )
                 return
 
-            db = own_database(CharactersRAGDB(
-                db_path,
-                "chatbook_creator",
-                console_library_migration_seed=load_console_library_migration_seed(),
-            ))
+            db = own_database(
+                CharactersRAGDB(
+                    db_path,
+                    "chatbook_creator",
+                    console_library_migration_seed=load_console_library_migration_seed(),
+                )
+            )
 
             try:
                 # Get character card (which includes all details)
@@ -2223,9 +2222,10 @@ class ChatbookCreator:
                             info.compress_type = zipfile.ZIP_DEFLATED
                             info.create_system = 3
                             info.external_attr = 0o100600 << 16
-                            with file_path.open("rb") as source, archive.open(
-                                info, "w"
-                            ) as destination:
+                            with (
+                                file_path.open("rb") as source,
+                                archive.open(info, "w") as destination,
+                            ):
                                 while chunk := source.read(64 * 1024):
                                     destination.write(chunk)
                         else:

@@ -165,9 +165,7 @@ def _issued_network_context(
         object_format,
     )
     environment = (
-        ssh_environment
-        if destination.scheme == "ssh"
-        else {"PATH": os.defpath}
+        ssh_environment if destination.scheme == "ssh" else {"PATH": os.defpath}
     )
     assert environment is not None
     configuration = (
@@ -187,9 +185,7 @@ def _issued_network_context(
     )
     context_parent = tmp_path / "contexts"
     context_parent.mkdir(mode=0o700)
-    developer_git = Path(
-        "/Library/Developer/CommandLineTools/usr/bin/git"
-    )
+    developer_git = Path("/Library/Developer/CommandLineTools/usr/bin/git")
     git_executable = (
         str(developer_git)
         if developer_git.is_file()
