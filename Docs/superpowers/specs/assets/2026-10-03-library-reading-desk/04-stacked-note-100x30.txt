@@ -2,22 +2,22 @@
  ⌃1 Home  ⌃2 Console   │ ⌃3 Library │ ⌃4 Roleplay  ⌃5 Watchlists  ⌃7 Schedules  ⌃8 Workflo  More ▾
 ────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
-  N   ‹ Items  Note · Notes — paper… (saved 20:12) ⇄ Reading · paper-retrieval-practice
-  a  Quoted ¶12 into Notes — paper-retrieval-practice
+  N   ‹ Items  Note · Retrieval practice… (saved 20:12) ⇄ Reading · paper-retrieval-practice
+  a  Quoted ¶12 of paper-retrieval-practice                                               cites 2 ▾
   v
        Edit (selected)  Preview  Info                                                         Save
      ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-     ┃ Source: paper-retrieval-practice ↗                                                          ┃
-     ┃                                                                                             ┃
      ┃ ## Key claims                                                                               ┃
----> ┃                                                                                             ┃
+     ┃                                                                                             ┃
      ┃ - Retrieval beats rereading at one week, in every subject tested.                           ┃
+---> ┃ - Spacing the reviews over several days adds to the effect.                                 ┃
      ┃                                                                                             ┃
      ┃ > Results. Retrieval practice improved 7-day retention by 21 percentage points.             ┃
      ┃ > — paper-retrieval-practice, ¶12 ↗                                                         ┃
      ┃                                                                                             ┃
-     ┃                                                                                             ┃
-     ┃                                                                                             ┃
+     ┃ > Spacing the same study time across several days produced better recall at one month       ┃
+     ┃ than massing it into one session.                                                           ┃
+     ┃ > — Spaced repetition, explained, ¶3 ↗                                                      ┃
 ---> ┃                                                                                             ┃
      ┃                                                                                             ┃
      ┃                                                                                             ┃
@@ -26,5 +26,5 @@
      ┃                                                                                             ┃
      ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
 
-                                                                                    31 words · 10:1
+                                                                                     58 words · 8:1
   esc back to reader | ctrl+s save | ctrl+end end of note | F1 · F6 · Ctrl+P · Ctrl+Q

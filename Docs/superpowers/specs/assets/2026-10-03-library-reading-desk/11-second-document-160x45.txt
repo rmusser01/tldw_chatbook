@@ -3,41 +3,41 @@
 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
-│   N  ┌────────────────────────────────────────────────────────┐  N  paper-retrieval-practice                                                                 │
-│   a  │  ‹ Items  Retrieval practice — lit review  cites 2 ▾   │  o  file:///Users/you/Papers/paper-retrieval-practice.pdf                                    │
-│   v  │ Saved 20:12 · ctrl+s save                              │  t    Find  Read later  Use in Console  Note  More                                           │
+│   N  ┌────────────────────────────────────────────────────────┐  N  Spaced repetition, explained                                                             │
+│   a  │  ‹ Items  Retrieval practice — lit review  cites 2 ▾   │  o  N. Ahmed                                                                                 │
+│   v  │ Quoted ¶3 of Spaced repetition, explained              │  t    Find  Read later  Use in Console  Note  More                                           │
 │      │                                                        │  e    Read (selected)  Analysis  Highlights  Info                                            │
-│      │   Edit (selected)  Preview  Info                Save   │      Rendered (selected) |      Raw                                        ¶13 of 31  Quote  │
+│      │   Edit (selected)  Preview  Info                Save   │                                                                              ¶3 of 7  Quote  │
 │      │ ▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎ │     ┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓ │
-│      │ ▊ ## Key claims                                      ▎ │     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      ┃ │
-│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊ - Retrieval beats rereading at one week, in        ▎ │     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.      ┃ │
-│      │ ▊ every subject tested.                              ▎ │     ┃                                                                                      ┃ │
-│      │ ▊ - Spacing the reviews over several days adds to    ▎ │     ┃   Discussion. Effects held across subject areas.                                     ┃ │
+│      │ ▊ ## Key claims                                      ▎ │     ┃   Spaced repetition schedules reviews of the same material at growing intervals      ┃ │
+│      │ ▊                                                    ▎ │     ┃   instead of all at once.                                                            ┃ │
+│      │ ▊ - Retrieval beats rereading at one week, in        ▎ │     ┃                                                                                      ┃ │
+│      │ ▊ every subject tested.                              ▎ │     ┃   The idea is old: early memory studies measured how quickly unrehearsed material    ┃ │
+│      │ ▊ - Spacing the reviews over several days adds to    ▎ │     ┃   was forgotten, and how much a later review restored it.                            ┃ │
 │      │ ▊ the effect.                                        ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      ┃ │
-│ ---> │ ▊ > Results. Retrieval practice improved 7-day       ▎ │     ┃                                                                                   ▄▄ ┃ │
-│      │ ▊ retention by 21 percentage points.                 ▎ │     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.      ┃ │
-│      │ ▊ > — paper-retrieval-practice, ¶12 ↗                ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃ █ Discussion. Effects held across subject areas.                                     ┃ │
+│      │ ▊                                                    ▎ │     ┃ █ Spacing the same study time across several days produced better recall at one      ┃ │
+│ ---> │ ▊ > Results. Retrieval practice improved 7-day       ▎ │     ┃ █ month than massing it into one session.                                            ┃ │
+│      │ ▊ retention by 21 percentage points.                 ▎ │     ┃                                                                                      ┃ │
+│      │ ▊ > — paper-retrieval-practice, ¶12 ↗                ▎ │     ┃   The best gap depends on how long you need to remember: longer retention intervals  ┃ │
+│      │ ▊                                                    ▎ │     ┃   favour longer gaps between reviews.                                                ┃ │
 │      │ ▊ > Spacing the same study time across several       ▎ │     ┃                                                                                      ┃ │
-│      │ ▊ days produced better recall at one month than      ▎ │<--- ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      ┃ │
-│      │ ▊ massing it into one session.                       ▎ │     ┃                                                                                      ┃ │
-│      │ ▊ > — Spaced repetition, explained, ¶3 ↗             ▎ │     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.      ┃ │
+│      │ ▊ days produced better recall at one month than      ▎ │<--- ┃   Combining spacing with retrieval, testing yourself at each review, helps more      ┃ │
+│      │ ▊ massing it into one session.                       ▎ │     ┃   than either alone.                                                                 ┃ │
+│      │ ▊ > — Spaced repetition, explained, ¶3 ↗             ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃   Flashcard software automates the schedule, but the evidence comes from classroom   ┃ │
+│      │ ▊                                                    ▎ │     ┃   and lab studies, not from any one app.                                             ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃   Discussion. Effects held across subject areas.                                     ┃ │
+│ ---> │ ▊                                                    ▎ │     ┃   Open questions remain about complex material, where what to review matters as      ┃ │
+│      │ ▊                                                    ▎ │     ┃   much as when.                                                                      ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│ ---> │ ▊                                                    ▎ │     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.      ┃ │
-│      │ ▊                                                    ▎ │     ┃                                                                                   ▃▃ ┃ │
-│      │ ▊                                                    ▎ │     ┃   Discussion. Effects held across subject areas.                                     ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊                                                    ▎ │     ┃   Results. Retrieval practice improved 7-day retention by 21 percentage points.      ┃ │
 │      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
-│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃   Discussion. Effects held across subject areas.                                     ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊                                                    ▎ │     ┃                                                                                      ┃ │
+│      │ ▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎ │     ┃                                                                                      ┃ │
 │      │                                                        │     ┃                                                                                      ┃ │
 │      │                                       58 words · 12:1  │     ┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛ │
 │      └────────────────────────────────────────────────────────┘                                                                                              │

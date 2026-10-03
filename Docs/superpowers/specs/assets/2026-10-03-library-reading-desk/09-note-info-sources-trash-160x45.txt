@@ -4,7 +4,7 @@
  Library | Local
 ┌──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │   N  ┌────────────────────────────────────────────────────────┐  N  paper-retrieval-practice                                                                 │
-│   a  │  ‹ Items  Note · Notes — paper-retrieval… ·  1 of 2 ▾  │  o  file:///Users/you/Papers/paper-retrieval-practice.pdf                                    │
+│   a  │  ‹ Items  Retrieval practice — lit review  cites 3 ▾   │  o  file:///Users/you/Papers/paper-retrieval-practice.pdf                                    │
 │   v  │ Saved 20:12 · ctrl+s save                              │  t    Find  Read later  Use in Console  Note  More                                           │
 │      │                                                        │  e    Read (selected)  Analysis  Highlights  Info                                            │
 │      │   Edit  Preview  Info (selected)                Save   │      Rendered (selected) |      Raw                                        ¶12 of 31  Quote  │
@@ -12,17 +12,17 @@
 │      │ │Properties                                          │ │     │   Discussion. Effects held across subject areas.                                     │ │
 │      │ │Keywords                                            │ │     │                                                                                      │ │
 │      │ │▊▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▎│ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
-│      │ │▊ retrieval, study                                 ▎│ │     │                                                                                      │ │
+│      │ │▊ retrieval, spacing, lit review                   ▎│ │     │                                                                                      │ │
 │      │ │▊▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▎│ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
 │      │ │                                                    │ │     │                                                                                      │ │
-│      │ │Created   2026-10-02 20:04 · 8m ago                 │ │     │   Discussion. Effects held across subject areas.                                  ▄▄ │ │
+│      │ │Created   2026-10-02 19:31 · 41m ago                │ │     │   Discussion. Effects held across subject areas.                                  ▄▄ │ │
 │ ---> │ │Modified  2026-10-02 20:12 · just now               │ │     │                                                                                      │ │
-│      │ │Folder    Reading notes                             │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
-│      │ │Words     61 words                                  │ │     │                                                                                      │ │
-│      │ │                                                    │ │     │ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
-│      │ │Sources (2)                                         │ │     │                                                                                      │ │
-│      │ │  paper-retrieval-practice ↗    · pdf               │ │<--- │   Discussion. Effects held across subject areas.                                     │ │
-│      │ │ Spaced repetition, explained · In Trash ·┃ Restore │ │     │                                                                                      │ │
+│      │ │Words     58 words                                  │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
+│      │ │                                                    │ │     │                                                                                      │ │
+│      │ │Sources (3)                                         │ │     │ █ Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
+│      │ │  paper-retrieval-practice ↗   · pdf                │ │     │                                                                                      │ │
+│      │ │  Spaced repetition, explained ↗   · article        │ │<--- │   Discussion. Effects held across subject areas.                                     │ │
+│      │ │  Make It Stick — chapter 2… · In Trash ·┃ Restore ┃│ │     │                                                                                      │ │
 │      │ │                                                    │ │     │   Abstract. We compare rereading with retrieval practice in 120 undergraduates.      │ │
 │      │ │Linked from (0) — no notes link here yet            │ │     │                                                                                      │ │
 │      │ │Reuse & Export                                      │ │     │   Results. Retrieval practice improved 7-day retention by 21 percentage points.      │ │
