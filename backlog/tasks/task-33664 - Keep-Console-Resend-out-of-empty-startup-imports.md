@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-03 01:20'
+updated_date: '2026-10-03 03:03'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 <!-- AC:END -->
 
 ## Implementation Plan
@@ -82,6 +82,28 @@ Reason: test-only separation of admission-count behavior from the existing legal
 2. The owned cold admission-count case keeps every original assertion and real SQLite/worker/admission/retirement behavior, using the existing injected clock seam to remove unrelated wall-clock variability. Production100ms bound and all original Performance sources remain exact.
 3. Add a real private-profile fresh-worker controlled-clock zero-row yield and second admitted retry regression. Assert pending row/checkpoint preservation, normalization only on retry, at most two admissions per attempt, and zero registered worker handles after both attempts. This detects ignoring the elapsed guard, deleting/claiming an unprocessed row, dropping pending work, duplicate admission or lost physical cleanup.
 4. Verify the controlled yield catches a temporary external ignore-time mutation; run the owned repair and bounded legacy/parking neighbors without changing production. Get fresh independent immutable review with original assertion AST and production/Performance hash preservation; retain all earlier non-green evidence before final original budgets and closure.
+
+## Required Roleplay quit integration — October 2
+
+> For agentic workers: execute inline in the authorized worktree; request an independent immutable review after composition. Preserve the completed source and all earlier qualification records.
+
+**Goal:** Satisfy live strict up-to-date protection while retaining PR #2963 / TASK-33622.14 and every approved orchestration source.
+**Architecture:** Preserve the incoming Roleplay draft guard and lazy delegation exactly. Only the generated diagnostic inventory overlaps this patch; compose its owner entries from unchanged production sources, without replacing either side's ownership evidence.
+**Tech Stack:** Python, Textual, existing Backlog CLI, Git and existing source-reproduction guards.
+**Spec:** Incoming TASK-33622.14 and the user's protected-merge authorization; this adds no product behavior beyond the landed implementation.
+
+ADR required: no new ADR
+ADR path: backlog/decisions/031-tui-keybinding-and-footer-hint-conventions.md; backlog/decisions/097-boot-budget-ratchets.md; existing ADR199 unchanged.
+Reason: mechanical preserving integration of the accepted global quit choke point and existing budget contracts; no new UI, owner, runtime, schema, authority, dependency, gate or ceiling.
+
+Files: preserve eight non-overlap incoming files from dev2d34cbf80d1d7569abf0490e5c9821101d892661; compose Docs/security/production-diagnostic-inventory.json; update this plan, existing review/follow-up and TASK33664 qualification records only. Incoming module-size row tightens PersonasScreen to16397 and must stay exact; all Performance guards remain unchanged.
+
+- [ ] Confirm all four published637ebd jobs PASS, exact-head Qodo clear/four threads resolved, live protection strict/enforced for admins and actual dev2d34cbf MERGEABLE/BEHIND. Reopen TASK33664 AC3 through CLI and preserve prior131 reviewed and incoming9 hashes before rebase.
+- [ ] Rebase once onto exact2d34cbf; resolve only actual conflicts, preserving both diagnostic owner deltas. Prove all prior131 non-overlap hashes and eight incoming non-overlap hashes exact, plus every tracked package/Native/Packaging/Performance blob except the two exact incoming Roleplay sources. Leave incoming TASK33622.14 Done as shipped, other programs unchanged.
+- [ ] Run Tests/UI/test_roleplay_quit_guard.py, Tests/Architecture/test_quit_flow_prompt_choke_point.py, the two PersonasScreen module-size nodes and affected aggregate navigation/quit neighbors only, with cwd/PYTHONPATH pinned to this checkout. Preserve all positive and non-green results; do not claim new physical Ctrl+Q/relaunch, reference-backend or wider suite qualification.
+- [ ] Reproduce the diagnostic inventory and CSS bundles; check fatal/added-line/new-file static plus affected diagnostic/worker/task artifacts. Request independent immutable source/quit/delegation/inventory/guard preservation review; reviewers write reports only, no source/Git/task changes. No new source repair is planned.
+- [ ] After functional/review/artifact activity settles, run the original five storage/import/UI-ready/boot-CSS cases unchanged. Record exact sources, limits/counts/warnings and inherited debt; recheck AC3 and Done through CLI only after qualification. Documentation-only closure must preserve the independent source manifest.
+- [ ] Publish once with EXACT observed637ebd161272e0ab903bee5ac587205b52d8d5fb lease, update concise PR body, verify refs/body/current-head Qodo and require all four fresh jobs. Merge normally with --match-head-commit only after live strict protection is met; verify MERGED parents/tree/concurrent changes and pause heartbeat.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
