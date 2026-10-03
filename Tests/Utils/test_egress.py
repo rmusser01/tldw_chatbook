@@ -88,8 +88,9 @@ def test_cgnat_blocked(monkeypatch):
 # One shared address-classification predicate (task-609)
 # ---------------------------------------------------------------------------
 
-#: Addresses every fetch layer must accept: ordinary public v4/v6 plus the
-#: two IANA globally-reachable anycast entries (192.0.0.9/.10).
+#: Addresses every fetch layer must accept: ordinary public v4/v6, the two
+#: IANA globally-reachable anycast entries (192.0.0.9/.10), and a public
+#: IPv4 address in either IPv6 wrapper (v4-mapped, NAT64 well-known prefix).
 _FETCHABLE_PUBLIC = (
     "93.184.216.34",
     "1.1.1.1",
@@ -97,6 +98,8 @@ _FETCHABLE_PUBLIC = (
     "192.0.0.9",
     "192.0.0.10",
     "::ffff:93.184.216.34",
+    "64:ff9b::5db8:d822",
+    "64:ff9b::1.2.3.4",
 )
 
 #: One representative of every rejected address category, from the task-609
@@ -104,8 +107,9 @@ _FETCHABLE_PUBLIC = (
 #: link-local, unspecified, multicast, RFC 6598 CGNAT (not is_private on
 #: Python 3.12 -- caught only by the is_global floor, task-610), cloud
 #: metadata endpoints, documentation ranges, reserved v4, the non-anycast
-#: part of 192.0.0.0/24, v4-mapped private/CGNAT, and the NAT64 well-known
-#: prefix (is_global yet is_reserved -- see the reconciliation test below).
+#: part of 192.0.0.0/24, and v4-mapped or NAT64-wrapped private/CGNAT/
+#: loopback/metadata addresses (the wrappers get the verdict of the IPv4
+#: they embed -- see the NAT64 test below).
 _NOT_FETCHABLE = (
     "10.0.0.5",
     "192.168.1.1",
@@ -128,8 +132,11 @@ _NOT_FETCHABLE = (
     "192.0.0.100",
     "::ffff:10.0.0.1",
     "::ffff:100.64.0.1",
-    "64:ff9b::1.2.3.4",
     "64:ff9b::7f00:1",
+    "64:ff9b::c0a8:101",
+    "64:ff9b::6440:1",
+    "64:ff9b::a9fe:a9fe",
+    "64:ff9b:1::5db8:d822",
 )
 
 
@@ -149,32 +156,47 @@ def test_address_is_fetchable_shared_floor():
     assert not egress.address_is_fetchable("not-an-ip")
 
 
-def test_nat64_well_known_prefix_blocked_everywhere(monkeypatch):
-    """task-609 delta reconciliation, strict side wins.
+def test_nat64_well_known_prefix_gets_its_embedded_ipv4_verdict(monkeypatch):
+    """task-609 reconciliation, as amended in PR #2993 review.
 
     ``64:ff9b::/96`` is the one category the two layers disagreed on:
     ``is_global`` is True (so egress's old classification said "public")
-    while ``is_reserved`` is True (so the skill layer's six-predicate chain
-    rejected it). The prefix embeds IPv4 -- ``64:ff9b::7f00:1`` IS
-    ``127.0.0.1`` -- so allowing it is a rebinding-shaped hole; both layers
-    now reject it via the shared predicate (egress tightens).
+    while ``is_reserved`` is True (so the skill layer rejected the whole
+    prefix). The prefix embeds IPv4 -- ``64:ff9b::7f00:1`` IS ``127.0.0.1``
+    -- so "public" was a rebinding-shaped hole; but on an IPv6-only network
+    with DNS64 every IPv4-only host resolves into the prefix, so refusing
+    it wholesale refuses every such fetch. Both layers now give the address
+    the verdict of the IPv4 it embeds.
     """
-    assert not egress.address_is_fetchable("64:ff9b::7f00:1")
-
-    _resolve_to(monkeypatch, ["64:ff9b::7f00:1"])
-    d = evaluate_url_policy("https://h.example/")
-    assert not d.allowed and d.reason == "private"
-
-    # And through the strict pre-fetch guard, which ignores all trust config.
-    assert not egress.is_public_http_url("https://[64:ff9b::7f00:1]/x.zip")
-
-    # The same URL through the skill layer's per-hop check (skill side of
-    # the equivalence is pinned in Tests/Skills/test_skill_remote_fetch.py).
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import RemoteSkillError
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import _assert_host_allowed
 
+    # Embedded loopback: refused by every layer.
+    assert not egress.address_is_fetchable("64:ff9b::7f00:1")
+    _resolve_to(monkeypatch, ["64:ff9b::7f00:1"])
+    d = evaluate_url_policy("https://h.example/")
+    assert not d.allowed and d.reason == "private"
+    # ... through the strict pre-fetch guard, which ignores all trust config,
+    assert not egress.is_public_http_url("https://[64:ff9b::7f00:1]/x.zip")
+    # ... and through the skill layer's per-hop check.
     with pytest.raises(RemoteSkillError, match="not reachable"):
         _assert_host_allowed("nat64.example", lambda h: ["64:ff9b::7f00:1"])
+
+    # Embedded metadata endpoint (169.254.169.254): refused as metadata.
+    _resolve_to(monkeypatch, ["64:ff9b::a9fe:a9fe"])
+    d = evaluate_url_policy("https://h.example/")
+    assert not d.allowed and d.reason == "metadata"
+
+    # ``Petdex/network.py`` gates on ``_classify_ip`` directly.
+    assert egress._classify_ip("64:ff9b::c0a8:101") == "private"
+
+    # Embedded public address (93.184.216.34), the DNS64 answer for an
+    # ordinary IPv4-only site: fetchable through every layer.
+    assert egress.address_is_fetchable("64:ff9b::5db8:d822")
+    _resolve_to(monkeypatch, ["64:ff9b::5db8:d822"])
+    assert evaluate_url_policy("https://h.example/").allowed
+    assert egress.is_public_http_url("https://[64:ff9b::5db8:d822]/x.zip")
+    _assert_host_allowed("nat64.example", lambda h: ["64:ff9b::5db8:d822"])
 
 
 def test_metadata_ip_blocked_even_when_trusted(monkeypatch):
@@ -1466,3 +1488,17 @@ def test_is_public_http_url_blocks_multicast(monkeypatch):
 
     for bad in ("http://224.0.0.1/", "http://239.255.255.250:1900/description.xml"):
         assert egress.is_public_http_url(bad) is False, bad
+
+
+@pytest.mark.parametrize(
+    "helper",
+    [
+        egress.guarded_fetch_httpx,
+        egress.guarded_fetch_httpx_async,
+        egress.guarded_fetch_requests,
+        egress.guarded_fetch_aiohttp,
+    ],
+)
+def test_guarded_fetch_helpers_keep_their_docstrings(helper):
+    """A ``'''...''' + CONSTANT`` first statement silently drops ``__doc__``."""
+    assert "Credential contract" in (helper.__doc__ or "")

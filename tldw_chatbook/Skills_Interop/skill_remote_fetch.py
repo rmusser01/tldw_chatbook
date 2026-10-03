@@ -218,8 +218,9 @@ def _assert_host_allowed(host: str, resolver) -> None:
     ONE shared SSRF classification predicate (task-609), also used by
     egress's own policy pipeline -- so this layer and the egress layer cannot
     drift on which address categories are rejected (private/loopback/
-    link-local/reserved/unspecified/multicast/CGNAT/metadata/NAT64 all
-    reject; see that function's docstring for the full taxonomy). This layer
+    link-local/reserved/unspecified/multicast/CGNAT/metadata all reject,
+    and a NAT64 or IPv4-mapped address gets the verdict of the IPv4 it
+    embeds; see that function's docstring for the full taxonomy). This layer
     stays deliberately stricter than egress AROUND the predicate: https-only
     per hop (enforced in fetch_zip_bytes), no trusted_origins, no config
     allowlist.

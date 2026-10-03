@@ -32,10 +32,13 @@ verdict a DNS-rebinding-shaped hole.
 One public predicate in `Utils/egress` is the single source of truth for
 "may this address be fetched": `address_is_fetchable(ip_str) -> bool`.
 An address is fetchable iff it classifies `"public"` under `_classify_ip`
-(not a cloud-metadata endpoint, not multicast, globally reachable,
-IPv4-mapped normalized) **and** is in none of the stdlib non-global
-categories `is_global` alone misses: reserved, unspecified, loopback,
-link-local. Unparseable input fails closed (`False`).
+(not a cloud-metadata endpoint, not multicast, globally reachable) **and**
+is in none of the stdlib non-global categories `is_global` alone misses:
+reserved, unspecified, loopback, link-local. Both halves are computed on
+the address a connection actually reaches (`_effective_ip`): an IPv4-mapped
+(`::ffff:a.b.c.d`) or NAT64 well-known-prefix (`64:ff9b::a.b.c.d`, RFC 6052)
+address gets the verdict of the IPv4 address it embeds. Unparseable input
+fails closed (`False`).
 
 Consumers:
 
@@ -51,14 +54,30 @@ and allows http+https; the skill layer stays stricter — https-only per hop
 (redirect downgrades reject), no bypasses of any kind. Only the per-address
 classification is shared.
 
-The one behavioral delta is reconciled toward the stricter layer: egress now
-rejects `64:ff9b::/96` (as reason `"private"`), matching the skill layer.
-This is a tightening of egress, not a weakening of either side.
+The one behavioral delta is reconciled by classifying what the prefix
+embeds: `64:ff9b::7f00:1` is `127.0.0.1` and is rejected (reason
+`"private"`; an embedded metadata address is `"metadata"`), while
+`64:ff9b::5db8:d822` is `93.184.216.34` and is fetchable. For egress this
+closes the hole; for the skill layer it relaxes a blanket refusal to a
+precise one.
+
+Amended in PR #2993 review (owner decision, 2026-10-03). The first cut of
+this ADR rejected the whole prefix to match the skill layer. On an
+IPv6-only network with DNS64, every IPv4-only host resolves into
+`64:ff9b::/96`, so that verdict refused every guarded fetch to such a host
+there — web fetch, article ingest, media download — with a per-host
+`allowed_hosts` entry as the only remedy. RFC 6052 forbids the well-known
+prefix from representing non-global IPv4 addresses, so refusing exactly the
+non-global embeddings keeps the security property the blanket refusal was
+after.
 
 `Tools/web_tool_impls._is_public_ip` already documents itself as matching
 egress's classification, and `Petdex/network.py` imports `_classify_ip`
 directly; both can adopt `address_is_fetchable` in place — left as
-follow-ups since neither was in task-609's scope.
+follow-ups since neither was in task-609's scope. Petdex inherits the
+embedded-IPv4 verdict through `_classify_ip`; `_is_public_ip` keeps its own
+predicate chain and still refuses the whole NAT64 prefix until it adopts
+the shared one.
 
 ## Considered and rejected
 
@@ -73,10 +92,13 @@ follow-ups since neither was in task-609's scope.
 - **Keep two predicates, document them**: rejected — the delta matrix proved
   the drift was already real (NAT64), and every future category fix (like
   task-610's CGNAT) would have to be landed twice.
-- **Predicate = `_classify_ip == "public"` alone**: rejected — it admits
-  `64:ff9b::/96` (see Context); the reserved/unspecified/loopback/link-local
-  floor stays explicit so the taxonomy never depends on stdlib
-  `is_global`/`is_reserved` complementarity quirks.
+- **Predicate = `_classify_ip == "public"` alone**: rejected — the
+  reserved/unspecified/loopback/link-local floor stays explicit so the
+  taxonomy never depends on stdlib `is_global`/`is_reserved`
+  complementarity quirks (the NAT64 disagreement in Context was one).
+- **Reject `64:ff9b::/96` wholesale** (this ADR's first cut): rejected in
+  PR #2993 review — it breaks every guarded fetch to an IPv4-only host on a
+  DNS64/NAT64 network; see the amendment under Decision.
 
 ## Consequences
 
@@ -85,9 +107,13 @@ follow-ups since neither was in task-609's scope.
   matrices in `Tests/Utils/test_egress.py` and
   `Tests/Skills/test_skill_remote_fetch.py` pin both layers to the same
   verdict in both directions.
-- egress tightens: hosts resolving into `64:ff9b::/96` are now blocked with
-  the standard `EgressBlockedError` remedy (allowed_hosts escape hatch
-  applies as for any private range).
+- egress tightens: a host resolving to a `64:ff9b::/96` address that embeds
+  a non-global IPv4 address is now blocked with the standard
+  `EgressBlockedError` remedy (allowed_hosts escape hatch applies as for
+  any private range). One embedding a public IPv4 address is fetchable, as
+  it was before this ADR. Network-specific NAT64 prefixes (RFC 6052 §2.2)
+  are not recognisable from the address alone and are classified as
+  ordinary IPv6, unchanged.
 - `ipaddress` behavior is load-bearing (CGNAT is `is_private=False` only on
   Python ≥3.12.4; the task-610 floor and the shared predicate are tested
   against the actual runtime). A future stdlib change to `is_global` /

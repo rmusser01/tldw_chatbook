@@ -259,7 +259,10 @@ def test_host_allow_shares_the_egress_address_predicate():
     from tldw_chatbook.Skills_Interop.skill_remote_fetch import _assert_host_allowed
     from tldw_chatbook.Utils.egress import address_is_fetchable
 
-    fetchable = ["93.184.216.34", "1.1.1.1", "2606:4700::6810:85e5", "192.0.0.9"]
+    fetchable = [
+        "93.184.216.34", "1.1.1.1", "2606:4700::6810:85e5", "192.0.0.9",
+        "64:ff9b::5db8:d822",
+    ]
     not_fetchable = [
         "10.0.0.5", "127.0.0.1", "169.254.1.1", "0.0.0.0", "224.0.0.1",
         "100.64.0.1", "100.100.100.200", "2001:db8::1", "250.1.2.3",
@@ -276,10 +279,10 @@ def test_host_allow_shares_the_egress_address_predicate():
 
 @pytest.mark.asyncio
 async def test_nat64_host_rejected_per_hop():
-    # TASK-609 reconciliation: a hostname resolving into the NAT64
-    # well-known prefix -- is_global yet is_reserved, and able to embed
-    # loopback/private IPv4 (64:ff9b::7f00:1 IS 127.0.0.1) -- is rejected
-    # with the standard unreachable-host error, matching Utils/egress.
+    # TASK-609 reconciliation: a NAT64 well-known-prefix address gets the
+    # verdict of the IPv4 it embeds, so one embedding loopback
+    # (64:ff9b::7f00:1 IS 127.0.0.1) is rejected with the standard
+    # unreachable-host error, matching Utils/egress.
     with pytest.raises(RemoteSkillError, match="not reachable"):
         await fetch_zip_bytes("https://nat64.example/x.zip",
                               transport=_transport(lambda r: httpx.Response(200)),

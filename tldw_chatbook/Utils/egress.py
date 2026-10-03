@@ -183,6 +183,41 @@ def _config_allowed_hosts() -> frozenset:
     return frozenset(str(h).strip().lower() for h in value if str(h).strip())
 
 
+#: RFC 6052 NAT64 well-known prefix: the low 32 bits ARE an IPv4 address.
+_NAT64_WELL_KNOWN_PREFIX = ipaddress.ip_network("64:ff9b::/96")
+
+
+def _effective_ip(ip_str: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """The address a connection to ``ip_str`` actually reaches.
+
+    IPv4-mapped (``::ffff:a.b.c.d``) and NAT64 well-known-prefix
+    (``64:ff9b::a.b.c.d``) addresses are IPv4 in an IPv6 wrapper, so every
+    verdict is computed on the embedded IPv4 address: ``64:ff9b::7f00:1``
+    IS ``127.0.0.1`` and is refused as loopback, while a public embedded
+    address stays fetchable. The second half matters as much as the first:
+    on an IPv6-only network with DNS64, EVERY IPv4-only host resolves into
+    this prefix, so refusing the prefix wholesale (ADR-206's first cut)
+    refused every guarded fetch to such a host there.
+
+    Args:
+        ip_str: One address in string form, zone suffix already removed.
+
+    Returns:
+        The embedded IPv4 address for the two wrapper forms, else the
+        parsed address itself.
+
+    Raises:
+        ValueError: If ``ip_str`` is not an IP address.
+    """
+    ip = ipaddress.ip_address(ip_str)
+    mapped = getattr(ip, "ipv4_mapped", None)
+    if mapped is not None:
+        return mapped
+    if ip.version == 6 and ip in _NAT64_WELL_KNOWN_PREFIX:
+        return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
+
+
 def _classify_ip(ip_str: str) -> str:
     """Classify one resolved IP: "metadata" | "private" | "public".
 
@@ -196,10 +231,7 @@ def _classify_ip(ip_str: str) -> str:
     it is strictly tightening for every consumer of this function -- caught
     in review of task-1356's pre-scrape SSRF guard (task-1356 CRITICAL 1).
     """
-    ip = ipaddress.ip_address(ip_str)
-    mapped = getattr(ip, "ipv4_mapped", None)
-    if mapped is not None:
-        ip = mapped
+    ip = _effective_ip(ip_str)
     if ip in _METADATA_IPS:
         return "metadata"
     if ip.is_multicast:
@@ -222,13 +254,14 @@ def address_is_fetchable(ip_str: str) -> bool:
 
     Verdict: an address is fetchable iff it classifies ``"public"`` under
     :func:`_classify_ip` (not a metadata endpoint, not multicast, globally
-    reachable, IPv4-mapped addresses normalized to their IPv4 side) AND it
-    is in none of the stdlib non-global categories that ``is_global`` alone
-    misses -- reserved, unspecified, loopback, link-local. The reserved
-    category is load-bearing: the NAT64 well-known prefix ``64:ff9b::/96``
-    is ``is_global`` yet ``is_reserved``, and its addresses embed IPv4
-    (``64:ff9b::7f00:1`` IS ``127.0.0.1``); the skill layer always rejected
-    it and task-609 reconciled egress to the same verdict.
+    reachable) AND it is in none of the stdlib non-global categories that
+    ``is_global`` alone misses -- reserved, unspecified, loopback,
+    link-local. Both halves are computed on :func:`_effective_ip`, so an
+    IPv4-mapped or NAT64 well-known-prefix address gets the verdict of the
+    IPv4 address it embeds: ``64:ff9b::7f00:1`` IS ``127.0.0.1`` and is
+    refused, ``64:ff9b::5db8:d822`` IS ``93.184.216.34`` and is fetchable
+    (task-609 reconciled the two layers; PR #2993 review moved the verdict
+    from "refuse the prefix" to "classify what it embeds").
 
     Args:
         ip_str: One resolved address (string form). A trailing IPv6 zone
@@ -239,7 +272,7 @@ def address_is_fetchable(ip_str: str) -> bool:
         unparseable input returns ``False``, never raises.
     """
     try:
-        ip = ipaddress.ip_address(ip_str)
+        ip = _effective_ip(ip_str)
     except ValueError:
         return False
     return (
@@ -867,18 +900,16 @@ def _hop_headers(
     return filter_cross_origin_headers(headers)
 
 
-#: Credential contract shared by every ``guarded_fetch_*`` helper (task-592):
-#: pass credentials through the helper's ``headers=`` argument (or its
-#: ``auth=`` parameter where one exists) -- never attached to the
-#: client/session object itself. The httpx and requests helpers ENFORCE the
-#: contract by stripping/suppressing transport-object-level credentials on
-#: cross-origin hops; the aiohttp helper cannot (see
-#: :func:`_aiohttp_session_level_credential`) and refuses the hop instead.
-_CREDENTIAL_CONTRACT = (
-    "Credentials must be supplied via this helper's ``headers=`` argument "
-    "(or its ``auth=`` parameter where one exists), never attached to the "
-    "client/session object itself."
-)
+# Credential contract shared by every ``guarded_fetch_*`` helper (task-592):
+# pass credentials through the helper's ``headers=`` argument (or its
+# ``auth=`` parameter where one exists) -- never attached to the
+# client/session object itself. The httpx and requests helpers ENFORCE the
+# contract by stripping/suppressing transport-object-level credentials on
+# cross-origin hops; the aiohttp helper cannot (see
+# :func:`_aiohttp_session_level_credential`) and refuses the hop instead.
+# Each helper restates the contract in its own docstring as plain text: a
+# ``"""...""" + CONSTANT`` first statement is an expression, not a docstring,
+# and leaves ``__doc__`` as ``None``.
 
 
 def _aiohttp_session_level_credential(session) -> str | None:
@@ -928,8 +959,12 @@ def guarded_fetch_httpx(
     library's own framing (:data:`_TRANSPORT_HEADERS`) and nothing else, no
     matter where the header came from: the ``headers`` argument, the client
     object's default headers, or a client-level ``auth=`` (suppressed on the
-    hop by passing an explicit ``auth=None`` to ``send()``). Credential
-    contract: """ + _CREDENTIAL_CONTRACT
+    hop by passing an explicit ``auth=None`` to ``send()``).
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
+    """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         check_url_or_raise(current, trusted_origins=trusted_origins)
@@ -1011,8 +1046,12 @@ async def guarded_fetch_httpx_async(
     ``auth=None`` on the cross-origin hop rather than by header stripping.
     ``Content-Type`` would be the one conditional exception
     (:data:`_BODY_DESCRIBING_HEADERS`), but this helper only ever issues a
-    bodyless GET, so it never applies here. Credential contract:
-    """ + _CREDENTIAL_CONTRACT
+    bodyless GET, so it never applies here.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
+    """
     current = url
     for hop in range(MAX_REDIRECT_HOPS + 1):
         await check_url_or_raise_async(current, trusted_origins=trusted_origins)
@@ -1289,7 +1328,12 @@ def guarded_fetch_requests(
     :data:`CROSS_ORIGIN_SAFE_HEADERS` only: ``session.auth``, the session's
     cookies, and its default headers all land on the PREPARED request, which
     is post-filtered by :func:`strip_cross_origin_request_headers` before it
-    is sent. Credential contract: """ + _CREDENTIAL_CONTRACT
+    is sent.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
+    """
     import requests
 
     sess = session or requests.Session()
@@ -1366,8 +1410,12 @@ async def guarded_fetch_aiohttp(
     a cross-origin hop on a session carrying such a credential raises
     :class:`EgressFetchError` instead of forwarding it. Sessions without
     session-level credentials (every live caller, e.g. the crawler's bare
-    ``ClientSession()``) are unaffected. Credential contract:
-    """ + _CREDENTIAL_CONTRACT
+    ``ClientSession()``) are unaffected.
+
+    Credential contract: credentials must be supplied via this helper's
+    ``headers=`` argument (or its ``auth=`` parameter where one exists),
+    never attached to the client/session object itself.
+    """
     from multidict import CIMultiDict
 
     current = url
