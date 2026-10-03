@@ -75,6 +75,7 @@ Constraints:
 - Phase 5 riders TASK-33005.7-.15 are NOT in Phase 6 scope unless a Phase 6 task file names them.
 - A census or timing test (storage units, keystroke work) that fails also fails on clean dev intermittently (trace maintenance storage_admissions 2.125 > 2 is a known dev regression): run serially and compare with dev before acting.
 - Boot census (added 2026-10-02 after a dev regression): a NEW module that only user actions need must be imported inside the function that uses it, never at module level in a boot-path module (UI/Console_Modules/*, Widgets/Console/*, chat_screen). Check `Tests/Performance/test_ui_ready_module_census.py` with `PYTHONPATH=<worktree>` (without it the venv's editable install measures the MAIN checkout and passes falsely); the limit is 1033 and must not rise.
+- Scratch hygiene (added 2026-10-02 after one agent clobbered another's base tree and the disk filled): every scratch directory carries a unique name with your task and sha (e.g. $SP/p6-t3-base-<sha>); never generic names (base, head, tree, cfgroot, devtree, neg); never `rm -rf` a directory you did not create in this run; remove your own trees when done (`git worktree remove` for worktrees).
 - Workers: never run_worker(exclusive=True) without group=; gated UI pilot tests carry bootstrap_profile in the file itself.
 
 ## Task 1: Lay out Chat settings core-first with one field-row grammar (TASK-33006.1)
@@ -220,6 +221,8 @@ ConsoleProviderPicker (console_provider_picker.py, 455 lines) is used only by th
 - The boot-CSS snapshot Tests/Performance/boot_budget_snapshots/boot_css_bytes.json (:196, 494 bytes).
 
 P4 provides the switcher's pick-only mode. ADR-031's task-16211 refinement requires dismissal inventory coverage for modal-to-modal launches (Tests/UI/test_console_modal_dismissal.py). Alt on macOS types composed characters unless Option-as-Meta is on (chat_screen.py:1333-1339), so the Change button must work without Alt.
+
+Hand-off from TASK-33006.2 (review round 1): its AC#6 test, `test_changing_the_model_updates_the_hidden_set_and_line_at_once` in Tests/UI/test_console_settings_hidden_fields.py, drives `_rebase_to` with the real controller rebaser, because pick mode was not wired yet. The support sync that re-decides the hidden rows and the Sampling line runs in `_apply_rebased_state`, where `_rebase_to` lands. Pick mode must land through `_rebase_to` (AC#2's controller rebaser), and that test is re-pointed at the Change gesture under AC#7.
 
 ### Acceptance criteria
 
