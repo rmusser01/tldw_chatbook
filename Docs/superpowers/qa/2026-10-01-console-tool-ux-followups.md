@@ -659,3 +659,25 @@ literal extraction. Current qualification and limits are recorded under
 `outcome_kind_release_followup` in the combined QA JSON and
 /tmp/console-tool-ux-outcome-qualified.json. Final published-head gates and fresh
 resolved Qodo remain required before protected normal merge in PR2953.
+
+
+Latest-dev known trace-work integration (PR2959/TASK33801, 2026-10-03 UTC)
+
+Dev e6ab66b0a9f950a56de80fb6b1bfa7dfbee3df7d skips an extra idle-check
+admission on known-work maintenance passes. All27 PR patches rebase unchanged.
+The changed runtime worker method and maintenance class match upstream ASTs;
+all remaining module ASTs and the controller remain unchanged from1695e988.
+The two upstream regression files retain exact upstream bytes.
+
+**147 fresh scoped checks pass**, zero failures/errors/skips:110 full trace
+migration/parking, runtime-shutdown and chat-create integration contracts,
+followed serially by all37 exact Perf Guard cases (22 boot,13 latency/stall,
+and both ordinary storage variants). Real write-during-pass and signal-wake
+SQLite workers, idle read-only completion, fences, canaries, ticks and existing
+ceilings remain verified. Preflight and zero-new Ruff34 pass.
+
+Of230 preceding pins,228 remain unchanged; the two differences are upstream
+trace owners. Their two upstream regression files are additionally pinned,
+for232 current source pins. Code anchor:2942fc3a8a315c12289f9dd153fe2f5a249afe45.
+Original native27/29 and46/65/230-case receipts keep prior head/byte identities. No current native replay is claimed for the inherited worker optimization. Current runtime/maintenance owners are qualified by real SQLite worker/write regressions, lifetime contracts and mounted performance tests. No new production patch, budget, snapshot, CI setting, authority or full-suite sweep; fresh published-head gates/Qodo still required.
+QA trace_work_base_final_followup records receipts and explicit scope.

@@ -7,7 +7,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-28 18:01'
-updated_date: '2026-10-02 22:56'
+updated_date: '2026-10-03 00:03'
 labels:
   - performance
   - ci
@@ -63,6 +63,14 @@ PR2953 latest-dev evidence-counter follow-up: ADR required: no. ADR path: backlo
 PR2953 remaining UI timeout (2026-10-02, head45189cd3): ADR required: no. ADR path: backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md; existing ADR-126 private-profile isolation and ADR-097 ratchets apply. Reason: test-only grouping of this workstream's existing mounted Close scenarios; no production, authority, deadline, CI setting or budget change. UI Fast Lane reached97% with no assertion failure before its unchanged20m limit; the14 Close children took273.95s. Measure nine navigation/recovery nodes through their ordinary private wrappers, then place their unchanged complete scenario bodies into two bounded private children with fresh apps/controllers/stores/workers, distinct real-DB directories, per-scenario monkeypatch contexts and existing factory cleanup between scenarios. Keep all five heavier children separate and the180s child timeout unchanged. Compare actual timings and original-body ASTs, review isolation, run changed children, zero-new lint/range-format and artifact preflight. Retain exact unchanged production/native/performance qualification with explicit source-equivalence evidence. Require fresh final-head Qodo and all four GitHub gates before normal merge; local timing is not a CI completion guarantee.
 
 Latest-dev PERF-07 integration: preserve the already-approved ADR-126 D2 memo implementation from dev ecc0a531c8 unchanged, without adding a boundary or exception. Rebase after the bounded local grouping measurement. Read TASK-33266/ADR-126 and the eight upstream changed files; run the full seven-child Close suite, projection and compact approval mounted groups, upstream data-dir memo contracts and exact three Perf Guard groups on the combined tree. Requalify existing native approval/Close journeys and actual loaded source origins serially after tests; retain old-base receipts and explicit new-base identities. Finish fresh lint/artifact checks, task/QA notes, safe push and final-head Qodo/all four CI gates.
+
+Latest-dev trace-work integration (PR2959/TASK33801):
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/126-complete-local-backup-and-recovery.md
+Reason: Qualify the inherited known-work idle-check optimization unchanged; no new production change, boundary or budget exception.
+1. Read the upstream task/runtime/maintenance and real-write regressions; prove all27 PR patches unchanged and the two changed worker owners retain exactly the upstream method/class semantics.
+2. Run affected full trace migration/parking, runtime shutdown and chat-create integration contracts, followed serially by all three exact Perf Guard groups in private profiles. Preserve timers, real seams, canaries, caps and all original receipts.
+3. Record current source hashes and fresh lint/preflight. Existing native receipts retain original runtime bytes and are historical; no new native UI claim for this upstream worker optimization. Safe-push the qualified combined head and require fresh final-head Qodo and all four gates before normal merge.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
@@ -101,6 +109,8 @@ Reopened after published45189cd3 UI Fast Lane reached97% then hit20m. No asserti
 Remaining UI timeout grouping locally qualified: nine unchanged scenario bodies/63 assertions execute through two ordinary private-profile wrappers,28.42+38.44=66.86s versus95.55s baseline. All five heavy bodies unchanged; scoped patches exit before per-scenario existing factory drains/unfreeze/GC. Independent review clear, zero-new Ruff34 and edited-range format pass. No production or CI/deadline changes; local single-pair saving is not a CI guarantee. Keep In Progress for dev ecc0a531c8 combined-tree qualification and fresh final-head gates.
 
 Final qualification on dev ecc0a531 at code anchor 17235d9d: all 25 patches rebase unchanged and all eight upstream files match dev. Fresh 65 scoped cases pass with zero failures/errors/skips, including all mounted Close/projection/compact-approval groups, upstream memo/readiness contracts and all three exact Perf Guard groups. Native approval27 (nine journeys) and Close29 (six real closes plus geometry) pass; independently verified source pins/origins, normal process/socket cleanup, no egress and real-profile invariance. A post-completion shell capacity error is preserved separately; space recovered without pruning or rerunning. Preflight, zero-new Ruff across 34 files, range format and independent review pass; ceilings, snapshots, counters, canaries, ticks and deadlines remain unchanged. Original receipts retain their identities and explicit limits. Existing ADR-094/097/126 apply; no new ADR. QA path_memo_base_final_followup records evidence. PR2953 still requires fresh final-head CI/Qodo and normal protected merge. No full suite.
+
+Latest dev e6ab66b0 (PR2959/TASK33801 known-work idle-check optimization) integrates cleanly: all27 PR patches unchanged, changed worker/class AST exactly upstream and remaining modules/controller unchanged.147 fresh scoped cases pass with zero failures/errors/skips:110 real trace/write/lifetime/chat-create contracts plus all37 exact Perf Guard cases. Of230 prior pins,228 unchanged; two upstream trace-owner changes and two additional upstream regression-file pins identified (232 current). Zero-new Ruff34 and fresh preflight pass; original counters, ticks, canaries, caps, snapshots and CI settings remain. No new production patch or full suite. Prior native27/29 and46/65/230 receipts keep original identities; current worker owners have real SQLite and mounted performance evidence, with no new native replay claim. Existing ADR-097/126 apply. QA trace_work_base_final_followup records qualification/limits. Final published-head CI/Qodo/normal merge remains PR2953.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

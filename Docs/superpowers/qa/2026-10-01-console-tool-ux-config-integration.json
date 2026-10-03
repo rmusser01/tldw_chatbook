@@ -2037,5 +2037,121 @@
       "Tests/Performance/test_ui_ready_module_census.py": "c3eb3f9def8a7b0e76085ac47d854dbaf41ab8eb3149ca8ff5c6d16a0a8a7109"
     },
     "upstream_release_changes": "dev f3aeb32 includes the 0.2.3 version/source-list/docs changes, the additional Resend-absent warm-census assertion and unrelated evaluation case sensitivity. Their production contents remain upstream-owned."
+  },
+  "trace_work_base_final_followup": {
+    "base": "e6ab66b0a9f950a56de80fb6b1bfa7dfbee3df7d",
+    "code_anchor": "2942fc3a8a315c12289f9dd153fe2f5a249afe45",
+    "all27_pr_patches_unchanged": true,
+    "range_diff": "/tmp/console-tool-ux-trace-work-rebase-range-diff.txt",
+    "source_proof": {
+      "prior_head": "1695e9884bc143a10a77642c28909d17da23f958",
+      "base": "e6ab66b0a9f950a56de80fb6b1bfa7dfbee3df7d",
+      "candidate_head": "2942fc3a8a315c12289f9dd153fe2f5a249afe45",
+      "all27_patches_unchanged": true,
+      "owners": {
+        "tldw_chatbook/Chat/console_runtime.py": {
+          "upstream_owner_ast_matches": true,
+          "remaining_module_ast_unchanged": true,
+          "sha256": "ed6d4dc957c2a3a4b32285a75370a96338077251d0addb83fa3e0b5a67467697"
+        },
+        "tldw_chatbook/Chat/console_trace_maintenance.py": {
+          "upstream_owner_ast_matches": true,
+          "remaining_module_ast_unchanged": true,
+          "sha256": "5809706486377dfa5401a0d0992f3fdcfc4a1b63328328c844776c7789eb7ecc"
+        },
+        "controller_unchanged": true
+      }
+    },
+    "current_source_pin_count": 232,
+    "prior_source_pin_count": 230,
+    "unchanged_prior_pins": 228,
+    "changed_prior_pins": [
+      "tldw_chatbook/Chat/console_runtime.py",
+      "tldw_chatbook/Chat/console_trace_maintenance.py"
+    ],
+    "additional_upstream_test_pins": [
+      "Tests/Chat/test_console_trace_legacy_migration.py",
+      "Tests/Chat/test_console_trace_maintenance_parking.py"
+    ],
+    "changed_and_added_pin_sha256": {
+      "tldw_chatbook/Chat/console_runtime.py": "ed6d4dc957c2a3a4b32285a75370a96338077251d0addb83fa3e0b5a67467697",
+      "tldw_chatbook/Chat/console_trace_maintenance.py": "5809706486377dfa5401a0d0992f3fdcfc4a1b63328328c844776c7789eb7ecc",
+      "Tests/Chat/test_console_trace_legacy_migration.py": "d297730d2a9d334f584b89b0909dc44e0ea339806aefd4948b3239cec45e3cc7",
+      "Tests/Chat/test_console_trace_maintenance_parking.py": "8a9c340a4658d41bb9f883789fe9bb498c7fd6b3847895e62db31fe6ceb4c437"
+    },
+    "fresh_cases": 147,
+    "failures": 0,
+    "errors": 0,
+    "skips": 0,
+    "groups": [
+      {
+        "nodes": [
+          "Tests/Chat/test_console_trace_legacy_migration.py",
+          "Tests/Chat/test_console_trace_maintenance_parking.py",
+          "Tests/Chat/test_console_runtime_shutdown.py",
+          "Tests/Chat/test_console_chat_create_integration.py"
+        ],
+        "exit_code": 0,
+        "cases": 110,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 47.77,
+        "log": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-000/pytest.log",
+        "report": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-000/pytest.xml"
+      },
+      {
+        "nodes": [
+          "Tests/Performance/test_app_import_weight.py",
+          "Tests/Performance/test_ui_ready_module_census.py",
+          "Tests/Performance/test_boot_worker_census.py",
+          "Tests/Performance/test_textual_css_fastpath.py",
+          "Tests/Performance/test_boot_css_byte_budget.py",
+          "Tests/Performance/test_screen_preimport_payload_budget.py"
+        ],
+        "exit_code": 0,
+        "cases": 22,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 76.38,
+        "log": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-001/pytest.log",
+        "report": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-001/pytest.xml"
+      },
+      {
+        "nodes": [
+          "Tests/Performance/test_ui_latency_guardrails.py",
+          "Tests/Utils/test_ui_responsiveness_stall_persist.py"
+        ],
+        "exit_code": 0,
+        "cases": 13,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 67.72,
+        "log": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-002/pytest.log",
+        "report": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-002/pytest.xml"
+      },
+      {
+        "nodes": [
+          "Tests/Performance/test_console_keystroke_work_census.py::test_console_storage_units_stay_within_their_ratchets"
+        ],
+        "exit_code": 0,
+        "cases": 2,
+        "failures": 0,
+        "errors": 0,
+        "skipped": 0,
+        "duration_seconds": 61.73,
+        "log": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-003/pytest.log",
+        "report": "/tmp/console-tool-ux-trace-work-integration-ujl7lm8m/run-003/pytest.xml"
+      }
+    ],
+    "receipt": "/tmp/console-tool-ux-trace-work-integration.json",
+    "preflight": "/tmp/console-tool-ux-trace-work-preflight.txt",
+    "preflight_pass": true,
+    "lint": "/tmp/console-tool-ux-trace-work-final-lint.json",
+    "new_ruff_diagnostics": 0,
+    "changed_python_files": 34,
+    "limits": "Original native27/29 and46/65/230-case receipts keep prior head/byte identities. No current native replay is claimed for the inherited worker optimization. Current runtime/maintenance owners are qualified by real SQLite worker/write regressions, lifetime contracts and mounted performance tests. No new production patch, budget, snapshot, CI setting, authority or full-suite sweep; fresh published-head gates/Qodo still required."
   }
 }
