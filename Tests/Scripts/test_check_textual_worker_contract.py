@@ -818,8 +818,10 @@ class T:
         {call}
 """
     expected = (
-        ["tldw_chatbook/UI/m1.py::T.on_button_pressed => "
-         "tldw_chatbook/UI/m0.py::S._pick"]
+        [
+            "tldw_chatbook/UI/m1.py::T.on_button_pressed => "
+            "tldw_chatbook/UI/m0.py::S._pick"
+        ]
         if flagged
         else []
     )
@@ -830,8 +832,7 @@ class T:
 #: class-body alias. Neither is visible to a subclass's class BODY.
 _BASE_PICK = {
     "method": (
-        "async def _pick(self):\n"
-        "        await self.app.push_screen_wait(Picker())"
+        "async def _pick(self):\n        await self.app.push_screen_wait(Picker())"
     ),
     "class-body-alias": "_pick = _waiting",
 }
@@ -931,9 +932,7 @@ def test_w003_a_class_inside_a_function_reads_the_enclosing_functions_locals(
     collector reset the enclosing function at the ``class`` statement, so
     these resolved as module names and lost the push (PR #2944 round-6
     review)."""
-    assert _w003(_CLASS_IN_A_FUNCTION[shape]) == [
-        _row("S.on_button_pressed", "_pick")
-    ]
+    assert _w003(_CLASS_IN_A_FUNCTION[shape]) == [_row("S.on_button_pressed", "_pick")]
 
 
 def test_w003_accepts_the_fixed_shape_a_handler_that_starts_a_worker():
@@ -1182,8 +1181,14 @@ def wire(screen):
         "SubController(lambda draft: _pick(draft))",
         "SubController(partial(_pick))",
     ],
-    ids=["keyword", "positional", "positional-and-keyword", "inherited-init",
-         "lambda", "partial"],
+    ids=[
+        "keyword",
+        "positional",
+        "positional-and-keyword",
+        "inherited-init",
+        "lambda",
+        "partial",
+    ],
 )
 def test_w003_a_positional_handoff_binds_the_constructor_parameter(wiring):
     """``HooksController(_pick)`` binds ``_pick`` to ``request_review``
@@ -1408,6 +1413,47 @@ class S:
         await self.app.push_screen_wait(Picker())
 """
     assert _unresolved(source) == []
+
+
+_PARTIAL_WIRING = """
+from somewhere import external
+
+
+async def run(label, pick):
+    await pick()
+
+
+class S:
+    def on_mount(self):
+        self.call_later({wiring})
+
+    async def _pick(self):
+        await self.app.push_screen_wait(Picker())
+"""
+
+
+@pytest.mark.parametrize(
+    "wiring",
+    ["partial(run, 'go', pick=self._pick)", "partial(run, 'go', self._pick)"],
+    ids=["keyword", "positional"],
+)
+def test_w003_a_positional_argument_after_partials_target_binds_its_parameter(
+    wiring,
+):
+    """``partial(run, 'go', self._pick)`` hands ``_pick`` to ``run``'s second
+    parameter, as ``partial(run, 'go', pick=self._pick)`` does by keyword.
+    ``partial`` was skipped as a modelled callee, so only its target was
+    followed and the positional argument was neither bound nor reported."""
+    assert _w003(_PARTIAL_WIRING.format(wiring=wiring)) == [
+        _row("S.on_mount->run", "S._pick")
+    ]
+
+
+def test_w003_reports_a_positional_argument_after_an_unresolvable_partial_target():
+    """The unresolved report covers ``partial``'s arguments too, at the
+    position the target sees."""
+    source = _PARTIAL_WIRING.format(wiring="partial(external, self._pick)")
+    assert _unresolved(source) == [f"{_M0}::S.on_mount -> external#0 => {_M0}::S._pick"]
 
 
 def test_w003_self_call_resolves_through_a_package_base_class():
@@ -1638,8 +1684,7 @@ _ROOT_TWICE = {
         "S.on_button_pressed",
     ),
     "module-handler": (
-        "async def on_ready(app):\n    {first}\n"
-        "async def on_ready(app):\n    {last}\n",
+        "async def on_ready(app):\n    {first}\nasync def on_ready(app):\n    {last}\n",
         "on_ready",
     ),
     "nested-handler": (
@@ -1677,13 +1722,327 @@ def test_w003_only_a_live_definition_of_a_root_is_a_root(scope, live_waits):
         site = "S._ask"
     else:
         bodies, site = _ROOT_BODIES, root
-    first, last = (bodies[False], bodies[True]) if live_waits else (
-        bodies[True],
-        bodies[False],
+    first, last = (
+        (bodies[False], bodies[True])
+        if live_waits
+        else (
+            bodies[True],
+            bodies[False],
+        )
     )
     source = template.format(first=first, last=last)
     expected = [_row(root, site)] if live_waits else []
     assert _w003(source) == expected
+
+
+_SCHEDULES_ASK = "self.call_later(self._ask)"
+_ASK = "    async def _ask(self):\n        await self.app.push_screen_wait(Picker())\n"
+
+#: A def that a later def of the SAME name does not make dead, because its
+#: value outlives the rebinding, as ``(source, expected rows)``. The first
+#: cut called every earlier same-named def dead, and lost rows dev reported
+#: (PR checkpoint review: ``ServiceWiringMixin.llamacpp_snapshot_service``
+#: is a getter with a setter, and schedules).
+_STILL_BOUND = {
+    # `@service.setter` reads `service`: the property keeps the getter.
+    "property-getter": (
+        "class S:\n"
+        "    @property\n"
+        f"    def service(self):\n        {_SCHEDULES_ASK}\n"
+        "        return self._service\n\n"
+        "    @service.setter\n"
+        "    def service(self, value):\n        self._service = value\n\n" + _ASK,
+        [_row("S.service->_ask", "S._ask")],
+    ),
+    "property-getter-setter-deleter": (
+        "class S:\n"
+        "    @property\n"
+        f"    def service(self):\n        {_SCHEDULES_ASK}\n"
+        "        return self._service\n\n"
+        "    @service.setter\n"
+        "    def service(self, value):\n        self._service = value\n\n"
+        "    @service.deleter\n"
+        "    def service(self):\n        self._service = None\n\n" + _ASK,
+        [_row("S.service->_ask", "S._ask")],
+    ),
+    # A statement between the two put the first one somewhere first.
+    "read-before-rebinding": (
+        "async def on_ready(app):\n"
+        "    await app.push_screen_wait(Picker())\n\n"
+        "READY = {'ready': on_ready}\n\n"
+        "async def on_ready(app):\n"
+        "    return None\n",
+        [_row("on_ready")],
+    ),
+    # Its OWN decorator may have handed it somewhere first: the package's
+    # `@self.mcp.tool()` registers the function with a server, and the
+    # registration outlives the name.
+    "registered-by-its-own-decorator": (
+        "@register\n"
+        "async def on_ready(app):\n"
+        "    await app.push_screen_wait(Picker())\n\n"
+        "async def on_ready(app):\n"
+        "    return None\n",
+        [_row("on_ready")],
+    ),
+    # Negative controls: nothing outlives these rebindings.
+    # `@overload` only describes a signature; the stub is never kept.
+    "overload-stub": (
+        "@overload\n"
+        "async def on_ready(app):\n"
+        "    await app.push_screen_wait(Picker())\n\n"
+        "async def on_ready(app):\n"
+        "    return None\n",
+        [],
+    ),
+    # Textual collects `@on` handlers from the finished class namespace,
+    # where only the last binding is left.
+    "on-handler-rebound": (
+        "class S:\n"
+        "    @on(Button.Pressed)\n"
+        "    async def on_pick(self, event):\n"
+        "        await self.app.push_screen_wait(Picker())\n\n"
+        "    @on(Button.Pressed)\n"
+        "    async def on_pick(self, event):\n"
+        "        return None\n",
+        [],
+    ),
+    "getter-rebound-by-a-plain-def": (
+        "class S:\n"
+        "    @property\n"
+        f"    def service(self):\n        {_SCHEDULES_ASK}\n"
+        "        return self._service\n\n"
+        "    def service(self):\n        return None\n\n" + _ASK,
+        [],
+    ),
+    # The setter keeps the getter -- inside a property that is itself
+    # rebound, so neither ever runs.
+    "whole-property-rebound": (
+        "class S:\n"
+        "    @property\n"
+        f"    def service(self):\n        {_SCHEDULES_ASK}\n"
+        "        return self._service\n\n"
+        "    @service.setter\n"
+        "    def service(self, value):\n        self._service = value\n\n"
+        "    def service(self):\n        return None\n\n" + _ASK,
+        [],
+    ),
+    # The rebinding def's BODY reads the name only when called, and by then
+    # the name is the rebinding def itself.
+    "read-only-in-the-rebinding-body": (
+        "async def on_ready(app):\n"
+        "    await app.push_screen_wait(Picker())\n\n"
+        "async def on_ready(app):\n"
+        "    return on_ready\n",
+        [],
+    ),
+}
+
+
+@pytest.mark.parametrize("shape", sorted(_STILL_BOUND))
+def test_w003_a_definition_whose_value_outlives_its_rebinding_stays_a_root(shape):
+    """Dead means rebound before anything read it. A property getter is read
+    by its own ``@x.setter``, and a def handed somewhere before the
+    rebinding is still reachable there; both are roots."""
+    source, expected = _STILL_BOUND[shape]
+    assert _w003(source) == expected
+
+
+#: The same name defined in ALTERNATIVE branches, as ``(template, root,
+#: site)``: whichever branch runs binds it, so neither is dead.
+_ALTERNATIVES = {
+    "class-if-else": (
+        "class S:\n"
+        "    if WIDE:\n"
+        "        async def action_pick(self):\n            {first}\n"
+        "    else:\n"
+        "        async def action_pick(self):\n            {second}\n",
+        "S.action_pick",
+        "S.action_pick",
+    ),
+    "module-try-except": (
+        "try:\n"
+        "    import fast\n\n"
+        "    async def on_ready(app):\n        {first}\n"
+        "except ImportError:\n"
+        "    async def on_ready(app):\n        {second}\n",
+        "on_ready",
+        "on_ready",
+    ),
+    # SchedulesWorkbench._reminder_owner_action's shape: an early-return
+    # branch and the fall-through each define `_do`.
+    "nested-early-return": (
+        "class S:\n"
+        "    def _go(self, action):\n"
+        "        if action == 'a':\n"
+        "            def _do():\n                {first}\n"
+        "            self.run_worker(_do, thread=True)\n"
+        "            return\n"
+        "        def _do():\n            {second}\n"
+        "        self.run_worker(_do, thread=True)\n\n" + _ASK,
+        "_do->_ask",
+        "S._ask",
+    ),
+}
+
+
+@pytest.mark.parametrize("scope", sorted(_ALTERNATIVES))
+@pytest.mark.parametrize(
+    "first_waits", [True, False], ids=["first-branch-waits", "second-branch-waits"]
+)
+def test_w003_definitions_in_alternative_branches_are_all_roots(scope, first_waits):
+    """``if``/``else`` and ``try``/``except`` alternatives are not a
+    redefinition: the branch that runs binds the name. Calling the earlier
+    one dead dropped a waiting handler that dev reported."""
+    template, root, site = _ALTERNATIVES[scope]
+    waits = _SCHEDULES_ASK if scope == "nested-early-return" else _ROOT_BODIES[True]
+    first, second = (waits, "return None") if first_waits else ("return None", waits)
+    assert _w003(template.format(first=first, second=second)) == [_row(root, site)]
+
+
+#: A def nested in another, whose ENCLOSING def is defined twice, as
+#: ``(template, root, site)``. ``{first}``/``{last}`` are the two bodies of
+#: the enclosing def; whatever the dead one defines never exists.
+_NESTED_IN_TWICE = {
+    "nested-def": (
+        "class S:\n"
+        "    def build(self):\n        {first}\n"
+        "    def build(self):\n        {last}\n\n" + _ASK,
+        "on_click->_ask",
+        "S._ask",
+    ),
+    "class-in-a-function": (
+        "def build():\n    {first}\ndef build():\n    {last}\n",
+        "Pane.on_click",
+        "Pane.on_click",
+    ),
+}
+
+_NESTED_BODIES = {
+    "nested-def": (
+        "def on_click():\n            self.call_later(self._ask)\n"
+        "        return on_click\n"
+    ),
+    "class-in-a-function": (
+        "class Pane:\n"
+        "        async def on_click(self):\n"
+        "            await self.app.push_screen_wait(Picker())\n"
+        "    return Pane\n"
+    ),
+}
+
+
+@pytest.mark.parametrize("scope", sorted(_NESTED_IN_TWICE))
+@pytest.mark.parametrize(
+    "in_last", [True, False], ids=["in-the-bound-def", "in-the-rebound-def"]
+)
+def test_w003_a_definition_nested_in_a_dead_one_is_dead_too(scope, in_last):
+    """A dead def's body never runs, so nothing it defines -- a nested def,
+    a class and its methods -- is ever a root."""
+    template, root, site = _NESTED_IN_TWICE[scope]
+    body = _NESTED_BODIES[scope]
+    first, last = ("return None", body) if in_last else (body, "return None")
+    expected = [_row(root, site)] if in_last else []
+    assert _w003(template.format(first=first, last=last)) == expected
+
+
+#: What a def defined twice DOES in its body, as ``(template, body that
+#: hands the waiting ``_pick`` on, body that does not, root, site)``. Only
+#: the live def's body ever runs.
+_DEAD_BODY_EFFECTS = {
+    # `self.choose = self._pick`: a class-bound attribute waits when ANY of
+    # its bindings does, so a dead binding alone would make it wait.
+    "self-attribute-binding": (
+        "class S:\n"
+        "    def _wire(self):\n        {first}\n"
+        "    def _wire(self):\n        {last}\n\n"
+        "    async def on_button_pressed(self, event):\n"
+        "        await self.choose()\n\n"
+        "    async def _pick(self):\n"
+        "        await self.app.push_screen_wait(Picker())\n",
+        "self.choose = self._pick",
+        "self.choose = self._noop",
+        "S.on_button_pressed",
+        "S._pick",
+    ),
+    # A future stored on `self` by a callback push, awaited by the handler.
+    "self-future-publisher": (
+        "class S:\n"
+        "    def _open(self):\n        {first}\n"
+        "    def _open(self):\n        {last}\n\n"
+        "    async def on_button_pressed(self, event):\n"
+        "        self._open()\n"
+        "        await self._answer\n",
+        "self._answer = asyncio.get_running_loop().create_future()\n"
+        "        self.app.push_screen(Review(), callback=self._answer.set_result)",
+        "self._answer = None",
+        "S.on_button_pressed",
+        "S._open",
+    ),
+    # A positional handoff binds `run`'s parameter, which `run` schedules.
+    "positional-handoff": (
+        "def run(pick):\n"
+        "    app.call_later(pick)\n\n"
+        "class S:\n"
+        "    def _wire(self):\n        {first}\n"
+        "    def _wire(self):\n        {last}\n\n"
+        "    async def _pick(self):\n"
+        "        await self.app.push_screen_wait(Picker())\n",
+        "run(self._pick)",
+        "return None",
+        "run->pick",
+        "S._pick",
+    ),
+    # A class-body binding in a class defined inside the def: both `build`s
+    # define a `Pane`, and one class name is one class to W003.
+    "class-body-binding": (
+        "async def _pick():\n"
+        "    await app.push_screen_wait(Picker())\n\n"
+        "def build():\n"
+        "    class Pane:\n        {first}\n\n"
+        "        async def on_click(self):\n"
+        "            await self.choose()\n"
+        "    return Pane\n\n"
+        "def build():\n"
+        "    class Pane:\n        {last}\n\n"
+        "        async def on_click(self):\n"
+        "            await self.choose()\n"
+        "    return Pane\n",
+        "choose = _pick",
+        "choose = None",
+        "Pane.on_click",
+        "_pick",
+    ),
+    # Rebound inside an `else:` -- a statement list of its own.
+    "in-an-else-branch": (
+        "class S:\n"
+        "    if NARROW:\n"
+        "        pass\n"
+        "    else:\n"
+        "        def _start(self):\n            {first}\n"
+        "        def _start(self):\n            {last}\n\n"
+        "    async def _pick(self):\n"
+        "        await self.app.push_screen_wait(Picker())\n",
+        "self.call_later(self._pick)",
+        "return None",
+        "S._start->_pick",
+        "S._pick",
+    ),
+}
+
+
+@pytest.mark.parametrize("effect", sorted(_DEAD_BODY_EFFECTS))
+@pytest.mark.parametrize(
+    "in_last", [True, False], ids=["in-the-bound-def", "in-the-rebound-def"]
+)
+def test_w003_what_a_dead_definition_does_never_happens(effect, in_last):
+    """A dead def's body never runs: an attribute it binds, a future it
+    stores on ``self`` and a callable it schedules are all absent -- and
+    present when the live def does the same."""
+    template, hands_on, inert, root, site = _DEAD_BODY_EFFECTS[effect]
+    first, last = (inert, hands_on) if in_last else (hands_on, inert)
+    expected = [_row(root, site)] if in_last else []
+    assert _w003(template.format(first=first, last=last)) == expected
 
 
 # `push_screen_wait` by hand -- PR #2922's request_hook_review until
@@ -1956,8 +2315,7 @@ def test_w003_a_hand_rolled_wait_split_across_functions_is_flagged(shape):
 #: pump on it. Only the handler awaiting it does.
 _SPLIT_RECEIVERS = {
     "awaited-by-a-handler": (
-        "async def on_button_pressed(self, event):\n"
-        "        await open_review(self)",
+        "async def on_button_pressed(self, event):\n        await open_review(self)",
         True,
     ),
     "stored-not-awaited": (

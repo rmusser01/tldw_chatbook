@@ -128,10 +128,15 @@ W003 (census ratchet, TASK-33621.13)
     subclasses, each through its own package base classes and what they
     assign to ``self.x``. So a base-class template method reaches a
     subclass's override, and a mixin reaches the class that mixes it in and
-    that class's other mixins -- but never an unrelated class's ``x``. A name
-    defined twice in one scope is its LAST definition, as Python binds it:
-    the earlier one is dead code, never a root and never reached by name. A
-    bare ``x()`` resolves lexically first -- a nested def or local alias of
+    that class's other mixins -- but never an unrelated class's ``x``. A def
+    that a later def of the same name rebinds in the same statement list,
+    before anything reads it, is dead code: never a root, never reached by
+    name, and neither is anything defined inside it, nor any binding its
+    body makes. Anything else stays live: alternatives in ``if``/``else`` or
+    ``try``/``except`` branches (whichever runs binds the name), a property
+    getter that its own ``@x.setter`` reads, a def handed on before it was
+    rebound, a def whose own decorator may have registered it. A bare
+    ``x()`` resolves lexically first -- a nested def or local alias of
     an enclosing function (through a class defined inside one, too), then a
     module-level ``x``. A bare name written in a CLASS BODY (``choose =
     _pick``, not a lambda's body) reads that class's own namespace -- never
@@ -612,7 +617,6 @@ class _Function:
         # What a positional argument binds: `params[position + offset]`.
         args = node.args
         self.params = [arg.arg for arg in (*args.posonlyargs, *args.args)]
-        self.has_varargs = args.vararg is not None
         self.is_static = "staticmethod" in decorators
         # `push_screen_wait(...)` / `push_screen(..., wait_for_dismiss=True)`.
         self.wait_pushes = 0
@@ -627,8 +631,10 @@ class _Function:
         self.call_results: dict[str, list[_Ref]] = {}
         self.awaited: list[_Ref] = []
         self.scheduled: list[tuple[_Ref, str]] = []
-        # Solved by _WaitGraph.
+        # False for dead code: rebound before anything read it, or defined
+        # inside a def that is (set by the collector, see `_dead_defs`).
         self.live = True
+        # Solved by _WaitGraph.
         self.targets: list[_Target] = []
         self.handoffs: list[_Function] = []
         self.waiting = False
@@ -816,9 +822,10 @@ def _callee(func: ast.AST) -> _Ref | None:
 
 
 #: Callees whose positional callables W003 already models (a worker, a pump
-#: scheduler, a push's result callback, ``partial``'s target) or rules out
-#: (``call_from_thread`` runs its callable in the calling worker's context):
-#: not a parameter handoff.
+#: scheduler, a push's result callback) or rules out (``call_from_thread``
+#: runs its callable in the calling worker's context): not a parameter
+#: handoff. ``partial``'s first argument is its target, which ``_ref``
+#: follows; the rest bind the target's parameters.
 _HANDOFF_MODELLED = PUMP_SCHEDULERS | {
     "run_worker",
     "call_from_thread",
@@ -833,13 +840,18 @@ def _record_handoffs(
 ) -> None:
     """Each callable passed POSITIONALLY: it binds the callee's parameter at
     that position, exactly as the keyword form binds it by name (PR #2945:
-    ``HooksController(_pick)`` hid the push its keyword twin reports)."""
-    if not call.args:
+    ``HooksController(_pick)`` hid the push its keyword twin reports).
+    ``partial(target, a, b)`` hands ``a`` and ``b`` to ``target``'s first
+    two parameters."""
+    args = call.args
+    if not args:
         return
     callee = _callee(call.func)
+    if callee is not None and callee[1] == "partial":
+        callee, args = _callee(args[0]), args[1:]
     if callee is None or callee[1] in _HANDOFF_MODELLED:
         return
-    for position, arg in enumerate(call.args):
+    for position, arg in enumerate(args):
         if isinstance(arg, ast.Starred):
             return  # every later position is unknown
         ref = _ref(arg)
@@ -892,6 +904,92 @@ def _base_names(node: ast.ClassDef) -> list[str]:
     return names
 
 
+#: The fields holding a statement list: a def is dead only when a SIBLING in
+#: the same list rebinds its name (``handlers``/``cases`` hold nodes whose
+#: own ``body`` is such a list).
+_STATEMENT_LISTS = frozenset({"body", "orelse", "finalbody"})
+_DEFS = (ast.FunctionDef, ast.AsyncFunctionDef)
+
+#: Decorators that wrap or describe a def without handing it anywhere, so a
+#: later def of the same name still leaves it unreachable. Any OTHER decorator
+#: may have registered it first (the package's ``@self.mcp.tool()``), and the
+#: registration outlives the name. Textual's ``@on`` qualifies: Textual reads
+#: handlers from the finished class namespace, where only the last is left.
+_NON_REGISTERING = frozenset(
+    {
+        "overload",
+        "property",
+        "setter",
+        "getter",
+        "deleter",
+        "cached_property",
+        "staticmethod",
+        "classmethod",
+        "abstractmethod",
+        "override",
+        "final",
+        "on",
+        "work",
+        "wraps",
+        "lru_cache",
+        "cache",
+        "contextmanager",
+        "asynccontextmanager",
+    }
+)
+
+
+def _reads_name(nodes: list[ast.AST], name: str) -> bool:
+    """Whether any of ``nodes`` loads the bare name ``name``."""
+    return any(
+        isinstance(node, ast.Name)
+        and node.id == name
+        and isinstance(node.ctx, ast.Load)
+        for root in nodes
+        for node in ast.walk(root)
+    )
+
+
+def _dead_defs(body: list[ast.stmt]) -> list[ast.AST]:
+    """The defs in one statement list that Python never runs.
+
+    A def is dead when a LATER def of the same name in the same list rebinds
+    it before anything reads it. Read in between -- ``READY = {"ready":
+    on_ready}`` -- it is live wherever it went; so is one whose own
+    decorator may have registered it (anything outside
+    ``_NON_REGISTERING``). Read only by the rebinding def's header (its
+    decorators or parameters' defaults), its value lives on in that def:
+    ``@service.setter`` keeps the ``@property`` getter, so the getter is
+    live exactly when the setter is. A def in another list -- an
+    ``if``/``else`` or ``try``/``except`` alternative -- is never rebound
+    here: whichever branch runs binds the name (TASK-33621.33 checkpoint
+    review: "the last definition in the scope table" called every one of
+    those dead and lost rows dev reported).
+    """
+    defs = [(index, stmt) for index, stmt in enumerate(body) if isinstance(stmt, _DEFS)]
+    if len(defs) < 2:
+        return []
+    live: dict[int, bool] = {}
+    next_def: dict[str, int] = {}
+    dead: list[ast.AST] = []
+    for index, stmt in reversed(defs):
+        later = next_def.get(stmt.name)
+        if (
+            later is None
+            or _decorator_names(stmt) - _NON_REGISTERING
+            or _reads_name(body[index + 1 : later], stmt.name)
+        ):
+            live[index] = True
+        else:
+            rebinding = body[later]
+            header = [*rebinding.decorator_list, rebinding.args]
+            live[index] = _reads_name(header, stmt.name) and live[later]
+        if not live[index]:
+            dead.append(stmt)
+        next_def[stmt.name] = index
+    return dead
+
+
 def _bind(table: dict[str, _Function], new: _Function) -> None:
     """Register ``new`` under its name unless a LATER definition holds it.
 
@@ -924,6 +1022,8 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
     """
     module = _Module(rel)
     functions: list[_Function] = []
+    # `id()` of each dead def node: the tree outlives this pass.
+    dead: set[int] = set()
     AST = ast.AST
     stack: list[
         tuple[
@@ -942,6 +1042,12 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
             cls, fn, sink = node.name, None, None
         elif kind is ast.FunctionDef or kind is ast.AsyncFunctionDef:
             new = _Function(node, module, cls if fn is None else None, fn, outer)
+            # Dead when rebound unread, or defined inside a dead def -- for a
+            # method of a class defined inside a function, that function.
+            enclosing = fn if fn is not None else outer
+            new.live = id(node) not in dead and (
+                enclosing is None or enclosing.live
+            )
             functions.append(new)
             if fn is not None:
                 _bind(fn.nested, new)
@@ -953,7 +1059,11 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
         elif kind is ast.Lambda:
             sink = None
         else:
-            if kind is ast.Call:
+            # A binding made in dead code never happens.
+            inert = (fn is not None and not fn.live) or (
+                outer is not None and not outer.live
+            )
+            if kind is ast.Call and not inert:
                 _record_handoffs(module, node, cls, fn)
             if sink is not None:
                 if kind is ast.Call:
@@ -979,7 +1089,7 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
                             sink.futures.add(future)
                         elif result is not None:
                             sink.call_results.setdefault(future, []).append(result)
-            if isinstance(node, _ALIAS_SOURCES):
+            if not inert and isinstance(node, _ALIAS_SOURCES):
                 local = fn is not None and kind is not ast.Call and kind is not ast.Dict
                 for alias, value, form in _alias_pairs(node):
                     ref = _ref(value)
@@ -1006,6 +1116,8 @@ def _collect_module(tree: ast.Module, rel: str) -> tuple[_Module, list[_Function
             child_sink = None if in_worker and field != "func" else sink
             value = getattr(node, field, None)
             if value.__class__ is list:
+                if field in _STATEMENT_LISTS:
+                    dead.update(map(id, _dead_defs(value)))
                 for item in value:
                     if isinstance(item, AST):
                         stack.append((item, cls, fn, child_sink, outer))
@@ -1078,16 +1190,6 @@ class _WaitGraph:
             # the same collection must not inherit the last one's answer.
             fn.targets, fn.waiting, fn.sites = [], False, frozenset()
             fn.handoffs = []
-            # Only the LAST definition of a name in its scope is ever bound;
-            # an earlier one is dead code -- never a root, never reached by
-            # name (PR #2945 review).
-            if fn.parent is not None:
-                scope = fn.parent.nested
-            elif fn.cls is not None:
-                scope = fn.module.classes[fn.cls]
-            else:
-                scope = fn.module.functions
-            fn.live = scope.get(fn.name) is fn
         self.defs_by_name: dict[str, list[_Function]] = {}
         for fn in self.functions:
             if fn.parent is None and fn.live:
@@ -1149,7 +1251,7 @@ class _WaitGraph:
         # `callback=`: (module, class, attribute) -> those functions.
         publishers: dict[tuple[str, str, str], list[_Function]] = {}
         for fn in self.functions:
-            stored = fn.self_futures
+            stored = fn.self_futures if fn.live else ()
             cls = self._class_of(fn) if stored else None
             for attr in stored if cls is not None else ():
                 publishers.setdefault((fn.module.rel, cls, attr), []).append(fn)
