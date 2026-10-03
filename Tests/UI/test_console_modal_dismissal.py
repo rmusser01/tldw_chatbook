@@ -147,6 +147,10 @@ from tldw_chatbook.Widgets.Console.console_system_prompt_modal import (
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
     ConsoleVideoCapacityModal,
 )
+from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+    GeneratedVideoConfirmation,
+    GeneratedVideoFileSave,
+)
 from tldw_chatbook.Widgets.Console.console_workspace_files_modal import (
     ConsoleWorkspaceFilesModal,
     WorkspaceFilesBinding,
@@ -1025,12 +1029,16 @@ _DIRECT_SHARED_MODAL_TYPES = tuple(
     # Shared modals the Console root does NOT construct itself: each is
     # declared on the edge of the owner that actually opens it
     # (ChangeReviewScreen; the workspace create dialog -- task-18810).
+    # TASK-33622.15: the root's generated-video save now opens the
+    # quit-guarded GeneratedVideoFileSave subclass (declared on the root edge
+    # below); EnhancedFileSave itself stays reachable via TraceExportDialog.
     if contract.modal_type
     not in {
         ChangeRevertConfirmModal,
         ChangeGitCommitModal,
         ChangeGitPushModal,
         SelectDirectory,
+        EnhancedFileSave,
     }
 )
 CONSOLE_MODAL_LAUNCH_EDGES = (
@@ -1045,6 +1053,9 @@ CONSOLE_MODAL_LAUNCH_EDGES = (
             ProjectInstructionSetupModal,
             TrajectoryScreen,
             WorkspaceCreateModal,
+            # TASK-33622.15: the generated video's Save-to-disk screens.
+            GeneratedVideoFileSave,
+            GeneratedVideoConfirmation,
         ),
         _CONSOLE_ROOT_SOURCE_PATHS,
     ),
@@ -1402,6 +1413,10 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         ProjectInstructionNoticeModal,
         ProjectInstructionSetupModal,
         TraceExportDialog,
+        # TASK-33622.15: quit-guarded subclasses of the shared picker and
+        # confirmation, opened only by the generated-video save.
+        GeneratedVideoFileSave,
+        GeneratedVideoConfirmation,
     }
 
     assert discovered_console_types - console_contract_types == inventory_only_types
@@ -1420,8 +1435,9 @@ def test_console_modal_inventory_matches_runtime_ast_and_transitive_launches() -
         if inspect.isclass(node) and issubclass(node, ModalScreen)
     }
     # The current dev baseline grows to 49 when TASK-26042's Workspace Files
-    # owner seam joins the explicit Console launch graph.
-    assert len(reachable_modal_types) == 49
+    # owner seam joins the explicit Console launch graph. TASK-33622.15 adds the
+    # generated video's two quit-guarded Save-to-disk screens: 49 -> 51.
+    assert len(reachable_modal_types) == 51
     all_contract_types = (
         console_contract_types
         | {contract.modal_type for contract in TASK4_MODAL_CONTRACTS}

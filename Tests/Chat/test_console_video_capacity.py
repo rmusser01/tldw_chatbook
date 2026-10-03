@@ -1407,10 +1407,13 @@ async def test_external_picker_reprompts_for_any_nonmatching_suffix(
         artifact, session_id="session", message_id=artifact.message_id
     )
 
+    # TASK-33622.15: the picker is the quit-guarded GeneratedVideoFileSave.
+    from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+
     pickers = [
         screen
         for screen in harness.waited_screens
-        if screen.__class__.__name__ == "EnhancedFileSave"
+        if isinstance(screen, EnhancedFileSave)
     ]
     assert len(pickers) == 2
     assert not bad_target.exists()
@@ -1842,6 +1845,24 @@ async def test_confirmed_target_disappearing_requires_fresh_confirmation_before_
     assert harness.opened == []
     assert not target.exists()
     assert artifact.stream.closed
+    # TASK-33622.15: once the capacity choice has closed, every Save-to-disk
+    # screen -- both pickers and both confirmations -- asks before Ctrl+Q
+    # discards the video (their confirm_quit; the walk finds no other hook).
+    from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+        GeneratedVideoConfirmation,
+        GeneratedVideoFileSave,
+    )
+
+    assert [type(screen) for screen in harness.waited_screens[1:]] == [
+        GeneratedVideoFileSave,
+        GeneratedVideoConfirmation,
+        GeneratedVideoConfirmation,
+        GeneratedVideoFileSave,
+    ]
+    assert [screen.title for screen in harness.waited_screens[2:4]] == [
+        "Replace existing file?",
+        "Destination changed",
+    ]
 
 
 @pytest.mark.asyncio

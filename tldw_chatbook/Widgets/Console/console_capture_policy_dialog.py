@@ -835,6 +835,16 @@ class ConsoleCapturePolicyDialog(SafeModalDismissMixin, ModalScreen[None]):
             return
         self.dismiss_safe_once(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while a change is applied, as Escape does (TASK-33622.15).
+
+        Returns:
+            False, with a still-working notice, while applying; else True.
+        """
+        return _quit_unless_applying(
+            self, "Capture policy changes are still being saved."
+        )
+
 
 class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
     """Edit future Capture and PII policy without changing viewer disclosure."""
@@ -1065,3 +1075,32 @@ class ConsoleTracePrivacyDialog(SafeModalDismissMixin, ModalScreen[None]):
         del source
         if not self._applying:
             self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while a change is applied, as Escape does (TASK-33622.15).
+
+        Returns:
+            False, with a still-working notice, while applying; else True.
+        """
+        return _quit_unless_applying(
+            self, "Trace privacy changes are still being saved."
+        )
+
+
+def _quit_unless_applying(
+    dialog: ConsoleCapturePolicyDialog | ConsoleTracePrivacyDialog, activity: str
+) -> bool:
+    """Answer the quit walk for a policy dialog that refuses Escape mid-apply.
+
+    Args:
+        dialog: The open dialog.
+        activity: What is still being saved, for the still-working notice.
+
+    Returns:
+        True when nothing is being applied; False (with the notice) otherwise.
+    """
+    if not dialog._applying:
+        return True
+    from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+    return refuse_quit_while_working(dialog, activity)

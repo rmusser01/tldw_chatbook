@@ -284,6 +284,25 @@ class ProjectSkillsImportModal(SafeModalDismissMixin, ModalScreen[ImportDecision
             return
         self.dismiss_safe_once(("not_now", None))
 
+    async def confirm_quit(self) -> bool:
+        """Stay while an import runs, as every close does (TASK-33622.15).
+
+        Quitting mid-import would leave the half-imported skill that
+        ``_import_in_flight`` exists to prevent, with no way to know.
+
+        Returns:
+            False, with a still-working notice, mid-import; else True.
+        """
+        if not self._import_in_flight():
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import (
+            refuse_quit_while_working,
+        )
+
+        return refuse_quit_while_working(
+            self, "Project skills are still being imported."
+        )
+
     @on(Button.Pressed, "#project-skills-not-now")
     async def _not_now(self, event: Button.Pressed) -> None:
         event.stop()

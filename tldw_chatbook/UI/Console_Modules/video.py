@@ -33,7 +33,6 @@ from ...Video_Generation.video_store import (
     VideoStore,
     VideoStoreSaveError,
 )
-from ...Widgets.confirmation_dialog import ConfirmationDialog
 from ...Widgets.Console.console_video_capacity_modal import ConsoleVideoCapacityModal
 from ...Widgets.Console.console_video_card import ConsoleVideoCardSpec
 
@@ -789,11 +788,15 @@ class ConsoleVideoController:
         self, artifact: PendingVideoArtifact
     ) -> Path | Literal[False] | None:
         """Choose and atomically write an external path, retaining on failure."""
-        from tldw_chatbook.Widgets.enhanced_file_picker import EnhancedFileSave
+        # TASK-33622.15: these screens ask before Ctrl+Q discards the video.
+        from tldw_chatbook.Widgets.Console.console_video_save_screens import (
+            GeneratedVideoConfirmation,
+            GeneratedVideoFileSave,
+        )
 
         while self._owns_pending_console_video(artifact):
             selected = await self._wait_for_console_screen_result(
-                EnhancedFileSave(
+                GeneratedVideoFileSave(
                     title="Save generated video",
                     default_filename=f"{artifact.slug}.{artifact.extension}",
                 )
@@ -837,7 +840,7 @@ class ConsoleVideoController:
 
                 if identity is None and reconfirmation_required:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Destination changed",
                             message=(
                                 "The file previously confirmed at "
@@ -856,7 +859,7 @@ class ConsoleVideoController:
                     confirmed_identity = None
                 elif identity is not None and identity != confirmed_identity:
                     confirmed = await self._wait_for_console_screen_result(
-                        ConfirmationDialog(
+                        GeneratedVideoConfirmation(
                             title="Replace existing file?",
                             message=(
                                 "A file already exists at "

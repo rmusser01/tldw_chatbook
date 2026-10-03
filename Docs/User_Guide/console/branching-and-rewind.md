@@ -68,7 +68,10 @@ says that no earlier message can be forked. A reply that is still being written
 only asks you to wait for it to finish.
 After confirmation the fork opens as a separate Console tab and can diverge;
 the source tab stays open with the same title, selected variants, active leaf,
-history, and live work it had before.
+history, and live work it had before. While the dialog shows **Forking…** the
+fork can no longer be cancelled: Escape is refused, and **Ctrl+Q** says the
+fork is still being created and stays open; press it again once the fork has
+opened.
 
 - A saved source creates a saved fork in the same Chats or named Workspace
   section, with durable ancestry back to the source and boundary.

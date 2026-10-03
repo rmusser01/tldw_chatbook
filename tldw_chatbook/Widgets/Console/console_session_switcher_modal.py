@@ -2549,6 +2549,20 @@ class ConsoleSessionSwitcherModal(
         self._cancel_query_debounce()
         self.dismiss_safe_once(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while a chat opening commits, as Escape does (TASK-33622.15).
+
+        Before the commit, quitting is fine: Escape cancels that opening too.
+
+        Returns:
+            False, with a still-working notice, while committing; else True.
+        """
+        if self._activation_phase is not ConsoleActivationPhase.COMMITTING:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return refuse_quit_while_working(self, "The chat is still being opened.")
+
     @on(Button.Pressed, "#console-switcher-cancel")
     async def _cancel(self, event: Button.Pressed) -> None:
         event.stop()

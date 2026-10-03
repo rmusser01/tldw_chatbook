@@ -374,3 +374,15 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._set_status("Export is finishing; the destination is still protected.")
             return
         self.dismiss_safe_once(None)
+
+    async def confirm_quit(self) -> bool:
+        """Stay while the export is written, as Escape does (TASK-33622.15).
+
+        Returns:
+            False, with a still-working notice, mid-write; else True.
+        """
+        if not self._writing:
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
+
+        return refuse_quit_while_working(self, "The export is still being written.")

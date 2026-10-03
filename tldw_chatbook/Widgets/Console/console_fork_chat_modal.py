@@ -422,6 +422,20 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
             await panel.remove()
         self.dismiss_safe_once(None)
 
+    async def confirm_quit(self) -> bool:
+        """Stay while the fork commits, as Escape does (TASK-33622.15).
+
+        Returns:
+            False, with a still-working notice, while committing; else True.
+        """
+        if self.state != "committing":
+            return True
+        from tldw_chatbook.Widgets.quit_while_working import (
+            refuse_quit_while_working,
+        )
+
+        return refuse_quit_while_working(self, "The fork is still being created.")
+
     def show_validating(self) -> None:
         self.state = "validating"
         self._set_status("Checking fork…")

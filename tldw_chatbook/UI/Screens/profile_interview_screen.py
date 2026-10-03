@@ -36,6 +36,10 @@ _ERROR_COPY = {
     ),
 }
 
+#: Ctrl+Q's still-working notices while a terminal operation runs (TASK-33622.15).
+_DISCARDING = "The interview is still being discarded."
+_CLEANING_UP = "Interview draft cleanup is still running."
+
 
 class ProfileInterviewResult(NamedTuple):
     """Terminal result returned to a Settings/setup launch point."""
@@ -124,6 +128,11 @@ class ProfileInterviewScreen(
         self._starting = session_id is None
         self._cancel_after_start = False
         self._busy = False
+        # TASK-33622.15: the terminal operation now running (a discard or a
+        # draft cleanup), named for Ctrl+Q; and a close it finished while
+        # another screen covered this one, kept until this screen is on top.
+        self._closing_activity: str | None = None
+        self._pending_close: ProfileInterviewResult | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="profile-interview-shell"):
@@ -227,9 +236,10 @@ class ProfileInterviewScreen(
         if self._session_id is None:
             return
         self._set_busy(True)
+        self._closing_activity = _DISCARDING
         self._run_thread(
             partial(self._coordinator.discard, self._session_id),
-            lambda _result: self.dismiss_safe_once(
+            lambda _result: self._close_with(
                 ProfileInterviewResult("discarded", (), None)
             ),
         )
@@ -401,11 +411,12 @@ class ProfileInterviewScreen(
                 ).disabled = True
 
     def _apply_error(self, copy: str) -> None:
+        self._closing_activity = None
         if self._starting:
             self._starting = False
             if self._cancel_after_start:
                 self._cancel_after_start = False
-                self.dismiss_safe_once(ProfileInterviewResult("cancelled", (), None))
+                self._close_with(ProfileInterviewResult("cancelled", (), None))
                 return
         if self._session is None:
             self._set_busy(False)
@@ -414,6 +425,7 @@ class ProfileInterviewScreen(
         self.query_one("#profile-interview-error", Static).update(copy)
 
     def _apply_expired(self) -> None:
+        self._closing_activity = None
         self._expired_or_cleanup_pending = True
         self._set_busy(False)
         self.query_one("#profile-interview-state", Static).update(
@@ -561,6 +573,7 @@ class ProfileInterviewScreen(
         del source
         if self._starting and self._session_id is None:
             self._cancel_after_start = True
+            self._closing_activity = _DISCARDING
             self.query_one("#profile-interview-state", Static).update(
                 "Cancellation pending — securely discarding the new draft."
             )
@@ -604,6 +617,7 @@ class ProfileInterviewScreen(
             and self._session_id is not None
             and not self._cancel_after_start
             and not self._expired_or_cleanup_pending
+            and self._pending_close is None
             and session.status not in {"committed", "committing"}
         )
 
@@ -615,9 +629,17 @@ class ProfileInterviewScreen(
         Chatbook closes -- its Leave prompt offers only Continue or Discard --
         so quitting asks first, as Escape does.
 
+        A discard or cleanup the user already chose is never asked about
+        again; Ctrl+Q waits for it instead (TASK-33622.15), because quitting
+        mid-way could leave the draft or its key behind.
+
         Returns:
             True to let the quit proceed; False to continue the interview.
         """
+        if self._closing_activity is not None:
+            from ...Widgets.quit_while_working import refuse_quit_while_working
+
+            return refuse_quit_while_working(self, self._closing_activity)
         if not self._quit_discards_interview():
             return True
         from ...Widgets.confirmation_dialog import confirm_quit_discarding_edits
@@ -648,17 +670,42 @@ class ProfileInterviewScreen(
             self.dismiss_safe_once(ProfileInterviewResult("saved", committed_ids, None))
         elif choice == "discard" and self._session_id is not None:
             self._set_busy(True)
+            self._closing_activity = _DISCARDING
             self._run_thread(
                 partial(self._coordinator.discard, self._session_id),
-                lambda _result: self.dismiss_safe_once(
+                lambda _result: self._close_with(
                     ProfileInterviewResult("discarded", (), None)
                 ),
             )
+
+    def _close_with(self, result: ProfileInterviewResult) -> None:
+        """Close with ``result`` now, or once nothing covers this screen.
+
+        TASK-33622.15. A terminal operation can finish while another screen
+        covers this one (a background push). The mixin refuses a covered
+        dismiss (ADR-031), and nothing retried it, so the screen stayed open
+        and busy over a draft that no longer existed. The close is kept for
+        ``on_screen_resume`` instead.
+
+        Args:
+            result: The terminal result for the launch point.
+        """
+        self._closing_activity = None
+        self._pending_close = result
+        if self.dismiss_safe_once(result):
+            self._pending_close = None
+
+    def on_screen_resume(self) -> None:
+        """Finish a close that was refused while another screen covered this one."""
+        pending = self._pending_close
+        if pending is not None and self.dismiss_safe_once(pending):
+            self._pending_close = None
 
     def _retry_cleanup(self) -> None:
         if self._session_id is None or self._busy:
             return
         self._set_busy(True)
+        self._closing_activity = _CLEANING_UP
         self._run_thread(
             partial(self._coordinator.retry_draft_cleanup, self._session_id),
             self._cleanup_succeeded,
@@ -679,6 +726,4 @@ class ProfileInterviewScreen(
             if self._session is not None and self._session.status == "committed"
             else None
         )
-        self.dismiss_safe_once(
-            ProfileInterviewResult(status, committed_ids, runtime_enabled)
-        )
+        self._close_with(ProfileInterviewResult(status, committed_ids, runtime_enabled))

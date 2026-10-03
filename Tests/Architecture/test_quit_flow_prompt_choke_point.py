@@ -22,8 +22,12 @@ this scans, statically:
   through ``self.<name>(...)``;
 * every method of ``app_lifecycle.py`` whose name mentions ``quit``, with the
   same ``self.`` closure;
-* every module-level function of ``confirmation_dialog.py`` whose name
-  mentions ``quit`` except ``await_quit_prompt`` itself;
+* every module-level function whose name mentions ``quit`` (except
+  ``await_quit_prompt`` itself) in any module that defines or names a walk
+  hook -- ``confirmation_dialog.py``'s prompt helpers, and the delegates
+  TASK-33622.15 added beside the modals that call them
+  (``refuse_quit_while_working``, ``confirm_quit_discarding_generated_video``
+  ...), which a ``self.`` closure cannot follow;
 * every module-level function of ``Persona_Modules/roleplay_draft_guard.py``
   (TASK-33622.14). ``PersonasScreen.confirm_quit`` delegates there, so the
   scan cannot follow it through ``self.``; the module's flow is shared with
@@ -43,7 +47,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PACKAGE = REPO_ROOT / "tldw_chatbook"
 APP_LIFECYCLE = PACKAGE / "app_lifecycle.py"
-CONFIRMATION_DIALOG = PACKAGE / "Widgets" / "confirmation_dialog.py"
 #: Roleplay's quit hook delegates here; every function in it is scanned.
 ROLEPLAY_DRAFT_GUARD = PACKAGE / "UI" / "Persona_Modules" / "roleplay_draft_guard.py"
 
@@ -188,12 +191,13 @@ def _scan_tree() -> tuple[list[str], list[str]]:
         )
         roots.extend(found_roots)
         offences.extend(found_offences)
-    found_roots, found_offences = scan_module_functions(
-        CONFIRMATION_DIALOG.read_text(encoding="utf-8"),
-        str(CONFIRMATION_DIALOG.relative_to(REPO_ROOT)),
-    )
-    roots.extend(found_roots)
-    offences.extend(found_offences)
+        if path == ROLEPLAY_DRAFT_GUARD:
+            continue  # scanned whole below
+        # TASK-33622.15: a hook's module-level quit helpers (the prompt
+        # helpers in confirmation_dialog.py among them).
+        found_roots, found_offences = scan_module_functions(source, label)
+        roots.extend(found_roots)
+        offences.extend(found_offences)
     # Missing on a tree without TASK-33622.14: the reach test then names it.
     if ROLEPLAY_DRAFT_GUARD.exists():
         found_roots, found_offences = scan_module_functions(
@@ -236,6 +240,17 @@ def test_the_scan_reaches_the_quit_flow_it_guards() -> None:
         "confirm_roleplay_quit",
         "tldw_chatbook/UI/Persona_Modules/roleplay_draft_guard.py:"
         "confirm_roleplay_drafts",
+        # TASK-33622.15: in-flight refusals, the video save screens, and the
+        # module-level delegates their hooks call.
+        "tldw_chatbook/Widgets/Console/console_fork_chat_modal.py:"
+        "ConsoleForkChatModal.confirm_quit",
+        "tldw_chatbook/Widgets/quit_while_working.py:refuse_quit_while_working",
+        "tldw_chatbook/Widgets/Console/console_video_save_screens.py:"
+        "GeneratedVideoFileSave.confirm_quit",
+        "tldw_chatbook/Widgets/Console/console_video_capacity_modal.py:"
+        "confirm_quit_discarding_generated_video",
+        "tldw_chatbook/Widgets/Console/console_capture_policy_dialog.py:"
+        "_quit_unless_applying",
     }
     missing = expected - set(roots)
     assert not missing, f"the scan no longer reaches: {sorted(missing)}"

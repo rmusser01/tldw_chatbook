@@ -1954,6 +1954,24 @@ class ConsoleModelPopover(
         guard.focus()
         self.call_after_refresh(self._sync_list_height)
 
+    async def confirm_quit(self) -> bool:
+        """Ask before Ctrl+Q drops edits that Esc would ask about (TASK-33622.15).
+
+        Returns:
+            True to let the quit proceed; False to keep editing.
+        """
+        labels = () if self._pick_only else self._edited_labels()
+        if not labels:
+            return True
+        from tldw_chatbook.Widgets.confirmation_dialog import (
+            confirm_quit_discarding_edits,
+        )
+        from tldw_chatbook.Widgets.Console.console_settings_unsaved import (
+            unsaved_summary_copy,
+        )
+
+        return await confirm_quit_discarding_edits(self, unsaved_summary_copy(labels))
+
     def _hide_guard(self) -> None:
         self.query_one("#console-popover-guard", UnsavedEditsGuard).display = False
         self.query_one("#console-popover-esc-key", Static).update("· Esc cancel")
