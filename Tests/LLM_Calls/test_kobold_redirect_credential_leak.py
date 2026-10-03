@@ -263,3 +263,18 @@ def test_kobold_refuses_redirect_and_never_leaks_x_api_key(
         f"to requests' resolve_redirects() peek close; observed "
         f"{len(redirect_close_calls)} close() call(s)"
     )
+
+
+def test_kobold_refuses_a_location_less_3xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``Response.is_redirect`` is False without a ``Location`` header, so a
+    bare 3xx used to pass ``raise_for_status`` and have its body parsed as
+    the model's generation."""
+
+    def _fake_send(self, request, **kwargs):  # noqa: ANN001 - requests API
+        return _fake_response(
+            300, {"Content-Type": "application/json"}, _EVIL_BODY, request=request
+        )
+
+    monkeypatch.setattr(requests.adapters.HTTPAdapter, "send", _fake_send)
+    with pytest.raises(ChatProviderError, match="redirect"):
+        _call_kobold()
