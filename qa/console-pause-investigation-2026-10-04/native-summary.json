@@ -1,5 +1,7 @@
 {
   "source_production_commit": "16e5f0270e1ee02ed807abde940b25843a5b4c1d",
+  "pr_head_observed_at_completion": "b825d974d78306bc4a6d9db754fedbaac27c6985",
+  "source_difference_note": "Concurrent PR updates change only Chat/console_trace_service.py. Examined UI, storage, config, SQLite, native-file and CSS paths match the measured source. Timings remain pinned to the initial source, not a fresh whole-head run.",
   "control_commit": "48a6d1e7cec8d9079657279f2442170c8cf67282",
   "native_control_run": "https://github.com/rmusser01/tldw_chatbook/actions/runs/37228455116",
   "hosts": {
