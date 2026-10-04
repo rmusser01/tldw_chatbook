@@ -1,0 +1,127 @@
+# Covering-run parity, re-run 2026-10-04 06:43-07:48 (finding 4)
+
+This is a covering run, not the full suite (the plan's Global Constraints ask for covering tests + preflight).
+
+## Files
+83 test files (82 at base: test_settings_model_defaults_rows.py is new). That is the Task 5 run's
+59-file list plus an independent grep of Tests/ for every id, symbol and copy Task 5 touched:
+settings-generation-defaults, settings-model-sampling, settings-provider-generation-support,
+settings-providers-models-card, settings-console-behavior-card, settings-select-row,
+settings-compact-select, settings-model-profile-, MODEL_PROFILE_INPUT_PLACEHOLDERS,
+_provider_generation_support_copy, _model_profile_input_placeholder, _model_profile_field_supported,
+resolve_console_value_layers, CONSOLE_VALUE_SOURCE_WORDS, hidden_fields_line,
+console_settings_field_row, settings_field_rows, providers_models_card,
+_generation_defaults_collapsed, _sampling_defaults_collapsed, _refresh_generation_support_summary,
+'Generation defaults', 'Model defaults', 'Inherit default', 'Providers & Models',
+ui_pr_gate_census. The branch's own test files were added too. Tests/Architecture files ran
+separately, serial (architecture-parity.txt).
+
+## Run
+Both sides at once, each: pytest -p p7t5fix1_admit -p no:randomly -n 6 --dist loadfile --timeout=900
+-o tmp_path_retention_policy=none --junitxml ..., env -i scratch profile, PYTHONPATH=<that tree>:<scratch
+admission plugin> (the lessons-testing-evidence RecoveryRequired recipe). Load average 18-20 on 18 cores.
+
+## pytest last lines
+base: 287 failed, 5397 passed, 1 skipped, 108 warnings, 37 errors in 3900.15s (1:05:00)
+head: 287 failed, 5407 passed, 1 skipped, 109 warnings, 37 errors in 3889.02s (1:04:49)
+
+## Failure + error names, compared by name (from the junit files)
+base junit: {'passed': 5397, 'failed': 287, 'errors': 37, 'skipped': 1}  failure+error names: 324
+head junit: {'passed': 5407, 'failed': 287, 'errors': 37, 'skipped': 1}  failure+error names: 324
+names in both: 317
+head-only names (7):
+  + Tests.UI.test_destination_shells::test_primary_destination_wrappers_mount[library-#library-header-line-pick a section]
+  + Tests.UI.test_destination_visual_parity_correction::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0]
+  + Tests.UI.test_latest_dev_core_app_usability_smoke::test_home_console_model_setup_routes_to_settings_provider_defaults
+  + Tests.UI.test_latest_dev_core_app_usability_smoke::test_latest_dev_core_first_use_routes_exclude_sync_and_persona
+  + Tests.UI.test_settings_compact_fields::test_compact_network_closed_select_paints_every_full_policy[textual-dark]
+  + Tests.UI.test_settings_default_model_picker::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated
+  + Tests.UI.test_settings_generation_default_journeys::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light]
+base-only names (7):
+  - Tests.UI.test_console_native_chat_flow::test_console_send_after_workspace_switch_persists_to_selected_workspace
+  - Tests.UI.test_console_native_chat_flow::test_image_message_gets_inline_row_after_prep_and_toggle_cycles
+  - Tests.UI.test_console_settings_geometry::test_new_focus_supersedes_pending_suspended_anchor_and_is_revealed
+  - Tests.UI.test_library_shell::test_library_media_edit_save_stays_gated_through_detail_refresh
+  - Tests.UI.test_library_shell::test_library_note_pilot_conflict_can_originate_from_every_region[preview]
+  - Tests.UI.test_settings_compact_fields::test_compact_fields_keep_labels_focus_and_values_across_resize[providers-models-textual-light]
+  - Tests.UI.test_settings_console_rail_labels::test_console_rail_label_revert_discards_every_console_behavior_draft
+tests only in head (12):
+  + Tests.UI.test_settings_configuration_hub::test_settings_provider_connect_block_precedes_open_model_defaults ['passed']
+  + Tests.UI.test_settings_configuration_hub::test_settings_provider_unavailable_fields_are_named_by_the_sampling_line ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_a_blank_field_says_what_it_inherits_and_from_where ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_core_rows_come_first_each_one_row_with_source_and_help[anthropic-claude-sonnet-4-5-shown_core0] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_core_rows_come_first_each_one_row_with_source_and_help[llama_cpp-qwen-shown_core1] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_every_select_row_is_one_row_on_both_cards ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_help_and_source_text_clear_aa_against_the_detail_pane[agentic_terminal] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_help_and_source_text_clear_aa_against_the_detail_pane[textual-light] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_model_defaults_follow_default_model_open_and_name_the_pair ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[211x44] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_sampling_is_one_closed_row_naming_what_anthropic_does_not_accept[235x52] ['passed']
+  + Tests.UI.test_settings_model_defaults_rows::test_saving_an_edit_and_a_blank_changes_exactly_those_config_keys ['passed']
+tests only in base (2):
+  - Tests.UI.test_settings_configuration_hub::test_settings_provider_connect_block_precedes_collapsed_generation_defaults ['passed']
+  - Tests.UI.test_settings_configuration_hub::test_settings_provider_unavailable_fields_render_single_summary_line ['passed']
+The 12 head-only tests are the new file's 10 and the two hub tests rewritten on purpose; the 2
+base-only tests are the two old names those rewrites replaced. All 14 pass on their own side. Every
+other test rewritten or extended on purpose (named in the Task 5 report) has the same name on both
+sides and passes at head.
+
+## Each head-only failure name, re-run alone twice per side (serial, same profile recipe + admission plugin)
+### base
+1 Tests/UI/test_destination_shells.py::test_primary_destination_wrappers_mount[library-#library-header-line-pick a section] :: 1 passed in 3.94s
+2 Tests/UI/test_destination_shells.py::test_primary_destination_wrappers_mount[library-#library-header-line-pick a section] :: 1 passed in 3.33s
+1 Tests/UI/test_destination_visual_parity_correction.py::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0] :: 1 passed in 4.40s
+2 Tests/UI/test_destination_visual_parity_correction.py::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0] :: 1 passed in 4.34s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 5.77s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 6.11s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_latest_dev_core_first_use_routes_exclude_sync_and_persona :: 1 passed in 8.89s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_latest_dev_core_first_use_routes_exclude_sync_and_persona :: 1 passed in 8.86s
+1 Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-dark] :: 1 passed in 5.13s
+2 Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-dark] :: 1 passed in 4.87s
+1 Tests/UI/test_settings_default_model_picker.py::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated :: 1 passed in 14.26s
+2 Tests/UI/test_settings_default_model_picker.py::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated :: 1 passed in 20.39s
+1 Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light] :: 1 passed in 103.30s (0:01:43)
+2 Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light] :: 1 passed in 100.30s (0:01:40)
+### head
+1 Tests/UI/test_destination_shells.py::test_primary_destination_wrappers_mount[library-#library-header-line-pick a section] :: 1 passed in 3.63s
+2 Tests/UI/test_destination_shells.py::test_primary_destination_wrappers_mount[library-#library-header-line-pick a section] :: 1 passed in 3.31s
+1 Tests/UI/test_destination_visual_parity_correction.py::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0] :: 1 passed in 3.90s
+2 Tests/UI/test_destination_visual_parity_correction.py::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0] :: 1 passed in 3.44s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 4.97s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_home_console_model_setup_routes_to_settings_provider_defaults :: 1 passed in 5.54s
+1 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_latest_dev_core_first_use_routes_exclude_sync_and_persona :: 1 passed in 7.71s
+2 Tests/UI/test_latest_dev_core_app_usability_smoke.py::test_latest_dev_core_first_use_routes_exclude_sync_and_persona :: 1 passed in 7.70s
+1 Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-dark] :: 1 passed in 4.18s
+2 Tests/UI/test_settings_compact_fields.py::test_compact_network_closed_select_paints_every_full_policy[textual-dark] :: 1 passed in 5.66s
+1 Tests/UI/test_settings_default_model_picker.py::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated :: 1 passed in 13.82s
+2 Tests/UI/test_settings_default_model_picker.py::test_an_unlisted_model_id_is_entered_through_custom_id_and_validated :: 1 passed in 11.97s
+1 Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light] :: 1 passed in 39.71s
+2 Tests/UI/test_settings_generation_default_journeys.py::test_generation_keyboard_validation_revert_save_clear_and_return[size0-textual-light] :: 1 passed in 43.48s
+All 7 pass alone, twice, on both sides: they are load flakes of this run (a dropped keystroke,
+'.3' == '0.3'; a focus or a 10 s wait that did not land under load 20). None of them is a Task 5
+regression. The 7 base-only names are the same kind of noise in the other direction.
+
+## The previous round's six head-only names, in this run
+The Task 5 report's second covering run had six head-only names. In this run:
+  Tests.UI.test_console_session_settings::test_console_settings_save_clears_stale_terminal_run_status | base: passed | head: passed
+  Tests.UI.test_destination_shells::test_schedules_empty_state_reads_as_live_queue_with_recovery_path | base: passed | head: passed
+  Tests.UI.test_destination_shells::test_schedules_failed_run_exposes_consistent_retry_control_state | base: passed | head: passed
+  Tests.UI.test_destination_visual_parity_correction::test_destination_pane_titles_are_user_facing_not_ordinal[schedules] | base: failed | head: failed
+  Tests.UI.test_destination_visual_parity_correction::test_operational_destinations_use_timing_or_procedure_workbench[schedules-#scheduling-sync-status-#scheduling-workbench-panes0-actions0] | base: passed | head: failed
+  Tests.UI.test_settings_configuration_hub::test_settings_provider_unavailable_fields_are_named_by_the_sampling_line | base: absent | head: passed
+Three pass on both sides, and one fails on both. One flipped head-only again, and it passes alone
+twice per side (above). The last is the hub test the report fixed (the resize-mid-sync bug), which
+now passes. The report called these flaky on both sides, and this run agrees.
+
+Known branch item, not Task 5's: Tests/UI/test_settings_footer_hints.py::
+test_advertised_capabilities_match_real_action_branches passed on both sides in this run (with the
+admission plugin's bootstrap profile); the teardown socket error the report names did not reproduce here.
+
+## Warnings
+base "108 warnings", head "109 warnings". After normalising tree paths and line numbers, the
+warnings-summary sections differ in only two ways:
+- the per-worker end-of-session "open file descriptors grew" UserWarning, which lands on whichever
+  test a worker ran last (loadfile order) and carries a different count;
+- one Pillow DeprecationWarning (textual_image getdata) on test_image_message_gets_inline_row_after_
+  prep_and_toggle_cycles at head. That test failed early at base, a base-only flake above.
+No warning names a Task 5 file or test.

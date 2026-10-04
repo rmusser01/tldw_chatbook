@@ -11,7 +11,7 @@
 │                              │  │  │ │ │ Top P                   │ 0.95                                                                                    │ │  │  │  │ No unsaved changes                      │
 │  Core                        │  │  │ │ │ Min P                   │ 0.05                                                                                    │ │  │  │  │  Guided edits: change a field first.    │
 │      Overview (view)         │  │  │ │ │ Top K                   │ 50                                                                                      │ │  │  │  │  Save (s) — no changes                  │
-│      Providers & Models      │  │  │ │ │ Max tokens              │ optional whole number                                                                   │ │  │  │  │  Revert (r) — no changes                │
+│      Providers & Models      │  │  │ │ │ Max tokens              │ tokens                                                                                  │ │  │  │  │  Revert (r) — no changes                │
 │      Web Search              │  │  │ │ │ Seed                    │ integer                                                                                 │ │  │  │  │ Local-only: saves write your config     │
 │      Speech & TTS            │  │  │ │ │ Presence penalty        │ -2.0 - 2.0                                                                              │ │  │  │  │ file.                                   │
 │  Interface                   │  │  │ │ │ Frequency penalty       │ -2.0 - 2.0                                                                              │ │  │  │  │ Control guide                           │
