@@ -13665,6 +13665,7 @@ class ConsoleChatStore:
         nodes = self._nodes_by_session.get(session_id, {})
         tombstones: list[dict[str, Any]] = []
         from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         with self._dispatch_branch_mutation(session_id):
             # TASK-33628.6/.7/.9: every saved row, even under an unsaved node.
             saved = flat_roots.delete_seeds(self, session_id, subtree_ids)
@@ -15481,6 +15482,7 @@ class ConsoleChatStore:
                 elif not current_leaf_persisted_id:
                     return None
         from tldw_chatbook.Chat import console_legacy_flat_roots as flat_roots
+
         return ResolvedVoicePromotionDestination(
             session_id=session_id,
             session_incarnation=context.origin.session_incarnation,
