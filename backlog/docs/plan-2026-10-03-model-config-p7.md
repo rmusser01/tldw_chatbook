@@ -347,7 +347,7 @@ The judge's mockup also lists a 'Reasoning replay override' row here, but that c
 - [ ] #8 The Providers & Models card draws no border of its own and no bordered group inside the detail pane; each section starts with a one-row header. Other categories keep their card frames.
 - [ ] #9 A colour-stripped capture of the open Saved model list and Catalog refresh still shows every row's state.
 - [ ] #10 '/' field search reaches fields inside closed disclosures and opens the one it lands in. Tests/UI/test_settings_search_index.py stays green.
-- [ ] #11 Ids that tests query are kept (#settings-snapshot-controls, #settings-discovered-models-list, #settings-model-catalog-group, #settings-mc-auto-*, #settings-model-context-window). Any test changed on purpose is named in the PR.
+- [ ] #11 Ids that tests query are kept (#settings-snapshot-controls, #settings-discovered-models-list, #settings-model-catalog-group, #settings-mc-auto-*, #settings-mc-write-*, #settings-model-context-window). Any test changed on purpose is named in the PR.
 - [ ] #12 Live captures show Saved model list open after a discovery at 211x44 and Catalog refresh open at 235x52.
 - [ ] #13 With every Advanced disclosure closed, live captures at 211x44 for Anthropic and llama.cpp still show Connect through Model defaults without scrolling (a re-check of TASK-33007.5 AC#9, which was captured before this fold).
 
