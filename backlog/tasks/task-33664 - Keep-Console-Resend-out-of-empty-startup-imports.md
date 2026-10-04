@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: In Progress
+status: Done
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 02:12'
+updated_date: '2026-10-04 02:27'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -612,4 +612,6 @@ Evidence: /private/tmp/pr2918-ci-conflict-{pre-rebase-manifest,planned-source,ex
 Independent JSON hashes: source a0bdd4e1224c63f58be7d84542bdb646e5a63c18ca89c412d27af3814e45cdd5, supplemental 1a5a70fb11af95a27db7b50b3210b3c4d6bdfe9cb0af9e80ee5e2600a73eea7a. Both approve only immutablebfe/exact01a. Actual dev before closure is 01a2020981c6197e5cd9945e5287567ad977edfe; any different concurrency remains separately unqualified until all fresh published-head jobs pass. CLI AC3/Done closure follows both approvals, AC4 stays checked. Documentation-only closure changes only four owned canonical Markdown records, preserving every reviewed source/deletion and full tree outside four. Publish ONCE with EXACT observed8dd lease and concise body, verify actual refs/GitHub/body after lag without second push. Fresh new-head Qodo/no actionable threads and ALL FOUR jobs precede any further strict-base action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/current concurrency proportionately before pausing heartbeat/reporting.
 
 Every earlier positive/NON-GREEN/baseline/interrupted/unexecuted result, metadata correction, rejected uncreated/unexecuted readiness adapter and optional/style/profile/snapshot/stale-cleanup/physical/wider limit remains. Schema76/stamps/frozen AgentRuns, exact AGENT_WAKE refusal/refund/nonreplay, child initialization/scoped tools/peers, app revocation/finite admitted SQL custody, shared Send/hook/replay/readiness/HELD recovery and three deferred Resend imports retain approval. This includes prior scope79P/4P/UI49P2F, isolation57P2SKIP/privacy14P/UI48P3F/exactbaseline, telemetry mixed37P50ERROR/mounted/exactbaseline, local/wizard, flat140P9F/exact9F/FDgrowth203>200 cause unqualified, recovery84P/19P, provider/hook/audio/Roleplay/cold-worker/PERF07/capture145P51SKIP and all original budgets. No full suite/live providers/user keys/physicalCtrlQ/relaunch/real voice service/provision/download/playback/native-Linux/Windows/aggregate/package/index/installed/native-release/wider audit, admin bypass, weakened gates, shared stash or foreign cleanup follows.
+
+Documentation-only strict-base follow-up integration qualified on exact dev 0001eba40419859ce39ed4952f0f8df7b40639bd. Prospective plan6c387635e4703fa6abcec3e3fa6dab031fc66d9d preceded clean67-commit rebase; immutable source834eed42d460f4c6a1a40c2ff69a801b93de3069 has independent Ready preservation/evidence approval, no findings. All1352 prior plus3 incoming records (1355),27552 fulltree/index entries and capture_cloud.py deletion authenticate. TASK34350..34352 remain exact To Do/16 unchecked; application/test/guard/workflow bytes are unchanged. Prior functional/static/diagnostic/CSS/size and original5 budgets5PASS97.491s carry by exact source identity; no budget/test rerun or new follow-up/runtime/live/physical/platform/aggregate/wider certification. Supported task guards4924/owned whitespace pass. Review JSON SHA10b48f3265fd54112f02c26305b624075517bf276e6dc2b2d31d1fe987ab0ce5. Every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/limit/separate state remains. Existing ADR097 boot/199 apply, no new ADR or boundary. AC3 closes via CLI after independent approval; AC4 remains checked. Fresh published-head Qodo/allFOUR jobs/live strict protection/current concurrency still precede normal protected head-matched merge.
 <!-- SECTION:NOTES:END -->
