@@ -104,6 +104,7 @@ from tldw_chatbook.Agents.agent_runtime import (
     render_tool_protocol,
     split_visible_text_and_tool_call,
 )
+from tldw_chatbook.Agents.first_request_window import PLAIN_CHAT_SYSTEM_PROMPT
 from tldw_chatbook.Agents.project_instruction_resolver import (
     InstructionPromotionSnapshot,
     InstructionSnapshot,
@@ -5081,9 +5082,11 @@ def build_console_first_request_plan(
         direct_system_prompt=direct_prompt,
         discovery_system_prompt=discovery_prompt,
         # TASK-34100.5 AC#6: the same window the send preflight used, and a
-        # tool-less request carries only the session's own prompt.
+        # tool-less request carries only the session's own prompt (or a
+        # neutral one-liner, never the tool-protocol prompt: V2-F2).
         context_window=getattr(resolution, "context_window", None),
-        plain_system_prompt=(session_system_prompt or "").strip() or None,
+        plain_system_prompt=(session_system_prompt or "").strip()
+        or PLAIN_CHAT_SYSTEM_PROMPT,
     )
     config = dataclass_replace(config, system_prompt=schemas.system_prompt)
     profile_workspace_id = (

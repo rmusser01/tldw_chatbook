@@ -79,6 +79,7 @@ def _plan(
     message: str = "Reply with just: hi",
     provider: str = "llama_cpp",
     model: str = _MODEL,
+    session_system_prompt: str | None = _SESSION_PROMPT,
 ):
     registry = ToolCatalogRegistry()
     registry.register_provider(_BuiltinLikeProvider())
@@ -107,7 +108,7 @@ def _plan(
         scratch_lease=None,
         resolution=resolution,
         fallback_model=model,
-        session_system_prompt=_SESSION_PROMPT,
+        session_system_prompt=session_system_prompt,
         native_tools=False,
         turn_skill_bindings=(),
         turn_bundle_block="",
@@ -152,6 +153,28 @@ def test_an_unverified_window_never_licenses_the_full_agent_preamble(provider) -
     # The request carries the session's own prompt, not tool instructions
     # for a protocol it no longer describes.
     assert plan.schemas.system_prompt == _SESSION_PROMPT
+
+
+@pytest.mark.parametrize("session_prompt", [None, "", "   "])
+def test_a_tool_less_request_with_the_system_prompt_off_carries_no_tool_talk(
+    session_prompt,
+) -> None:
+    """Review round 2 (V2-F2), live g5-v2-local: with the session prompt off
+    (the post-setup default) the tool-less request fell back to the agent's
+    operating prompt -- 'call exactly one tool per reply using the fenced
+    protocol described below ... Use spawn_subagent' -- with no tools and no
+    protocol below it, inviting a small model to fake tool calls."""
+    plan = _plan(
+        ContextWindowResolution(32000, "application fallback", False),
+        session_system_prompt=session_prompt,
+    )
+
+    assert plan.schemas.runtime_schemas == ()
+    assert plan.schemas.active_schemas == ()
+    content = _system_content(plan)
+    for tool_talk in ("tool", "protocol", "fence", "spawn_subagent", "sub-task"):
+        assert tool_talk not in content.lower(), content
+    assert content.strip(), "a neutral one-liner, never an empty system row"
 
 
 def test_a_detected_small_window_plans_against_the_server_value() -> None:

@@ -28,6 +28,10 @@ from typing import Any
 UNVERIFIED_PLANNING_WINDOW_TOKENS = 4096
 #: An unverified planning window reserves at most this share for the reply.
 UNVERIFIED_RESERVATION_DIVISOR = 4
+#: The system prompt of a tool-less request when the session prompt is off
+#: (review round 2, V2-F2): the agent's operating prompt describes a tool
+#: protocol and spawn_subagent that such a request does not carry.
+PLAIN_CHAT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 
 def planning_window(

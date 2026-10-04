@@ -1111,7 +1111,8 @@ run, use **Stop**, **Ctrl+G**, or `/stop` instead.
   is sized against the context window the send itself uses. When a
   self-hosted server's window is only a guess (no catalog entry, and the
   server didn't report one), it is planned as 4,096 tokens; when the tools
-  don't fit, the request carries just your system prompt and conversation. A
+  don't fit, the request carries just your system prompt (with it off, the
+  one line "You are a helpful assistant.") and the conversation. A
   llama.cpp server started with `-c 4096` therefore still answers a first
   "hi". A model with a known, large window keeps its tools, and so does a
   cloud model the catalog doesn't list yet (its provider's window is used).
