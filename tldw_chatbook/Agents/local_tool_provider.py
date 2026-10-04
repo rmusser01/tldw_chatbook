@@ -216,6 +216,14 @@ LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL = (
 LOCAL_WORKER_FAILED_REFUSAL = (
     "The local file-tool worker failed before returning a result."
 )
+#: TASK-34351: a sub-agent's isolated worktree is un-routed when its run ends
+#: (`retire_run_workspace_root`). A call from that run that loses the race --
+#: before the gate, or while its approval card waited -- used to get the
+#: scratch refusal above, or a bare KeyError naming the alias.
+LOCAL_RUN_WORKTREE_RELEASED_REFUSAL = (
+    "This run has ended and its isolated worktree was released; "
+    "the tool was not run."
+)
 # TASK-28238 phase 1: fs_write CAS-injection stale-write guard (Task 3).
 # {old}/{new} are sha256[:8]/size, or the word "absent".
 LOCAL_STALE_WRITE_REFUSAL = (
@@ -2153,10 +2161,13 @@ class LocalToolProvider:
             # PROVIDER's own base root, not `authority.root`, so it would
             # dispatch a path tool against the wrong root instead of
             # refusing. An explicit blocked result is the honest one here.
+            # TASK-34351: only a retired agent worktree reaches this branch
+            # (static Console roots are never retired), so the refusal names
+            # the released worktree, not private scratch.
             authority_specs = self._path_specs_by_alias.get(authority.alias)
             if authority_specs is None or name not in authority_specs:
                 return LocalToolInvocationResult(
-                    result=ToolResult.blocked(LOCAL_AUTHORITY_UNAVAILABLE_REFUSAL),
+                    result=ToolResult.blocked(LOCAL_RUN_WORKTREE_RELEASED_REFUSAL),
                     final_gate="not_checked",
                     approval_consumed=False,
                     reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
@@ -2213,6 +2224,28 @@ class LocalToolProvider:
                         dispatch_started=False,
                         provider_terminal=LocalProviderTerminal.NOT_STARTED,
                     )
+                # TASK-34351: resolve the handler once, before any side
+                # effect. The run's worktree may have been retired while its
+                # approval card waited; re-indexing the alias cache at the
+                # handler site raised a bare KeyError whose text (the alias)
+                # reached the model as the error.
+                if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES:
+                    handler_spec = self._path_specs_by_alias.get(
+                        authority.alias, {}
+                    ).get(name)
+                    if handler_spec is None:
+                        return LocalToolInvocationResult(
+                            result=ToolResult.blocked(
+                                LOCAL_RUN_WORKTREE_RELEASED_REFUSAL
+                            ),
+                            final_gate=gate.verdict,
+                            approval_consumed=gate.approval_consumed,
+                            reason_code=LocalToolInvocationReason.AUTHORITY_UNAVAILABLE,
+                            dispatch_started=False,
+                            provider_terminal=LocalProviderTerminal.NOT_STARTED,
+                        )
+                else:
+                    handler_spec = spec
                 # Phase 3c (Task 17): redaction strips the authority's root
                 # locator from results/paths. A local root unwraps to its
                 # Path (byte-identical); a RemoteRoot redacts LEXICALLY
@@ -2328,12 +2361,7 @@ class LocalToolProvider:
                             provider_terminal=provider_terminal,
                         )
                 try:
-                    selected_spec = (
-                        self._path_specs_by_alias[authority.alias][name]
-                        if authority is not None and name in _PATH_AUTHORITY_LOCAL_NAMES
-                        else spec
-                    )
-                    raw_output = selected_spec.handler(dispatch_args)
+                    raw_output = handler_spec.handler(dispatch_args)
                     result = ToolResult(
                         ok=True,
                         content=self._bounded_result(
