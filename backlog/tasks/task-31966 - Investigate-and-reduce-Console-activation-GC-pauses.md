@@ -1,9 +1,11 @@
 ---
 id: TASK-31966
 title: Investigate and reduce Console activation GC pauses
-status: To Do
-assignee: []
+status: In Progress
+assignee:
+  - '@codex'
 created_date: '2026-09-07 18:45'
+updated_date: '2026-10-04 23:30'
 labels:
   - console
   - performance
@@ -23,7 +25,6 @@ Follow up separately on the main-thread garbage-collection pause found during TA
 <!-- SECTION:DESCRIPTION:END -->
 
 ## Acceptance Criteria
-
 <!-- AC:BEGIN -->
 - [ ] #1 A disposable-profile reproduction identifies allocation and lifecycle ownership, compares a frozen baseline, and distinguishes observer overhead from automatic GC costs.
 - [ ] #2 An evidence-backed correction preserves exact conversation activation, focus, cancellation, and terminal resource ownership; any global GC or cache policy change has an approved ADR before implementation.
@@ -31,7 +32,23 @@ Follow up separately on the main-thread garbage-collection pause found during TA
 - [ ] #4 Targeted regressions and repeated terminal resource checks pass without warning suppression, threshold increases, real-profile access, or replacing native evidence with mocks.
 <!-- AC:END -->
 
-## Evidence and scope
+## Implementation Plan
+
+<!-- SECTION:PLAN:BEGIN -->
+1. Retain the frozen baseline, exact identity outcomes, GC timings, observer costs and all failed runs without relabelling them.
+2. Attribute stable control-refresh substeps in a small disposable real-app profile; distinguish nested work, instrumentation effects and GC from exclusive function cost.
+3. Obtain design approval for the newly identified bounded recovery-bar height-class correction before changing production code.
+4. After approval, add genuine mounted regressions for unchanged refreshes, recovery transitions, unrelated classes and inline reset behavior, then implement atomic idempotent class replacement in the existing owner.
+5. Freeze clean source and rerun the relevant targeted tests, strict resource checks, artifact guards and fresh real-owner scale matrix against unchanged timing limits. Preserve residual failures; do not change GC policy to force a pass.
+6. Keep native, Windows, participant and final application-owner retirement gaps explicit; do not start the dependent semantic subsystem or mark qualification complete without its required evidence.
+ADR required: no new ADR for the proposed local, behavior-preserving class correction.
+ADR path: N/A; existing backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md, backlog/decisions/150-design-token-system-and-design-language.md, backlog/decisions/161-component-pattern-library.md and backlog/decisions/198-gc-policy-freeze-boot-heap.md govern the work.
+Reason: existing geometry, tokens, activation, authority and lifetime contracts are preserved; any later global GC/cache policy requires separate approved ADR review.
+
+### Historical evidence and scope — 2026-09-07 checkpoint
+
+Retained from the original task. This subsection is inside the CLI-owned plan
+marker so future task serialization does not discard its evidence.
 
 On 2026-09-07 the user explicitly chose a separate follow-up for this investigation.
 This task does not reopen the reviewed TASK-31245 activation/rollback/resource or
@@ -60,4 +77,13 @@ a fix. The existing standalone 300-query retrieval pass is not UI latency proof.
 
 ADR review is required when taking this task In Progress. ADR120 governs existing
 activation authority; a new global GC/cache/lifecycle policy requires its own
-approved architectural decision. No implementation plan or remedy is approved yet.
+approved architectural decision. At the original checkpoint, no implementation
+plan or remedy was approved. The current bounded plan above does not authorize a
+global policy change or claim qualification completion.
+<!-- SECTION:PLAN:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+Implemented the approved local recovery-height correction: atomic owned height-class replacement avoids unchanged subtree restyles while preserving recovery controls, unrelated classes and inline geometry repair. Mounted RED/GREEN recorded; six new tests passed, broader targeted run had 117 passes and four inherited config-admission failures reproduced with the fix removed. Existing ADR120/150/161/198 apply; no global GC or cache policy change. Fresh frozen latency/resource qualification remains pending, so status and acceptance criteria stay open. See Docs/QA/task-31245/fixture-rebuild-2026-10-04.md.
+<!-- SECTION:NOTES:END -->

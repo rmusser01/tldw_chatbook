@@ -155,3 +155,6 @@ Tests/UI/test_console_rename_consistency.py
 
 # TASK-31245: constructor hydration and finite workspace handle ownership.
 Tests/UI/test_console_fixture_ownership.py
+
+# TASK-31966: stable recovery-bar refresh and real recovery-height transitions.
+Tests/UI/test_console_control_bar_recovery_height.py

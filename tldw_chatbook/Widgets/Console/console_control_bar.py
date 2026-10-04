@@ -126,9 +126,11 @@ class ConsoleControlBar(Vertical):
     def _set_recovery_height(self, visible: bool) -> None:
         """Set the exact bar height for its recovery-row visibility."""
         height = 2 if visible else 1
-        self.remove_class(*(name for name in self.classes if name.startswith("h-")))
+        classes = {name for name in self.classes if not name.startswith("h-")}
+        classes.add(f"h-{height}")
         self.set_styles(height=None)
-        self.add_class("h-2" if visible else "h-1")
+        # One atomic update; Textual skips restyling when classes are unchanged.
+        self.set_classes(classes)
         self.styles.min_height = height
         self.styles.max_height = height
 
@@ -300,7 +302,9 @@ class ConsoleControlBar(Vertical):
             for action in self._visible_actions():
                 yield self._action(action)
         with Horizontal(id="console-auto-speak-row") as speech_row:
-            speech_row.remove_class(*(name for name in speech_row.classes if name.startswith("h-")))
+            speech_row.remove_class(
+                *(name for name in speech_row.classes if name.startswith("h-"))
+            )
             speech_row.set_styles(height=None)
             speech_row.add_class("h-1")
             speech_row.styles.min_height = 1

@@ -307,3 +307,75 @@ background load remained; these were serial runs, not alongside my own tests
 or CLI walkthrough. Attribution and a reviewed bounded correction remain
 necessary before claiming the latency/resource gates passed. TASK-31246's
 qualification dependency and the final combined PR remain pending.
+
+### Stable control-refresh attribution on the small fixture
+
+Documentation-only successor `5a43164923` preserves the production, test,
+script and package inputs byte-for-byte from the measured 8c head. A newly
+prepared, exact-head small synthetic corpus supported five direct calls to the
+installed control refresh after real saved-chat resume. This is a diagnostic,
+not a full-scale latency, native input or resource qualification. Original
+readiness/config/ownership checks remain in place and sources stayed unchanged.
+
+The first observer mistakenly rebound a static method as an instance method
+and failed during composition, before the intended observations. That failure
+is retained at `control-steps-5a`; it is not a production regression. Corrected
+observers preserve the original descriptor and filter to the main thread.
+The five steady refreshes in `control-steps-v2-5a` took 19.019583, 20.810458,
+22.442000, 21.773208 and 20.064375 ms, with zero dropped records. Composer
+reason/geometry work was small rather than the main cost; no speculative
+composer-wide optimization was implemented.
+
+Adding the remaining speech/library/inspector projection substeps in
+`control-steps-v3-5a` retained all observations and no app exception. Its five
+refreshes took 35.908834, 40.469959, 23.480750, 28.880583 and 29.450875 ms.
+Of 158.128 ms summed control-refresh time, 94.219 ms was inside
+`ConsoleControlBar._set_recovery_height` (90.677 ms main-thread CPU). These
+instrumented inclusive durations are not a before/after production comparison
+or a universal timing bound. The existing method unconditionally removes
+its `h-*` class and re-adds the same `h-1` on every unchanged disabled-speech
+refresh; Textual synchronously restyles that control-bar subtree for both
+mutations. This gives a concrete bounded correction to test, without a global
+GC/cache policy or dropping the authoritative speech/config refresh.
+
+The proposed correction replaces only the owned height-class set atomically,
+preserves unrelated classes and the inline-height reset, and retains the
+existing one-/two-row recovery transitions. The user approved proceeding, and
+the bounded correction below was implemented; this does not itself establish
+the remaining 50 ms activation limit. TASK-31966 is In Progress, with criteria open.
+Diagnostic receipts/scripts remain in the retained temporary container above;
+each successful receipt records its full source head, source digest, raw calls,
+windows and script digest. ADR-120/150/161/198 remain controlling.
+
+### Bounded recovery-bar correction
+
+The mounted RED had three expected failures and three passes: five unchanged
+speech refreshes caused ten real node restyles for both hidden and visible
+recovery, and each transition first removed its height class before adding the
+replacement. Atomic replacement of the owned `h-*` set now lets Textual skip an
+unchanged class set. Unrelated classes, the inline-height reset, min/max bounds,
+recovery visibility, retry/resume behavior and replacement widget setup remain
+intact. No global GC/cache policy or activation/readiness guard changed.
+
+Initial GREEN: six mounted tests pass in 2.61s, no pytest warnings. First setup
+attempts exposed the documented source-bound config admission trap; the new
+widget-only suite uses the existing bootstrap-profile marker without profile
+mutations. Logs: `/tmp/task31966-recovery-red-bound.log` and
+`/tmp/task31966-recovery-green.log`. Both paths format clean; the new tests are
+Ruff clean. The production file retains the same three inherited Ruff findings
+as HEAD (FLY002 and two B010), confirmed on the committed source.
+
+The covering speech/coalescing/design-token run had 117 passes and four config
+admission failures in 54.14s. All four reproduce with this production fix
+removed (4.65s): both coalescing mounts and the two full-app speech suspend
+cases fail with `raw_source_selection_changed`. This is not a clean covering
+suite or a recovery regression. No guard was bypassed to turn them green.
+The strict read-only census retained no database files after any teardown;
+admission/lease descriptors remain, so this is not an all-descriptor-zero claim.
+Logs: `/tmp/task31966-recovery-cover.log` and
+`/tmp/task31966-inherited-baseline.log`. After restoring the correction and
+formatting, all six mounted regressions pass again in 3.37s with strict
+database retirement required and no pytest warnings. All eleven artifact guards
+pass, including the newly gated regression file. Logs:
+`/tmp/task31966-recovery-final.log` and `/tmp/task31966-recovery-preflight.log`.
+Fresh frozen performance remains to run.
