@@ -7,6 +7,7 @@ from typing import Any, Dict, Literal, get_args
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.timer import Timer
 from textual.widget import Widget
 from textual.widgets import Button, Input, Label, Select, Static, Switch, TextArea
@@ -316,7 +317,10 @@ class PersonaProfileEditorWidget(Container):
         self.new_persona(runtime_source="local")
         self._actor_pack_mode = True
         selector = self.query_one("#personas-editor-character-portrait", Select)
-        selector.set_options(list(portrait_options))
+        # TASK-34400: character names are user text; a str prompt parses as markup.
+        selector.set_options(
+            [(Content(name), value) for name, value in portrait_options]
+        )
         selector.value = portrait_options[0][1] if portrait_options else Select.BLANK
         self._loaded_snapshot = self._form_snapshot()
         self._dirty_posted = False

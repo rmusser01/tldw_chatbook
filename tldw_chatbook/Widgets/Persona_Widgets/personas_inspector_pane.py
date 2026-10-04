@@ -8,6 +8,7 @@ import re
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import QueryError
 from textual.widgets import Button, Checkbox, Input, ListItem, ListView, Static
 
@@ -230,7 +231,8 @@ class PersonasInspectorPane(VerticalScroll):
             )
             collapse_button.tooltip = "Collapse Inspector rail"
             yield collapse_button
-        yield Static("Selected: none", id="personas-selected-name")
+        # TASK-34400: the selected name is untrusted text; never parse markup.
+        yield Static("Selected: none", id="personas-selected-name", markup=False)
         yield Static("Type: -", id="personas-selected-kind")
         # Portrait of the selected character. A roleplay user identifies a
         # character by its picture at least as much as by its name, and the
@@ -240,7 +242,9 @@ class PersonasInspectorPane(VerticalScroll):
         # selection - pre-selection the inspector is just the summary lines
         # plus one plain guidance line (the readiness Static below), not a
         # false "Validation: OK", dangling section headers, and dead buttons.
-        validation = Static("Validation: OK", id="personas-validation-summary")
+        validation = Static(
+            "Validation: OK", id="personas-validation-summary", markup=False
+        )
         validation.display = False
         yield validation
         # Read-only policy-rules summary (workspace-assistant-defaults
@@ -274,7 +278,10 @@ class PersonasInspectorPane(VerticalScroll):
         )
         readiness_header.display = False
         yield readiness_header
-        yield Static(_NO_SELECTION_GUIDANCE, id="personas-readiness-console")
+        # TASK-34400: block reasons quote provider names (config text); literal.
+        yield Static(
+            _NO_SELECTION_GUIDANCE, id="personas-readiness-console", markup=False
+        )
         actions = Vertical(id="personas-inspector-actions")
         actions.display = False
         with actions:
@@ -1034,14 +1041,15 @@ class PersonasInspectorPane(VerticalScroll):
             export_tooltip = None
         # Send-to-draft tooltip only surfaces when the selection gate itself
         # is closed; the copy matches the readiness line's intent language.
-        attach_tooltip = None
+        attach_tooltip: str | Content | None = None
         if not self._console_actions_enabled:
             if not selected:
                 attach_tooltip = _NO_SELECTION_GUIDANCE
             elif unsaved:
                 attach_tooltip = _UNSAVED_TOOLTIP
             else:
-                attach_tooltip = (
+                # TASK-34400: a tooltip str parses as markup; the reason is not ours.
+                attach_tooltip = Content(
                     "Chat now and Send to Console draft blocked: "
                     f"{self._console_action_block_reason}"
                 )
@@ -1089,7 +1097,9 @@ class PersonasInspectorPane(VerticalScroll):
         if not self._console_actions_enabled:
             start_btn.tooltip = attach_tooltip
         elif self._provider_block_reason:
-            start_btn.tooltip = f"Chat now blocked: {self._provider_block_reason}"
+            start_btn.tooltip = Content(
+                f"Chat now blocked: {self._provider_block_reason}"
+            )
         else:
             start_btn.tooltip = None
         # F-040: an active mark set retargets Delete/Export JSON at the

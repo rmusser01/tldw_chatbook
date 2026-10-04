@@ -212,6 +212,7 @@ class BuddyWorkspaceModal(SafeModalDismissMixin, ModalScreen[None]):
                 if isinstance(exc, ValueError)
                 else "Could not mark the result seen. Retry.",
                 severity="warning",
+                markup=False,  # TASK-34400: exception text is not ours
             )
         if self.is_mounted:
             await self.refresh_inbox()

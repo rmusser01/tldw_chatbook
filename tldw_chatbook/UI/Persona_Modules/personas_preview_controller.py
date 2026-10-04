@@ -29,7 +29,6 @@ from ...Chat.console_provider_gateway import ConsoleProviderGateway
 from ...Chat.console_session_settings import build_default_console_session_settings
 from ...Chat.provider_catalog import provider_display_name
 from ...Chat.provider_readiness import get_provider_readiness
-from ...Utils.input_validation import escape_markup
 from ...Widgets.Persona_Widgets.personas_character_editor_widget import (
     PersonasCharacterEditorWidget,
 )
@@ -284,10 +283,10 @@ class PersonasPreviewController:
                 show its entry's name.
 
         Returns:
-            The display name as markup, since a registry entry's name is user
-            text.
+            The display name as plain text; the preview's readout and status
+            lines render it literally (TASK-34400).
         """
-        return escape_markup(provider_display_name(str(provider_key or ""), config))
+        return provider_display_name(str(provider_key or ""), config)
 
     def provider_readout(self) -> tuple[str, str]:
         """Compute the pre-send provider readout from current config.

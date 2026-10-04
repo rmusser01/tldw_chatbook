@@ -76,8 +76,11 @@ def validate_input(model_class: Type[BaseModel], extract_fields: Optional[list] 
                     )
                     # Show error to user
                     if hasattr(self, "window") and hasattr(self.window, "app_instance"):
+                        # TASK-34400: the message can echo user input; literal.
                         self.window.app_instance.notify(
-                            f"Validation Error: {error_msg}", severity="error"
+                            f"Validation Error: {error_msg}",
+                            severity="error",
+                            markup=False,
                         )
                     return None
 
@@ -196,8 +199,9 @@ def validate_file_import(func: Callable) -> Callable:
             if not is_valid:
                 logger.error(f"File import validation failed: {error_msg}")
                 if hasattr(self, "window") and hasattr(self.window, "app_instance"):
+                    # TASK-34400: the message quotes the path; literal.
                     self.window.app_instance.notify(
-                        f"Invalid file: {error_msg}", severity="error"
+                        f"Invalid file: {error_msg}", severity="error", markup=False
                     )
                 return None
 

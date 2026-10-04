@@ -9,6 +9,7 @@ from uuid import UUID
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
+from textual.content import Content
 from textual.widgets import Button, Select, Static
 
 from ...TTS import ProfileAvailabilityState
@@ -308,9 +309,10 @@ class PersonasCharacterTTSWidget(Container):
         has_suggestion = state.suggested_profile_id is not None
         selector = self.query_one(".personas-character-tts-profile", Select)
         options = [("Use global default", _GLOBAL_PROFILE_VALUE)]
+        # TASK-34400: profile names are user text; a str prompt parses as markup.
         options.extend(
             (
-                (
+                Content(
                     f"{profile.display_name} · {_character_tts_option_suffix(profile)}"
                     + (
                         " · Suggested"

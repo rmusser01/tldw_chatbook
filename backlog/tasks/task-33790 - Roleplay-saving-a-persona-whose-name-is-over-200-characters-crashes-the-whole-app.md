@@ -6,6 +6,7 @@ title: >-
 status: To Do
 assignee: []
 created_date: '2026-10-02 04:56'
+updated_date: '2026-10-04 18:52'
 labels:
   - roleplay
   - ux-review-2026-10-01
@@ -42,7 +43,13 @@ Line refs below were re-checked on origin/dev @ ab4df99959. Paths are under `tld
 - [ ] #1 Saving a new or an existing persona with a name longer than 200 characters never exits the app; the user sees a readable message and every open draft remains.
 - [ ] #2 The 200-character name limit is visible before Save: a longer name is either prevented at entry with a visible notice, or flagged inline next to the field.
 - [ ] #3 The validation message names the field and its limit in plain words, not raw validation-library text.
-- [ ] #4 Any Roleplay toast whose text contains square brackets (exception text or user-entered names) shows them as literal text and never raises.
+- [x] #4 Any Roleplay toast whose text contains square brackets (exception text or user-entered names) shows them as literal text and never raises.
 - [ ] #5 A tool-policy rule name longer than 512 characters is handled the same way: no crash, and a readable message.
 - [ ] #6 Regression tests: a validation error on the persona save path (create and edit) produces a toast without raising, and a Pilot-driven Save with a 205-character name leaves the app running; they fail on the current code.
 <!-- AC:END -->
+
+## Implementation Notes
+
+<!-- SECTION:NOTES:BEGIN -->
+2026-10-04, TASK-34400: the app-exit half is fixed. Every Roleplay toast now renders literally (PersonasScreen._notify passes markup=False), so the persona save with a 205-character name shows the pydantic text in a toast and the app keeps running (pinned by Tests/UI/test_roleplay_hostile_names.py::test_a_persona_save_that_fails_validation_keeps_the_app_running). AC#4 is delivered. Still open here: AC#1's readable message (the toast still shows raw validation text), AC#2 (visible 200-character limit), AC#3 (plain-words message), AC#5 (512-character rule name: no longer exits, but the message is raw) and AC#6's Pilot-driven create and edit paths.
+<!-- SECTION:NOTES:END -->
