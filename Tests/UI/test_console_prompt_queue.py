@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import inspect
+from dataclasses import fields as dataclass_fields
 from dataclasses import replace
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +36,7 @@ from tldw_chatbook.Chat.console_runtime import (
 from tldw_chatbook.UI.Console_Modules.prompt_queue import (
     RECOVERY_TURN_PREVIEW_CELLS,
     ConsolePromptDispatchStatus,
+    ConsolePromptQueuePresentation,
     ConsolePromptQueueRegion,
     ConsolePromptQueueUIController,
     derive_prompt_queue_presentation,
@@ -325,21 +328,22 @@ def _shelf_snapshot(
     )
 
 
-def _every_shelf_presentation():
+def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
     """The shelf states ``presentation_for`` can project, by button label.
 
     Built through the production projection with the arguments
     ``ConsolePromptQueueUIController.presentation_for`` passes, so the labels
     come from production, not from a copy kept here. Only a new
-    ``PromptQueuePauseReason`` is picked up automatically; a new
-    ``PromptQueueMode`` or a new ``presentation_for`` argument needs a row
-    here. 'Starting...' and the bare 'Turn failed' are not walked: their
-    buttons carry the same labels as states that are. The failed turn's name
-    uses the production preview budget at its full width: that summary is the
-    shelf's longest, and the one most likely to push a button off the row.
+    ``PromptQueuePauseReason`` is picked up automatically. A new
+    ``PromptQueueMode`` or a new projection argument needs a row here, and
+    ``test_painted_label_walk_covers_every_shelf_projection_input`` fails
+    until it has one. 'Starting...' and the bare 'Turn failed' are not walked:
+    their buttons carry the same labels as states that are. The failed turn's
+    name uses the production preview budget at its full width, behind a full
+    queue: that summary is the shelf's longest, and the one most likely to
+    push a button off the row.
     """
 
-    derive = derive_prompt_queue_presentation
     paused = PromptQueueMode.PAUSED
     failed_name = make_prompt_preview(
         "Summarise the attached quarterly report in five bullets, then rank "
@@ -360,14 +364,16 @@ def _every_shelf_presentation():
         ),
     )
     for reason in PromptQueuePauseReason:
+        failed = reason is PromptQueuePauseReason.FAILED
+        # The failed turn's row is also painted at a full queue: 'Queue 10/10'
+        # is one cell wider than 'Queue 1/10', on the longest summary.
+        count = MAX_CONSOLE_QUEUE_ENTRIES if failed else 1
         yield (
             f"paused-{reason.value}",
             derive(
-                _shelf_snapshot(paused, reason),
-                _activity(count=1, paused=True),
-                failed_turn_preview=(
-                    failed_name if reason is PromptQueuePauseReason.FAILED else None
-                ),
+                _shelf_snapshot(paused, reason, count=count),
+                _activity(count=count, paused=True),
+                failed_turn_preview=failed_name if failed else None,
             ),
         )
     yield (
@@ -440,6 +446,69 @@ async def test_every_shelf_button_paints_its_whole_label(shelf_width) -> None:
                     f"{button.id}'s columns; row {row!r}"
                 )
             assert manage.region.right <= pause.region.x, name
+
+
+def test_painted_label_walk_covers_every_shelf_projection_input() -> None:
+    """TASK-33625.5: the painted-label walk reaches every state the shelf can.
+
+    The walk above is the proof that no shelf state pushes a button off the
+    row, so it only holds if the walk reaches every state. The shelf once had
+    a dispatch-recovery mode, entered only through the projection's
+    ``dispatch_recovery=`` argument. Production never passed that argument
+    and the walk never exercised it. Fed the real 'Response delivery status is
+    unknown on the source device.' copy, it pushed Discard to cell 102 on a
+    92-101 cell shelf. So every queue mode, and every projection argument
+    given a non-default value, must appear in the walk. Every parameter after
+    the snapshot and the activity counts, whatever its kind: a new input
+    added before the ``*`` must be walked too.
+    """
+
+    parameters = list(
+        inspect.signature(derive_prompt_queue_presentation).parameters.values()
+    )
+    assert [parameter.name for parameter in parameters[:2]] == [
+        "snapshot",
+        "activity",
+    ]
+    defaults = {parameter.name: parameter.default for parameter in parameters[2:]}
+    walked_inputs: set[str] = set()
+    walked_modes: set[PromptQueueMode] = set()
+
+    def recording_derive(snapshot, activity, **kwargs):
+        walked_modes.add(snapshot.mode)
+        walked_inputs.update(
+            name for name, value in kwargs.items() if value != defaults[name]
+        )
+        return derive_prompt_queue_presentation(snapshot, activity, **kwargs)
+
+    assert list(_every_shelf_presentation(derive=recording_derive))
+    # composer_collapsed only hides the shelf, so it has no button to paint;
+    # test_region_is_revision_guarded_and_hides_preview_when_collapsed pins it.
+    unwalked = sorted(set(defaults) - walked_inputs - {"composer_collapsed"})
+    assert not unwalked, (
+        "the shelf projection accepts state inputs the painted-label walk "
+        f"never exercises: {unwalked}"
+    )
+    assert walked_modes == set(PromptQueueMode)
+
+
+def test_queue_shelf_has_no_dispatch_recovery_mode() -> None:
+    """Pin that the queue shelf has no dispatch-recovery mode (TASK-33625.5).
+
+    Response recovery is the #console-dispatch-recovery card's job alone. The
+    shelf's copy of it (Retry anyway / Retry response / Unavailable) was
+    unreachable in production, so it is gone. Pin that the projection can
+    neither take a recovery state nor hand the shelf recovery actions. The
+    shelf's own blocked state stays: see
+    test_queue_presentation_cannot_offer_resume_while_dispatch_recovery_blocks.
+    """
+
+    parameters = inspect.signature(derive_prompt_queue_presentation).parameters
+    assert "dispatch_recovery" not in parameters
+    presentation_fields = {
+        field.name for field in dataclass_fields(ConsolePromptQueuePresentation)
+    }
+    assert "recovery_actions" not in presentation_fields
 
 
 @pytest.mark.asyncio

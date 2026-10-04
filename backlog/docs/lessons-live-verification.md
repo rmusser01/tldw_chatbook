@@ -14,6 +14,33 @@ tldw_chatbook; print(tldw_chatbook.__file__)"` from OUTSIDE the repo. For a work
 worktree its own venv (`uv venv` + `uv pip install -e ".[dev,...]"`) so the worker imports the
 code under test; a shared venv's editable install points at whichever checkout installed it last.
 
+## `tmux kill-server` does not leave a pending dispatch; SIGKILL the app's own pid
+
+**TASK-33625.5, 2026-10-03.** To show the Console's response-recovery card
+live, a turn has to die between acceptance and the reply. Two attempts
+failed before one worked:
+- **The reply had already arrived.** With the review proxy in `stall` mode,
+  a "count to 300" reply streamed in full before the hang. The process was
+  SIGKILLed while **Stop** still showed, but after relaunch the turn came
+  back complete and no card appeared.
+- **The kill never landed.** In `slow` mode (12 s before upstream), the
+  capture with **Stop** showing was taken at 09:00:16, then
+  `tmux kill-server` ran. My `kill -9` guard silently did not fire. The
+  app's log then shows `provider_entry` at 09:00:23 and `reply end` at
+  09:00:37: the process outlived its tmux server by about 20 s and
+  finished the turn.
+- **What worked.** The pid was resolved from the profile's environment
+  (`ps eww -p <pid> | grep profiles/<name>/config.toml`) and SIGKILLed while
+  **Stop** showed. A `kill -0` loop confirmed it was gone. The log ends
+  after `durable_commit` and `reply start`, with no `provider_entry`.
+  Reopening the chat showed "Response delivery status is unknown on the
+  source device." with **Retry anyway** and **Discard**.
+
+**What to do.** Hang the request before upstream, not mid-stream. Kill the
+app by its own pid and confirm it is gone before relaunching. Then read the
+log's last `console_send_stage` phase: it says which recovery state the
+relaunch will show, before you go looking for it.
+
 ## CSS overflow alone does not provide keyboard scrolling
 
 **TASK-32879, 2026-09-20.** The restored MCP review made a plain Container
