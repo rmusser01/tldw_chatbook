@@ -10,7 +10,7 @@
 
 **Spec:** [Approved Console learned response rules](../specs/2026-10-03-console-response-rules-design.md)
 
-**Status:** User accepted the plan subject to this requested audit and selected Native execution on 2026-10-03. Audit refinements are incorporated; product implementation has not started.
+**Status:** User accepted the plan subject to this requested audit and selected Native execution on 2026-10-03. Audit refinements are incorporated; Native implementation is underway in the managed Console response-rules worktree.
 
 ADR required: yes
 
@@ -53,6 +53,18 @@ Planning inspected committed product code at `origin/dev` **74fffc99f99cf47a39c1
 - [ ] File atomic Backlog tasks through the CLI before implementation. This machine currently has no `backlog` command on PATH; use an available project CLI installation or resolve that prerequisite before starting code. Do not manufacture Markdown task files or reserved IDs. Sweep current refs/history/worktrees immediately at filing, inspect the CLI's returned file path, and reference only already-created lower-ID tasks. The numbered tasks below are plan steps, not Backlog IDs.
 - [ ] Put each corresponding Backlog task In Progress and assign it before adding its implementation plan. Include ADR-219 in its plan; do not add final implementation notes or check acceptance criteria until work is verified.
 - [ ] Select the execution checkout's Python environment and prove `tldw_chatbook.__file__` resolves under that checkout. Commands below use `python` for that interpreter. Install no packages into another session's environment. Locate the then-current schema version before allocating the migration.
+
+## Backlog implementation tasks
+
+- Plan task 1: [TASK-34354](../../../backlog/tasks/task-34354%20-%20Validate-native-response-rule-definitions-and-deterministic-outcomes.md).
+- Plan task 2: [TASK-34355](../../../backlog/tasks/task-34355%20-%20Persist-device-local-response-rules-and-inert-recovery.md).
+- Plan task 3: [TASK-34356](../../../backlog/tasks/task-34356%20-%20Bound-native-rule-helper-request-lifetime-and-usage.md).
+- Plan task 4: [TASK-34357](../../../backlog/tasks/task-34357%20-%20Assess-response-rules-using-permitted-execution-evidence.md).
+- Plan task 5: [TASK-34358](../../../backlog/tasks/task-34358%20-%20Learn-and-calibrate-native-response-rule-candidates.md).
+- Plan task 6: [TASK-34359](../../../backlog/tasks/task-34359%20-%20Admit-native-repairs-through-shared-machine-follow-up-custody.md).
+- Plan task 7: [TASK-34360](../../../backlog/tasks/task-34360%20-%20Own-response-rule-learning-and-assessment-in-Console-runtime.md).
+- Plan task 8: [TASK-34361](../../../backlog/tasks/task-34361%20-%20Expose-learned-response-rules-in-composer-and-scoped-settings.md).
+- Plan task 9: [TASK-34362](../../../backlog/tasks/task-34362%20-%20Qualify-integrated-Console-response-rules-and-document-evidence.md).
 
 ## File ownership map
 

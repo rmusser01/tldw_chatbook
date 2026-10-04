@@ -2,7 +2,7 @@
 
 Date: 2026-10-03
 Status: Accepted by user on 2026-10-03 after written-spec review
-Related Task: N/A; this request is design-only and has not created an implementation task.
+Related Task: [TASK-34354](../tasks/task-34354%20-%20Validate-native-response-rule-definitions-and-deterministic-outcomes.md), with remaining atomic implementation tasks linked from the plan.
 Spec: [Console learned response rules](../../Docs/superpowers/specs/2026-10-03-console-response-rules-design.md)
 Plan: [Console response rules implementation](../../Docs/superpowers/plans/2026-10-03-console-response-rules.md), accepted with requested audit; Native execution selected on 2026-10-03
 Extends: [ADR-163](163-expanded-console-hook-runtime.md) at the shared continuation admission boundary
