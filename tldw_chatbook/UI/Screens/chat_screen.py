@@ -1380,6 +1380,7 @@ CONSOLE_DECISION_CARD_SELECTORS: tuple[str, ...] = (
     "#chat-question-card",
     "#chat-skill-install-card",
     "#chat-skill-script-card",
+    "#chat-create-card",
 )
 
 
@@ -14137,6 +14138,26 @@ class ChatScreen(BaseAppScreen):
         return source in {"artifacts", "chatbooks"} and ":chatbook:" in target_id
 
     def _console_pending_approval_count(self) -> int:
+        controller = self._console_chat_controller
+        count = getattr(controller, "pending_round_count", None)
+        store = self._console_chat_store
+        if callable(count) and store is not None:
+            registered = count(store.active_session_id or "")
+            if registered:
+                return registered
+            # Legacy unscoped tool rounds can mount without a kind-registry entry.
+            task_approval = self._task_resume_state.pending_approval
+            if not task_approval or (
+                isinstance(task_approval, dict)
+                and task_approval.get("phase") == "finishing"
+            ):
+                return 0
+            if isinstance(task_approval, dict):
+                owner = task_approval.get("session_id")
+                if owner and owner != store.active_session_id:
+                    return 0
+            return 1
+
         explicit_count = getattr(
             self.app_instance, "console_pending_approval_count", None
         )
@@ -14248,7 +14269,16 @@ class ChatScreen(BaseAppScreen):
         run_controller = self._console_chat_controller
         run_state = getattr(run_controller, "run_state", None)
         run_failed = getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
+        store = self._console_chat_store
+        session_id = store.active_session_id if store is not None else ""
+        has_pending = getattr(run_controller, "has_pending_approval_round", None)
+        pending_copy = (
+            console_pending_round_copy_for(run_controller, session_id or "")
+            if callable(has_pending) and has_pending(session_id or "")
+            else ""
+        )
         inspector_state = ConsoleInspectorState.from_values(
+            pending_interrupt_copy=pending_copy,
             live_work_title=pending_launch.title if pending_launch else None,
             run_active=self._console_run_active(),
             run_failed=run_failed,
@@ -18417,21 +18447,8 @@ class ChatScreen(BaseAppScreen):
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
             return ""
-        # `has_pending_approval_round` reads the controller's round
-        # registry, which `run_round` (console_interrupt_rounds.py) feeds
-        # for ALL FIVE interrupt-round kinds -- approval, skill_install,
-        # skill_script, worktree_merge, and question -- not just MCP
-        # approvals. `_console_pending_approval_count` / `ConsoleInspector
-        # State.pending_approval_count` (console_display_state.py) instead
-        # count the viewed session's mounted APPROVAL card only.
-        #
-        # Qodo #4 (the rider this comment used to describe, now done): that
-        # generic predicate answers "is anything waiting" -- right for the
-        # gate above, wrong for the copy -- so a question card used to
-        # render "Waiting for your approval" while the inspector correctly
-        # showed zero pending approvals. The KIND now picks the sentence;
-        # an approval among the outstanding rounds still wins, which is
-        # what keeps this and the inspector's count agreeing.
+        # Every interrupt kind owns its waiting copy; approval takes priority.
+        # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):
             return f"{console_pending_round_copy_for(controller, session_id or '')}."
         return run_state.visible_copy or run_state.status.value
@@ -20804,14 +20821,14 @@ class ChatScreen(BaseAppScreen):
         ``handle_console_inspector_review_approval`` verbatim so a third
         (or fourth) caller cannot drift from it.
 
-        Qodo #5: that ``◆`` marker is worn for ALL FIVE interrupt-round
-        kinds (``console_interrupt_rounds.KIND_SETTER_ATTRS``), but this
+        Qodo #5: that ``◆`` marker is worn for every interrupt-round kind,
+        including standalone chat creation, but this
         knew only approvals and questions -- a pending skill-install or
         skill-script confirm reached the "no approval" warning instead of
         its own mounted card. The scan now walks every decision card in the
         same kind precedence the copy uses (approval first, then question,
-        then the confirmations), so it cannot disagree with what the run
-        chip is telling the user is waiting.
+        then the confirmations). Queued approvals still contribute to the
+        waiting copy and count, while focus reaches the card on screen.
 
         Args:
             notify_missing: Whether to warn when nothing is focusable. The
@@ -20822,23 +20839,13 @@ class ChatScreen(BaseAppScreen):
         Returns:
             Whether a card was found and focused.
         """
-        if self._console_pending_approval_count() > 0:
-            card = self._first_displayed_console_decision_card(
-                "#chat-approval-card"
-            )
+        # Registered approvals can be queued behind a visible confirmation.
+        # Route to painted cards in priority order, independently of that count.
+        for selector in CONSOLE_DECISION_CARD_SELECTORS:
+            card = self._first_displayed_console_decision_card(selector)
             if card is not None:
                 self._focus_console_decision_card(card)
                 return True
-        else:
-            # PRD A4: this focus action is how keyboard-only users reach a
-            # question card that deliberately never steals focus -- and,
-            # since Qodo #5, the skill/merge confirms that never had a
-            # route at all.
-            for selector in CONSOLE_DECISION_CARD_SELECTORS:
-                card = self._first_displayed_console_decision_card(selector)
-                if card is not None:
-                    self._focus_console_decision_card(card)
-                    return True
         if notify_missing:
             self.app_instance.notify(
                 CONSOLE_INSPECTOR_NO_APPROVAL_REASON, severity="warning"
@@ -20858,7 +20865,7 @@ class ChatScreen(BaseAppScreen):
         `ChatApprovalCard` owns `focus_first_decision` (``set_batch``, the
         card's sole production entry point, is the only body it ever
         renders, so a displayed card's action is always its "Submit"
-        button). The other four kinds have no such method, so their first
+        button). The other cards have no such method, so their first
         interactive control is focused directly -- Buttons included, which
         is what a confirm card's Approve/Deny pair is made of.
         """
@@ -22328,6 +22335,8 @@ class ChatScreen(BaseAppScreen):
             return
         compact = event.size.height < CONSOLE_COMPACT_HEIGHT_ROWS
         shell.set_class(compact, "-console-compact")
+        for card in self.query(ChatApprovalCard):
+            card._sync_control_layout()
         self._request_console_context_allocation_reconcile()
 
     @on(Resize)

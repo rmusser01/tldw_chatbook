@@ -16,6 +16,7 @@ import stat
 import contextlib
 import threading
 import time
+import traceback
 from contextlib import nullcontext
 from collections import OrderedDict
 from collections.abc import AsyncIterator, Iterable, Iterator, Mapping
@@ -60,10 +61,13 @@ from tldw_chatbook.Chat.attachment_core import (
     vision_block_reason,
 )
 from tldw_chatbook.Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
     FEEDBACK_ACTIVE_RUN_STATUSES,
     CONSOLE_CAP_REFUSAL_TITLE_LIMIT,
     CONSOLE_DEFAULT_MAX_PARALLEL_RUNS,
     CONSOLE_DISPATCH_DISCARDED_COPY,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     CONSOLE_GLOBAL_WORKSPACE_ID,
     ConsoleChatMessage,
     ConsoleControllerActivity,
@@ -811,6 +815,7 @@ _DEFAULT_SKILL_SCRIPT_CONFIRM_TIMEOUT_SECONDS = 0.0
 #: for `request_chat_create_confirm`'s own wait loop (fallback used when no
 #: `chat_create_confirm_timeout_seconds` seam is injected).
 _DEFAULT_CHAT_CREATE_CONFIRM_TIMEOUT_SECONDS = 0.0
+_CHAT_CREATE_SESSION_GONE = "session_gone"
 #: Same ADR-067 contract, for `request_worktree_merge_confirm`'s own wait
 #: loop (fallback used when no `worktree_merge_confirm_timeout_seconds`
 #: seam is injected).
@@ -5117,6 +5122,8 @@ class ConsoleChatController:
         # from reusing the generation of an older, timed-out incarnation.
         self._session_close_generation = 0
         self._session_close_generations: dict[str, int] = {}
+        # Failed provisional rollbacks block retry without retiring live usage.
+        self._failed_session_close_generations: dict[str, int] = {}
         self._session_close_states: dict[
             str,
             tuple[ConsoleSessionCloseTicket, bool, Any, str | None],
@@ -7186,7 +7193,7 @@ class ConsoleChatController:
         return len(self._live_busy_session_ids())
 
     def add_pending_round(
-        self, session_id: str, round_id: str, kind: str = "approval"
+        self, session_id: str, round_id: str, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Register ``round_id`` as an outstanding approval-like round for ``session_id``.
 
@@ -7219,9 +7226,9 @@ class ConsoleChatController:
                 the reserved ``_LEGACY_PENDING_APPROVAL_ROUND_ID`` sentinel
                 -- see ``set_run_pending_approval``).
             kind: Which interrupt kind is waiting -- a
-                ``console_interrupt_rounds.KIND_SETTER_ATTRS`` key
-                (``approval``, ``question``, ``skill_install``,
-                ``skill_script``, ``worktree_merge``). Qodo #4: the badge and
+                registered interrupt key (``approval``, ``question``,
+                ``skill_install``, ``skill_script``, ``worktree_merge``, or
+                the standalone ``chat_create`` confirmation). Qodo #4: the badge and
                 lifecycle do not care, but the run chip and activity line do
                 -- they used to translate this registry's generic "something
                 is pending" into "Waiting for your approval" even for a
@@ -7238,7 +7245,7 @@ class ConsoleChatController:
             changed = round_id not in rounds
             rounds.add(round_id)
             self._pending_round_kinds.setdefault(session_id, {})[round_id] = str(
-                kind or "approval"
+                kind or CONSOLE_PENDING_APPROVAL_KIND
             )
         if changed:
             if self._buddy_sink is not None:
@@ -7334,12 +7341,29 @@ class ConsoleChatController:
             session_id: The session to read.
 
         Returns:
-            Every distinct kind currently outstanding for ``session_id``
-            (``console_interrupt_rounds.KIND_SETTER_ATTRS`` keys), empty
-            when nothing is.
+            Every distinct registered kind outstanding for ``session_id``,
+            including standalone chat creation, empty when nothing is.
         """
         with self._approval_state_lock:
             return frozenset(self._pending_round_kinds.get(session_id, {}).values())
+
+    def pending_round_count(
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
+    ) -> int:
+        """Count one session's outstanding rounds of the requested kind.
+
+        Args:
+            session_id: The owning session to inspect.
+            kind: Interrupt kind to count, including queued or hidden rounds.
+
+        Returns:
+            Number of registered rounds of this kind for the session.
+        """
+        with self._approval_state_lock:
+            return sum(
+                value == kind
+                for value in self._pending_round_kinds.get(session_id, {}).values()
+            )
 
     def set_run_pending_approval(self, session_id: str, pending: bool) -> None:
         """DEPRECATED boolean shim -- prefer ``add_pending_round``/``discard_pending_round``.
@@ -14590,7 +14614,15 @@ class ConsoleChatController:
 
         Returns:
             Opaque ticket required by :meth:`finalize_session_close`.
+
+        Raises:
+            ConsoleLifecycleRevisionChanged: The approved impact changed.
+            RuntimeError: Recovery or an unreconciled close fence blocks close.
         """
+        if session_id in self._failed_session_close_generations:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
+        if session_id in self._session_close_generations:
+            raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL)
         impact = self.lifecycle_impact(session_id=session_id)
         if impact.revision != expected_revision:
             raise ConsoleLifecycleRevisionChanged(
@@ -14631,53 +14663,81 @@ class ConsoleChatController:
                 "abort_fleet_fence",
                 None,
             )
-            if not callable(abort_fleet_fence):
-                return
             try:
-                abort_fleet_fence(
+                if callable(abort_fleet_fence) and abort_fleet_fence(
                     fleet_conversation_id,
                     generation=generation,
+                ):
+                    return
+            except Exception as exc:  # noqa: BLE001 -- failed rollback stays fenced
+                logger.warning(
+                    "close_session provisional fleet rollback failed (error_type={})",
+                    type(exc).__name__,
                 )
-            except Exception:  # noqa: BLE001 -- failed rollback stays fenced
-                logger.warning("close_session provisional fleet fence stayed latched")
+            # An uncertain rollback must never be replaced by a retry's new
+            # generation. Keep this close fail-closed even without a ticket;
+            # surviving children still own valid usage in the retained session.
+            self._failed_session_close_generations[session_id] = generation
+            logger.warning("close_session provisional fleet fence stayed latched")
 
         # A reservation publishes its lifecycle revision before the fleet
         # fence can acquire the coordinator lock. Recheck only after that
         # admission boundary is closed; a child admitted while the dialog was
         # open must refresh consent rather than silently widening it.
-        current_impact = self.lifecycle_impact(session_id=session_id)
-        if current_impact.revision != expected_revision:
-            abort_provisional_fleet_fence()
-            raise ConsoleLifecycleRevisionChanged(
-                "Console session activity changed during close."
+        try:
+            current_impact = self.lifecycle_impact(session_id=session_id)
+            if current_impact.revision != expected_revision:
+                raise ConsoleLifecycleRevisionChanged(
+                    "Console session activity changed during close."
+                )
+            if self._cancel_raw_cli_session is not None:
+                try:
+                    self._cancel_raw_cli_session(session_id)
+                except Exception:  # noqa: BLE001 -- teardown remains best-effort
+                    logger.warning("close_session could not cancel raw CLI commands")
+            owns_active_stream = self._active_stream_belongs_to_session(session_id)
+            active_assistant_message_id = self._active_assistant_message_ids.get(
+                session_id
             )
-        if self._cancel_raw_cli_session is not None:
-            try:
-                self._cancel_raw_cli_session(session_id)
-            except Exception:  # noqa: BLE001 -- teardown remains best-effort
-                logger.warning("close_session could not cancel raw CLI commands")
-        owns_active_stream = self._active_stream_belongs_to_session(session_id)
-        active_assistant_message_id = self._active_assistant_message_ids.get(
-            session_id
-        )
-        if owns_active_stream and active_assistant_message_id is not None:
-            # Closing is an explicit cancellation boundary. Settle the durable
-            # dispatch before removing its in-memory owner so the cancelled
-            # task cannot leave a restart-visible ``dispatch_started`` row.
-            self._signal_stop(session_id=session_id)
-            try:
-                self._mark_stream_stopped(
-                    active_assistant_message_id,
-                    visible_copy="Session closed.",
+            if owns_active_stream and active_assistant_message_id is not None:
+                # Closing is an explicit cancellation boundary. Settle the durable
+                # dispatch before removing its in-memory owner so the cancelled
+                # task cannot leave a restart-visible ``dispatch_started`` row.
+                self._signal_stop(session_id=session_id)
+                try:
+                    self._mark_stream_stopped(
+                        active_assistant_message_id,
+                        visible_copy="Session closed.",
+                    )
+                except ConsoleDispatchSettlementError:
+                    self._restore_dispatch_recovery_after_settlement_failure(
+                        session_id,
+                        active_assistant_message_id,
+                    )
+                    raise
+            # Progress ownership must release before child cancellation, but a
+            # failed callback must not commit wake, scratch or queue teardown.
+            close_progress = getattr(self._agent_bridge, "close_progress", None)
+            if callable(close_progress):
+                close_progress(session_id, conversation_id=fleet_conversation_id)
+        except BaseException as exc:
+            abort_provisional_fleet_fence()
+            if (
+                isinstance(exc, Exception)
+                and session_id in self._failed_session_close_generations
+            ):
+                frames = traceback.extract_tb(exc.__traceback__)
+                logger.warning(
+                    "close_session provisional failure (error_type={}, origin={})",
+                    type(exc).__name__,
+                    frames[-1].name if frames else "unknown",
                 )
-            except ConsoleDispatchSettlementError:
-                self._restore_dispatch_recovery_after_settlement_failure(
-                    session_id,
-                    active_assistant_message_id,
-                )
-                abort_provisional_fleet_fence()
-                raise
-        self._session_close_generations[session_id] = generation
+                raise RuntimeError(CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL) from None
+            raise
+        # Commit under the question registry's shared host lock. An earlier
+        # registration is swept below; a later one observes this fence.
+        with self._approval_state_lock:
+            self._session_close_generations[session_id] = generation
         # Admission fences are the first irreversible close action after the
         # durable stream gate has settled successfully. They must beat every
         # cancellation snapshot and precede queue/file teardown, so a stale
@@ -14725,9 +14785,6 @@ class ConsoleChatController:
         # along. getattr-guarded and wrapped: a bare bridge double, no
         # bridge, or a raising cancel must never break a close.
         fleet_conversation_id = self._agent_conversation_id(session_id)
-        close_progress = getattr(self._agent_bridge, "close_progress", None)
-        if callable(close_progress):
-            close_progress(session_id, conversation_id=fleet_conversation_id)
         cancel_all = (
             getattr(self._agent_bridge, "cancel_all_subagents", None)
             if self._agent_bridge is not None
@@ -16170,6 +16227,17 @@ class ConsoleChatController:
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)
+        with self._pending_question_lock:
+            for state in self._pending_question_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                if not state.get("settled"):
+                    state["settled"] = True
+                    state["terminal_reason"] = "cancelled"
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
         with self._pending_skill_install_lock:
             for state in self._pending_skill_install_rounds.values():
                 if state.get("session_id") == session_id:
@@ -16194,6 +16262,18 @@ class ConsoleChatController:
                     if isinstance(decision, dict):
                         decision["allow"] = False
                         decision["remember"] = False
+                event = state.get("event")
+                if isinstance(event, threading.Event):
+                    events.append(event)
+        with self._pending_chat_create_lock:
+            for state in self._pending_chat_create_rounds.values():
+                if state.get("session_id") != session_id:
+                    continue
+                state["revoked"] = True
+                decision = state.get("decision")
+                if isinstance(decision, dict):
+                    decision["allow"] = False
+                    decision["remember"] = False
                 event = state.get("event")
                 if isinstance(event, threading.Event):
                     events.append(event)
@@ -16556,7 +16636,7 @@ class ConsoleChatController:
         self._announce_detached_approval(session_id, kind=kind)
 
     def _announce_detached_approval(
-        self, session_id: str, *, kind: str = "approval"
+        self, session_id: str, *, kind: str = CONSOLE_PENDING_APPROVAL_KIND
     ) -> None:
         """Raise the app-wide toast for a round with no visible Console view.
 
@@ -18934,13 +19014,16 @@ class ConsoleChatController:
         # SUB-AGENT requester never rides one -- children share the session
         # with the primary, so the user's session grant must not silently
         # auto-allow child-run chat creation; every child call confirms.
-        if (
-            requesting_kind == AGENT_KIND_PRIMARY
-            and tool in self._chat_create_session_grants.get(
-                owning_session_id, set()
-            )
-        ):
-            return {"allow": True, "remember": True}
+        with self._pending_chat_create_lock:
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
+            if (
+                requesting_kind == AGENT_KIND_PRIMARY
+                and tool in self._chat_create_session_grants.get(
+                    owning_session_id, set()
+                )
+            ):
+                return {"allow": True, "remember": True}
 
         # Final-review fix wave (Finding 1): enrich the payload BEFORE the
         # round is armed -- fork_source_title/fork_message_count (the card's
@@ -18963,12 +19046,17 @@ class ConsoleChatController:
             "event": event,
             "decision": decision,
             "session_id": owning_session_id,
+            # Legacy callers never park; their initial card remains unscoped.
+            "session_scoped": session_id is not None,
             "run_id": current_run_id(),
             # Re-read after the wait: a late Allow must not stick. See
             # `revoke_approval_rounds_for_run`.
             "revoked": False,
         }
         with self._pending_chat_create_lock:
+            # Enrichment can finish after Close has swept the standalone rounds.
+            if owning_session_id in self._session_close_generations:
+                return {"allow": False, "remember": False}
             self._pending_chat_create_rounds[request_id] = chat_create_round_state
 
         timeout_seconds = (
@@ -18995,7 +19083,9 @@ class ConsoleChatController:
         # they keep the unconditional mount below.
         is_head = True
         if session_id is not None:
-            self.add_pending_round(session_id, request_id)
+            self.add_pending_round(
+                session_id, request_id, kind=CONSOLE_PENDING_CHAT_CREATE_KIND
+            )
             # Keyed by ROUND; the return says whether THIS round is its
             # session's FIFO head. A non-head round must not mount: an
             # older sibling is still holding the card.
@@ -19027,19 +19117,20 @@ class ConsoleChatController:
             # was cancelled must not authorize the create. Mirrors the
             # sibling bridges' identical post-wait guard.
             with self._pending_chat_create_lock:
-                was_revoked = bool(chat_create_round_state.get("revoked"))
-            if was_revoked:
-                return {"allow": False, "remember": False}
-            allow = bool(decision.get("allow", False))
-            remember = bool(decision.get("remember", False))
-            # Record a standing grant only on an allow that ALSO asked to
-            # be remembered -- a remembered deny must not poison later
-            # rounds into auto-allowing.
-            if allow and remember:
-                self._chat_create_session_grants.setdefault(
-                    owning_session_id, set()
-                ).add(tool)
-            return {"allow": allow, "remember": remember}
+                if (
+                    chat_create_round_state.get("revoked")
+                    or owning_session_id in self._session_close_generations
+                ):
+                    return {"allow": False, "remember": False}
+                allow = bool(decision.get("allow", False))
+                remember = bool(decision.get("remember", False))
+                # Decide and remember atomically with the Close/revocation sweep.
+                # A remembered deny must never become a standing grant.
+                if allow and remember:
+                    self._chat_create_session_grants.setdefault(
+                        owning_session_id, set()
+                    ).add(tool)
+                return {"allow": allow, "remember": remember}
         finally:
             with self._pending_chat_create_lock:
                 self._pending_chat_create_rounds.pop(request_id, None)
@@ -19101,13 +19192,45 @@ class ConsoleChatController:
         )
 
     def _marshal_pending_chat_create(self, payload: dict[str, Any] | None) -> None:
-        """WORKER THREAD: hand a chat-create confirm payload to the UI thread.
+        """WORKER THREAD: project a current chat-create decision on the UI.
+
+        Recheck scoped ownership after dispatch; legacy unparked rounds keep
+        their unconditional initial projection. A clear derives the current head.
 
         Args:
-            payload: The pending confirm dict to show, or None to hide it.
+            payload: Proposed confirmation, or None to rederive the active head.
         """
-        if self.app is not None and self.set_pending_chat_create is not None:
-            self.app.call_from_thread(self.set_pending_chat_create, payload)
+        if self.app is None or self.set_pending_chat_create is None:
+            return
+
+        def _apply() -> None:
+            """UI THREAD: qualify the current owner before painting its decision."""
+            setter = self.set_pending_chat_create
+            if setter is None:
+                return
+            active_session_id = self.store.active_session_id or ""
+            if payload is None:
+                setter(
+                    self._head_round_payload(
+                        self._parked_chat_create_payloads, active_session_id
+                    )
+                )
+                return
+            owning_session_id = str(payload.get("session_id") or "")
+            if owning_session_id in self._session_close_generations:
+                return
+            with self._pending_chat_create_lock:
+                state = self._pending_chat_create_rounds.get(payload.get("request_id"))
+                if state is None or state.get("revoked") or state["event"].is_set():
+                    return
+                if state.get("session_scoped", True) and (
+                    owning_session_id != active_session_id
+                ):
+                    return
+            # The UI owns Close/navigation; external sinks run outside locks.
+            setter(payload)
+
+        self.app.call_from_thread(_apply)
 
     def resolve_pending_chat_create(
         self, allow: bool, remember: bool, request_id: str | None = None
@@ -19142,11 +19265,11 @@ class ConsoleChatController:
             return
         with self._pending_chat_create_lock:
             round_state = self._pending_chat_create_rounds.get(request_id)
-        if round_state is None:
-            return
-        round_state["decision"]["allow"] = bool(allow)
-        round_state["decision"]["remember"] = bool(remember)
-        round_state["event"].set()
+            if round_state is None:
+                return
+            round_state["decision"]["allow"] = bool(allow)
+            round_state["decision"]["remember"] = bool(remember)
+            round_state["event"].set()
 
     def pending_chat_create_ids(self) -> list[str]:
         """Return the request ids of every currently-armed chat-create round.
@@ -19164,8 +19287,10 @@ class ConsoleChatController:
 
         TASK-32482 Task 7. Runs ONLY after ``request_chat_create_confirm``
         returned an allow (the bridge closure enforces that ordering), so
-        every failure below is fail-closed: nothing is created, and the
-        outcome's ``kind`` tells the model (and the run log) why.
+        refusal before creation makes no chat; the outcome's ``kind``
+        tells the model (and the run log) why. A source retired during I/O
+        refuses UI placement and discards its newly committed row through
+        the existing best-effort orphan soft-delete helper.
 
         For ``fork_chat`` the new conversation copies the source's active
         path verbatim (``ChatConversationService.copy_conversation_active_
@@ -19201,11 +19326,19 @@ class ConsoleChatController:
 
         tool = str(payload.get("tool") or "")
         session_id = str(payload.get("session_id") or "")
+        # A committed Close retains its source during drain; an earlier Allow
+        # cannot authorize a new durable chat once that Close has committed.
+        if session_id in self._session_close_generations:
+            return {
+                "ok": False,
+                "kind": _CHAT_CREATE_SESSION_GONE,
+                "error": "source session is closing",
+            }
         session = next(
             (s for s in self.store.sessions() if s.id == session_id), None
         )
         if session is None:
-            return {"ok": False, "kind": "session_gone",
+            return {"ok": False, "kind": _CHAT_CREATE_SESSION_GONE,
                     "error": "source session not found"}
         title = str(payload.get("title") or "").strip()
         opening_prompt = str(payload.get("opening_prompt") or "")
@@ -19497,20 +19630,57 @@ class ConsoleChatController:
                 if session.local_character_id() is not None
                 else None,
             }
-        if self.app is not None and self.complete_agent_chat_create is not None:
-            self.app.call_from_thread(
-                self.complete_agent_chat_create,
-                session_id=session_id,
-                conversation_id=new_conv,
-                title=title,
-                tool=tool,
-                opening_prompt=opening_prompt,
-                workspace_id=completion_workspace_id,
-                nodes=nodes,
-                active_leaf_persisted_id=new_leaf,
-                settings=routed_settings,
-                **identity,
-            )
+
+        completion_admitted = False
+
+        def complete_if_source_open(**kwargs: Any) -> bool:
+            """UI THREAD: qualify the source before using the current view sink.
+
+            Args:
+                kwargs: Created-chat placement inputs resolved by this worker.
+
+            Returns:
+                False if Close/disposal retired the source; True otherwise,
+                including a live source whose view is currently detached.
+            """
+            nonlocal completion_admitted
+            if not self._chat_create_source_is_open(session_id):
+                return False
+            completion_admitted = True
+            complete = self.complete_agent_chat_create
+            if complete is not None:
+                complete(session_id=session_id, **kwargs)
+            return True
+
+        completion_allowed = self._chat_create_source_is_open(session_id)
+        app = self.app
+        if completion_allowed and app is not None:
+            try:
+                completion_allowed = app.call_from_thread(
+                    complete_if_source_open,
+                    conversation_id=new_conv,
+                    title=title,
+                    tool=tool,
+                    opening_prompt=opening_prompt,
+                    workspace_id=completion_workspace_id,
+                    nodes=nodes,
+                    active_leaf_persisted_id=new_leaf,
+                    settings=routed_settings,
+                    **identity,
+                )
+            except Exception:
+                # A retiring app can refuse the UI hop before running its gate.
+                # Keep unrelated completion failures on their existing path.
+                if completion_admitted or self._chat_create_source_is_open(session_id):
+                    raise
+                completion_allowed = False
+        if not completion_allowed:
+            self._discard_chat_create_orphan(db, new_conv)
+            return {
+                "ok": False,
+                "kind": _CHAT_CREATE_SESSION_GONE,
+                "error": "source session closed before chat completion",
+            }
         return {
             "ok": True,
             "title": title,
@@ -19519,6 +19689,21 @@ class ConsoleChatController:
             "copied_messages": copied,
             "draft_set": bool(opening_prompt),
         }
+
+    def _chat_create_source_is_open(self, session_id: str) -> bool:
+        """Check the existing lifetime fence and live source ownership.
+
+        Args:
+            session_id: Exact source session of the confirmed chat creation.
+
+        Returns:
+            True while the source exists without committed Close or disposal.
+        """
+        return (
+            not self._disposed
+            and session_id not in self._session_close_generations
+            and any(session.id == session_id for session in self.store.sessions())
+        )
 
     def _resolve_ask_user_timeout_seconds(self) -> float:
         """PRD A7: the question deadline -- seam, else env, else config, else 0.
@@ -19621,6 +19806,10 @@ class ConsoleChatController:
         # gets `busy`. The host re-registers the same state object at
         # run_round entry, which is idempotent.
         with self._pending_question_lock:
+            # Close publishes its fence and sweeps questions under this same
+            # lock; no delayed worker may register after the sweep has passed.
+            if owning_session_id in self._session_close_generations:
+                return unanswered_result("cancelled")
             live = any(
                 state.get("session_id") == owning_session_id
                 for state in self._pending_question_rounds.values()

@@ -11,6 +11,7 @@ Task 7 of the agent-chat-fork-spawn plan (TASK-32482):
    fixture) with the UI completion callback stubbed to record kwargs.
 """
 import json
+import threading
 
 import pytest
 
@@ -23,6 +24,10 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp
+
+
+#: Event waits and worker joins share the existing bounded race-test deadline.
+_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
 
 
 class _FakeConfirm:
@@ -707,3 +712,273 @@ def test_fork_from_child_run_context_copies_parent_conversation(real_db_controll
     assert [m["content"] for m in copied] == ["root"]
     handoff = completed[0]
     assert handoff["conversation_id"] == outcome["conversation_id"]
+
+
+@pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
+def test_confirmed_create_refuses_a_source_retained_during_close(
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    tool: str,
+) -> None:
+    """A committed Close prevents rows and UI completion before deletion.
+
+    Args:
+        real_db_controller: Controller over real SQLite with a UI bridge.
+        tool: Confirmed new-chat or fork-chat executor path.
+    """
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    conversation_id = controller.store.persistence.create_conversation(
+        conversation_title="Source"
+    )
+    source.persisted_conversation_id = conversation_id
+    message_id = db.add_message(
+        {"conversation_id": conversation_id, "sender": "user", "content": "hi"}
+    )
+    db.set_conversation_active_leaf(conversation_id, str(message_id))
+    completed = []
+    controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
+    before = _live_conversation_count(db)
+    ticket = controller.begin_session_close(
+        source.id,
+        expected_revision=controller.lifecycle_impact(session_id=source.id).revision,
+    )
+    assert any(session.id == source.id for session in controller.store.sessions())
+    outcome = controller.execute_agent_chat_create(
+        {"tool": tool, "session_id": source.id, "title": "Late creation"}
+    )
+    assert not outcome["ok"] and outcome["kind"] == "session_gone"
+    assert _live_conversation_count(db) == before
+    assert completed == []
+    controller.finalize_session_close(ticket)
+    assert not any(s.id == source.id for s in controller.store.sessions())
+
+
+@pytest.mark.parametrize("tool", ["new_chat", "fork_chat"])
+@pytest.mark.parametrize(
+    "close_at", ["durable-create", "ui-handoff", "ui-handoff-error"]
+)
+def test_inflight_create_cannot_publish_after_its_source_closes(
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+    tool: str,
+    close_at: str,
+) -> None:
+    """Actual Close suppresses a started creation and its queued UI handoff.
+
+    Args:
+        real_db_controller: Controller over real SQLite with a UI bridge.
+        monkeypatch: Pause the real create or queued completion boundary.
+        tool: New-chat or fork-chat executor path.
+        close_at: Boundary held while the source's actual Close completes.
+    """
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    source_conv = controller.store.persistence.create_conversation(
+        conversation_title="Source"
+    )
+    source.persisted_conversation_id = source_conv
+    message_id = db.add_message(
+        {"conversation_id": source_conv, "sender": "user", "content": "hi"}
+    )
+    db.set_conversation_active_leaf(source_conv, str(message_id))
+    entered, release = threading.Event(), threading.Event()
+    created, completed, queued = [], [], []
+    result = {}
+    original_create = controller.store.persistence.create_conversation
+    original_marshal = controller.app.call_from_thread
+    before = _live_conversation_count(db)
+    controller.complete_agent_chat_create = lambda **kwargs: completed.append(kwargs)
+
+    def paused_create(**kwargs):
+        """Create a real row after the optional Close interleaving.
+
+        Args:
+            kwargs: Original persistence inputs.
+
+        Returns:
+            The actual created conversation ID.
+        """
+        if close_at == "durable-create":
+            entered.set()
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        conversation_id = original_create(**kwargs)
+        created.append(conversation_id)
+        return conversation_id
+
+    def queued_marshal(callback, *args, **kwargs):
+        """Hand worker callbacks to the test's UI thread across Close.
+
+        Args:
+            callback: Controller completion gate or original completion sink.
+            args: Positional callback inputs.
+            kwargs: Keyword callback inputs.
+
+        Returns:
+            The result produced by the actual callback on the UI thread.
+        """
+        if close_at.startswith("ui-handoff") and threading.current_thread() is worker:
+            queued.append((callback, args, kwargs))
+            entered.set()
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+            if close_at == "ui-handoff-error":
+                raise RuntimeError("App is not running")
+            return result["ui_result"]
+        return original_marshal(callback, *args, **kwargs)
+
+    monkeypatch.setattr(
+        controller.store.persistence, "create_conversation", paused_create
+    )
+    monkeypatch.setattr(controller.app, "call_from_thread", queued_marshal)
+
+    def execute():
+        """Capture executor failure without abandoning test-owned thread cleanup."""
+        try:
+            result["outcome"] = controller.execute_agent_chat_create(
+                {"tool": tool, "session_id": source.id, "title": "Late creation"}
+            )
+        except Exception as exc:  # noqa: BLE001 -- surface owned thread failures
+            result["error"] = str(exc)
+
+    worker = threading.Thread(target=execute)
+    worker.start()
+    try:
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        ticket = controller.begin_session_close(
+            source.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=source.id
+            ).revision,
+        )
+        controller.finalize_session_close(ticket)
+        assert not any(s.id == source.id for s in controller.store.sessions())
+        if queued and close_at != "ui-handoff-error":
+            callback, args, kwargs = queued[0]
+            result["ui_result"] = callback(*args, **kwargs)
+    finally:
+        release.set()
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not worker.is_alive()
+    assert _live_conversation_count(db) == before
+    assert "error" not in result
+    assert not result["outcome"]["ok"]
+    assert result["outcome"]["kind"] == "session_gone"
+    assert completed == []
+    assert len(created) == 1
+    assert db.get_conversation_by_id(created[0]) is None
+    assert db.get_conversation_by_id(created[0], include_deleted=True)["deleted"] == 1
+
+
+@pytest.mark.parametrize("view_change", ["detached", "reattached"])
+def test_chat_create_completion_uses_the_current_view_sink(
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+    view_change: str,
+) -> None:
+    """View detachment preserves durable results and reattachment owns UI.
+
+    Args:
+        real_db_controller: Controller over real SQLite with a UI bridge.
+        monkeypatch: Change the view sink during the UI handoff.
+        view_change: Detach the old view or replace it with a new one.
+    """
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    old_completed, new_completed = [], []
+    controller.complete_agent_chat_create = lambda **kwargs: old_completed.append(
+        kwargs
+    )
+
+    def handoff_after_view_change(callback, *args, **kwargs):
+        """Execute the actual queued callback after changing its UI sink.
+
+        Args:
+            callback: Controller completion gate or original completion sink.
+            args: Positional callback inputs.
+            kwargs: Keyword callback inputs.
+
+        Returns:
+            The actual callback result.
+        """
+        controller.complete_agent_chat_create = (
+            None
+            if view_change == "detached"
+            else lambda **fields: new_completed.append(fields)
+        )
+        return callback(*args, **kwargs)
+
+    monkeypatch.setattr(controller.app, "call_from_thread", handoff_after_view_change)
+    outcome = controller.execute_agent_chat_create(
+        {"tool": "new_chat", "session_id": source.id, "title": "Live source"}
+    )
+    assert outcome["ok"]
+    assert db.get_conversation_by_id(outcome["conversation_id"]) is not None
+    assert old_completed == []
+    assert len(new_completed) == (view_change == "reattached")
+
+
+def test_admitted_chat_create_completion_error_keeps_the_placed_chat(
+    real_db_controller: tuple[ConsoleChatController, CharactersRAGDB],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A later source Close cannot discard an already-admitted UI result.
+
+    Args:
+        real_db_controller: Controller over real SQLite and the real chat store.
+        monkeypatch: Deliver a UI exception after retiring its source.
+    """
+    controller, db = real_db_controller
+    source = controller.store.create_session(title="Source")
+    placed = []
+
+    def place_then_fail(**kwargs):
+        """Place the durable chat before a subsequent UI completion failure.
+
+        Args:
+            kwargs: Real executor completion inputs.
+        """
+        placed.append(
+            controller.store.restore_persisted_session(
+                title=kwargs["title"],
+                workspace_id=kwargs["workspace_id"],
+                persisted_conversation_id=kwargs["conversation_id"],
+                all_nodes=kwargs["nodes"],
+                active_leaf_persisted_id=kwargs["active_leaf_persisted_id"],
+                activate=False,
+            )
+        )
+        raise RuntimeError("completion failed after placement")
+
+    def retire_before_worker_receives_error(callback, *args, **kwargs):
+        """Retire the source after the admitted UI callback fails.
+
+        Args:
+            callback: The actual controller completion gate.
+            args: Positional callback inputs.
+            kwargs: Keyword callback inputs.
+
+        Returns:
+            The actual callback result if it succeeds.
+        """
+        try:
+            return callback(*args, **kwargs)
+        except RuntimeError:
+            ticket = controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+            controller.finalize_session_close(ticket)
+            raise
+
+    controller.complete_agent_chat_create = place_then_fail
+    monkeypatch.setattr(
+        controller.app, "call_from_thread", retire_before_worker_receives_error
+    )
+    with pytest.raises(RuntimeError, match="completion failed after placement"):
+        controller.execute_agent_chat_create(
+            {"tool": "new_chat", "session_id": source.id, "title": "Placed chat"}
+        )
+    assert len(placed) == 1
+    assert placed[0] in controller.store.sessions()
+    assert db.get_conversation_by_id(placed[0].persisted_conversation_id) is not None

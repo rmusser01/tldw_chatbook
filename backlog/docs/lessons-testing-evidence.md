@@ -15,6 +15,32 @@ the test must take what the text says and execute it through the real tool or ro
 the real first-request plan, read each alias the note names, call `fs_list` with it). A
 text-shape assertion cannot notice that the thing it describes moved.
 
+## A provisional close fence is not a closed-session usage marker
+
+**TASK-33621.16 / PR #2953, 2026-10-01.** The first Close retry repair
+retained an uncertain fleet rollback in `_session_close_generations` so
+another attempt could not replace its generation. All 19 mounted Close
+checks passed, but independent review traced that map's other reader:
+`_fleet_event_is_stale` treats its sessions as closed and drops child usage.
+A live-controller probe retained an open session with no close ticket;
+parent usage stayed at 120 tokens after a 45-token child drain. Removing
+only that marker let the same drain fold the total to 165.
+
+Keep failed-provisional retry markers separate from committed-close
+markers. The mounted refused-rollback regression now delivers a deterministic
+drain through the real bridge fanout, checks usage 3→6, and proves a retry
+cannot allocate a new generation. Trace every reader before reusing an
+ownership marker; successful cleanup tests do not cover surviving work after
+an unsuccessful boundary.
+
+**Follow-up, 2026-10-02.** Recreating a closed native ID exposed a second
+reader: the runtime retains its own admission tombstone even after a proven
+drain. Clearing only the controller marker would admit a queued old usage
+callback against a restored assistant ID. The regression now delivers both
+immediate and already-queued stale drains, preserving the restored usage and
+source; retained Close refuses before voice ownership with the authored restart
+message and ends the confirmation flow. Normal resume uses a fresh native ID.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
@@ -17753,3 +17779,237 @@ pytest temp dir (36); the Linux runner's shorter path gives 26. The 73 was the
 billed window, about one run in ten; the census now holds that probe still for
 the phase. Pin `os_opens` at the depth the gate actually runs at (the default
 temp dir, or CI's), and trace callers before calling an upward step "jitter".
+
+## Containment does not prove a dialog kept its frame (TASK-33621.16, 2026-10-02)
+
+The short-height Close fix replaced `Container` with `VerticalScroll`. Its first
+containment check passed while the old `ConfirmationDialog > Container` selector
+stopped matching: Textual's scroll container inherits `Widget`, so the dialog
+expanded to the viewport and lost its intended frame. Independent review caught
+the mismatch before native qualification. The corrected selector retains both
+body types; the mounted and native regressions now assert the original 60-cell
+width alongside painted actions, keyboard scrolling and focus across resize.
+
+The same PR later missed `CancelConfirmationDialog`'s inherited primary-border
+override: its selector still named only `Container`, so the scroll body inherited
+the base accent. A mounted production-CSS check now asserts all four computed
+border edges, literal prose and safe Enter/Escape dismissal. Review subclass
+body selectors as well as the shared frame when changing the body type.
+
+## A refusal toast does not prove the user can resolve it (TASK-33621.16, 2026-10-02)
+
+Qodo's final-head review found that the temporary-turn Close regression checked
+the authored refusal toast but allowed a replacement confirmation to cover the
+tab immediately. Strengthening the same real pending-turn test to require the
+close worker's claim to end reproduced the defect. The shared existing refusal
+allowlist now governs both safe wording and terminal exit; transient cleanup
+failures retain their separate fresh-consent retry check. Assert the user can
+reach the work a refusal asks them to resolve, as well as the refusal's wording.
+
+
+## A captured maintenance scheduler leaves cold work for the idle census
+
+**TASK-33260 / PR #2953, 2026-10-02.** After dev added the read-only trace
+completion pre-check, the settled-idle guard failed at17 storage admissions
+over eight ticks (ceiling2 per tick). A real call-through diagnostic found
+3 admissions for the first pending migration completion and2 for each later
+check. The test had captured the scheduler, so its startup migration never
+ran. Assert that real one-time completion in uncounted setup before measuring
+settled idle; retain every measured tick, admission seam, canary and ceiling.
+The cold cost still exists. A passing idle guard does not claim it was removed.
+
+
+**PR #2953 typing fixture follow-up, 2026-10-02.** The aggregate guard saw one
+helper during typing, but no counted caller was captured. Two frozen call-through
+runs instead found the unowned five-second media startup helper ending 116 ms
+and 508 ms before the first key. Hold that private startup schedule and await
+its real cleanup before counting; a Textual worker drain cannot own this plain
+`asyncio.to_thread` task. The ordinary guard passes with unchanged seams,
+canaries and ceilings. This removes a proven setup timing window; it does not
+attribute the original aggregate failure or remove the production cold cost.
+
+
+## A first baseline call can count setup absent from its comparison
+
+**TASK-33260 / PR #2953, 2026-10-02.** After the readiness rebase, the
+isolated shared-evidence normalization comparison counted3669 without evidence
+and9 with it. The first call initialized the cached support set:59 non-direct
+handlers each normalized62 keys, plus two direct handlers, exactly3660 calls.
+One real no-evidence build before either profile preserves the positive baseline
+and exact equality while leaving the first shared-owner lookup measured. Existing
+cached/injected/derived-set contracts remain green; production and boot ceilings
+are unchanged. Initialize equivalent setup on both sides of a per-build comparison,
+and keep startup cost and cache semantics covered separately.
+
+
+## A retained Close source still needs an execution fence
+
+**TASK-32367 / PR #2953, 2026-10-02.** Qodo found that a standalone
+chat-create confirmation could remember an Allow after Close had removed its
+grants, and the executor treated a source retained during bounded Close drain
+as open. Real Close regressions reproduced grant resurrection and durable
+new-chat/fork-chat creation before final deletion. Check the committed Close
+generation at shared executor entry; decide and remember under the same lock
+as revocation. Verify rows and UI completion while the actual ticket retains
+the source, rather than testing only after the source disappears.
+
+
+**In-flight follow-up, same task/PR.** The entry fence did not stop a physical
+worker already creating a chat: the bounded runtime drain could retire its
+source before durable creation or a queued UI callback completed. Real SQLite
+pauses at creation and UI handoff reproduced live orphan rows for both tools;
+a refused Textual UI dispatch reproduced the same cleanup gap. Check currentness
+again at the synchronous UI handoff and use the existing worker-side soft-delete
+compensation, rather than holding a lock or DB transaction across that handoff.
+A peer review then reproduced a placed chat being deleted when its UI callback
+raised before a later source Close reached the worker. Record UI admission
+before calling the current sink; preserve an admitted result and its original
+exception. Soft-delete is compensation, not physical transaction rollback.
+
+
+### End-key scroll checks need animation completion before pixel assertions
+
+PR2953's private-process timing baseline failed the existing short-height Close
+geometry assertion after End: scroll_y was positive, but the bottom consequence
+was not yet painted. The initial234.08s receipt records7 passes/1 failure; it is
+not a successful timing baseline. Waiting on Textual Pilot's existing
+wait_for_scheduled_animations after the same positive-scroll check preserves
+every pixel assertion and passes both long-title journeys in the original node
+and the later complete grouped files. A positive scroll offset proves motion
+started; wait for actual animation completion before asserting final pixels.
+
+
+## A Close cancellation sweep also needs a late-registration fence
+
+**TASK-32367 / PR #2953, 2026-10-03.** Qodo found that a delayed question
+could register after committed Close had already swept the question registry.
+The real-host after-registration regression passed, while already-closed and
+paused-before-registration variants both left workers waiting. Publish and check
+the existing committed generation under the shared interrupt lock: earlier
+states are swept and later admission returns cancelled. Keep callbacks outside
+the non-reentrant lock, and assert a sibling question remains answerable.
+Testing only a round present at the cancellation snapshot misses late admission.
+
+
+## A cancelled worker can still have a stale UI payload
+
+**TASK-32367 / PR #2953, 2026-10-03.** A review alleged that chat-create
+registration could pass its Close fence and occur after cancellation. The actual
+check/insert and sweep share the standalone mutex: six call-through interleavings
+for both tools passed, preserving a live sibling. Running Close on a foreign
+thread instead hit the real prompt-queue ownership refusal; that invalid probe
+was not evidence of a registration race.
+
+Independent review found a different gap. Real mounted tests paused the source's
+initial marshal, changed tabs or completed Close, then resumed it. The worker
+correctly denied Close, but its captured payload replaced the sibling's live card.
+A queued `None` clear could erase that sibling too; restoring only the old clear
+inside the otherwise corrected test process reproduced the erased state. Qualify
+scoped owners and derive the current head on the actual UI callback, then invoke
+the sink outside locks. Keep legacy unparked callers distinct: an initial equality
+guard dropped their only card after navigation, reproduced by the new legacy
+control. Inspect the survivor's actual resume state and mounted request ID after
+dispatch completes; worker cancellation and registration snapshots alone do not
+prove correct presentation.
+
+
+## A live host round does not prove a kind-registry count
+
+**TASK-32367 / PR #2953, 2026-10-03.** Qodo found a mounted legacy tool
+approval showing zero pending. The actual host state and waiting worker existed,
+but request_mcp_approvals(session_id=None) deliberately skips the separate
+kind/badge entry even when the controller infers a run owner. A real mounted
+RED and a pure zero-registry control both reproduced the count. Preserve
+positive registered counts and use only typed tool-card state for the zero
+compatibility fallback; broad app metadata can instead describe a question or
+another session. The new helper initially asserted unrelated transcript waiting
+copy and failed after its count was fixed; assert the affected Inspector and
+Files counts for this contract. Ordinary full wrappers then verify old journeys,
+worker completion and cleanup. Record the maximum-count compatibility bound
+rather than claiming an additive deduplicated mixed legacy/registered total.
+
+
+## Ruff line:column is one range endpoint
+
+**TASK-32367 / PR #2953, 2026-10-03.** A mechanical review fix passed full-module
+AST equivalence, but `ruff format --range start:end` interpreted the colon as
+line:column and reformatted code beyond the intended edit. Artifact preflight
+caught a controller diagnostic digest change despite an unchanged call count.
+Remove the unrelated formatting rather than blessing it in the inventory. Use
+`start_line:start_column-end_line:end_column` (or `start_line-end_line`), validate
+nonempty parsed diff ranges, and inspect the actual diff; AST equality alone
+does not establish byte-local scope or persistent-diagnostic reproducibility.
+
+## A queryable confirmation is not a painted confirmation
+
+**TASK-33621.16 / PR #2953, 2026-10-03.** A latest-dev qualification
+uncovered three real Close journey failures after ConfirmationDialog had
+entered the screen stack and its Confirm selector existed. Navigation and
+refusal tests tried to click at `(0, 0)` with an empty compositor; the compact
+geometry test saw the scroll container's width as zero even though Stay had
+focus. The shared `_wait_for_confirmation` helper returned on selector
+existence, before the first paint.
+
+Wait at that common boundary until both Confirm and Stay have non-empty
+regions and the compositor returns the actual buttons at their centres.
+Keep the original polling budget and real Pilot clicks, focus/geometry
+assertions and private-profile wrapper caps. Focus and selector readiness
+do not establish paint readiness; adding sleeps or weakening geometry
+assertions would conceal the timing gap instead of verifying the interface.
+
+
+## Resolve controls before committing layout state (Console PR #2953, 2026-10-03)
+
+Qodo flagged the screen's resize dispatch reaching an approval card before
+its controls composed. A real-card regression reproduced NoMatches for
+`#approval-batch-actions` with `approval-compact` already set: the class
+was also the next reflow's applied-state guard. Resolve all controls before
+committing that class, and leave it unapplied when composition is pending.
+The RED boundary case and unchanged mounted width/height/focus journeys
+prove both retry readiness and normal painted controls. An uncomposed-widget
+check alone is not evidence of native visibility; pair it with those mounted
+journeys and retain each source identity.
+
+
+## A real startup callback superseded an older census setup seam
+
+**PR #2953, 2026-10-03.** Rebase brought in a census that pauses the actual
+startup media-cleanup timer and bills its real callback separately. The PR's
+older setup still disabled startup cleanup and called it manually before
+typing. Both variants failed with zero captured callbacks before reaching the
+new query/helper proof. Removing only the old disable/manual-call blocks
+restored the capture and completed-query assertion; the existing trace
+migration settlement remained necessary. Compare complete test modules across
+the rebase before retaining an old settlement seam: its replacement may now
+measure the operation that the old setup suppresses.
+
+## A group selector spent the fully mounted CSS candidate budget
+
+**TASK-33625.2 / PR #2953, 2026-10-03.** A real mounted startup census read
+275 CSS candidates above its unchanged ceiling274. A read-only failure-frame
+probe identified `.approval-compact #approval-batch-actions Button` among the
+Button candidates. The three existing action IDs preserve the parsed(1,1,1)
+specificity and token declarations while indexing under those IDs. Source
+rebuild, mounted candidate budget, complete approval journeys and token/bundle
+guards then passed. Check actual parsed specificity and the fully mounted
+census when narrowing a selector; matching the same controls alone does not
+prove its global styling cost is unchanged.
+
+
+## A batched UI wrapper must preserve each journey's cleanup boundary
+
+**PR #2953, 2026-10-03.** Two hosted UI lanes reached the20-minute cap at
+92% and83% without reporting an assertion failure. The Close harness eagerly
+loaded all destination sheets rather than the shipping Console's startup CSS.
+A call-through comparison retained every action/geometry assertion; group
+JUnit totals changed from287.194s to199.903s. The ordinary scoped harness
+then passed all four groups in133.63s process elapsed. These are observed
+runs, not repeated benchmarks or a guaranteed hosted duration.
+
+The pending-interrupt batch also retained factory patches/directories until
+its outer test ended. A real call-through probe drained7of each at6journey
+boundaries and passed. Mirror the existing Close/compact cleanup there, while
+keeping fresh app/DB owners and all worker shutdown/assertion operations.
+Six old apps still remained weak-reference reachable in that diagnostic: GC
+and factory cleanup do not establish an app-retention fix. The whole original
+test ASTs restore after removing only scoped harness/cleanup substitutions.

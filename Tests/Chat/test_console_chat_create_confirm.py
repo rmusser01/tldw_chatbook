@@ -1,5 +1,6 @@
 """Confirm rounds for agent-initiated chat creation (fork_chat / new_chat)."""
 import threading
+from collections.abc import Callable
 
 import pytest
 
@@ -9,6 +10,10 @@ from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
 from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
 from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
 from Tests.Chat.test_console_skill_script_confirm import _FakeApp, _wait_until  # reuse fakes
+
+
+#: Event waits and worker joins share the existing bounded race-test deadline.
+_CHAT_CREATE_SYNC_TIMEOUT_SECONDS = 5
 
 
 @pytest.fixture
@@ -41,7 +46,7 @@ def test_allow_round_trip(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert result["decision"] == {"allow": True, "remember": False}
 
 
@@ -53,7 +58,7 @@ def test_deny_round_trip(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(False, False, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert result["decision"] == {"allow": False, "remember": False}
 
 
@@ -77,7 +82,7 @@ def test_remember_grants_session_scope(make_controller):
     t.start()
     _wait_until(lambda: bool(controller.pending_chat_create_ids()))
     controller.resolve_pending_chat_create(True, True, request_id=controller.pending_chat_create_ids()[0])
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
 
     # Second call in the same session: no card, straight allow. ("s1" is
     # not the store's active session, so round 1 PARKED -- it never
@@ -101,7 +106,7 @@ def test_remember_grants_session_scope(make_controller):
     t2.start()
     _wait_until(lambda: len(controller.pending_chat_create_ids()) > 0)
     controller.resolve_pending_chat_create(True, False, request_id=controller.pending_chat_create_ids()[-1])
-    t2.join(timeout=5)
+    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert results[-1] == {"allow": True, "remember": False}
 
 
@@ -136,7 +141,7 @@ def test_revoking_a_run_denies_its_chat_create_confirm(make_controller):
 
     assert controller.revoke_approval_rounds_for_run("run-chat-a") == 1
 
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not t.is_alive(), "the revoked confirm never released its thread"
     assert results["decision"] == {"allow": False, "remember": False}
     assert controller.pending_chat_create_ids() == []  # torn down, not armed
@@ -208,7 +213,7 @@ def _arm_and_capture(controller, payload, session_id):
     controller.resolve_pending_chat_create(
         False, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     assert not t.is_alive(), "the confirm round never released its thread"
     return card, result["decision"]
 
@@ -322,7 +327,7 @@ def test_confirm_payload_run_id_is_the_true_run(make_controller):
     controller.resolve_pending_chat_create(
         True, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t2.join(timeout=5)
+    t2.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     payload = controller.pending_chat_create_payloads[0]
     assert payload["run_id"] == "run-TRUE-1"
 
@@ -366,7 +371,7 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
     controller.resolve_pending_chat_create(
         True, False, request_id=controller.pending_chat_create_ids()[0]
     )
-    t.join(timeout=5)
+    t.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
     # No silent grant ride: a card was armed (round existed) and decided.
     assert decisions == [{"allow": True, "remember": False}]
     assert payload_seen["agent_kind"] == "subagent"
@@ -374,7 +379,16 @@ def test_subagent_requester_stamps_identity_and_skips_session_grant(make_control
     assert payload_seen["agent_task"].startswith("do the thing")
 
 
-def test_primary_requester_still_rides_session_grant(make_controller):
+@pytest.mark.parametrize("closing", [False, True], ids=["open-session", "committed-close"])
+def test_primary_requester_still_rides_session_grant(
+    make_controller: Callable[[], ConsoleChatController], closing: bool
+) -> None:
+    """A remembered grant survives only while its source session is live.
+
+    Args:
+        make_controller: Existing standalone confirmation controller fixture.
+        closing: Commit the real Close ticket before consulting the grant.
+    """
     controller = make_controller()
     real = controller.store.create_session(title="S")
     sid = real.id
@@ -383,6 +397,157 @@ def test_primary_requester_still_rides_session_grant(make_controller):
 
     from tldw_chatbook.Agents.run_context import use_run_id
 
+    if closing:
+        controller.begin_session_close(
+            sid, expected_revision=controller.lifecycle_impact(session_id=sid).revision
+        )
+        assert sid in controller._chat_create_session_grants
+        assert any(session.id == sid for session in controller.store.sessions())
     with use_run_id("run-9"):
         decision = controller.request_chat_create_confirm(_payload(), session_id=sid)
-    assert decision == {"allow": True, "remember": True}
+    assert decision == {"allow": not closing, "remember": not closing}
+    assert not controller.pending_chat_create_ids()
+
+
+def test_close_cannot_resurrect_a_remembered_chat_create_grant(
+    make_controller: Callable[[], ConsoleChatController],
+) -> None:
+    """A decided confirmation cannot recreate a grant after real Close.
+
+    Args:
+        make_controller: Existing standalone confirmation controller fixture.
+    """
+    controller = make_controller()
+    session = controller.store.create_session(title="Source")
+    entered = threading.Event()
+    release = threading.Event()
+    results = {}
+
+    class PausedGrants(dict):
+        def setdefault(self, key, default=None):
+            """Pause only an unprotected write so Close can settle first.
+
+            Args:
+                key: Owning session's grant key.
+                default: Grant set created by the confirmation.
+
+            Returns:
+                The existing or newly inserted grant set for the session.
+            """
+            protected = controller._pending_chat_create_lock.locked()
+            results["protected_write"] = protected
+            entered.set()
+            # A protected write must finish before Close's cancellation sweep;
+            # waiting for Close while holding its lock would deadlock the test.
+            if not protected:
+                assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+            return super().setdefault(key, default)
+
+    controller._chat_create_session_grants = PausedGrants()
+    worker = threading.Thread(
+        target=lambda: results.update(
+            decision=controller.request_chat_create_confirm(
+                _payload(), session_id=session.id
+            )
+        )
+    )
+    worker.start()
+    try:
+        _wait_until(lambda: bool(controller.pending_chat_create_ids()))
+        controller.resolve_pending_chat_create(
+            True, True, request_id=controller.pending_chat_create_ids()[0]
+        )
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        if results["protected_write"]:
+            worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+            assert not worker.is_alive()
+        ticket = controller.begin_session_close(
+            session.id,
+            expected_revision=controller.lifecycle_impact(
+                session_id=session.id
+            ).revision,
+        )
+        controller.finalize_session_close(ticket)
+        assert not any(s.id == session.id for s in controller.store.sessions())
+    finally:
+        release.set()
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+    assert not worker.is_alive()
+    assert results["decision"] == {"allow": True, "remember": True}
+    assert session.id not in controller._chat_create_session_grants
+    assert controller.pending_chat_create_ids() == []
+    assert controller._parked_chat_create_payloads == {}
+
+
+@pytest.mark.bootstrap_profile
+@pytest.mark.parametrize("closing", [False, True], ids=["navigate", "close"])
+def test_legacy_chat_create_marshal_keeps_its_unscoped_contract(
+    make_controller: Callable[[], ConsoleChatController],
+    monkeypatch: pytest.MonkeyPatch,
+    closing: bool,
+) -> None:
+    """An unparked legacy round remains visible after navigation, or denies Close.
+
+    Args:
+        make_controller: Existing real confirmation registry with a fake UI sink.
+        monkeypatch: Pauses only the original worker-to-UI marshal boundary.
+        closing: Complete source Close instead of merely changing the viewed tab.
+    """
+    controller = make_controller()
+    source = controller.new_session(title="Legacy source")
+    entered = threading.Event()
+    release = threading.Event()
+    marshalled = threading.Event()
+    results = {}
+    original_marshal = controller._marshal_pending_chat_create
+
+    def delayed_marshal(payload):
+        """Hold the legacy initial projection before its real UI callback.
+
+        Args:
+            payload: Original controller confirmation or teardown payload.
+        """
+        if payload:
+            entered.set()
+            assert release.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        original_marshal(payload)
+        if payload:
+            marshalled.set()
+
+    monkeypatch.setattr(controller, "_marshal_pending_chat_create", delayed_marshal)
+    worker = threading.Thread(
+        target=lambda: results.update(
+            decision=controller.request_chat_create_confirm(_payload())
+        )
+    )
+    worker.start()
+    try:
+        assert entered.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        request_id = controller.pending_chat_create_ids()[0]
+        controller.new_session(title="Viewed sibling")
+        if closing:
+            ticket = controller.begin_session_close(
+                source.id,
+                expected_revision=controller.lifecycle_impact(
+                    session_id=source.id
+                ).revision,
+            )
+            controller.finalize_session_close(ticket)
+        release.set()
+        assert marshalled.wait(_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        captured = [
+            payload
+            for payload in controller.pending_chat_create_payloads
+            if payload and payload.get("request_id") == request_id
+        ]
+        assert bool(captured) is not closing
+        assert controller._parked_chat_create_payloads == {}
+        if not closing:
+            controller.resolve_pending_chat_create(True, False, request_id=request_id)
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)
+        assert not worker.is_alive()
+        assert results == {"decision": {"allow": not closing, "remember": False}}
+    finally:
+        release.set()
+        controller.begin_shutdown()
+        worker.join(timeout=_CHAT_CREATE_SYNC_TIMEOUT_SECONDS)

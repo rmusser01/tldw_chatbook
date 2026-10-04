@@ -13,6 +13,7 @@ Tests/UI/test_chat_screen_ui_state_path.py
 Tests/UI/test_chat_search_enhanced.py
 Tests/UI/test_chatbook_wizard_open_folder.py
 Tests/UI/test_checkbox_height_render.py
+Tests/UI/test_console_approval_compact_layout.py
 Tests/UI/test_console_archive_publication.py
 Tests/UI/test_console_archive_resume_errors.py
 Tests/UI/test_console_archive_switcher_controls.py
@@ -32,6 +33,7 @@ Tests/UI/test_console_library_search_modal.py
 Tests/UI/test_console_model_popover_no_provider.py
 Tests/UI/test_console_model_popover_registry_options.py
 Tests/UI/test_console_model_switcher.py
+Tests/UI/test_console_pending_interrupt_projection.py
 Tests/UI/test_console_popover_context_window.py
 Tests/UI/test_console_progress_navigation_owners.py
 Tests/UI/test_console_rail_progress_timer.py

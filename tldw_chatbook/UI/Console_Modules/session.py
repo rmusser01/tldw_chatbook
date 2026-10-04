@@ -140,7 +140,10 @@ from textual.widgets import Select
 from ...Agents.session_todo_store import SessionTodoStore, TodoStoreError
 from ...Chat.chat_handoff_models import ChatHandoffPayload
 from ...Chat.console_chat_models import (
+    CONSOLE_PENDING_APPROVAL_KIND,
+    CONSOLE_PENDING_CHAT_CREATE_KIND,
     CONSOLE_GLOBAL_WORKSPACE_ID,
+    CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
     DEFAULT_CONSOLE_SESSION_TITLE,
     ConsoleLifecycleImpact,
     ConsoleLifecycleRevisionChanged,
@@ -303,7 +306,10 @@ _SESSION_CLOSE_TITLE_MAX_CHARACTERS = 60
 #: generic defect type of Python, asyncio and Textual, and internal texts
 #: such as "Console session is closed." would contradict the open tab.
 _USER_ACTIONABLE_CLOSE_REFUSALS = frozenset(
-    {"Finish or discard the pending turn before closing this chat."}
+    {
+        "Finish or discard the pending turn before closing this chat.",
+        CONSOLE_SESSION_CLOSE_RECOVERY_REFUSAL,
+    }
 )
 
 
@@ -335,6 +341,7 @@ class ConsoleSessionCloseImpact:
     lifecycle: ConsoleLifecycleImpact
     has_draft: bool = False
     pending_attachment_count: int = 0
+    pending_round_kinds: frozenset[str] = frozenset()
 
     @property
     def has_loss_risk(self) -> bool:
@@ -343,6 +350,7 @@ class ConsoleSessionCloseImpact:
             or self.lifecycle.has_loss_risk
             or self.has_draft
             or self.pending_attachment_count
+            or self.pending_round_kinds
         )
 
 
@@ -2852,6 +2860,7 @@ class ConsoleSessionController:
             await self._sync_native_console_chat_ui()
             return True
 
+        retry_confirmation = False
         while True:
             impact = self._session_close_impact(session_id)
             if impact is None:
@@ -2860,7 +2869,7 @@ class ConsoleSessionController:
                 # its ✕ never does nothing.
                 await self._sync_native_console_chat_ui()
                 return
-            if not impact.has_loss_risk:
+            if not impact.has_loss_risk and not retry_confirmation:
                 if await _complete_close(impact):
                     return
                 self.app_instance.notify(
@@ -2875,8 +2884,21 @@ class ConsoleSessionController:
                 await self._sync_native_console_chat_ui()
                 return
             if current == impact:
-                if await _complete_close(impact):
-                    return
+                title = self._session_close_display_title(session_id)
+                try:
+                    if await _complete_close(impact):
+                        return
+                except Exception as exc:  # noqa: BLE001 -- an explicit retry needs consent
+                    await self._report_session_close_failure(session_id, title, exc)
+                    if self._session_is_gone(session_id) or (
+                        isinstance(exc, RuntimeError)
+                        and str(exc) in _USER_ACTIONABLE_CLOSE_REFUSALS
+                    ):
+                        return
+                    # A failed confirmed close gets another fresh dialog, even
+                    # if cancellation already removed its original loss risk.
+                    retry_confirmation = True
+                    continue
             self.app_instance.notify(
                 "Session activity changed; review the updated close impact.",
                 severity="warning",
@@ -3026,6 +3048,7 @@ class ConsoleSessionController:
             lifecycle=controller.lifecycle_impact(session_id=session_id),
             has_draft=bool(draft),
             pending_attachment_count=len(session.pending_attachments),
+            pending_round_kinds=controller.pending_round_kinds(session_id),
         )
 
     async def _await_confirmation(self, dialog: Any) -> bool:
@@ -3042,19 +3065,60 @@ class ConsoleSessionController:
         from ...Widgets.confirmation_dialog import ConfirmationDialog
 
         lifecycle = impact.lifecycle
+        consequences = [
+            text
+            for present, text in (
+                (
+                    impact.transcript_message_count,
+                    f"Temporary or unsaved messages: {impact.transcript_message_count}",
+                ),
+                (impact.has_draft, "Unsent draft: yes"),
+                (
+                    impact.pending_attachment_count,
+                    f"Pending attachments: {impact.pending_attachment_count}",
+                ),
+                (
+                    lifecycle.live_run_count,
+                    f"Live agent turns: {lifecycle.live_run_count}",
+                ),
+                (
+                    lifecycle.delegated_child_count,
+                    f"Delegated agents: {lifecycle.delegated_child_count}",
+                ),
+                (
+                    lifecycle.unsent_prompt_count,
+                    f"Unsent queued prompts: {lifecycle.unsent_prompt_count}",
+                ),
+            )
+            if present
+        ]
+        consequences.extend(
+            text
+            for kind, text in (
+                (
+                    CONSOLE_PENDING_APPROVAL_KIND,
+                    "Tool approvals: denied; runs cancelled.",
+                ),
+                ("question", "Questions: cancelled without an answer."),
+                ("skill_install", "Skill installs: declined; runs cancelled."),
+                ("skill_script", "Skill scripts: declined; runs cancelled."),
+                (
+                    CONSOLE_PENDING_CHAT_CREATE_KIND,
+                    "Chat creation: declined; no chat created.",
+                ),
+                (
+                    "worktree_merge",
+                    "Worktree decisions: cancelled; no merge or discard.",
+                ),
+            )
+            if kind in impact.pending_round_kinds
+        )
+        message = "Saved history stays in Library."
+        if consequences:
+            message += "\nClosing will discard or cancel:\n" + "\n".join(consequences)
         dialog = ConfirmationDialog(
-            title="Close Console session?",
-            message=(
-                "Saved history stays in Library. Closing removes this open tab.\n\n"
-                "Closing will discard or cancel:\n"
-                f"Temporary or unsaved messages: {impact.transcript_message_count}\n"
-                f"Unsent draft: {'yes' if impact.has_draft else 'no'}\n"
-                f"Pending attachments: {impact.pending_attachment_count}\n"
-                f"Live agent turns: {lifecycle.live_run_count}\n"
-                f"Delegated agents: {lifecycle.delegated_child_count}\n"
-                f"Unsent queued prompts: {lifecycle.unsent_prompt_count}\n\n"
-                "Close this session?"
-            ),
+            title=f'Close tab "{self._session_close_display_title(impact.session_id)}"?',
+            message=message,
             confirm_label="Close",
             cancel_label="Stay",
         )
