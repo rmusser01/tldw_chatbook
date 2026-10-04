@@ -11060,7 +11060,12 @@ async def test_finalize_and_dismiss_screen_never_double_dismiss():
         summary = container.steps[container.current_step]
         assert isinstance(summary, SummaryStep)
         summary._exit_home()
-        await pilot.pause(0.3)
+        # Wait on the dismiss, not one fixed 0.3 s pause: the completion
+        # write took longer than that under load (TASK-34100.1 review round 2).
+        for _ in range(200):
+            if dismiss_calls:
+                break
+            await pilot.pause(0.05)
         assert len(dismiss_calls) == 1
         assert container._finalized is True
 
