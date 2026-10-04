@@ -1,7 +1,7 @@
 {
-  "scope": "Exact selected top-level QA report/log/receipt/helper bytes only. Historical QA byte-unchanged and prior audit retained.",
-  "files": 112,
-  "bytes": 2019885,
+  "scope": "Exact selected QA report/log/JUnit/receipt/helper bytes, including inspected Task5 evidence regular files. Historical QA byte-unchanged and prior audit retained.",
+  "files": 351,
+  "bytes": 9258859,
   "known_local_credential_values_compared": 3,
   "known_matches": 0,
   "recognized_token_or_private_key_findings": 0,

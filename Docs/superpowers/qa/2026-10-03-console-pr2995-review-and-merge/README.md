@@ -15,6 +15,16 @@ Final branch review found two small issues: duplicate grant clearing before clos
 
 Latest dev advanced again through PR2994: backup-admission device-renumbering and malformed-token normalization. The rebase onto `81c7c94f486491d6fde09584710dc3a3172225a0` yields `872efa5bdcf21fd17fe98b29177603d9e61faf99`; all78owned feature source/test blobs remain identical. The affected backup group passes42tests; startup/import ratchets pass13tests with three unchanged headroom warnings. See `backup-dev-rebase-receipt.json` and the two `backup-dev-*.json` receipts.
 
+## Initial Qodo and CI repairs
+
+Qodo completed review5404068729 on ready head7a15e3e9b4 with eight findings. Task3 sourcefc1627e99b repairs shared strict Pydantic validation, public API documentation, duplicate Redirect width accounting and saved-note handoff labels. Complete directly affected non-UI owners pass194cases and the mounted composer owner passes36; independent spec/quality review approves this source.
+
+Task4 source d3b2ade44b and recovery fixc0b251a714 retain charged accepted uncertainty, atomically pause its canonical allowance, drain physical native commits before releasing capacity, refuse SQLite writer contention at the existing cutoff, and use shared status/type-only diagnostics. Initial qualification records a deduplicated260-case passing union with explicit final-byte limits. Independent review then found a late recovery cleanup race; deterministic RED reproduced it, covering40 and final overlap3 pass after the fix, and scoped review approves it. These overlapping counts are not added together. Cold connection/WAL setup and FULL fsync remain synchronous; the real warm writer-lock control qualifies contention handling only.
+
+Task5 sourcee7cc533761 repairs unsupported duplicate Console content-screen setup in the ownership harness. Three original CI failures reproduce; actual startup/public navigation controls pass before and after correction. The original four-file CI batch passes155cases with one inherited strictXFAIL and five inherited warnings (including FD growth523); all six native consumption cases pass. Independent review approves the test-only source. The fourth historical CI readiness timeout was not reproduced; its cause remains unproved and current-head external CI is required. Disposable diagnostic retirement fields were misnamed/null and are explicitly excluded from the causal evidence.
+
+Latest devca2992cb10 includes1863changed paths since81c7c94f48, mainly formatting, with25feature intersections. Structural/canonical comparisons identify the actual overlapping writer/queue/fixture/test changes. Task6 integration and its final qualification remain pending at this archival checkpoint; no merge is claimed.
+
 ## Evidence
 
 | Record | Scope |
@@ -32,6 +42,10 @@ Latest dev advanced again through PR2994: backup-admission device-renumbering an
 | `rebase-receipt.json`, `docs-dev-rebase-receipt.json` | Dev ancestry and historical QA/source identity |
 | `backup-dev-rebase-receipt.json`, `backup-dev-qualification.json`, `backup-dev-startup.json` | Latest dev ancestry, feature byte identity and affected seam qualification |
 | `rebase-task-id-sweep.json` | Ref/history/worktree task-ID ownership sweep |
+| `task-3-report.md`, `task-3-review.md` | Initial Qodo validation/layout/note repairs and independent review |
+| `task-4-report.md`, `task-4-review.md`, `task-4-fix1-review.md` | Runtime repairs, reproduced recovery gap, verified fix and exact coverage limits |
+| `task-5-report.md`, `task-5-review.md`, `task-5-evidence/` | Reproduced CI lifecycle cause, canonical controls, full targeted batch and native timeout limit |
+| `latest-dev-structural-compare.json` | Formatter/behavior overlap classification before final integration |
 | `manifest.json`, `publication-audit.json` | Exact archived bytes, exclusions and scoped publication audit |
 
 Counts overlap; do not sum them. Whole-file composer/startup diagnostic runs retain their failed expectations; later focused receipts qualify the repaired nodes. One setup-directory error in the separate child test is retained separately from its passing run. The original report links identify the disposable source locations; the corresponding basename files are archived here.
@@ -42,4 +56,4 @@ Counts overlap; do not sum them. Whole-file composer/startup diagnostic runs ret
 - The older skill-await draft test isolates hook review. Separate real hook tests qualify unchanged/stale admission; combined skill-await plus hook refusal is an explicit coverage limitation.
 - UI-ready modules1033/1033 and screen-preimport modules556/556 have no headroom. No budget increase or failing-snapshot refresh occurred.
 - Historical live PTY/provider records retain their original source revisions. Current mounted tests qualify the authored handoff repair; no full repository sweep or general live-user qualification is claimed.
-- Only selected top-level reports, receipts, logs and helpers are exported. Private test profiles, user configuration, databases, caches and immutable base checkout directories are excluded. Review package hashes are recorded; their immutable ranges permit reproduction without copying the large historical QA diff.
+- Only selected reports, receipts, logs, JUnit results and helpers are exported, including regular files in the explicitly inspected Task5 evidence directory. There is no recursive export. Private test profiles, user configuration, databases, caches and immutable base checkout directories are excluded. Review package hashes are recorded; their immutable ranges permit reproduction without copying the large historical QA diff.

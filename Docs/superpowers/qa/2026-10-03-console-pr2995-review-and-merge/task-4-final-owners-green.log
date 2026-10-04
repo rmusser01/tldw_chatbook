@@ -1,0 +1,32 @@
+........................................................................ [ 30%]
+........................................................................ [ 60%]
+........................................................................ [ 90%]
+.......................                                                  [100%]
+- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-4-final-owners-green.xml -
+============================= slowest 25 durations =============================
+4.74s call     Tests/Chat/test_console_durable_commit_offload.py::test_send_does_not_stall_event_loop_while_write_lock_is_held
+3.37s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[sync-False]
+3.29s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[generation]
+3.19s call     Tests/Chat/test_console_chat_start.py::test_native_start_child_and_wake_share_original_allowance[deadline]
+3.16s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[sync-True]
+3.11s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[agent-False]
+3.06s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[direct-False]
+2.93s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[agent-True]
+2.87s call     Tests/Chat/test_console_durable_commit_offload.py::test_stop_during_dispatch_cas_settles_before_returning[direct-True]
+2.73s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_resume_after_close_leaves_no_dangling_continuation
+2.70s call     Tests/Chat/test_console_durable_commit_offload.py::test_dispatch_begins_only_after_commit_is_durably_visible
+2.69s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_closing_midway_through_the_effect_sequence_does_not_raise
+2.64s call     Tests/Chat/test_console_durable_commit_offload.py::test_cancel_during_offloaded_commit_leaves_consistent_state
+2.53s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_resume_after_the_chat_was_closed_does_not_raise
+2.50s call     Tests/Chat/test_console_chat_start.py::test_saved_launch_status_projects_to_native_and_persisted_rows
+2.43s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_a_failing_release_never_replaces_the_original_failure
+2.40s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_an_effect_that_fails_while_the_chat_closes_reports_its_own_cause
+2.24s call     Tests/Chat/test_console_close_during_durable_postcommit.py::test_closing_the_chat_during_a_successful_effect_does_not_raise
+2.11s call     Tests/Chat/test_console_durable_commit_diagnostics.py::test_a_failed_durable_commit_records_the_exception_type
+2.04s call     Tests/Chat/test_console_durable_commit_diagnostics.py::test_the_failure_log_does_not_leak_the_exception_message
+2.00s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_generic_provider_adapter_exits
+1.96s call     Tests/Chat/test_console_chat_start.py::test_native_start_uses_both_receipts_and_literal_machine_request[hello]
+1.78s call     Tests/Chat/test_console_chat_start.py::test_manual_send_withdraws_prepared_start_before_busy_gate
+1.65s call     Tests/Chat/test_console_chat_start.py::test_native_configured_v2_initialization_and_stop_proposal[True]
+1.58s call     Tests/Chat/test_console_chat_start.py::test_stop_keeps_native_claim_until_actual_bridge_worker_exits
+239 passed in 177.93s (0:02:57)

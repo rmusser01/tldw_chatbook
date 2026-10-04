@@ -1,0 +1,28 @@
+{
+  "base_ref": "d3b2ade44b49afc96f78c592ac271e3231472b27",
+  "base_sha": "d3b2ade44b49afc96f78c592ac271e3231472b27",
+  "baseline_red_paths": [],
+  "files": {
+    "Tests/DB/test_automatic_chat_starts.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "3ae9ac9a670793ffb905252e451d6b31a44c15b44b429102ad1ea9eda704d276"
+    },
+    "tldw_chatbook/DB/automatic_work.py": {
+      "debt_units": 0,
+      "formatter_required": false,
+      "normalized_diff_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "source_hunks": [],
+      "source_sha256": "05c65a259f916744541e569b5f6f4812d0a3add79016a40bd23a69f16318617b"
+    }
+  },
+  "generated_at_utc": "2026-10-04T05:06:00.601758+00:00",
+  "paths": [
+    "tldw_chatbook/DB/automatic_work.py",
+    "Tests/DB/test_automatic_chat_starts.py"
+  ],
+  "ruff_version": "ruff 0.16.6",
+  "schema_version": 1
+}
