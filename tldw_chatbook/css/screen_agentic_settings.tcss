@@ -405,9 +405,14 @@ $ds-conversation-menu-width: 30;
    fixed label otherwise leaves only the final digit of Temperature visible.
    Console Behavior and Storage use the same stacked field contract.
    Existing controls retain their compact border and focus contracts.
-   TASK-33007.6: the card's rows also sit inside its Advanced disclosures,
-   so its selectors match at any depth. */
-.settings-workbench-compact #settings-providers-models-card .settings-input-row,
+   TASK-33007.6: the Context window and Discover rows moved from the card
+   into Advanced disclosures, so those two are named. A card-wide
+   descendant selector would also stack Catalog refresh's and Custom
+   endpoints' rows, which keep their own compact rules (fix round 1). */
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row,
+.settings-workbench-compact #settings-advanced-saved-models .settings-input-row,
 .settings-workbench-compact #settings-network-card > .settings-input-row,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row,
 .settings-workbench-compact #settings-storage-card .settings-input-row {
@@ -417,8 +422,11 @@ $ds-conversation-menu-width: 30;
     margin-bottom: $ds-space-stack;
 }
 
-.settings-workbench-compact #settings-providers-models-card .settings-input-row > Input,
-.settings-workbench-compact #settings-providers-models-card .settings-input-row > Select,
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Input,
+.settings-workbench-compact #settings-providers-models-card > .settings-input-row > Select,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Input,
+.settings-workbench-compact #settings-generation-defaults .settings-input-row > Select,
+.settings-workbench-compact #settings-advanced-context-window .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Input,
 .settings-workbench-compact #settings-network-card > .settings-input-row > Select,
 .settings-workbench-compact #settings-console-behavior-card .settings-input-row > Input,

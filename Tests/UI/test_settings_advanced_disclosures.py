@@ -9,6 +9,7 @@ card draws no frame inside the detail pane.
 
 from __future__ import annotations
 
+from itertools import pairwise
 from unittest.mock import patch
 
 import pytest
@@ -396,3 +397,41 @@ async def test_opening_the_model_picker_keeps_the_card_width(request):
         await pilot.pause()
         await pilot.pause()
         assert card.region.width == at_rest
+
+
+@pytest.mark.asyncio
+@private_profile_test
+async def test_compact_workbench_stacks_only_the_rows_it_stacked_before_the_fold(
+    request,
+):
+    """R20 at <=100 columns: the rows that moved into Context window still
+    stack label over field (TASK-32593), while Catalog refresh's per-provider
+    rows keep their own two-row stack with no gap between providers, as
+    before the fold. A card-wide descendant selector gave every provider row
+    a margin, 25 rows more at 100x40 (fix round 1, finding 4)."""
+    host = _SettingsCssHarness(_app(), "settings")
+
+    async with host.run_test(size=(80, 24)) as pilot:
+        screen = await _open(host, pilot)
+        assert screen.query_one("#settings-workbench").has_class(
+            "settings-workbench-compact"
+        )
+        for disclosure_id in (
+            "settings-advanced-context-window",
+            "settings-advanced-catalog-refresh",
+        ):
+            screen.query_one(f"#{disclosure_id}", Collapsible).collapsed = False
+        await pilot.pause()
+        await pilot.pause()
+
+        context_row = screen.query_one("#settings-model-context-window").parent
+        assert context_row.styles.layout.name == "vertical"
+        rows = [
+            screen.query_one(f"#settings-mc-auto-{provider.lower()}").parent
+            for provider in AUTO_REFRESH_PROVIDER_LIST_KEYS
+        ]
+        for upper, lower in pairwise(rows):
+            assert lower.virtual_region.y == upper.virtual_region.bottom, (
+                upper.query_one(Checkbox).id,
+                upper.styles.margin,
+            )
