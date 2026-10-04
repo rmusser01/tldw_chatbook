@@ -187,6 +187,8 @@ ABSENT_AT_READY_MODULES = (
     # Delete action, an armed or shown confirmation, or the Inspector's
     # pending-delete copy), never before first paint.
     "tldw_chatbook.Chat.console_message_delete",
+    # TASK-33628.5: its plan/write/apply phases, imported by the first delete.
+    "tldw_chatbook.Chat.console_subtree_delete",
     "tldw_chatbook.UI.Console_Modules.message_delete",
     "tldw_chatbook.Widgets.Console.console_transcript_delete_confirmation",
     "tldw_chatbook.Widgets.Console.console_message_delete_receipt",

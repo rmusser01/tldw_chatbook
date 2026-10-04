@@ -314,6 +314,80 @@ async def test_ctrl_q_waits_for_a_project_skills_import(monkeypatch, tmp_path):
         )
 
 
+async def test_ctrl_q_waits_for_a_message_delete_and_its_undo(monkeypatch):
+    """A large Console Delete, and its Undo, save off the event loop.
+
+    TASK-33628.5. While either is being saved the receipt refuses Escape and
+    Done, so Ctrl+Q must not quit past it either: interrupted, the user
+    would not know whether the messages were deleted (or restored). Once
+    the save lands, Ctrl+Q quits as usual.
+    """
+    from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
+        ConsoleMessageDeleteReceiptModal,
+    )
+
+    deleting, delete_release = asyncio.Event(), asyncio.Event()
+    undoing, undo_release = asyncio.Event(), asyncio.Event()
+    results: list[str | None] = []
+
+    async def held_delete() -> None:
+        deleting.set()
+        await delete_release.wait()
+
+    async def held_undo() -> str:
+        undoing.set()
+        await undo_release.wait()
+        return "restored"
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        await _mounted_console(app, pilot)
+        modal = ConsoleMessageDeleteReceiptModal(
+            count=3002, delete=held_delete, undo=held_undo
+        )
+        await app.push_screen(modal, callback=results.append)
+        await _until(pilot, deleting.is_set, "the delete to start saving")
+        assert modal._working
+
+        await _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, "delete")
+
+        delete_release.set()
+        await _until(
+            pilot,
+            lambda: bool(modal.query("#console-delete-receipt")),
+            "the receipt once the delete is saved",
+        )
+        assert not modal._working
+        assert await _click_when_shown(app, pilot, "#console-delete-receipt-undo")
+        await _until(pilot, undoing.is_set, "the undo to start saving")
+        assert modal._working
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: len(_still_working_notices(app)) == 2 or bool(cleanups),
+            "Ctrl+Q over the receipt mid-undo to answer",
+            timeout=5.0,
+        )
+        assert cleanups == [], "Ctrl+Q quit straight past an undo being saved"
+        assert "restor" in _still_working_notices(app)[-1].lower()
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after the still-working answer",
+            timeout=5.0,
+        )
+        assert app.screen is modal and results == []
+
+        undo_release.set()
+        await _until(pilot, lambda: results == ["undo"], "the receipt to close")
+        await _assert_ctrl_q_quits(
+            app, pilot, cleanups, "Ctrl+Q to quit once the undo was saved"
+        )
+
+
 async def test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit(monkeypatch):
     """A refusal whose flag never clears must not make the app unquittable.
 

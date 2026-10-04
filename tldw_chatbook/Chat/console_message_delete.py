@@ -17,13 +17,26 @@ The capture/restore pair works directly on the store's tree-registration
 primitives -- the ones ``ConsoleChatStore._delete_message`` itself tears
 down -- because ``console_chat_store.py`` is held by a size ratchet
 (``Tests/Architecture/test_module_size_ratchet.py``) and must not grow.
+
+TASK-33628.5: the Console's Delete and Undo run their durable halves off the
+event loop (:func:`delete_subtree_off_loop`, :func:`restore_subtree_off_loop`)
+-- a 3,000-message subtree held the loop for up to 1.8 s. The store is UI
+thread state, so only the database work moves: the store's fork-source and
+voice-promotion fences are taken on the loop before it starts and released
+there once its result is applied, and the recovered-media hold is opened in
+the thread that tombstones (it is per-thread). The synchronous
+:func:`delete_subtree_for_undo`/:func:`restore_deleted_subtree` remain for
+callers that are not on an event loop.
 """
 
 from __future__ import annotations
 
-from contextlib import nullcontext
+import asyncio
+import contextvars
+import functools
+from contextlib import ExitStack, nullcontext
 from dataclasses import dataclass, replace
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping, TypeVar
 
 from loguru import logger
 
@@ -258,23 +271,35 @@ def with_committed_tombstones(
         ``deleted`` carrying the committed ``(message_id, version)``
         tombstones, or ``deleted`` unchanged when nothing was persisted.
     """
-    persisted = (
-        list(committed_ids)
-        if committed_ids is not None
-        else [
-            node.persisted_message_id
-            for node in deleted.nodes
-            if node.persisted_message_id
-        ]
-    )
     database = getattr(store.persistence, "db", None) if store.persistence else None
+    persisted = (
+        list(committed_ids) if committed_ids is not None else _node_saved_ids(deleted)
+    )
+    tombstones = _committed_tombstones(database, persisted)
+    return deleted if tombstones is None else replace(deleted, tombstones=tombstones)
+
+
+def _node_saved_ids(deleted: ConsoleDeletedSubtree) -> list[str]:
+    """The captured nodes' saved ids (read on the event loop)."""
+    return [
+        node.persisted_message_id for node in deleted.nodes if node.persisted_message_id
+    ]
+
+
+def _committed_tombstones(
+    database: Any, persisted: list[str]
+) -> tuple[tuple[str, int], ...] | None:
+    """Read the committed ``(id, version)`` tombstones; reads no store state.
+
+    Returns:
+        The tombstones, or ``None`` when nothing was saved or the database
+        cannot say.
+    """
     reader = getattr(database, "get_message_tombstones", None)
     if not persisted or not callable(reader):
-        return deleted
-    rows = reader(persisted)
-    return replace(
-        deleted,
-        tombstones=tuple((str(row["message_id"]), int(row["version"])) for row in rows),
+        return None
+    return tuple(
+        (str(row["message_id"]), int(row["version"])) for row in reader(persisted)
     )
 
 
@@ -323,6 +348,25 @@ def restore_deleted_subtree(store: Any, deleted: ConsoleDeletedSubtree) -> None:
     Raises:
         ConsoleDeleteUndoError: The conversation changed so Undo is unsafe.
     """
+    _check_restorable(store, deleted)
+    session_id = deleted.session_id
+    with store._fork_source_transition(session_id):
+        if deleted.tombstones:
+            restorer = _restorer(store)
+            try:
+                with store._dispatch_branch_mutation(session_id):
+                    restored_rows = restorer(**_restore_kwargs(deleted))
+            except Exception as exc:  # noqa: BLE001 - mapped to user-facing copy
+                raise _undo_error(deleted, exc) from exc
+            _rebind_versions(deleted, restored_rows)
+        _reinsert(store, deleted)
+        if deleted.on_active_path and not deleted.tombstones:
+            store._persist_active_leaf(session_id, deleted.previous_active_leaf)
+    _reconcile_restored(store, deleted)
+
+
+def _check_restorable(store: Any, deleted: ConsoleDeletedSubtree) -> None:
+    """Refuse an Undo the conversation can no longer take back."""
     session_id = deleted.session_id
     if session_id not in store._sessions:
         raise ConsoleDeleteUndoError("This conversation is no longer open.")
@@ -333,47 +377,238 @@ def restore_deleted_subtree(store: Any, deleted: ConsoleDeletedSubtree) -> None:
         )
     if any(node_id in store._message_session_index for node_id in deleted.node_ids):
         raise ConsoleDeleteUndoError("These messages are already back.")
-    with store._fork_source_transition(session_id):
-        if deleted.tombstones:
-            restorer = getattr(store.persistence, "restore_message_subtree", None)
-            if not callable(restorer):
-                raise ConsoleDeleteUndoError("Saved messages can't be restored here.")
-            try:
-                with store._dispatch_branch_mutation(session_id):
-                    restored_rows = restorer(
-                        tombstones=deleted.tombstones,
-                        conversation_id=deleted.conversation_id,
-                        active_cursor=(
-                            deleted.previous_cursor if deleted.on_active_path else None
-                        ),
-                    )
-            except ConflictError as exc:  # a tombstone moved since the delete
-                raise ConsoleDeleteUndoError(
-                    "These messages changed after they were deleted, so Undo "
-                    "can't restore them."
-                ) from exc
-            except ValueError as exc:  # pending dispatch owns the branch
-                raise ConsoleDeleteUndoError(str(exc), retryable=True) from exc
-            except Exception as exc:  # noqa: BLE001 - storage refusal, nothing changed
-                logger.bind(conversation_id=deleted.conversation_id).warning(
-                    "Console delete Undo failed in storage: {}", type(exc).__name__
-                )
-                raise ConsoleDeleteUndoError(
-                    "Undo couldn't finish; the messages are still deleted. Try "
-                    "Undo again, or choose Done to keep the delete.",
-                    retryable=True,
-                ) from exc
-            _rebind_versions(deleted, restored_rows)
-        _reinsert(store, deleted)
-        if deleted.on_active_path and not deleted.tombstones:
-            store._persist_active_leaf(session_id, deleted.previous_active_leaf)
+
+
+def _restorer(store: Any) -> Callable[..., Any]:
+    restorer = getattr(store.persistence, "restore_message_subtree", None)
+    if not callable(restorer):
+        raise ConsoleDeleteUndoError("Saved messages can't be restored here.")
+    return restorer
+
+
+def _restore_kwargs(deleted: ConsoleDeletedSubtree) -> dict[str, Any]:
+    return {
+        "tombstones": deleted.tombstones,
+        "conversation_id": deleted.conversation_id,
+        "active_cursor": deleted.previous_cursor if deleted.on_active_path else None,
+    }
+
+
+def _undo_error(
+    deleted: ConsoleDeletedSubtree, exc: BaseException
+) -> ConsoleDeleteUndoError:
+    """Map a durable-undelete failure to the copy Undo shows."""
+    if isinstance(exc, ConflictError):  # a tombstone moved since the delete
+        return ConsoleDeleteUndoError(
+            "These messages changed after they were deleted, so Undo "
+            "can't restore them."
+        )
+    if isinstance(exc, ValueError):  # pending dispatch owns the branch
+        return ConsoleDeleteUndoError(str(exc), retryable=True)
+    # A storage refusal: nothing changed.
+    logger.bind(conversation_id=deleted.conversation_id).warning(
+        "Console delete Undo failed in storage: {}", type(exc).__name__
+    )
+    return ConsoleDeleteUndoError(
+        "Undo couldn't finish; the messages are still deleted. Try "
+        "Undo again, or choose Done to keep the delete.",
+        retryable=True,
+    )
+
+
+def _reconcile_restored(store: Any, deleted: ConsoleDeletedSubtree) -> None:
+    """Project the restored rows to Sync v2; best-effort, as for deletes."""
     if deleted.tombstones and deleted.conversation_id is not None:
         try:
             store._reconcile_restored_chat_sync_intents(
-                session_id, deleted.conversation_id
+                deleted.session_id, deleted.conversation_id
             )
         except Exception:  # noqa: BLE001 - projection is best-effort, as for deletes
             logger.warning("Failed to project restored Console messages to Sync v2")
+
+
+_Result = TypeVar("_Result")
+_Settled = TypeVar("_Settled")
+
+
+async def run_durable_off_loop(
+    database: Any,
+    call: Callable[[], _Result],
+    settle: Callable[[_Result | None, BaseException | None], _Settled],
+) -> _Settled:
+    """Run ``call`` off the event loop; ``settle`` its outcome on the loop.
+
+    ``settle(result, error)`` runs exactly once, on the event-loop thread, as
+    soon as ``call`` finishes -- even when the task awaiting this coroutine
+    was cancelled meanwhile. Cancelling a task does not stop the thread
+    already running ``call`` (lessons-testing-evidence: "Cancelling a
+    Textual worker does not cancel its underlying thread"), so what
+    ``settle`` applies and releases -- the store's view of the write, the
+    store's fences -- always is, and never before the write has finished.
+
+    A ``:memory:`` ChaChaNotes database is thread-local: another thread would
+    open an empty one. ``call`` runs inline for it (the ``_run_fork_io``
+    precedent), as it does with no database.
+
+    Args:
+        database: The ChaChaNotes database ``call`` writes, if any.
+        call: The durable work; it must read no UI-thread state.
+        settle: Receives ``call``'s result or the exception it raised.
+
+    Returns:
+        What ``settle`` returned.
+
+    Raises:
+        Exception: What ``settle`` raised.
+    """
+    if database is None or getattr(database, "is_memory_db", False):
+        try:
+            result = call()
+        except Exception as exc:  # noqa: BLE001 - handed to settle
+            return settle(None, exc)
+        return settle(result, None)
+    loop = asyncio.get_running_loop()
+    outcome: asyncio.Future[_Settled] = loop.create_future()
+
+    def finished(work: asyncio.Future[_Result]) -> None:
+        error = asyncio.CancelledError() if work.cancelled() else work.exception()
+        try:
+            value = settle(None if error is not None else work.result(), error)
+        except BaseException as exc:  # noqa: BLE001 - handed to the awaiter
+            if not outcome.done():
+                outcome.set_exception(exc)
+        else:
+            if not outcome.done():
+                outcome.set_result(value)
+
+    def retrieved(done: asyncio.Future[_Settled]) -> None:
+        # An awaiter cancelled meanwhile never reads the outcome.
+        if not done.cancelled():
+            done.exception()
+
+    work = loop.run_in_executor(
+        None, functools.partial(contextvars.copy_context().run, call)
+    )
+    work.add_done_callback(finished)
+    outcome.add_done_callback(retrieved)
+    return await asyncio.shield(outcome)
+
+
+async def delete_subtree_off_loop(
+    store: Any, message_id: str
+) -> tuple[ConsoleDeletedSubtree, tuple[str, ...]]:
+    """:func:`delete_subtree_for_undo` with its durable write off the loop.
+
+    The store's fork-source and voice-promotion fences are taken here, on
+    the event loop, before anything is read, and released there once the
+    write's result has been applied to the store. The recovered-media hold
+    opens in the thread that tombstones, so it holds exactly that delete's
+    references.
+
+    Args:
+        store: The Console store to delete from.
+        message_id: Native id of the subtree's root message.
+
+    Returns:
+        The Undo snapshot, and the persisted ids whose reference release
+        was held back.
+
+    Raises:
+        KeyError: The message is no longer in the store.
+        ValueError: A reply or a pending dispatch owns the branch.
+        Exception: Whatever the durable delete raised; nothing changed.
+    """
+    from . import console_subtree_delete as subtree
+
+    fences = ExitStack()
+    with ExitStack() as unwind:
+        unwind.push(fences)
+        fences.enter_context(
+            store._fork_source_transition(store.session_id_for_message(message_id))
+        )
+        plan = subtree.plan_subtree_delete(store, message_id)
+        deleted = capture_deleted_subtree(store, message_id)
+        fallback_ids = _node_saved_ids(deleted)
+        unwind.pop_all()
+    persistence = store.persistence
+    database = getattr(persistence, "db", None) if persistence is not None else None
+    store_type = type(store)
+
+    def durable() -> tuple[list[dict[str, Any]], tuple[str, ...] | None, Any]:
+        hold = getattr(persistence, "hold_recovered_media_release", None)
+        with hold() if callable(hold) else nullcontext(None) as held:
+            tombstones = subtree.write_subtree_delete(store_type, persistence, plan)
+        # The hold collects exactly the ids this thread's delete tombstoned.
+        committed = tuple(held) if held is not None else None
+        persisted = list(committed) if committed is not None else fallback_ids
+        return tombstones, committed, _committed_tombstones(database, persisted)
+
+    def settle(
+        result: tuple[list[dict[str, Any]], tuple[str, ...] | None, Any] | None,
+        error: BaseException | None,
+    ) -> tuple[ConsoleDeletedSubtree, tuple[str, ...]]:
+        with fences:
+            if error is not None:
+                raise error
+            assert result is not None
+            tombstones, committed, rows = result
+            subtree.apply_subtree_delete(store, plan, tombstones)
+        undo = deleted if rows is None else replace(deleted, tombstones=rows)
+        return undo, committed or ()
+
+    return await run_durable_off_loop(database, durable, settle)
+
+
+async def restore_subtree_off_loop(store: Any, deleted: ConsoleDeletedSubtree) -> None:
+    """:func:`restore_deleted_subtree` with its durable undelete off the loop.
+
+    Args:
+        store: The Console store the delete ran on.
+        deleted: The snapshot :func:`delete_subtree_off_loop` returned.
+
+    Raises:
+        ConsoleDeleteUndoError: Undo is unsafe or did not finish.
+    """
+    _check_restorable(store, deleted)
+    session_id = deleted.session_id
+    fences = ExitStack()
+    fences.enter_context(store._fork_source_transition(session_id))
+    if not deleted.tombstones:
+        with fences:
+            _reinsert(store, deleted)
+            if deleted.on_active_path:
+                store._persist_active_leaf(session_id, deleted.previous_active_leaf)
+        return
+    with ExitStack() as unwind:
+        unwind.push(fences)
+        restorer = _restorer(store)
+        unwind.pop_all()
+    database = getattr(store.persistence, "db", None)
+    session = store._sessions.get(session_id)
+    conversation_id = getattr(session, "persisted_conversation_id", None)
+    branch_transaction = type(store)._dispatch_branch_transaction
+    kwargs = _restore_kwargs(deleted)
+
+    def durable() -> Any:
+        with branch_transaction(database, conversation_id):
+            return restorer(**kwargs)
+
+    def settle(rows: Any, error: BaseException | None) -> None:
+        with fences:
+            if error is not None:
+                raise _undo_error(deleted, error) from error
+            _rebind_versions(deleted, rows)
+            try:
+                _check_restorable(store, deleted)
+            except ConsoleDeleteUndoError as exc:  # changed while it was saving
+                raise ConsoleDeleteUndoError(
+                    "The messages were restored, but this chat changed "
+                    "meanwhile. Reopen it to see them."
+                ) from exc
+            _reinsert(store, deleted)
+        _reconcile_restored(store, deleted)
+
+    await run_durable_off_loop(database, durable, settle)
 
 
 def _rebind_versions(deleted: ConsoleDeletedSubtree, rows: Any) -> None:

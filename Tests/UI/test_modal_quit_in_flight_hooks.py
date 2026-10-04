@@ -33,6 +33,9 @@ from tldw_chatbook.UI.Watchlists_Modules.bulk_sources_modal import BulkSourcesMo
 from tldw_chatbook.Widgets.Console.console_exchange_export_dialog import (
     ConsoleExchangeExportDialog,
 )
+from tldw_chatbook.Widgets.Console.console_message_delete_receipt import (
+    ConsoleMessageDeleteReceiptModal,
+)
 from tldw_chatbook.Widgets.Console.console_model_popover import ConsoleModelPopover
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
@@ -73,6 +76,8 @@ _IN_FLIGHT = [
     (PersonalContextProposalReviewModal, "_busy", "personal context"),
     (PersonalContextReviewModal, "_busy", "personal context"),
     (BulkSourcesModal, "_batch_posted", "sources"),
+    # TASK-33628.5: a large message Delete (or its Undo) saving off the loop.
+    (ConsoleMessageDeleteReceiptModal, "_working", "delete"),
 ]
 _IDS = [modal.__name__ for modal, _flag, _what in _IN_FLIGHT]
 

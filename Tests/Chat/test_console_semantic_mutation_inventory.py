@@ -146,7 +146,7 @@ BOUNDARY_CALL_ROUTE_CLASSIFICATION: dict[str, str] = {
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.delete_message_subtree::call:db:soft_delete_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.restore_message_subtree::call:db:restore_message_subtree",
             "tldw_chatbook/Chat/chat_persistence_service.py::ChatPersistenceService.save_history::call:db:soft_delete_message",
-            "tldw_chatbook/Chat/console_chat_store.py::ConsoleChatStore._delete_message::call:persistence:delete_message_subtree",
+            "tldw_chatbook/Chat/console_subtree_delete.py::write_subtree_delete::call:persistence:delete_message_subtree",
             "tldw_chatbook/DB/ChaChaNotes_DB.py::CharactersRAGDB.delete_chat_message::call:db:soft_delete_message",
         },
         "visibility/ownership-only",
@@ -2765,9 +2765,11 @@ def test_public_mutation_boundary_calls_are_classified() -> None:
 
 
 def test_boundary_scanner_resolves_console_soft_delete_getattr_alias() -> None:
+    # TASK-33628.5: the store's delete runs this durable phase, which the
+    # Console's Delete also runs off the event loop.
     assert (
-        "tldw_chatbook/Chat/console_chat_store.py::"
-        "ConsoleChatStore._delete_message::call:persistence:delete_message_subtree"
+        "tldw_chatbook/Chat/console_subtree_delete.py::"
+        "write_subtree_delete::call:persistence:delete_message_subtree"
         in _boundary_call_routes()
     )
 
