@@ -304,6 +304,8 @@ def _artifact(
         ("store_failure", "backdrop", "backdrop", "video-capacity-keep"),
     ],
 )
+# Builds the real app, so it needs the bootstrap profile (TASK-33622.17).
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_generic_capacity_dismissal_guards_real_staged_artifact(
     reason: str,
@@ -1731,7 +1733,10 @@ async def test_managed_save_copy_failure_logs_and_notifies_without_private_detai
 
         @staticmethod
         def _ensure_console_video_store():
-            return SimpleNamespace(resolve=lambda *_args, **_kwargs: private_path)
+            # The managed Save path asks resolve_state for (status, path).
+            return SimpleNamespace(
+                resolve_state=lambda *_args, **_kwargs: ("ready", private_path)
+            )
 
         @staticmethod
         def _video_storage_message_id(_message):
@@ -2013,6 +2018,8 @@ async def test_late_picker_completion_after_drain_is_noop(tmp_path: Path) -> Non
 
 
 @pytest.mark.parametrize("wait_surface", ["modal", "picker"])
+# Builds the real app, so it needs the bootstrap profile (TASK-33622.17).
+@pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_mounted_chat_screen_exit_drains_modal_and_picker_waiters(
     wait_surface: str,

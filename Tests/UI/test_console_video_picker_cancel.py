@@ -10,8 +10,9 @@ an explicit **Discard** throws it away.
 
 Every test drives the real ``TldwCli``, the real pending-video resolver and the
 real picker and choice screens, and presses the real keys and buttons. The
-irreversible shutdown is replaced by a recorder, and the OS opener (called
-after a successful save) by a list.
+irreversible shutdown is replaced by a recorder (in the Discard-and-quit test,
+one that then calls the real ``App.exit``), and the OS opener (called after a
+successful save) by a list.
 """
 
 from __future__ import annotations
@@ -30,7 +31,9 @@ from Tests.UI.test_app_quit_in_flight_modals import (
 from Tests.UI.test_app_quit_under_modal import (
     _dialogs_titled,
     _mounted_console,
+    _record_cleanup_then_exit,
     _until,
+    _until_exited,
 )
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Widgets.Console.console_video_capacity_modal import (
@@ -224,3 +227,68 @@ async def test_only_an_explicit_discard_throws_the_video_away(monkeypatch):
         assert appended == []
         assert not isinstance(app.screen, ConsoleVideoCapacityModal)
         assert cleanups == []
+
+
+async def test_discard_and_quit_over_the_picker_exits_without_reopening_the_choice(
+    monkeypatch,
+):
+    """Ctrl+Q's Discard and quit over the picker ends the app, not a new choice.
+
+    A cancelled picker now re-opens the storage choice, so the shutdown that
+    takes the picker down must never read as a cancel: the app exits, the video
+    is released exactly once, and the resolver never asks for the storage choice
+    again once the user has approved the quit. Only the persistence steps of the
+    shutdown are stood in for; the ``App.exit`` that closes every screen is the
+    real one.
+    """
+    from Tests.Chat.test_console_video_capacity import _artifact
+
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups: list[bool] = []
+    monkeypatch.setattr(
+        app, "_run_approved_quit_cleanup", _record_cleanup_then_exit(app, cleanups)
+    )
+    artifact = _artifact(b"paid generation", message_id="discard-and-quit")
+    quit_approved: list[bool] = []
+    choices_after_approval: list[ConsoleVideoCapacityModal] = []
+    async with app.run_test(size=(140, 44)) as pilot:
+        console = await _mounted_console(app, pilot)
+        picker = await _video_waiting_in_the_save_picker(app, pilot, console, artifact)
+        # Record the resolver's REQUEST for the choice, not the push: once the
+        # app is exiting a requested screen may never reach the stack, and a
+        # check on pushes alone stays green while the resolver loops back.
+        wait_for_screen = console._video._wait_for_console_screen_result
+
+        async def recording_wait_for_screen(screen):
+            if quit_approved and isinstance(screen, ConsoleVideoCapacityModal):
+                choices_after_approval.append(screen)
+            return await wait_for_screen(screen)
+
+        monkeypatch.setattr(
+            console._video, "_wait_for_console_screen_result", recording_wait_for_screen
+        )
+
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, _QUIT_TITLE)) or bool(cleanups),
+            "Ctrl+Q over the Save-to-disk picker to ask first",
+            timeout=5.0,
+        )
+        assert cleanups == []
+        assert picker in app.screen_stack
+        quit_approved.append(True)
+        assert await pilot.click("#confirm-button")
+        await _until_exited(
+            app, cleanups, "Discard and quit to reach the approved shutdown"
+        )
+    assert cleanups == [True]
+    assert app.return_code == 0
+    assert choices_after_approval == [], (
+        "the shutdown that closed the Save-to-disk picker read as a cancel and "
+        "asked for the storage choice again"
+    )
+    assert artifact.stream.closed
+    assert artifact.stream.close_calls == 1
+    assert console._video._pending_console_video_artifacts() == {}
