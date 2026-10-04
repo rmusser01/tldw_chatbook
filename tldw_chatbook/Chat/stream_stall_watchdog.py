@@ -112,12 +112,9 @@ def first_token_timeout_seconds(
         if value is not None and not math.isfinite(value):
             value = None
     if value is None:
-        from tldw_chatbook.Chat.provider_readiness import (
-            KEYLESS_PROVIDER_KEYS,
-            provider_config_key,
-        )
+        from tldw_chatbook.Chat.provider_readiness import is_self_hosted_provider
 
-        local = provider_config_key(provider or "") in KEYLESS_PROVIDER_KEYS
+        local = is_self_hosted_provider(provider)
         value = DEFAULT_LOCAL_FIRST_TOKEN_TIMEOUT_SECONDS if local else stall_timeout
     return max(float(value), float(stall_timeout))
 

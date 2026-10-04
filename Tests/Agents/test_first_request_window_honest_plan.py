@@ -77,14 +77,16 @@ def _plan(
     *,
     max_tokens: int = 4096,
     message: str = "Reply with just: hi",
+    provider: str = "llama_cpp",
+    model: str = _MODEL,
 ):
     registry = ToolCatalogRegistry()
     registry.register_provider(_BuiltinLikeProvider())
     allowed = tuple(entry.name for entry in registry.list_catalog())
     resolution = SimpleNamespace(
-        model=_MODEL,
-        execution_key="llama_cpp",
-        provider="llama_cpp",
+        model=model,
+        execution_key=provider,
+        provider=provider,
         max_tokens=max_tokens,
         context_window=window,
     )
@@ -104,7 +106,7 @@ def _plan(
         scratch_root=None,
         scratch_lease=None,
         resolution=resolution,
-        fallback_model=_MODEL,
+        fallback_model=model,
         session_system_prompt=_SESSION_PROMPT,
         native_tools=False,
         turn_skill_bindings=(),
@@ -126,11 +128,19 @@ def _system_content(plan) -> str:
     return f"{prompt}\n\n{protocol}" if protocol else prompt
 
 
-def test_an_unverified_window_never_licenses_the_full_agent_preamble() -> None:
+@pytest.mark.parametrize(
+    "provider", ["llama_cpp", "custom-openai-api", "custom-hosted", "ollama"]
+)
+def test_an_unverified_window_never_licenses_the_full_agent_preamble(provider) -> None:
     """The shipped first-run shape: llama.cpp, a model no catalog knows, the
-    32,000-token application fallback, max_tokens 4,096."""
+    32,000-token application fallback, max_tokens 4,096. A Custom
+    OpenAI-compatible endpoint (the handler key, or the engine's
+    ``custom-hosted``) is self-hosted too."""
 
-    plan = _plan(ContextWindowResolution(32000, "application fallback", False))
+    plan = _plan(
+        ContextWindowResolution(32000, "application fallback", False),
+        provider=provider,
+    )
 
     content = _system_content(plan)
     # A llama-server started with -c 4096 must be able to take it with room
@@ -195,4 +205,38 @@ def test_a_long_message_to_an_unverified_window_is_not_refused_by_the_planner() 
 
     assert plan.schemas.runtime_schemas == ()
     assert plan.schemas.active_schemas == ()
+    assert plan.schemas.request_fits
+
+
+@pytest.mark.parametrize(
+    ("provider", "model", "tokens", "source"),
+    [
+        # Review round 1 (F1): the live Anthropic run used claude-sonnet-5-5,
+        # which no catalog row names -- a provider fallback of 200,000.
+        ("anthropic", "claude-sonnet-5-5", 200_000, "provider fallback"),
+        ("google", "gemini-9-pro", 30_720, "provider fallback"),
+        # A hosted provider with no fallback row lands on the application
+        # default; the base planned that as 32,000 too.
+        ("deepseek", "deepseek-chat-v9", 32_000, "application fallback"),
+    ],
+)
+def test_a_hosted_model_outside_the_catalog_keeps_its_tools_on_the_first_send(
+    provider, model, tokens, source
+) -> None:
+    """The 4,096-token guess is for a self-hosted server whose ``-c`` nobody
+    read. A hosted model the catalog has not caught up with is not a small
+    local server: planning it as 4,096 tokens removed every agent tool from
+    its first send, and later sends got them back once a probe verified the
+    window. It is planned against the provider's own window, as before."""
+
+    plan = _plan(
+        ContextWindowResolution(tokens, source, False),
+        provider=provider,
+        model=model,
+    )
+
+    names = {schema.name for schema in plan.schemas.runtime_schemas} | {
+        schema.name for schema in plan.schemas.active_schemas
+    }
+    assert "spawn_subagent" in names, sorted(names)
     assert plan.schemas.request_fits

@@ -1004,7 +1004,9 @@ def build_first_request_schema_plan(
 
         # TASK-34100.5 AC#6: plan against the send's own window when known.
         unclamped = config
-        planned = planning_window(context_window, config.response_reserve_tokens)
+        planned = planning_window(
+            context_window, config.response_reserve_tokens, provider=api_endpoint
+        )
         if planned is not None:
             context_limit = planned[0]
             config = dataclasses.replace(config, response_reserve_tokens=planned[1])
