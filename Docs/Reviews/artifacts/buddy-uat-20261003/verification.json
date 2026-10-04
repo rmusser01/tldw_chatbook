@@ -1,7 +1,7 @@
 {
   "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
   "branch": "codex/chatbook-buddy-uat",
-  "verification_status": "Four scoped Chatbook product repairs and the remaining command/workspace/fresh-upgrade qualification verified; native/human audio acceptance remains open.",
+  "verification_status": "Four scoped Chatbook product repairs, command/workspace/fresh-upgrade and realtime/audio harness qualification verified; native/human/live OpenAI acceptance remains open.",
   "production_and_test_sha256": {
     "tldw_chatbook/UI/Screens/chat_screen.py": "958552eeec74477bbc76b2891aa9239d9f8ac9a80fc5719e59d8a062a0856d54",
     "tldw_chatbook/UI/Screens/home_screen.py": "0c1cca82be1076cc2e48582742429fb2f4445c539dec8005927ba9ec708352c2",
@@ -18,7 +18,10 @@
     "Tests/UI/test_home_console_resume.py": "59a5a46393e5afa351944daedd2e300a1fd2508d6c857264ed2c3ed5bea329d5",
     "Tests/Persona_Buddy/test_buddy_interaction_config_projection.py": "7c7d38ea0369f9265be13a878ba4d76e09aaad9d94963f23c5f927fb612fe408",
     "Tests/UI/test_console_shutdown_recompose.py": "215676257339a0bffdd20420e77efb6ed79b678f128a88846d0b9e2c1e7e039a",
-    "Tests/UI/test_buddy_conversation_modal.py": "384b4bc05d1642c0043bf057ff11a0b5f7d0282b2b42486fbb95f0a45dc8232a"
+    "Tests/UI/test_buddy_conversation_modal.py": "384b4bc05d1642c0043bf057ff11a0b5f7d0282b2b42486fbb95f0a45dc8232a",
+    "Tests/UI/test_console_realtime_wiring.py": "dcda34ca065a6a1097279726df7a2110ca1f39590737534760e5c2ff60d78940",
+    "Tests/UI/test_console_realtime_controller.py": "254e78524f30c742af36a6198960ac33d4046d15d804b135ab1c6e9ce8153c7a",
+    "Tests/LLM_Calls/test_openai_realtime_session.py": "7eb8ce27ad40171abb65ec497f0fcfc9dfe200fa258afa96b8466bab0a5040c3"
   },
   "earlier_two_repairs_source_and_test_sha256": {
     "tldw_chatbook/UI/Screens/chat_screen.py": "6bb090345cd04d7a81376b96687ea295544287dffa5a4cce357c8b13dd040cbb",
@@ -48,7 +51,9 @@
     "buddy-final-workspace-binding.png": "8587b9dcd88bce962985807181342de5f4f9f50c2204b1cc1228691009920a36",
     "buddy-final-workspace-inbox.png": "a4becda92cf6647a80e4a8ccc1b08f34036d9551993d0bed379ee0a3dcbe5c74",
     "buddy-workspace-detour-draft.jpg": "5d02f9089f3170a4e5ad33403c2d1716643994b38659f5af40a701bb7e071e2f",
-    "buddy-visible-qualified.jpg": "d38aa0d5a33438cb42dbe06e5724b66b6333314be9ebbc15b87dd94f5526cfcd"
+    "buddy-visible-qualified.jpg": "d38aa0d5a33438cb42dbe06e5724b66b6333314be9ebbc15b87dd94f5526cfcd",
+    "Docs/Reviews/artifacts/buddy-uat-20261003/buddy-realtime-preview-ready.png": "e1389d5a3f6e35a8b11b2239121ead58e2f365ac55d397b22a222fa65cef383f",
+    "Docs/Reviews/artifacts/buddy-uat-20261003/buddy-realtime-cold-conversation.png": "dd0d1f0af72937dbca01af6358bcff65b59a642dc303d0fe5071c857a57e57df"
   },
   "screenshot_attribution": {
     "earlier_two_repairs": "The seven original PNGs qualify the earlier Home/config repair stage. They are not attributed to later motion, cold management or lifecycle source changes.",
@@ -71,7 +76,8 @@
     "port": 18770,
     "normal_profile_used": false,
     "physical_microphone_opened": false,
-    "provider_requests_sent": false
+    "provider_requests_sent": false,
+    "normal_config_metadata_read_for_credential_preflight": true
   },
   "targeted_runs": {
     "earlier_two_repairs": {
@@ -219,8 +225,10 @@
     "unique_passing_checks": 64,
     "composition": "63 passed in final_combined; corrected queued-remount outcome passed separately. The combined failure was an over-specific test assertion expecting empty mounts instead of no mount calls. No product source changed after that run.",
     "workspace_command_checks": 89,
-    "total_unique_passing_checks": 153,
-    "workspace_command_composition": "89 passed in one final targeted run. Its names do not overlap the64 four-repair checks. The combined total153 is an aggregate of targeted runs, not one full-suite run. Product6 source hashes stayed identical throughout command harness repair."
+    "total_unique_passing_checks": 334,
+    "workspace_command_composition": "89 passed in one final targeted run. Its names do not overlap the64 four-repair checks. The combined total153 is an aggregate of targeted runs, not one full-suite run. Product6 source hashes stayed identical throughout command harness repair.",
+    "realtime_checks": 181,
+    "realtime_composition": "181 unique cases passed in one final targeted run with no warnings, disjoint from the earlier153. Total334 aggregates scoped runs on identical product hashes."
   },
   "static": {
     "base": "01a2020981c6197e5cd9945e5287567ad977edfe",
@@ -257,7 +265,7 @@
   "existing_worker_guard_base_control_sha256": "aa55896bf7e5c2ce0299a1e318eaed61d9aa3ad23e8b8fff99f71b190d0498d3",
   "coverage_limits": [
     "No full test sweep",
-    "No normal profile access",
+    "App/runtime tests use isolated profiles; realtime preflight read normal config credential-field presence and fingerprint only, without writes.",
     "No physical Terminal UAT",
     "No physical microphone/playback or configured OpenAI realtime acceptance",
     "Unsent draft preservation covers navigation and modal dismissal, not process exit",
@@ -388,5 +396,9 @@
         }
       }
     }
+  },
+  "realtime_audio_supplement": {
+    "path": "realtime-audio-verification.json",
+    "sha256": "ffe238f048db362e35bc367036752c4e686197199c83cd73d90e5409a040ffad"
   }
 }

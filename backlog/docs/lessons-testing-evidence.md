@@ -18360,3 +18360,16 @@ test ASTs restore after removing only scoped harness/cleanup substitutions.
 **PR #2953, 2026-10-04.** On identical sources, Linux credential polling measured 10.125 os.open/tick against a 6.75 ceiling, then its same-head retry passed at 6.75 in both variants. A local call-through audit attributed every traced idle open to storage_admission._local_pause_requested / Admission.pause_requested on executor threads: each native backup-pause probe opened 37 descriptors on that private macOS path, and two or three probes landed in the idle phase. Those are real guard costs, not additional credential-poll admissions. No stack was captured in the failing Linux job, so the local attribution does not prove that job's exact cause.
 
 Before attributing a timing-dependent storage count to the UI callback, trace all threads and retain the failed census, successful repeat and exact source identities. Keep actual native pause/admission checks and the existing ceilings intact; an observed passing repeat is not a universal flake repair.
+
+## TASK-32108.6: close the backing app stores after a Console harness exits
+
+The Buddy realtime group passed 181 cases but grew 697 descriptors. Its UI cases
+already ran per-test GC. Each lightweight ConsoleHarness mounted a screen backed
+by a separate, unmounted TldwCli, so host teardown left that app's strongly retained
+SQLite stores open. A native per-case census showed 13 new descriptors per mounted
+case and none from the protocol-only case. Tracking both direct factory calls and
+_ready_host's imported factory alias, draining the app Console runtime, and closing
+its four stores on their creating UI thread made the four-case census stable and
+left no SQLite file records. The final 181-case run passed without warnings and
+with total session growth of three descriptors. Keep the owner's close routes and
+leak sentinel; GC cannot retire these retained native handles.

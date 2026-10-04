@@ -5,7 +5,7 @@ status: In Progress
 assignee:
 - '@codex'
 created_date: 2026-09-09 04:32
-updated_date: 2026-10-04 03:30
+updated_date: 2026-10-04 07:01
 labels: []
 dependencies: []
 priority: high
@@ -77,4 +77,8 @@ PR2910 Qodo coverage finding on b6860cf13f was reproduced: serial/xdist child-on
 Together with the 64 four-repair checks, 153 unique targeted checks pass on final product hashes. This is an aggregate of scoped runs. Updated report and sanitized receipts: Docs/Reviews/2026-10-03-chatbook-buddy-uat.md.
 
 Keep In Progress per the native-integration plan. Native Terminal, physical microphone/playback and application-configured OpenAI realtime acceptance remain open under TASK-31585. The provider/model/profile preference question is pending. Computer Use policy previously rejected native Terminal selection; no workaround was attempted.
+
+2026-10-03 realtime qualification continuation: TASK-32108.6 completed the admitted-profile, numeric-loopback and storage teardown repairs. The final 181 targeted cases passed in 340.89 seconds without warnings; descriptor growth fell from 697 to 3. All 338 existing assertions and all 74 original wiring test bodies are unchanged. Scoped static checks found zero introduced Ruff diagnostics, and independent review found no actionable issue.
+
+The new checks and the previous 153 have no duplicate test identities: 334 unique targeted checks pass on the same six product hashes. The isolated supported Chatbook preview was restored with Buddy visible and saved A history confirmed. Normal config metadata and its byte fingerprint were read only; its bytes stayed unchanged. OpenAI settings and the selected/common environment variable provide no key. Native Terminal, human microphone/playback and application-configured live OpenAI acceptance remain open. Updated the report and realtime supplement under Docs/Reviews/artifacts/buddy-uat-20261003/.
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->

@@ -9,7 +9,7 @@ Four scoped Chatbook repairs are verified on `codex/chatbook-buddy-uat`, based o
 3. **Opening management first after restart marked the saved owner unavailable.** Management recognizes only its already-bound saved local owner through metadata without loading its transcript or constructing execution services. Presentation-only Apply preserves that binding. Missing, deleted, remote, temporary and repurposed targets remain unavailable; Persona changes still require a live target.
 4. **Resume presentation and queued rebuilds could outlive shutdown.** Application shutdown cancels and drains only `console-sync` and `console-resume-navigation-startup` before runtime disposal. The retained shutdown task fences rollback sync, focus, startup and re-arming. Direct shutdown also sets Textual's existing exit flag, matching ordinary Quit and preventing queued rebuilds from mounting after child message pumps stop. Accepted execution keeps its existing runtime disposal policy.
 
-These repair existing behavior under [ADR-139](../../backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md), [ADR-147](../../backlog/decisions/147-conversation-archive-and-exact-resume.md), and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md). No new schema, provider contract or visual token is introduced. Tasks: TASK-32108.1–32108.4. Command qualification harness repair: TASK-32108.5.
+These repair existing behavior under [ADR-139](../../backlog/decisions/139-independent-buddy-conversation-and-workspace-bindings.md), [ADR-147](../../backlog/decisions/147-conversation-archive-and-exact-resume.md), and [ADR-094](../../backlog/decisions/094-console-turn-lifetime-and-navigation-boundary.md). No new schema, provider contract or visual token is introduced. Tasks: TASK-32108.1–32108.4. Command qualification harness repair: TASK-32108.5. Realtime profile and storage teardown repair: TASK-32108.6.
 
 ## Rendered Chatbook verification
 
@@ -59,6 +59,26 @@ A separate same-process browser check returned from the workspace binding to sav
 
 These 89 checks and the 64 four-repair checks have no duplicate test identities: **153 unique passing targeted checks on the final product sources**, aggregated across recorded runs. Independent review found no actionable issue in the profile/mode/readiness repairs. The final test module passes Ruff, formatting, compile and whitespace checks. Six separate `command-*.svg` exports record headless fresh/upgrade Static, Dynamic and inbox views; their original/export and repository hashes are recorded separately.
 
+## Realtime and audio qualification
+
+**All 181 focused checks passed in 340.89 seconds with no warnings.** They cover the complete mounted realtime wiring module, plain controllers, microphone tap, loop state machine and production protocol adapter against an owned numeric-loopback WebSocket server. Buddy generation replacement, screen replacement, first-word buffering, late transcripts, barge-in, reconnect-once, playback-end microphone gating, stale completion events and exit cleanup are exercised with synthetic audio and injected devices.
+
+TASK-32108.6 repairs test setup and teardown. Wiring, controller and protocol harnesses keep their collection-time admitted profile. The protocol transport also reads real TLS config, so it needs the same profile lifetime. Its network marker now permits only numeric loopback. All 338 existing assertions and all 74 wiring test bodies remain unchanged.
+
+The initial 109 checks passed 68 and failed 41: seven config-source mismatches and 34 OS sandbox refusals to bind loopback. Allowing the local server exposed 34 more config-source mismatches through TLS settings while the other 75 passed. After profile repairs the expanded group passed 181, but warned of 697 extra descriptors. A native per-case census found SQLite stores held by the unmounted backing application after its lightweight Console host exited. The new local fixture drains the app Console runtime, then closes its evaluation, workspace, library collections and subscriptions stores on their creating UI thread. The four-case census stabilized at 17 descriptors and left no SQLite file records open. The final 181-check session grew from 13 to 16 descriptors; the existing leak detector and threshold were preserved.
+
+The three test modules compile and pass formatting checks. Ruff reports the same 20 legacy diagnostics as their prior source and zero introduced diagnostics. Whitespace checks pass. Independent review found no actionable issue and verified the final executed hashes. Product source is unchanged from the four repairs.
+
+These 181 test identities are disjoint from the previous 153: **334 unique passing targeted checks** now qualify the final product sources, aggregated across recorded runs. This is scoped automated qualification. Human microphone/playback and native Terminal acceptance remain open.
+
+Credential preflight read only field presence and the byte fingerprint of the normal config. Its fingerprint stayed unchanged. There is no OpenAI key in modern/legacy settings or the selected/common environment variable. The preview and tests continue to use isolated profiles; no credentials were copied or saved.
+
+The prior preview process and tab had closed. A fresh supported Chatbook runtime on port 18770 restored Buddy's saved artwork and placement. Opening Buddy selected saved A and showed its original history; closing it returned to Home with Buddy visible. Its six production hashes match the verified sources. The preview is retained for the next UAT step.
+
+![Buddy visible in the restored Chatbook preview](artifacts/buddy-uat-20261003/buddy-realtime-preview-ready.png)
+
+[Realtime tests, descriptor census, credential preflight and capture receipts](artifacts/buddy-uat-20261003/realtime-audio-verification.json) retain the failed attempts separately from the final pass. Raw protocol/audio logs and credential values are excluded.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 remains In Progress: native Terminal interaction, physical microphone/playback and application-configured OpenAI realtime acceptance remain open under TASK-31585. Server React Buddy success contributes no Chatbook acceptance evidence.
@@ -72,4 +92,4 @@ These 89 checks and the 64 four-repair checks have no duplicate test identities:
 
 [Source, screenshot and verification hashes](artifacts/buddy-uat-20261003/verification.json) record final sources, earlier-stage attribution, targeted run counts and local log hashes. Screenshots contain synthetic fixtures. Config contents, bootstrap nonce, credentials, raw audio and raw application logs are excluded.
 
-Raw attempts remain under `/private/tmp/chatbook-*20261003*`. Final stages: `chatbook-buddy-final-repairs`, `chatbook-queued-shutdown-final`, `chatbook-buddy-final-static`, `chatbook-worker-guard-base-control`, and `chatbook-buddy-workspace-command-qualified` (all with the 20261003 suffix).
+Raw attempts remain under `/private/tmp/chatbook-*20261003*`. Final realtime stage: `chatbook-buddy-realtime-clean`. Final earlier stages: `chatbook-buddy-final-repairs`, `chatbook-queued-shutdown-final`, `chatbook-buddy-final-static`, `chatbook-worker-guard-base-control`, and `chatbook-buddy-workspace-command-qualified` (all with the 20261003 suffix).
