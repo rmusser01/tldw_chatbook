@@ -769,3 +769,147 @@ CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
         row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary"
     )
 )
+
+
+# TASK-34355: exact v76 additions captured from a fresh installed constructor.
+# Historical v75 SQL stays byte-for-byte available for restricted migration.
+CHACHANOTES_V75_SCHEMA = next(row[2] for row in CORE_SCHEMAS if row[0] == "db.chachanotes.primary")
+CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA = CHACHANOTES_DICTIONARY_UPDATE_SCHEMA
+CHACHANOTES_V76_ADDITIONS = ('CREATE INDEX idx_machine_followup_receipts_conversation ON '
+ 'console_machine_followup_receipts(conversation_id)',
+ 'CREATE INDEX idx_response_rule_assessments_source ON '
+ 'console_response_rule_assessments(conversation_id, message_id)',
+ 'CREATE INDEX idx_response_rule_drafts_scope ON console_response_rule_drafts(scope_kind, '
+ 'scope_id)',
+ 'CREATE TABLE console_machine_followup_receipts (\n'
+ '    operation_id TEXT NOT NULL CHECK(length(operation_id) > 0),\n'
+ '    parent_turn_id TEXT NOT NULL CHECK(length(parent_turn_id) > 0),\n'
+ '    settlement_id TEXT NOT NULL CHECK(length(settlement_id) > 0),\n'
+ '    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    parent_assistant_message_id TEXT NOT NULL REFERENCES messages(id) ON DELETE CASCADE,\n'
+ '    assistant_message_id TEXT NOT NULL,\n'
+ '    chain_id TEXT NOT NULL CHECK(length(chain_id) > 0),\n'
+ '    admitted_turns INTEGER NOT NULL CHECK(admitted_turns BETWEEN 1 AND 3),\n'
+ '    native_turns INTEGER NOT NULL CHECK(native_turns BETWEEN 0 AND 2 AND native_turns <= '
+ 'admitted_turns),\n'
+ '    contributors_json TEXT NOT NULL CHECK(json_valid(contributors_json) AND '
+ 'length(contributors_json) <= 64),\n'
+ '    PRIMARY KEY(operation_id, parent_turn_id, settlement_id)\n'
+ ')',
+ 'CREATE TABLE console_response_rule_assessments (\n'
+ '    assessment_id TEXT PRIMARY KEY NOT NULL,\n'
+ '    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n'
+ "    state TEXT NOT NULL CHECK(state IN ('pending','completed','cancelled','stale')),\n"
+ '    assessment_json TEXT NOT NULL CHECK(length(CAST(assessment_json AS BLOB)) <= 65536 AND '
+ 'json_valid(assessment_json))\n'
+ ')',
+ 'CREATE TABLE console_response_rule_bindings (\n'
+ "    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('chat','workspace','global')),\n"
+ '    scope_id TEXT NOT NULL CHECK(length(scope_id) > 0),\n'
+ '    rule_id TEXT NOT NULL CHECK(length(rule_id) > 0),\n'
+ '    revision INTEGER,\n'
+ "    state TEXT NOT NULL CHECK(state IN ('enabled','disabled','excluded')),\n"
+ '    binding_revision INTEGER NOT NULL CHECK(binding_revision > 0),\n'
+ '    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    PRIMARY KEY(scope_kind, scope_id, rule_id),\n'
+ '    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, '
+ 'revision),\n'
+ "    CHECK(state = 'excluded' OR revision > 0),\n"
+ "    CHECK(conversation_id IS NULL OR (scope_kind = 'chat' AND scope_id = conversation_id))\n"
+ ')',
+ 'CREATE TABLE console_response_rule_drafts (\n'
+ '    draft_id TEXT PRIMARY KEY NOT NULL,\n'
+ "    scope_kind TEXT NOT NULL CHECK(scope_kind IN ('chat','workspace','global')),\n"
+ '    scope_id TEXT NOT NULL,\n'
+ '    rule_id TEXT,\n'
+ '    revision INTEGER,\n'
+ '    source_json TEXT NOT NULL CHECK(length(CAST(source_json AS BLOB)) <= 8192 AND '
+ 'json_valid(source_json)),\n'
+ '    result_json TEXT NOT NULL CHECK(length(CAST(result_json AS BLOB)) <= 65536 AND '
+ 'json_valid(result_json)),\n'
+ '    complaint TEXT NOT NULL CHECK(length(CAST(complaint AS BLOB)) <= 8192),\n'
+ '    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n'
+ '    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) '
+ 'ON DELETE CASCADE\n'
+ ')',
+ 'CREATE TABLE console_response_rule_fixtures (\n'
+ '    rule_id TEXT NOT NULL,\n'
+ '    revision INTEGER NOT NULL,\n'
+ '    case_id TEXT NOT NULL,\n'
+ '    case_type TEXT NOT NULL CHECK(case_type IN '
+ "('recorded_violation','synthetic_violation','synthetic_correction','synthetic_acceptable')),\n"
+ '    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n'
+ '    message_version INTEGER NOT NULL CHECK(message_version > 0),\n'
+ '    input_json TEXT CHECK(input_json IS NULL OR (length(CAST(input_json AS BLOB)) <= 65536 AND '
+ 'json_valid(input_json))),\n'
+ '    PRIMARY KEY(rule_id, revision, case_id),\n'
+ '    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) '
+ 'ON DELETE CASCADE,\n'
+ "    CHECK((case_type = 'recorded_violation' AND input_json IS NULL) OR (case_type != "
+ "'recorded_violation' AND input_json IS NOT NULL))\n"
+ ')',
+ 'CREATE TABLE console_response_rule_revisions (\n'
+ '    rule_id TEXT NOT NULL CHECK(length(rule_id) > 0),\n'
+ '    revision INTEGER NOT NULL CHECK(revision > 0),\n'
+ '    definition_json TEXT NOT NULL CHECK(length(CAST(definition_json AS BLOB)) <= 8192 AND '
+ 'json_valid(definition_json)),\n'
+ '    schema_version INTEGER NOT NULL CHECK(schema_version = 1),\n'
+ '    origin_json TEXT NOT NULL CHECK(length(CAST(origin_json AS BLOB)) <= 8192 AND '
+ 'json_valid(origin_json)),\n'
+ '    created_at TEXT NOT NULL,\n'
+ '    PRIMARY KEY(rule_id, revision)\n'
+ ')',
+ 'CREATE TABLE console_response_rule_validations (\n'
+ '    rule_id TEXT NOT NULL,\n'
+ '    revision INTEGER NOT NULL,\n'
+ '    validation_json TEXT NOT NULL CHECK(length(CAST(validation_json AS BLOB)) <= 32768 AND '
+ 'json_valid(validation_json)),\n'
+ '    conversation_id TEXT REFERENCES conversations(id) ON DELETE CASCADE,\n'
+ '    message_id TEXT REFERENCES messages(id) ON DELETE CASCADE,\n'
+ '    message_version INTEGER NOT NULL CHECK(message_version > 0),\n'
+ '    PRIMARY KEY(rule_id, revision),\n'
+ '    FOREIGN KEY(rule_id, revision) REFERENCES console_response_rule_revisions(rule_id, revision) '
+ 'ON DELETE CASCADE\n'
+ ')',
+ 'CREATE TRIGGER console_response_rules_conversation_cleanup\n'
+ 'AFTER DELETE ON conversations BEGIN\n'
+ '    DELETE FROM console_response_rule_revisions\n'
+ '    WHERE NOT EXISTS (\n'
+ '        SELECT 1 FROM console_response_rule_bindings b\n'
+ '        WHERE b.rule_id = console_response_rule_revisions.rule_id\n'
+ '          AND b.revision = console_response_rule_revisions.revision\n'
+ '    ) AND NOT EXISTS (\n'
+ '        SELECT 1 FROM console_response_rule_drafts d\n'
+ '        WHERE d.rule_id = console_response_rule_revisions.rule_id\n'
+ '          AND d.revision = console_response_rule_revisions.revision\n'
+ '    );\n'
+ 'END')
+
+
+def _installed_schema_order(sql: str) -> tuple[str, str]:
+    # Only immutable installed constants enter this ordering function. SQL bodies
+    # are never normalized and archive-supplied SQL never enters this catalog.
+    import re
+    match = re.match(r"CREATE (?:(?:UNIQUE|VIRTUAL) )?(INDEX|TABLE|TRIGGER|VIEW)\s+([^\s(]+)", sql)
+    if match is None:
+        raise ValueError("installed_schema_declaration_invalid")
+    return match[1].lower(), match[2].strip("\"'`[]")
+
+
+CHACHANOTES_V76_SCHEMA = tuple(sorted(CHACHANOTES_V75_SCHEMA + CHACHANOTES_V76_ADDITIONS, key=_installed_schema_order))
+CORE_SCHEMAS = tuple(
+    (owner, 76, CHACHANOTES_V76_SCHEMA) if owner == "db.chachanotes.primary" else (owner, version, sql)
+    for owner, version, sql in CORE_SCHEMAS
+)
+CHACHANOTES_DICTIONARY_UPDATE_SCHEMA = tuple(
+    _CHAT_DICTIONARIES_UPDATED_TRIGGER if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER else sql
+    for sql in CHACHANOTES_V76_SCHEMA
+)
+CHACHANOTES_V75_TO_V76_SQL = tuple(
+    sql for sql in CHACHANOTES_V76_ADDITIONS if sql.startswith("CREATE TABLE")
+) + tuple(
+    sql for sql in CHACHANOTES_V76_ADDITIONS if not sql.startswith("CREATE TABLE")
+) + ("UPDATE db_schema_version SET version=76 WHERE schema_name='rag_char_chat_schema' AND version=75",)

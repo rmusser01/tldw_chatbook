@@ -38,6 +38,7 @@ UNSPECIFIED_ASSISTANT = object()
 _HYDRATION_NOT_PREPARED = object()
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Agents.fleet_messages import MessageStore
     from tldw_chatbook.Canvas.staging import (
         CanvasPromotionContribution,
@@ -1666,6 +1667,7 @@ class ConsoleChatStore:
             [str, ConsoleSessionSettings | None], ConsoleAssistantStartup
         ] | None = None,
         on_assistant_default_notice: Callable[[str], None] | None = None,
+        response_rule_store: "ResponseRuleStore | None" = None,
     ) -> None:
         """Initialize the Console chat store.
 
@@ -1709,6 +1711,9 @@ class ConsoleChatStore:
                 a native session activation or active-branch transition.
         """
         self.persistence = persistence
+        self.response_rule_store: ResponseRuleStore | None = None
+        if response_rule_store is not None:
+            self.bind_response_rule_store(response_rule_store)
         self._assistant_defaults_provider = assistant_defaults_provider
         self._on_assistant_default_notice = on_assistant_default_notice
         self.canvas_promotion_participant = canvas_promotion_participant
@@ -2310,6 +2315,8 @@ class ConsoleChatStore:
         )
         if ephemeral and self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.activate_session(session.id)
+        if ephemeral and self.response_rule_store is not None:
+            self.response_rule_store.register_temporary(session.id)
         if (
             ephemeral
             and self.canvas_turn_controller is not None
@@ -4958,6 +4965,8 @@ class ConsoleChatStore:
     def _purge_session_runtime_state(self, session_id: str) -> None:
         """Delete one session's exact process-local ownership without DB writes."""
         self._session_or_raise(session_id)
+        if self.response_rule_store is not None:
+            self.response_rule_store.discard_temporary(session_id)
 
         if self.canvas_promotion_participant is not None:
             self.canvas_promotion_participant.discard_session(session_id)
@@ -19150,6 +19159,7 @@ class ConsoleChatStore:
             context_policy_overrides=session.context_policy_overrides,
             contributions=contributions,
             trace_boundary=session.fork_trace_boundary,
+            **({"rule_adoption_session_id": session_id} if self.response_rule_store is not None else {}),
         )
 
         # The transaction has returned and SQLite can no longer roll it back.
@@ -21536,6 +21546,25 @@ class ConsoleChatStore:
         payload_hash = envelope.get("payload_hash")
         if isinstance(payload_hash, str) and payload_hash:
             self._sync_v2_message_versions[stable_key] = payload_hash
+
+    def bind_response_rule_store(self, rules: "ResponseRuleStore") -> None:
+        """Bind one app-owned rules service sharing the exact persistence DB."""
+        from .response_rules.store import ResponseRuleStore
+
+        binder = getattr(self.persistence, "bind_response_rule_store", None)
+        if (
+            not isinstance(rules, ResponseRuleStore)
+            or rules.repository.db is not getattr(self.persistence, "db", None)
+            or not callable(binder)
+        ):
+            raise ValueError("response_rules_persistence_owner_mismatch")
+        if self.response_rule_store is not None and self.response_rule_store is not rules:
+            raise ValueError("response_rules_owner_already_bound")
+        binder(rules)
+        self.response_rule_store = rules
+        for session in getattr(self, "_sessions", {}).values():
+            if session.ephemeral:
+                rules.register_temporary(session.id)
 
     def _session_or_raise(self, session_id: str) -> ConsoleChatSession:
         try:

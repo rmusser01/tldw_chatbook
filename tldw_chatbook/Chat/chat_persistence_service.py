@@ -79,6 +79,7 @@ from tldw_chatbook.Chat.console_trace_repository import (
 )
 from tldw_chatbook.Chat.console_semantic_revision import SemanticRevisionCoordinator
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.response_rules.store import ResponseRuleStore
     from tldw_chatbook.Chat.console_voice_promotion import (
         CompletedVoicePairCommit,
         ResolvedVoicePromotionDestination,
@@ -253,6 +254,7 @@ class ChatPersistenceService:
         citation_repository: CitationTraceRepository | None = None,
     ):
         self.db = db
+        self.response_rule_store: "ResponseRuleStore | None" = None
         self.workspace_registry = workspace_registry
         self.citation_repository = citation_repository
         self.context_repository = ConsoleContextRepository(db)
@@ -1624,6 +1626,16 @@ class ChatPersistenceService:
                 acceptance,
             )
 
+    def bind_response_rule_store(self, rules: "ResponseRuleStore") -> None:
+        """Use the same local rule owner for adoption and source cleanup."""
+        from .response_rules.store import ResponseRuleStore
+
+        if not isinstance(rules, ResponseRuleStore) or rules.repository.db is not self.db:
+            raise ValueError("response_rules_persistence_owner_mismatch")
+        if self.response_rule_store is not None and self.response_rule_store is not rules:
+            raise ValueError("response_rules_owner_already_bound")
+        self.response_rule_store = rules
+
     def promote_console_conversation_bundle(
         self,
         *,
@@ -1638,6 +1650,7 @@ class ChatPersistenceService:
         context_policy_overrides: ConsoleContextPolicyOverrides | None = None,
         contributions: Sequence[ConsolePromotionTransactionContribution] = (),
         trace_boundary: TraceForkBoundary | None = None,
+        rule_adoption_session_id: str | None = None,
     ) -> ConsoleLibraryPolicySnapshot:
         """Commit one temporary Console transcript and all Task-7 sidecars."""
         self.validate_workspace_target(**conversation_kwargs)
@@ -1699,6 +1712,13 @@ class ChatPersistenceService:
                 self.db.set_conversation_console_project_context(
                     conversation_id,
                     project_context_json,
+                )
+            if rule_adoption_session_id is not None:
+                if self.response_rule_store is None:
+                    raise RuntimeError("response_rules_owner_unbound")
+                self.response_rule_store.adopt_temporary(
+                    rule_adoption_session_id, conversation_id,
+                    native_message_ids, cursor,
                 )
             if contributions:
                 exact_native_message_ids = MappingProxyType(dict(native_message_ids))

@@ -90,6 +90,7 @@ class _Restrictions:
         self.steps = 0
         self.migrating = False
         self.migration_owner = None
+        self.preparing_response_rules = False
         self.canvas_schema = False
         self.changing_schema_trust = False
         self.reading_fts_metadata = False
@@ -138,6 +139,7 @@ class _Restrictions:
                 "glob",
                 "match",
                 "hex",
+                "json_valid",
             }
             if self.canvas_schema:
                 allowed.add("canvas_revision_payload_valid")
@@ -175,6 +177,14 @@ class _Restrictions:
             # SQLite 3.37 compiles, then discards, this declaration UPDATE
             # while connecting an existing FTS5 table for table_xinfo.
             return sqlite3.SQLITE_OK
+        if self.preparing_response_rules:
+            if action == sqlite3.SQLITE_TRANSACTION:
+                return sqlite3.SQLITE_OK
+            if action == sqlite3.SQLITE_UPDATE and (
+                first == "console_response_rule_bindings" and second in {"state", "binding_revision"}
+                or first == "console_response_rule_assessments" and second in {"state", "assessment_json"}
+            ):
+                return sqlite3.SQLITE_OK
         if self.migrating:
             if action == sqlite3.SQLITE_TRANSACTION:
                 return sqlite3.SQLITE_OK
@@ -206,6 +216,28 @@ class _Restrictions:
                     and first in {"sqlite_master", "schema_version"}
                 )
                 if allowed:
+                    return sqlite3.SQLITE_OK
+            if self.migration_owner == "db.chachanotes.primary":
+                tables = {
+                    "console_response_rule_revisions", "console_response_rule_bindings",
+                    "console_response_rule_validations", "console_response_rule_drafts",
+                    "console_response_rule_fixtures", "console_response_rule_assessments",
+                    "console_machine_followup_receipts",
+                }
+                indexes = {
+                    "idx_response_rule_drafts_scope": "console_response_rule_drafts",
+                    "idx_response_rule_assessments_source": "console_response_rule_assessments",
+                    "idx_machine_followup_receipts_conversation": "console_machine_followup_receipts",
+                    **{f"sqlite_autoindex_{table}_1": table for table in tables},
+                }
+                if (
+                    action == sqlite3.SQLITE_CREATE_TABLE and first in tables
+                    or action == sqlite3.SQLITE_CREATE_TRIGGER and first == "console_response_rules_conversation_cleanup" and second == "conversations"
+                    or action == sqlite3.SQLITE_CREATE_INDEX and indexes.get(first) == second
+                    or action == sqlite3.SQLITE_REINDEX and first in indexes
+                    or action == sqlite3.SQLITE_INSERT and first == "sqlite_master"
+                    or action == sqlite3.SQLITE_UPDATE and first == "db_schema_version" and second == "version"
+                ):
                     return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
                 allowed = (
@@ -329,6 +361,8 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     )
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V75_SCHEMA,
         CORE_SCHEMAS,
     )
 
@@ -344,6 +378,8 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     frozen = (
         installed,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V75_SCHEMA,
+        CHACHANOTES_V75_DICTIONARY_UPDATE_SCHEMA,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
