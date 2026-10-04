@@ -5991,6 +5991,9 @@ class ConsoleAgentBridge:
         persona_policy_rules: tuple[Mapping[str, Any], ...] | None = None,
         profile_context_service: Any | None = None,
         personal_context_snapshot: ProfileContextSnapshot | None = None,
+        accepted_turn_id: str | None = None,
+        parent_budget_deadline: float | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
     ) -> tuple[str, RunOutcome]:
         replay = getattr(resolution, "reasoning_replay", None)
         if replay is not None and thinking_policy in {"include", "exclude"}:
@@ -7663,19 +7666,22 @@ class ConsoleAgentBridge:
             guard_tool_calls=guard_tool_calls,
             hooks_v2_engine=hooks_v2_engine,
             hooks_v2_session_id=session_id,
-            hooks_v2_turn_id=assistant_message_id,
+            hooks_v2_turn_id=accepted_turn_id or assistant_message_id,
+            on_primary_budget_settled=on_primary_budget_settled,
             # Standalone work has no plugin dependency graph.
             hooks_v2_required_handler_ids=lambda _run_id: (),
             hooks_v2_definition_requirements=(
-                lambda definition, messages: (
-                    hooks_v2_engine.native_plugins.requirements_for(
-                        definition, registry, messages
+                (
+                    lambda definition, messages: (
+                        hooks_v2_engine.native_plugins.requirements_for(
+                            definition, registry, messages
+                        )
                     )
                 )
-            )
-            if hooks_v2_engine is not None
-            and getattr(hooks_v2_engine, "native_plugins", None) is not None
-            else None,
+                if hooks_v2_engine is not None
+                and getattr(hooks_v2_engine, "native_plugins", None) is not None
+                else None
+            ),
             before_tool_dispatch=before_tool_dispatch,
             review_state_scope=review_state_scope,
             install_skill_tool=install_skill_tool,
@@ -7803,6 +7809,17 @@ class ConsoleAgentBridge:
             # is False for a never-started thread, so the close branch is
             # the one taken and no fd leaks.
             turn_lifeline.start(owner=execution_owner)
+            if parent_budget_deadline is not None:
+                wall = parent_budget_deadline - time.monotonic()
+                if wall <= 0:
+                    raise RuntimeError("native_parent_budget_exhausted")
+                config = dataclass_replace(
+                    config,
+                    budget=dataclass_replace(
+                        config.budget,
+                        max_wall_seconds=min(config.budget.max_wall_seconds, wall),
+                    ),
+                )
             run_id, outcome = service.run_turn(
                 execution_owner=execution_owner,
                 conversation_id=conversation_id,

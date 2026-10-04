@@ -146,6 +146,7 @@ class ResponseRuleBuilder:
         *,
         resolution: ConsoleProviderResolution,
         current: Callable[[], bool],
+        progress: Callable[[Literal["drafting", "testing"]], None] | None = None,
     ) -> RuleLearningResult:
         from tldw_chatbook.Chat.console_provider_gateway import (
             AuxiliaryCompletionRequest,
@@ -181,6 +182,8 @@ class ResponseRuleBuilder:
                         return replace(last, state="stale", reason="source_changed")
                     if self.clock() >= deadline:
                         return replace(last, reason="learning_timeout")
+                    if progress is not None:
+                        progress("drafting")
                     lease = self.helper_pool.try_acquire(
                         source, purpose="learning", deadline=deadline
                     )
@@ -238,6 +241,8 @@ class ResponseRuleBuilder:
                         )
                         for kind in CASE_TYPES
                     }
+                    if progress is not None:
+                        progress("testing")
                     last = await self._validate(
                         source,
                         drafted.candidate,
@@ -297,7 +302,20 @@ class ResponseRuleBuilder:
             if (
                 prior.detector_digest == candidate.detector_digest()
                 and prior.protocol_version == EVALUATOR_PROTOCOL_VERSION
-                and prior.source == source
+                and (
+                    prior.source.profile_id,
+                    prior.source.session_id,
+                    prior.source.conversation_id,
+                    prior.source.message_id,
+                    prior.source.message_version,
+                )
+                == (
+                    source.profile_id,
+                    source.session_id,
+                    source.conversation_id,
+                    source.message_id,
+                    source.message_version,
+                )
                 and prior.original_input_digest == inputs.evidence_digest()
                 and prior.fixture_digest
                 == digest_payload({key: asdict(value) for key, value in cases.items()})
@@ -315,6 +333,8 @@ class ResponseRuleBuilder:
                     prior,
                     candidate_digest=candidate.candidate_digest(),
                     case_results=checks,
+                    source=source,
+                    reused_validation_digest=digest_payload(asdict(prior)),
                     tested_at=self._now(),
                 )
                 try:

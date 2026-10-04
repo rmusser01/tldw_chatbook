@@ -78,6 +78,12 @@ class RuleHelperPool:
                 lease.cancel_acceptance("shutdown")
                 lease.release_unused()
 
+    def usage_purpose(self, usage_id: str) -> str | None:
+        """Read original attribution while physical settlement owns the lease."""
+        with self._lock:
+            lease = self._leases.get(usage_id)
+            return lease.purpose if lease is not None else None
+
     def cancel_session(self, session_id: str, reason: str) -> None:
         """Revoke a Chat's result authority without claiming its worker stopped."""
         with self._lock:

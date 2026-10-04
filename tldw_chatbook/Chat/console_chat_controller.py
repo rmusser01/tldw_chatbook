@@ -96,6 +96,10 @@ from tldw_chatbook.Chat.console_chat_models import (
 from tldw_chatbook.Chat.console_endpoint_provenance import (
     ConsoleEndpointProvenance,
 )
+from tldw_chatbook.Chat.response_rules.runtime import (
+    ResponseRuleRuntime,
+    checked_generation,
+)
 from tldw_chatbook.Chat.citation_repair import (
     REPAIR_ANSWER_BODY_UTF8_BYTES_MAX,
     CitationRepairContract,
@@ -4850,15 +4854,20 @@ class ConsoleChatController:
         turn_context_provider: "Callable[[str], ConsoleTurnConfigurationSnapshot] | None" = None,
         queued_staged_rider_provider: "Callable[[str], bool] | None" = None,
         provider_config: "Callable[[], Mapping[str, Any]] | None" = None,
-        confirm_project_instruction_dispatch: Callable[
-            [ProjectInstructionDispatchNotice], Literal["proceed", "cancel", "disable"]
-        ]
-        | None = None,
-        select_project_instruction_binding: Callable[
-            [str, tuple[ProjectInstructionBindingSelection, ...], str],
-            Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
-        ]
-        | None = None,
+        confirm_project_instruction_dispatch: (
+            Callable[
+                [ProjectInstructionDispatchNotice],
+                Literal["proceed", "cancel", "disable"],
+            ]
+            | None
+        ) = None,
+        select_project_instruction_binding: (
+            Callable[
+                [str, tuple[ProjectInstructionBindingSelection, ...], str],
+                Awaitable[tuple[Literal["select", "disable", "cancel"], str | None]],
+            ]
+            | None
+        ) = None,
         buddy_sink: "PersonaBuddyConsoleAdapter | None" = None,
         scratch_spaces: ConsoleScratchSpaceManager | None = None,
         activity_receipts: Any | None = None,
@@ -4869,9 +4878,12 @@ class ConsoleChatController:
         library_preparation_timeout: float = 5.0,
         ensure_run_hooks: "Callable[[], Any] | None" = None,
         hook_permissions_accessor: Callable[[], HookPermissions] | None = None,
+        response_rules_changed: Callable[[str], None] | None = None,
     ) -> None:
         self.store = store
         self.provider_gateway = provider_gateway
+        self.response_rules: ResponseRuleRuntime | None = None
+        self.response_rules_changed = response_rules_changed
         self._activity_receipts = activity_receipts
         self.provider = provider
         self.model = model
@@ -6933,12 +6945,15 @@ class ConsoleChatController:
             one_shot_prefill=one_shot_prefill,
             one_shot_prefill_revision=one_shot_prefill_revision,
         )
-        return self.prompt_queue_coordinator.admit(
+        result = self.prompt_queue_coordinator.admit(
             session_id,
             text=clean_text,
             expected_revision=expected_revision,
             custody_request=request,
         )
+        if result.applied and self.response_rules is not None:
+            self.response_rules.invalidate(session_id, "user_input")
+        return result
 
     def edit_queued_prompt(
         self,
@@ -20051,9 +20066,17 @@ class ConsoleChatController:
     @property
     def is_stop_allowed(self) -> bool:
         """Project ordinary generation or exact pending Stop ownership for this tab."""
-        return self.run_state.is_stop_allowed or (
-            self.prompt_queue_coordinator.pending_continuation_stop_available(
-                self.store.active_session_id or ""
+        return (
+            (
+                self.response_rules is not None
+                and self.response_rules.state(self.store.active_session_id or "").phase
+                in {"drafting", "testing", "checking", "repairing"}
+            )
+            or self.run_state.is_stop_allowed
+            or (
+                self.prompt_queue_coordinator.pending_continuation_stop_available(
+                    self.store.active_session_id or ""
+                )
             )
         )
 
@@ -20079,6 +20102,14 @@ class ConsoleChatController:
             stopped; False (a no-op) when it did not.
         """
         session_id = self.store.active_session_id or ""
+        if self.response_rules is not None and self.response_rules.state(
+            session_id
+        ).phase in {"drafting", "testing", "checking"}:
+            self.response_rules.cancel(
+                session_id, "stopped" if record_user_stop else "shutdown"
+            )
+            self.prompt_queue_coordinator.pause_for_stop(session_id)
+            return True
         if self.prompt_queue_coordinator.stop_pending_continuation(session_id):
             self._signal_stop(session_id=session_id)
             return True
@@ -26945,6 +26976,7 @@ class ConsoleChatController:
             self._append_failure_system_row(session_id, note)
         return _flatten_preflight_messages(semantic), None
 
+    @checked_generation
     @_lease_captured_tool_profile
     async def _stream_assistant_response(
         self,
@@ -28939,6 +28971,7 @@ class ConsoleChatController:
             selected_body=selected.selected_body,
         )
 
+    @checked_generation
     @_close_remote_sessions_at_run_end
     @_retire_generation_before_agent_handoff
     async def _run_agent_reply(
@@ -29662,6 +29695,11 @@ class ConsoleChatController:
             # run_reply returns (run_id, outcome): run_id lets us write the
             # produced reply's PERSISTED id back onto the run after
             # completion (the load-bearing write for resume marker anchoring).
+            settled_budgets = []
+            accepted_chain = self.prompt_queue_coordinator._chains.get(session_id)
+            accepted_turn_id = getattr(
+                getattr(accepted_chain, "request", None), "turn_id", None
+            )
             run_id, outcome = await self._run_maintenance_agent_call(
                 self._agent_bridge.run_reply,
                 work_origin=work_origin,
@@ -29671,6 +29709,13 @@ class ConsoleChatController:
                 expected_progress_owner_id=progress_owner_id,
                 resolution=resolution,
                 assistant_message_id=assistant_message_id,
+                accepted_turn_id=accepted_turn_id,
+                parent_budget_deadline=turn_context.tool_configuration.get(
+                    "native_parent_budget_deadline"
+                ),
+                on_primary_budget_settled=lambda budget: settled_budgets.append(
+                    (budget, time.monotonic())
+                ),
                 model=(
                     getattr(resolution, "model", None)
                     or turn_context.effective_model
@@ -29811,7 +29856,11 @@ class ConsoleChatController:
                 revoke_approvals=self.revoke_approval_rounds_for_run,
                 plugin_cancel_root=cancel_event.set,
                 on_tool_terminal=self.complete_definitive_tool,
-                on_tool_result_terminal=functools.partial(self.observe_response_rule_tool_result, session_id, assistant_message_id),
+                on_tool_result_terminal=functools.partial(
+                    self.observe_response_rule_tool_result,
+                    session_id,
+                    assistant_message_id,
+                ),
                 on_run_terminal=self.complete_definitive_run,
                 restore_provider_continuation=restore_provider_continuation,
                 restore_provider_target=restore_provider_target,
@@ -29836,6 +29885,10 @@ class ConsoleChatController:
                 _generation_handoff=_generation_handoff,
                 profile_context_service=profile_context_service,
             )
+            if self.response_rules is not None and len(settled_budgets) == 1:
+                self.response_rules.record_generation_budget(
+                    assistant_message_id, accepted_turn_id, *settled_budgets[0]
+                )
         except asyncio.CancelledError:
             if work_origin is WorkOrigin.AUTOMATIC:
                 cancel_event.set()
@@ -31285,6 +31338,10 @@ class ConsoleChatController:
             if session_id is not None
             else (self.store.active_session_id or "")
         )
+        if self.response_rules is not None and self.response_rules.defer_terminal(
+            target, run_state
+        ):
+            return
         # Task 10 (background completion toasts): captured BEFORE the
         # overwrite below so the once-guard downstream can tell a genuine
         # transition INTO a terminal outcome (toast) apart from a

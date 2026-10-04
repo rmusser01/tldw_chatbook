@@ -875,6 +875,11 @@ class _CanvasNativeViewBinding:
 #: `None` is right there only by accident of one `callable()` check, and
 #: its sibling probe uses the opposite unwired convention.
 CONSOLE_VIEW_HOOK_SLOTS: tuple[ConsoleViewHookSlot, ...] = (
+    ConsoleViewHookSlot(
+        "response_rules_changed",
+        "controller",
+        why="Inert view projection; app-owned rule work and status survive detachment.",
+    ),
     # Only disposable screen projections belong here. Domain dependencies
     # are frozen into custody or resolved through app-owned services before
     # a turn task starts.
@@ -1045,6 +1050,9 @@ class ConsoleRuntime:
         self._chat_store: Any | None = None
         self._provider_gateway: Any | None = None
         self._rule_helper_pool: RuleHelperPool | None = None
+        self._response_rules = None
+        self._response_rule_usage_lock = RLock()
+        self._response_rule_usage: dict[str, Any] = {}
         self._agent_bridge: Any | None = None
         self._worktree_recovery = None
         self._agent_runs_db: Any | None = None
@@ -1704,6 +1712,9 @@ class ConsoleRuntime:
 
     def set_chat_store(self, value: Any) -> None:
         """Replace the store handle (a test double, or `None` to rebuild)."""
+        if self._response_rules is not None and self._chat_store is not value:
+            self._response_rules.dispose()
+            self._response_rules = None
         self._chat_store = value
         if value is not None and hasattr(value, "on_active_session_changed"):
             value.on_active_session_changed = self._on_active_session_changed
@@ -1762,6 +1773,9 @@ class ConsoleRuntime:
 
     def set_chat_controller(self, value: Any) -> None:
         """Replace the chat-controller handle."""
+        if self._response_rules is not None and self._chat_controller is not value:
+            self._response_rules.dispose()
+            self._response_rules = None
         self._chat_controller = value
         if value is not None:
             value._hooks_v2_runtime = self
@@ -1792,6 +1806,76 @@ class ConsoleRuntime:
         bind_wake_submitter = getattr(fleet_wake, "bind_runtime_submitter", None)
         if callable(bind_wake_submitter):
             bind_wake_submitter(self._submit_fleet_wake)
+
+    def ensure_response_rules(self):
+        """Build one profile-local service from actual Console owners."""
+        if self._response_rules is not None:
+            return self._response_rules
+        if self._disposed:
+            return None
+        from .response_rules.builder import ResponseRuleBuilder
+        from .response_rules.evaluator import ResponseRuleEvaluator
+        from .response_rules.repository import ResponseRuleRepository
+        from .response_rules.resources import RuleHelperPool
+        from .response_rules.runtime import ResponseRuleRuntime
+        from .response_rules.models import RuleHelperUsage
+        from .response_rules.store import ResponseRuleStore
+
+        chats, controller = self._chat_store, self._chat_controller
+        database = getattr(getattr(chats, "persistence", None), "db", None)
+        if database is None or controller is None:
+            return None
+        rules = chats.response_rule_store or ResponseRuleStore(
+            ResponseRuleRepository(database)
+        )
+        chats.bind_response_rule_store(rules)
+        if self._rule_helper_pool is None:
+
+            def record_usage(source, usage_id, usage):
+                purpose = self._rule_helper_pool.usage_purpose(usage_id) or "unknown"
+                with self._response_rule_usage_lock:
+                    self._response_rule_usage.setdefault(
+                        usage_id, RuleHelperUsage(source, usage_id, purpose, usage)
+                    )
+
+            self.set_rule_helper_pool(
+                RuleHelperPool(
+                    usage_sink=record_usage,
+                    current=lambda source: self._response_rules is not None
+                    and self._response_rules.acceptance_current(source),
+                    clock=time.monotonic,
+                )
+            )
+        evaluator = ResponseRuleEvaluator(controller.provider_gateway)
+        self._response_rules = ResponseRuleRuntime(
+            store=rules,
+            controller=controller,
+            queue=controller.prompt_queue_coordinator,
+            builder=ResponseRuleBuilder(
+                controller.provider_gateway,
+                evaluator,
+                self._rule_helper_pool,
+                clock=time.monotonic,
+            ),
+            evaluator=evaluator,
+            helpers=self._rule_helper_pool,
+        )
+        return self._response_rules
+
+    def response_rule_usage(self, session_id: str) -> tuple[Any, ...]:
+        """Return actual helper usage for its original owner, including unknowns."""
+        profile_id = (
+            self._response_rules.profile_id
+            if self._response_rules is not None
+            else None
+        )
+        with self._response_rule_usage_lock:
+            return tuple(
+                record
+                for record in self._response_rule_usage.values()
+                if record.source.session_id == session_id
+                and record.source.profile_id == profile_id
+            )
 
     def _continuation_admission_current(
         self, request: ConsoleTurnCustodyRequest
@@ -2363,6 +2447,11 @@ class ConsoleRuntime:
         self._raise_if_disposed_or_session_fenced(request.session_id)
         if request.configuration.session_id != request.session_id:
             raise ValueError("Turn configuration belongs to another session.")
+        if (
+            origin is ConsoleSubmissionOrigin.MANUAL
+            and self._response_rules is not None
+        ):
+            self._response_rules.invalidate(request.session_id, "user_input")
         store = self._chat_store
         if store is None:
             raise RuntimeError("Console chat store is unavailable.")
@@ -4172,6 +4261,7 @@ class ConsoleRuntime:
             getattr(raw_cli_runtime, "cancel_session", None),
         )
         self.set_chat_controller(ConsoleChatController(**kwargs))
+        self.ensure_response_rules()
         self._chat_controller.prompt_history = self.ensure_prompt_history()
         if self.view is None:
             # task-15860 Task 4: a runtime can be VIEWLESS FROM BIRTH, not
@@ -4927,6 +5017,8 @@ class ConsoleRuntime:
         if self._rule_helper_pool is not None:
             self._rule_helper_pool.close_admission()
         self._seal_hooks_v2()
+        if self._response_rules is not None:
+            self._response_rules.dispose()
         with self._run_hooks_lock:
             engine = self.run_hooks_engine
             if self._hook_permissions is not None:
@@ -4981,6 +5073,8 @@ class ConsoleRuntime:
             self._rule_helper_pool.close_admission()
 
         # The hook owner survives a cancelled dispose caller. Teardown producers
+        if self._response_rules is not None:
+            self._response_rules.dispose()
         # have the fixed notification window before final queue closure.
         self._seal_hooks_v2()
         if self._hooks_v2_cleanup_task is None and self._hooks_v2_engines:

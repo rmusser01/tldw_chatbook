@@ -103,6 +103,7 @@ from .agent_models import (
     ModelTurn,
     ProviderContinuationEvent,
     RunOutcome,
+    RunBudget,
     SkillFileBindings,
     SpawnAdmissionRefusal,
     ToolCall,
@@ -2103,6 +2104,7 @@ class AgentService:
         hooks_v2_engine: Any = None,
         hooks_v2_session_id: str | None = None,
         hooks_v2_turn_id: str | None = None,
+        on_primary_budget_settled: Callable[[RunBudget | bool], None] | None = None,
         hooks_v2_required_handler_ids: (
             Callable[[str], tuple[str, ...] | None] | None
         ) = None,
@@ -2164,8 +2166,9 @@ class AgentService:
         on_child_settled: Callable[[str | None, str], None] | None = None,
         managed_child_required: bool = False,
         managed_child_resume: Callable[[RetainedTranscript], object] | None = None,
-        persist_provider_continuation: Callable[[ProviderContinuationEvent], None]
-        | None = None,
+        persist_provider_continuation: (
+            Callable[[ProviderContinuationEvent], None] | None
+        ) = None,
         expand_provider_continuation: (
             Callable[[ProviderContinuationCheckpoint], list[dict]] | None
         ) = None,
@@ -2180,8 +2183,9 @@ class AgentService:
         ) = None,
         propagate_trace_call_persistence_errors: bool = False,
         wall_clock: Callable[[], datetime] = _utc_now,
-        inline_child_model_scope: Callable[[], contextlib.AbstractContextManager]
-        | None = None,
+        inline_child_model_scope: (
+            Callable[[], contextlib.AbstractContextManager] | None
+        ) = None,
         run_model_scope: RunModelScope | None = None,
         runtime_capacity: RuntimeCapacity | None = None,
         work_origin: WorkOrigin = WorkOrigin.MANUAL,
@@ -2256,6 +2260,7 @@ class AgentService:
         )
         self._hooks_v2_session_id = hooks_v2_session_id
         self._hooks_v2_turn_id = hooks_v2_turn_id
+        self._on_primary_budget_settled = on_primary_budget_settled
         self._hooks_v2_required_handler_ids = hooks_v2_required_handler_ids
         self._hooks_v2_definition_requirements = hooks_v2_definition_requirements
         self._hooks_v2_render_context = hooks_v2_render_context
@@ -8737,6 +8742,18 @@ class AgentService:
                     outcome,
                     config.budget,
                     self.clock() - started,
+                )
+            if (
+                parent_run_id is None
+                and self._on_primary_budget_settled is not None
+                and "outcome" in locals()
+            ):
+                from .hooks_v2.lifecycle import remaining_root_budget
+
+                self._on_primary_budget_settled(
+                    remaining_root_budget(
+                        outcome, config.budget, self.clock() - started
+                    )
                 )
             self._notify_run_terminal(run_id)
         self._persist(run_id, outcome, durable_handle_ids, budget_tokens_known=budget_tokens_known)

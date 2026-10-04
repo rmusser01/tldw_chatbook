@@ -94,6 +94,33 @@ def narrow_child(
     return replace(config, allowed_tools=allowed, budget=budget), selected
 
 
+def remaining_root_budget(
+    outcome: RunOutcome, budget: RunBudget, elapsed_seconds: float
+) -> RunBudget | bool:
+    """Compute the actual settled root allowance without hook authority."""
+    steps = budget.max_steps - len(outcome.steps)
+    turns = budget.max_model_turns - sum(step.kind == "model" for step in outcome.steps)
+    wall = budget.max_wall_seconds - elapsed_seconds
+    tokens = (
+        budget.max_total_tokens - outcome.total_tokens if budget.max_total_tokens else 0
+    )
+    if (
+        outcome.status != "done"
+        or min(steps, turns, wall) <= 0
+        or budget.max_total_tokens
+        and tokens <= 0
+    ):
+        return False
+    return replace(
+        budget,
+        max_steps=steps,
+        max_model_turns=turns,
+        max_wall_seconds=wall,
+        max_total_tokens=tokens,
+        max_subagents=max(0, budget.max_subagents - outcome.subagents_spawned),
+    )
+
+
 class HookSessionLifecycle:
     """One shared coordinator; operation IDs never masquerade as AgentRuns IDs."""
 
@@ -163,31 +190,8 @@ class HookSessionLifecycle:
     ) -> None:
         """Capture actual usage before terminal scope retirement loses the run."""
         self.terminal_budget_times[turn_id] = time.monotonic()
-        steps = budget.max_steps - len(outcome.steps)
-        turns = budget.max_model_turns - sum(
-            step.kind == "model" for step in outcome.steps
-        )
-        wall = budget.max_wall_seconds - elapsed_seconds
-        tokens = (
-            budget.max_total_tokens - outcome.total_tokens
-            if budget.max_total_tokens
-            else 0
-        )
-        if (
-            outcome.status != "done"
-            or min(steps, turns, wall) <= 0
-            or budget.max_total_tokens
-            and tokens <= 0
-        ):
-            self.terminal_budgets[turn_id] = False
-            return
-        self.terminal_budgets[turn_id] = replace(
-            budget,
-            max_steps=steps,
-            max_model_turns=turns,
-            max_wall_seconds=wall,
-            max_total_tokens=tokens,
-            max_subagents=max(0, budget.max_subagents - outcome.subagents_spawned),
+        self.terminal_budgets[turn_id] = remaining_root_budget(
+            outcome, budget, elapsed_seconds
         )
 
     def event(self, name: str, **kwargs: Any) -> HookEvent:

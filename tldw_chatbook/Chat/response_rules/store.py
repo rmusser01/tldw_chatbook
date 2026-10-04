@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sqlite3
 from collections.abc import Callable, Mapping
+from contextlib import nullcontext
 from dataclasses import asdict, dataclass, field, replace
 from threading import RLock
 
@@ -116,6 +117,22 @@ class ResponseRuleStore:
                     return validation
             return self.repository.get_validation(rule_id, revision)
 
+    def next_revision(self, rule_id: str) -> int:
+        """Allocate above every retained immutable draft and binding revision."""
+        with self._lock:
+            revisions = [
+                revision
+                for state in self._temporary.values()
+                for identity, revision in state.revisions
+                if identity == rule_id
+            ]
+            with self.repository.db.transaction() as cursor:
+                row = cursor.execute(
+                    "SELECT MAX(revision) FROM console_response_rule_revisions WHERE rule_id=?",
+                    (rule_id,),
+                ).fetchone()
+            return max([0, row[0] or 0, *revisions]) + 1
+
     def effective_rules(
         self, chat: RuleScope, workspace: RuleScope | None, global_scope: RuleScope
     ) -> tuple[RuleRevision, ...]:
@@ -151,10 +168,14 @@ class ResponseRuleStore:
         scope: RuleScope,
         *,
         expected_binding_revision: int,
+        current: Callable[[], bool] | None = None,
+        admission_lock=None,
     ) -> RuleBinding:
         """Publish a calibrated revision only after one successful local commit."""
         validate_activation(rule, validation)
-        with self._lock:
+        with self._lock, admission_lock or nullcontext():
+            if current is not None and not current():
+                raise RuleBindingConflict("rule_source_changed")
             self._assert_not_adopting(scope)
             if (
                 scope.kind == "chat"
@@ -261,11 +282,15 @@ class ResponseRuleStore:
         result: RuleLearningResult,
         *,
         complaint: str,
+        current: Callable[[], bool] | None = None,
+        admission_lock=None,
     ) -> None:
         """Keep failed or tested inactive drafts in their explicit source scope."""
         if len(complaint.encode("utf-8")) > 8192:
             raise ValueError("complaint_too_large")
-        with self._lock:
+        with self._lock, admission_lock or nullcontext():
+            if current is not None and not current():
+                raise RuleBindingConflict("rule_source_changed")
             self._assert_not_adopting(scope)
             if (
                 scope.kind == "chat"
@@ -295,6 +320,8 @@ class ResponseRuleStore:
                 )
             else:
                 with self.repository.db.transaction(immediate=True) as cursor:
+                    if current is not None:
+                        self.repository._assert_source(cursor, source)
                     self.repository._save_draft(
                         cursor, scope, source, result, complaint
                     )
@@ -332,9 +359,17 @@ class ResponseRuleStore:
                     raise RuleBindingConflict("rule_binding_changed")
                 self.repository._garbage_collect(cursor)
 
-    def save_assessment(self, assessment: RuleAssessment) -> None:
+    def save_assessment(
+        self,
+        assessment: RuleAssessment,
+        *,
+        current: Callable[[], bool] | None = None,
+        admission_lock=None,
+    ) -> None:
         """Retain historical outcomes separately from admission authority."""
-        with self._lock:
+        with self._lock, admission_lock or nullcontext():
+            if current is not None and not current():
+                raise RuleBindingConflict("rule_source_changed")
             if assessment.source.conversation_id is None:
                 self.register_temporary(assessment.source.session_id)
                 self._temporary[assessment.source.session_id].assessments.append(
@@ -342,6 +377,8 @@ class ResponseRuleStore:
                 )
                 return
             with self.repository.db.transaction() as cursor:
+                if current is not None:
+                    self.repository._assert_source(cursor, assessment.source)
                 cursor.execute(
                     "INSERT INTO console_response_rule_assessments VALUES (?,?,?,?,?)",
                     (

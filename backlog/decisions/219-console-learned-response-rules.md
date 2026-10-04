@@ -55,3 +55,7 @@ The spec defines activation, revision precedence, scope exclusions, privacy, rec
 ## Written-spec review refinements
 
 The requested audit clarified actual provider-resource lifetime, independent applicability and mixed verdicts, original-task scope of generated feedback, calibration without invented tool evidence, reuse/freshness of earlier settled results, stable settlement identities and atomic acceptance, inherited correction counters and existing whole-packet limits. These are implementation contracts for the approved response-only workflow, not new permission or scheduler owners.
+
+## Runtime budget handoff
+
+Actual primary AgentService settlement publishes its remaining allowance through an optional body-free callback independently of external hooks. The Console queue pins that result to the accepted custody identity; repairs narrow the captured agent budget and retain the absolute parent deadline through dispatch. Genuine hook budget records use that same custody identity and can further refuse work. Direct continuation and retry roots carry their actual allowance into shared native repair admission. No synthetic hook lifecycle is created to obtain a budget.

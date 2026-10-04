@@ -11,6 +11,8 @@ from typing import Literal, Self
 
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, model_validator
 
+from tldw_chatbook.Chat.provider_usage import ProviderUsage
+
 MAX_DEFINITION_BYTES = 8192
 MAX_TITLE_CHARACTERS = 120
 MAX_APPLICABILITY_BYTES = 1024
@@ -261,6 +263,7 @@ class RuleValidation:
     tested_at: str
     original_input_digest: str | None = None
     fixture_digest: str | None = None
+    reused_validation_digest: str | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "case_results", tuple(self.case_results))
@@ -277,3 +280,23 @@ class RuleLearningResult:
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "fixtures", MappingProxyType(dict(self.fixtures)))
+
+
+@dataclass(frozen=True, slots=True)
+class RuleRuntimeState:
+    """Disposable status projection; the app retains work and results."""
+
+    phase: Literal["idle", "drafting", "testing", "checking", "repairing"]
+    assessment: RuleAssessment | None
+    learning: RuleLearningResult | None
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class RuleHelperUsage:
+    """Body-free accounting retained against the original helper owner."""
+
+    source: RuleSource
+    usage_id: str
+    purpose: str
+    usage: ProviderUsage | None

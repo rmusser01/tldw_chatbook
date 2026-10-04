@@ -10044,6 +10044,11 @@ class ChatScreen(BaseAppScreen):
         self._sync_console_chat_core_state()
         return self._console_chat_controller
 
+    def _on_console_response_rules_changed(self, session_id: str) -> None:
+        """Refresh only the currently mounted Chat's disposable controls."""
+        if self.is_mounted and self._console_chat_store.active_session_id == session_id:
+            self._sync_console_control_bar()
+
     def console_view_hooks(self) -> dict[str, Any]:
         """Return this view's value for every `CONSOLE_VIEW_HOOK_SLOTS` slot.
 
@@ -10063,6 +10068,7 @@ class ChatScreen(BaseAppScreen):
         """
         skill = getattr(self, "_skill", None)
         return {
+            "response_rules_changed": self._on_console_response_rules_changed,
             "set_pending_decision": self._set_console_pending_decision,
             "follow_watchlists_operations": self._follow_console_watchlists_operations,
             "set_pending_approval": self._set_console_pending_approval,
@@ -11514,12 +11520,14 @@ class ChatScreen(BaseAppScreen):
             )
             provider, model, _settings = self._active_console_provider_model_display()
             catalog = get_pricing_catalog()
+            helper_usage = self._console_runtime().response_rule_usage(session_id)
             projection_key = (
                 history_key,
                 provider,
                 model,
                 store.session_settings_revision(session_id),
                 catalog,
+                helper_usage,
             )
             # PR2b Task 5 (cost rollup): the active conversation's LIVE
             # sub-agent fleet spend, folded into the snapshot's token total
@@ -11583,6 +11591,7 @@ class ChatScreen(BaseAppScreen):
                     model=model,
                     fleet_tokens=0,
                     estimate_cache=estimate_cache,
+                    auxiliary_usage=tuple(record.usage for record in helper_usage),
                 )
                 historical_media = any(
                     message.role is ConsoleMessageRole.USER
@@ -25155,15 +25164,6 @@ class ChatScreen(BaseAppScreen):
             handled = await self.handle_console_message_action(event)
             if handled:
                 return
-
-
-
-
-
-
-
-
-
 
     def _restore_collapsible_states(self) -> None:
         """Restore collapsible states from saved state."""

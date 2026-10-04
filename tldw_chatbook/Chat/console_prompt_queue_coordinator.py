@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_prompt_queue import (
 from tldw_chatbook.Chat.console_turn_context import ConsoleTurnCustodyRequest
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Agents.agent_models import RunBudget
     from tldw_chatbook.Agents.agent_models import PluginContextText
     from tldw_chatbook.Agents.hooks_v2.continuations import (
         ContinuationAdmission,
@@ -43,7 +44,10 @@ if TYPE_CHECKING:
     from tldw_chatbook.Agents.hooks_v2.models import HookResult
     from tldw_chatbook.Chat.console_chat_controller import ConsoleSubmitResult
     from tldw_chatbook.Chat.console_library_policy import ConsoleLibraryPolicySnapshot
-    from tldw_chatbook.Chat.response_rules.corrections import NativeCorrectionProposal
+    from tldw_chatbook.Chat.response_rules.corrections import (
+        MachineFollowupReceipt,
+        NativeCorrectionProposal,
+    )
     from tldw_chatbook.Chat.response_rules.models import RuleAssessment, RuleRevision, RuleSource
 
 
@@ -109,8 +113,9 @@ class _PromptChain:
     initiator: str = "manual"
     rollback_epoch: tuple[int, int] | None = None
     machine_entry_id: str | None = None
-    machine_receipt: object | None = None
+    machine_receipt: MachineFollowupReceipt | None = None
     native_proposal: object | None = None
+    native_budget: tuple[str, RunBudget | bool, float] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -544,6 +549,121 @@ class ConsolePromptQueueCoordinator:
         chain.native_proposal = proposal
         return True
 
+    def native_helper_deadline(
+        self, session_id: str, parent_turn_id: str
+    ) -> float | None:
+        """Keep semantic checking inside actual transferred parent limits."""
+        from .response_rules.models import MAX_HELPER_SECONDS
+
+        deadline = time.monotonic() + MAX_HELPER_SECONDS
+        chain = self._chains.get(session_id)
+        if chain is not None and chain.native_budget is not None:
+            turn_id, remaining, recorded_at = chain.native_budget
+            if turn_id != parent_turn_id or remaining is False:
+                return None
+            if remaining.max_total_tokens > 0:
+                return None
+            deadline = min(deadline, recorded_at + remaining.max_wall_seconds)
+        parent = chain.hook_parent if chain is not None else None
+        if parent is None:
+            return deadline
+        lifecycle, _scope, _event, _assistant, request = parent
+        if (
+            request.turn_id != parent_turn_id
+            or not lifecycle.live
+            or not lifecycle.current()
+        ):
+            return None
+        budget = lifecycle.terminal_budgets.get(parent_turn_id)
+        if budget is False:
+            return None
+        if budget is not None:
+            # An auxiliary input's actual token spend is not known preflight.
+            # Refuse when it cannot be admitted within a finite token balance.
+            if budget.max_total_tokens > 0:
+                return None
+            started = lifecycle.terminal_budget_times.get(parent_turn_id)
+            if started is None:
+                return None
+            deadline = min(deadline, started + budget.max_wall_seconds)
+        return deadline if deadline > time.monotonic() else None
+
+    def record_native_budget(
+        self,
+        session_id: str,
+        turn_id: str,
+        budget: RunBudget | bool,
+        recorded_at: float,
+    ) -> None:
+        """Retain actual agent limits on the exact accepted queue owner."""
+        chain = self._chains.get(session_id)
+        if (
+            chain is not None
+            and chain.request is not None
+            and chain.request.turn_id == turn_id
+        ):
+            chain.native_budget = (turn_id, budget, recorded_at)
+
+    async def start_native_repair(
+        self,
+        request: ConsoleTurnCustodyRequest,
+        proposal: NativeCorrectionProposal,
+        *,
+        parent_budget: tuple[RunBudget | bool, float] | None = None,
+    ) -> bool:
+        """Give an explicit learned-rule repair fresh ordinary queue custody."""
+        session_id = request.session_id
+        snapshot = self.registry.snapshot(session_id)
+        if (
+            session_id in self._chains
+            or snapshot.waiting_count
+            or snapshot.claimed_count
+            or self._shutting_down
+            or self._maintenance_paused
+            or snapshot.closing
+            or self._has_staged_rider(session_id)
+            or self._needs_approval(session_id)
+        ):
+            return False
+        self._sealed_continuations.discard(session_id)
+        started = self.registry.begin_chain(
+            session_id,
+            context_epoch=self._context_epoch(session_id),
+            expected_revision=snapshot.revision,
+        )
+        if started.status not in {
+            QueueMutationStatus.APPLIED,
+            QueueMutationStatus.UNCHANGED,
+        }:
+            return False
+        self._chains[session_id] = _PromptChain(request=request)
+        if parent_budget is not None:
+            self.record_native_budget(session_id, request.turn_id, *parent_budget)
+        try:
+            admitted = await self.admit_machine_followup(
+                session_id, source=proposal.source, native=proposal
+            )
+            if admitted is None:
+                return False
+            await self._drain_waiting(session_id, ConsoleRunStatus.COMPLETED)
+            return True
+        finally:
+            chain = self._chains.get(session_id)
+            if (
+                chain is not None
+                and not self.registry.snapshot(session_id).waiting_count
+            ):
+                snapshot = self.registry.snapshot(session_id)
+                if (
+                    snapshot.expected_context_epoch is not None
+                    and not snapshot.claimed_count
+                ):
+                    self.registry.finalize_empty_chain(
+                        session_id, expected_revision=snapshot.revision
+                    )
+                self._chains.pop(session_id, None)
+            self._changed(session_id)
+
     async def admit_machine_followup(
         self,
         session_id: str,
@@ -636,6 +756,16 @@ class ConsolePromptQueueCoordinator:
         budget = None
         budget_deadline = None
         parent_request = chain.request
+        if chain.native_budget is not None:
+            turn_id, budget, recorded_at = chain.native_budget
+            if turn_id != source.parent_turn_id or budget is False:
+                return None
+            budget_deadline = recorded_at + budget.max_wall_seconds
+            if budget_deadline <= time.monotonic():
+                return None
+            budget = replace(
+                budget, max_wall_seconds=budget_deadline - time.monotonic()
+            )
         if chain.hook_parent is not None and owned is None:
             return None  # Required postevents and Stop still own this boundary.
         if owned is not None:
@@ -662,16 +792,19 @@ class ConsolePromptQueueCoordinator:
             hook_message = combine_proposals(results)
             if any(result.continuation for result in results) and hook_message is None:
                 return None
-            budget = lifecycle.terminal_budgets.pop(request.turn_id, None)
+            hook_budget = lifecycle.terminal_budgets.pop(request.turn_id, None)
             budget_at = lifecycle.terminal_budget_times.pop(request.turn_id, None)
-            if budget is False:
+            if hook_budget is False:
                 return None
-            if budget is not None and budget_at is not None:
-                budget_deadline = budget_at + budget.max_wall_seconds
+            if hook_budget is not None and budget_at is not None:
+                budget_deadline = min(
+                    budget_deadline or float("inf"),
+                    budget_at + hook_budget.max_wall_seconds,
+                )
                 if budget_deadline <= time.monotonic():
                     return None
                 budget = replace(
-                    budget, max_wall_seconds=budget_deadline - time.monotonic()
+                    hook_budget, max_wall_seconds=budget_deadline - time.monotonic()
                 )
         text = feedback + (
             "\n\nUntrusted hook continuation proposal (machine initiated):\n"
@@ -704,6 +837,18 @@ class ConsolePromptQueueCoordinator:
             one_shot_prefill=None,
             one_shot_prefill_revision=None,
             staged_evidence_launch=None,
+            configuration=(
+                replace(
+                    parent_request.configuration,
+                    tool_configuration={
+                        **parent_request.configuration.tool_configuration,
+                        "agent_run_budget_maximum": budget,
+                        "native_parent_budget_deadline": budget_deadline,
+                    },
+                )
+                if budget is not None
+                else parent_request.configuration
+            ),
         )
         admitted = self.registry.admit(
             session_id,
@@ -769,7 +914,7 @@ class ConsolePromptQueueCoordinator:
                 receipt.admitted_turns,
             )
         chain.machine_receipt, chain.continuation_started = receipt, started
-        if budget is not None:
+        if budget is not None and lifecycle is not None:
             lifecycle.inherited_budgets[next_request.turn_id] = (
                 budget,
                 time.monotonic(),
