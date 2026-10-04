@@ -1,11 +1,11 @@
 ---
 id: TASK-33664
 title: Keep Console Resend out of empty startup imports
-status: Done
+status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-10-02 20:15'
-updated_date: '2026-10-04 18:36'
+updated_date: '2026-10-04 19:48'
 labels:
   - agents
   - console
@@ -26,7 +26,7 @@ The required Resend merge-base integration loads its new module during empty Con
 <!-- AC:BEGIN -->
 - [x] #1 The original UI-ready module census passes its unchanged 1033-module ceiling with the empty Console behavior and expected mount members preserved.
 - [x] #2 Real Resend click and keyboard, duplicate-worker, custody polling and selected-row action checks pass after deferring the imports.
-- [x] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
+- [ ] #3 App import, storage, CSS and source artifact guards remain unchanged and pass; focused independent review approves.
 - [x] #4 Incoming provider display/model/recovery copy reaches the actual Console while projected exception semantics and content-free durable audit remain intact, with focused independent source and behavior approval.
 <!-- AC:END -->
 
@@ -470,6 +470,27 @@ Reason: apply the shipped instruction to add a shard when one nears the cap; no 
 3. Run a new targeted existing Tests/CI selection once against the new workflow, including actual three-way shard commands, empty/invalid rejection and failure propagation controls. Authenticate all 3,795 records and full tree outside the workflow/owned docs; every runtime/test/CSS/original guard/MAX/source input remains exact approved5fb/c5. Carry original5fb five-budget source/raw/XML approval with explicit independent approval; do not repeat local budgets or claim hosted UI durations.
 4. Obtain immutable independent source/CI/artifact and carried-budget approval. Preserve TASK34353 In Progress/AC3 unchecked and all historical positive/NON-GREEN/baseline/interrupted/unexecuted/warnings/limits. Only after Ready close AC3 via CLI and append four owned canonical Markdown records, preserving approved source/deletion.
 5. This is a fix for current-head failed CI, not later-dev integration. Publish once with the EXACT observed c5 lease after fresh Qodo/threads/refs/live protection and verify actual remote/GitHub/body without a second push. Fresh new-head Qodo/no actionable feedback and all FOUR gates requiring ALL THREE UI shards precede later-dev source inspection/fetch/rebase and normal protected head-matched merge. No later-dev concurrency qualification has occurred.
+
+## Post-UI3 preserving latest-dev integration — October 4, 2026
+
+Goal: integrate exact dev a7d9bca5da7f0d6be95cb9c3b7ab81602987051c into PR2918 while preserving every approved orchestration contract and both sides' evidence.
+Architecture: preserve the incoming trace-row classification, blocked-turn presentation/refusal custody and awaited character transcript publication in their existing owners. Preserve schema77, progress/wake admission, scoped peers, finite SQL custody, Close retirement, typed provider presentation/privacy, shared Send/replay/readiness and the three deferred Resend imports. No new boundary or dependency is proposed.
+Spec: the canonical orchestration plan/review, TASK33664 AC3/AC4, incoming TASK31245 and TASK33621.2, and the human's preserving-rebase/Qodo/protected-merge authorization.
+
+ADR required: no
+ADR path: backlog/decisions/097-boot-budget-ratchets.md; backlog/decisions/120-character-conversation-navigation-and-local-semantic-search.md; backlog/decisions/199-scoped-peers-durable-progress-and-wakes.md; backlog/decisions/211-ephemeral-provider-failure-presentation.md; incoming tasks' existing trace/recovery decisions.
+Reason: preserving integration of accepted implementations without changing architecture, owner, permission, schema, authority, dependency, ratchet, UI token or time cap.
+
+Constraints: all FOUR exact0b2f gates passed before this inspection/fetch; all THREE UI components passed; exact-head Qodo four zero counters, four resolved threads and full pagination/older-nested feedback unchanged. Live strict up-to-date protection is enforced for administrators and conversation resolution. The qualified base is7446; only exact fetched a7d is being integrated. Later movement stays separately unqualified until fresh published-head gates pass. No completed script/test/budget/static/artifact/CSS/baseline/retry replay, shared stash or foreign cleanup; no full suite, live providers/keys, physical keys/relaunch, native voice/platform/release/aggregate or wider certification.
+
+Review focus: the controller's shared submit function must retain its preacceptance refusal/refund/nonreplay and incoming PAUSED copy; wiring must retain recovery's exact owner while adding its transient reason; trace classification must preserve saved revision/media authority and lazy imports; cancelled character publication must remove only its owned cold runtime; blocked presentation must not become dispatch authority or diagnostic body persistence. Incoming follow-up tasks remain separately open.
+
+- [ ] Prospectively reopen CLI TASK33664 AC3/In Progress with AC4 checked and commit this append before any preserving rebase/source mutation. Preserve the entire previous plan/notes and four canonical document prefixes. Authenticate 3795 prior records/full27982 tree/index and all39 incoming paths. Five actual feature overlaps independently reproduce clean three-way bytes; inspect leaf-function intersections rather than treating a whole class AST as a new function change.
+- [ ] Rebase the preserving 92-commit branch onto exact a7d once. Preserve all3783 prior-manifest nonoverlaps and incoming nonfeature paths; authenticate every composed overlap against independent clean three-way bytes, full expected tree/index/modes/recomputed disk blob IDs and capture_cloud.py deletion. Resolve only actual conflicts with explicit two-sided source receipts; no runtime/test repair without prospective refinement and actual evidence.
+- [ ] On immutable composed source, run new proportional owning qualification once: the new trace-row/capture-send modules and changed conversation-activation module; actual blocked-send recovery at its existing parameterized sizes/actions, the new coalesced activation and changed cold/warm presentation journey; changed refusal shelf projections and bounded runtime/refund/nonreplay/typed-diagnostic privacy neighbors. Keep all original assertions/config/readiness/fixtures intact. Record raw/XML/command/exit and any genuine NON-GREEN result; establish only necessary exact-incoming baseline evidence without claiming a cause or blocked behavior. Selections overlap and are never summed.
+- [ ] Perform source-specific fatal/added-signature/format analysis against exact prior and incoming, preserving inherited style/size debt. Reproduce only newly affected source artifacts/diagnostic counts and authenticate unchanged CSS/native/guard/MAX/workflow/UI3 identities. Preserve exact task states: TASK31245 remains In Progress, TASK33621.2 Done as shipped, new follow-ups To Do; no implementation or broader task closure for them.
+- [ ] Obtain independent read-only Ready/no findings on the immutable source, functional/static/artifact/composition evidence and preserved history. After ALL test/artifact/reviewer activity settles, run the original unchanged FIVE guards ONCE for this distinct application source with exact REPO_ROOT cwd/PYTHONPATH/default pytest depth/full-process private HOME/USERPROFILE/TLDW/XDG; preserve every old MAX/pin/count/work/time/warmup boundary and actual counts/warnings/raw/XML. Supplemental independent Ready precedes AC3 Done; do not rerun any completed original5 measurement.
+- [ ] Close only AC3 via CLI with AC4 checked after both independent approvals, append only four owned canonical Markdown records, preserve reviewed source/deletion/full tree outside four and every historical positive/NON-GREEN/baseline/interrupted/unexecuted/metadata/warning/FD/style/optional/physical/wider limit. Fresh0b2f Qodo/all feedback/refs/live protection precede ONE exact-observed0b2f lease publication and concise body; verify actual local/remote/GitHub/body after any lag without another push. Fresh new-head Qodo/no actionable feedback and ALL FOUR gates requiring ALL THREE UI shards precede any later concurrency action or normal protected --match-head-commit merge. Verify actual MERGED parents/tree/concurrency then pause heartbeat/report completion.
 <!-- SECTION:PLAN:END -->
 
 ## Implementation Notes
