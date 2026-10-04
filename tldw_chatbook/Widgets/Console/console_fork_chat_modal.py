@@ -515,5 +515,10 @@ class ConsoleForkChatModal(SafeModalDismissMixin, ModalScreen[None]):
         )
 
     def close_after_success(self) -> None:
-        """Dismiss this exact mounted modal after controller-owned activation."""
-        self.dismiss_safe_once(None)
+        """Dismiss this exact mounted modal after controller-owned activation.
+
+        Covered -- by Ctrl+Q's "Quit while still working?" -- the close is
+        kept until this modal is on top again (TASK-33622.15); otherwise Wait
+        revealed a finished fork stuck on "Forking..." with Escape refused.
+        """
+        self.dismiss_safe_once_when_on_top(None)

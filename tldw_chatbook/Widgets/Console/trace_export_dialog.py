@@ -352,7 +352,10 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             self._set_status(f"Export failed: {exc}", error=True)
             return
         self._writing = False
-        self.dismiss(written)
+        # Covered (Ctrl+Q's quit-anyway question), the close is kept for when
+        # this dialog is on top again, so the export is still reported
+        # (TASK-33622.15).
+        self.dismiss_safe_once_when_on_top(written)
 
     def _set_controls_disabled(self, disabled: bool) -> None:
         for selector in (

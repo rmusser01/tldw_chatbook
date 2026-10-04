@@ -365,6 +365,69 @@ async def test_a_stuck_operation_still_lets_a_repeated_ctrl_q_quit(monkeypatch):
         )
 
 
+async def test_a_fork_that_finishes_under_the_quit_question_closes_after_wait(
+    monkeypatch,
+):
+    """Wait after the fork finished under the question returns to the chat.
+
+    From the second Ctrl+Q on, "Quit while still working?" covers the fork
+    dialog. The controller closes the dialog once the fork is open
+    (``close_after_success``), but only the top screen may be dismissed
+    (ADR-031), so that close was refused while the question was up and never
+    tried again: after Wait the dialog sat on "Forking..." with every button
+    disabled and Escape refused, and quitting was the only way out.
+    """
+    from Tests.UI.test_console_fork_chat_modal import _summary
+    from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
+        ConsoleForkChatModal,
+    )
+
+    title = "Quit while still working?"
+    app = _build_test_app(configured_default="chat")
+    _configure_native_ready_console(app)
+    cleanups = _recording_cleanup(app, monkeypatch)
+    async with app.run_test(size=(140, 44)) as pilot:
+        console = await _mounted_console(app, pilot)
+        modal = ConsoleForkChatModal(_summary(), on_submit=lambda _result: None)
+        await app.push_screen(modal)
+        await _until(pilot, lambda: app.screen is modal, "the fork dialog")
+        modal.show_validating()
+        modal.show_committing()
+        await pilot.pause()
+
+        await _assert_ctrl_q_waits_for(app, pilot, modal, cleanups, "fork")
+        await pilot.press("ctrl+q")
+        await _until(
+            pilot,
+            lambda: bool(_dialogs_titled(app, title)),
+            "the repeated Ctrl+Q to ask before quitting past the fork",
+            timeout=5.0,
+        )
+        question = _dialogs_titled(app, title)[0]
+        assert app.screen is question
+
+        # The fork opens while the question is up: the controller's close.
+        modal.close_after_success()
+        await pilot.pause(0.2)
+        assert app.screen is question, "the dialog's close must not pop the question"
+        assert modal in app.screen_stack, "covered, the dialog cannot close yet"
+
+        await pilot.click("#cancel-button")  # Wait
+        await _until(
+            pilot,
+            lambda: modal not in app.screen_stack,
+            "the finished fork dialog to close once Wait uncovered it",
+        )
+        assert app.screen is console
+        await _until(
+            pilot,
+            lambda: app._quit_in_progress is False,
+            "the quit guard to clear after Wait",
+        )
+        assert cleanups == []
+        assert app._exception is None
+
+
 # --- The generated video's Save-to-disk picker (AC #2) ------------------------
 
 

@@ -23,12 +23,18 @@ quitting past the operation is only ever the user's explicit choice. It is
 asked through ``confirm_quit_discarding_edits`` and so through
 ``await_quit_prompt``, the quit flow's one choke point.
 
-Two known limits, both safe. The refused activity is remembered on the modal
-for its lifetime, so after one refusal a later operation with the same words
-in the same modal asks on its first Ctrl+Q. And while that question covers
-the modal, an owner that closes the modal once its operation finishes is
-refused (``SafeModalDismissMixin`` dismisses only the top screen), so Wait
-can reveal a modal that already finished; Ctrl+Q there still asks and quits.
+While that question covers the modal, the modal cannot be dismissed
+(``SafeModalDismissMixin`` dismisses only the top screen). A modal that
+closes itself once its operation finishes therefore closes through
+``dismiss_safe_once_when_on_top``: a close made under the question is kept,
+and after Wait the modal closes as it would have uncovered, instead of
+sitting over finished work with Escape still refused.
+
+Two known limits. The refused activity is remembered on the modal for its
+lifetime, so after one refusal a later operation with the same words in the
+same modal asks on its first Ctrl+Q. And BulkSourcesModal's owner drops a
+batch's result when anything covers the modal, this question included, so
+Wait can reveal it still creating sources; Ctrl+Q there still asks and quits.
 
 It is imported lazily from each ``confirm_quit``, so it never joins the
 ADR-097 boot census.

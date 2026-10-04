@@ -346,7 +346,9 @@ class PersonalContextProposalReviewModal(
 
     def _resolved(self, state: str, record_id: str | None) -> None:
         self._set_busy(False)
-        self.dismiss_safe_once(
+        # Covered (Ctrl+Q's quit-anyway question), the close is kept for when
+        # this review is on top again, so its result still lands (TASK-33622.15).
+        self.dismiss_safe_once_when_on_top(
             ProposalReviewResult(
                 proposal_id=self._proposal.proposal_id,
                 state=state,
@@ -703,7 +705,10 @@ class PersonalContextReviewModal(
         self._receipt = receipt
         self._set_busy(False)
         if receipt.runtime_update_succeeded and receipt.draft_cleanup_succeeded:
-            self.dismiss_safe_once(ReviewCommitResult(receipt, self._enable_runtime))
+            # Kept while covered, as in _resolved (TASK-33622.15).
+            self.dismiss_safe_once_when_on_top(
+                ReviewCommitResult(receipt, self._enable_runtime)
+            )
             return
         parts = ["Selected records were saved."]
         if not receipt.runtime_update_succeeded:
@@ -727,7 +732,7 @@ class PersonalContextReviewModal(
     def _cleanup_finished(self, _result: Any) -> None:
         if self._commit_unknown:
             self._set_busy(False)
-            self.dismiss_safe_once(ReviewCommitUnknownResult())
+            self.dismiss_safe_once_when_on_top(ReviewCommitUnknownResult())
             return
         assert self._receipt is not None
         self._receipt = replace(
@@ -737,7 +742,7 @@ class PersonalContextReviewModal(
         )
         self._set_busy(False)
         if self._receipt.runtime_update_succeeded:
-            self.dismiss_safe_once(
+            self.dismiss_safe_once_when_on_top(
                 ReviewCommitResult(self._receipt, self._enable_runtime)
             )
             return
