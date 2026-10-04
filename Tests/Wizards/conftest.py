@@ -36,10 +36,9 @@ def _restore_shared_bootstrap_config(request, isolate_test_environment):
     tests write it for real (``apply_settings_mutation_to_cli_config``). When
     the whole wizard file was first marked, a key stored by one test made
     ``test_mounted_sparse_keyless_save_back_next_is_idempotent`` see a
-    ``stored`` credential where it expects ``none``. The restore goes through
-    the guarded writer, which also refreshes the config caches. A file that did
-    not exist before the test is left alone: the next read recreates the
-    same defaults.
+    ``stored`` credential where it expects ``none``. ``put_back_bootstrap_config``
+    does the restore: it removes a file the test created and writes back one
+    it changed or deleted, refreshing the config caches either way.
 
     Args:
         request: The pytest request, used to read the node's markers.
@@ -56,10 +55,38 @@ def _restore_shared_bootstrap_config(request, isolate_test_environment):
     path = Path(os.environ["TLDW_CONFIG_PATH"])
     before = path.read_text(encoding="utf-8") if path.exists() else None
     yield
-    if before is None or not path.exists():
-        return
-    if path.read_text(encoding="utf-8") == before:
-        return
+    put_back_bootstrap_config(path, before)
+
+
+def put_back_bootstrap_config(path: Path, before: str | None) -> None:
+    """Return the config file at ``path`` to its state from before a test.
+
+    Qodo (PR #3001): a file the test created used to be left in place, keys
+    and all, for the next test in the worker. It is now removed and the
+    config caches are republished from the absent file. A file the test
+    changed or deleted is written back through the guarded writer, which
+    refreshes the caches too.
+
+    Args:
+        path: The bootstrap ``config.toml`` (``TLDW_CONFIG_PATH``).
+        before: Its text before the test, or None when it did not exist.
+
+    Raises:
+        RuntimeError: The caches could not be republished after removing a
+            file the test created.
+    """
     from tldw_chatbook import config
 
+    if before is None:
+        if not path.exists():
+            return
+        path.unlink()
+        refreshed = config.refresh_runtime_config_from_cli_config()
+        if not refreshed.caches_reloaded:
+            raise RuntimeError(
+                f"config caches not republished ({refreshed.failure_phase})"
+            )
+        return
+    if path.exists() and path.read_text(encoding="utf-8") == before:
+        return
     config.replace_cli_config_serialized(before, create_backup=False)
