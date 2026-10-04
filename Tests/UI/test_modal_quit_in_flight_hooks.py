@@ -38,6 +38,7 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
 from tldw_chatbook.Widgets.Console.trace_export_dialog import TraceExportDialog
+from tldw_chatbook.Widgets.Console.trace_export_profile_ui import EXPORT_STILL_WRITING
 from tldw_chatbook.Widgets.Persona_Widgets.buddy_character_review import (
     BuddyCharacterReviewDialog,
 )
@@ -90,8 +91,19 @@ async def test_mid_operation_ctrl_q_says_still_working_and_stays(modal, flag, wh
 
 
 @pytest.fixture
-def quit_anyway(monkeypatch):
-    """Record the quit-anyway prompt instead of pushing it; answer ``.answer``."""
+def quit_anyway(monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """Record the quit-anyway prompt instead of pushing it; answer ``.answer``.
+
+    Args:
+        monkeypatch: Replaces ``confirm_quit_discarding_edits``, the prompt
+            ``refuse_quit_while_working`` asks through, for this test only.
+
+    Returns:
+        The prompt recorder: ``calls`` lists each ``(screen, message, copy)``
+        the prompt was asked with (``copy`` holds its title and button
+        labels), and ``answer`` is what the next prompt returns -- False for
+        Wait (the default), True for Quit anyway.
+    """
     record = SimpleNamespace(calls=[], answer=False)
 
     async def _ask(screen, message: str, **copy: str) -> bool:
@@ -158,6 +170,22 @@ async def test_a_new_activity_is_announced_before_anything_is_asked(quit_anyway)
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("modal", "flag"),
+    [(ConsoleExchangeExportDialog, "_exporting"), (TraceExportDialog, "_writing")],
+    ids=["exchange-export", "trace-export"],
+)
+async def test_both_export_dialogs_name_the_one_shared_activity(modal, flag):
+    """Both dialogs refuse while writing an export, in one shared sentence."""
+    screen, notices = _stand_in(**{flag: True})
+
+    assert await modal.confirm_quit(screen) is False
+    assert [message for message, _kwargs in notices] == [
+        f"{EXPORT_STILL_WRITING} {QUIT_AGAIN_HINT}"
+    ]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(("modal", "flag", "what"), _IN_FLIGHT, ids=_IDS)
 async def test_idle_modal_lets_ctrl_q_through_silently(modal, flag, what):
     del what
@@ -189,8 +217,15 @@ async def test_switcher_stays_only_while_a_chat_opening_commits(phase, stays):
 
 
 @pytest.fixture
-def asked(monkeypatch):
-    """Record the discard prompt instead of pushing it; answer Keep editing."""
+def asked(monkeypatch: pytest.MonkeyPatch) -> list[tuple[object, str]]:
+    """Record the discard prompt instead of pushing it; answer Keep editing.
+
+    Args:
+        monkeypatch: Replaces ``confirm_quit_discarding_edits`` for this test.
+
+    Returns:
+        The ``(screen, message)`` of each prompt asked, in order.
+    """
     calls: list[tuple[object, str]] = []
 
     async def _keep_editing(screen, message: str, **_copy: str) -> bool:

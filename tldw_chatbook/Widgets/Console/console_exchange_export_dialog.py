@@ -31,6 +31,7 @@ from tldw_chatbook.Chat.trace_export_profiles import TraceExportProfile
 from tldw_chatbook.Utils.atomic_file_ops import atomic_write_text
 from tldw_chatbook.Utils.path_validation import validate_path_simple
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
@@ -373,6 +374,4 @@ class ConsoleExchangeExportDialog(SafeModalDismissMixin, ModalScreen[None]):
             return True
         from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
 
-        return await refuse_quit_while_working(
-            self, "The export is still being written."
-        )
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)

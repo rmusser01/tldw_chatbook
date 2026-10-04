@@ -33,6 +33,7 @@ from tldw_chatbook.Widgets.modal_dismissal import SafeModalDismissMixin
 # (TASK-22213; guard:
 # `Tests/Packaging/test_exchange_export_trajectory_deferral.py`).
 from tldw_chatbook.Widgets.Console.trace_export_profile_ui import (
+    EXPORT_STILL_WRITING,
     TRACE_EXPORT_PROFILE_COPY,
     TRACE_EXPORT_PROFILE_LABELS,
     full_trace_confirmation,
@@ -388,6 +389,4 @@ class TraceExportDialog(SafeModalDismissMixin, ModalScreen[Path | None]):
             return True
         from tldw_chatbook.Widgets.quit_while_working import refuse_quit_while_working
 
-        return await refuse_quit_while_working(
-            self, "The export is still being written."
-        )
+        return await refuse_quit_while_working(self, EXPORT_STILL_WRITING)
