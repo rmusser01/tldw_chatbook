@@ -2530,9 +2530,15 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
                 "settings-hosted-provider-guidance",
             )
             control = screen.query_one("#settings-provider-search", Input)
+            # TASK-33007.3, extended on purpose (R15): the Default model is a
+            # picker over the hidden #settings-model-value adapter; what it
+            # shows and holds is restored with the adapter.
+            picker = screen.query_one("#settings-model-picker")
+            picker_field = picker.query_one("#model-search-picker-input", Input)
             return {
                 "provider": (provider.value, provider.disabled),
                 "provider_control": (control.value, control.disabled),
+                "model_picker": (picker_field.value, picker.value, picker.disabled),
                 "manual": (manual.value, manual.placeholder, manual.disabled),
                 "model": (model.value, model.placeholder, model.disabled),
                 "endpoint": (

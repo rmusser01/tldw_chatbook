@@ -375,16 +375,20 @@ async def test_settings_save_preserves_user_session(
                 ),
                 "the rendered provider control did not stage Anthropic",
             )
-            model_input = await _wait_for_widget(
+            # TASK-33007.3, rewritten on purpose: the rendered Model control
+            # is the Default model picker (#settings-model-value is its hidden
+            # adapter); an id no list holds is typed after its Custom ID.
+            model_field = await _wait_for_widget(
                 settings,
                 pilot,
-                "#settings-model-value",
+                "#model-search-picker-input",
                 Input,
             )
-            model_input.value = "claude-task-648"
-            settings.handle_model_value_changed(
-                Input.Changed(model_input, model_input.value)
-            )
+            model_field.focus()
+            await pilot.pause()
+            settings.query_one("#model-search-picker-custom", Button).press()
+            await pilot.pause()
+            await pilot.press("home", "shift+end", "backspace", *"claude-task-648")
             await _wait_until(
                 pilot,
                 lambda: (

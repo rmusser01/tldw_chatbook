@@ -529,7 +529,9 @@ def build_field_search_index() -> None:
                     "settings-provider-api-mode",
                     "api_settings.<provider>.api_mode",
                 ),
-                ("settings-model-value", "Model"),
+                # TASK-33007.3: the picker's field; the Input behind it is a
+                # hidden adapter holding the model id.
+                ("model-search-picker-input", "Model"),
                 ("settings-provider-endpoint-value", "Endpoint"),
                 ("settings-provider-api-key", "API key"),
                 ("settings-provider-credential-env-var", "Credential env var"),

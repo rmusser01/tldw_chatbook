@@ -35,7 +35,6 @@ from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.selection import Selection
 from textual.strip import Strip
-from textual.suggester import SuggestFromList
 from textual.validation import ValidationResult, Validator
 from textual.worker import get_current_worker
 from textual.widgets import (
@@ -1235,6 +1234,7 @@ REGISTRY_FIELD_PLACEHOLDER = "Managed in Custom endpoints"
 #: mutation, and both reject a registry id. Enabled for every other provider.
 _REGISTRY_LOCKED_FIELD_SELECTORS = (
     "#settings-model-value",
+    "#settings-model-picker",
     "#settings-provider-endpoint-value",
     "#settings-provider-api-key",
     "#settings-provider-credential-env-var",
@@ -3321,6 +3321,8 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_status = MODEL_DISCOVERY_IDLE_COPY
         self._model_discovery_models: tuple[object, ...] = ()
         self._model_discovery_selected_model_ids: set[str] = set()
+        # The provider whose discovery listing the Default model picker shows.
+        self._model_picker_overlay_provider = ""
         self._model_discovery_revision = 0
         self._model_catalog_form_values: dict[str, dict[str, object]] | None = None
         self._model_catalog_save_status = ""
@@ -13666,6 +13668,7 @@ class SettingsScreen(BaseAppScreen):
             with widget.prevent(Select.Changed):
                 widget.value = value
             widget.disabled = disabled
+        self._sync_model_picker(provider)
 
         self._update_provider_dynamic_widgets()
 
@@ -13768,10 +13771,8 @@ class SettingsScreen(BaseAppScreen):
             self._stage_provider_value("model", intent.model_id)
             self._stage_provider_value("endpoint", intent.api_url)
             self._sync_provider_manual_widget(provider)
-            model_input = self.query_one("#settings-model-value", Input)
+            self._set_model_field_value(intent.model_id, provider=provider)
             endpoint_input = self.query_one("#settings-provider-endpoint-value", Input)
-            with model_input.prevent(Input.Changed):
-                model_input.value = intent.model_id
             with endpoint_input.prevent(Input.Changed):
                 endpoint_input.value = intent.api_url
             endpoint_input.placeholder = self._provider_endpoint_placeholder("vllm")
@@ -15495,7 +15496,7 @@ class SettingsScreen(BaseAppScreen):
         self._model_discovery_models = ()
         self._model_discovery_selected_model_ids = set()
         self._refresh_model_discovery_widgets()
-        self._refresh_model_field_suggester()
+        self._refresh_model_picker_discovered()
 
     def _discovery_status_from_error(self, result: object) -> str:
         error = getattr(result, "error", None)
@@ -15644,7 +15645,7 @@ class SettingsScreen(BaseAppScreen):
                 f"Discovered {len(models)} model(s) from {provider_list_key}."
             )
             self._refresh_model_discovery_widgets()
-            self._refresh_model_field_suggester()  # TASK-369: enable typeahead
+            self._refresh_model_picker_discovered()
             self.app.notify(
                 "Provider model discovery finished.", severity="information"
             )
@@ -15660,31 +15661,86 @@ class SettingsScreen(BaseAppScreen):
     async def _save_selected_discovered_provider_models_worker(self) -> None:
         await self._save_selected_discovered_provider_models()
 
-    def _model_field_suggester(self) -> SuggestFromList | None:
-        """TASK-369: typeahead of discovered model ids for the Model field.
+    def _refresh_model_picker_discovered(self) -> None:
+        """Merge the current discovery listing into the Default model picker.
 
-        Recognition over recall — while a discovery result is on screen, typing a
-        prefix (e.g. ``gemma``) completes to the full gguf id instead of forcing
-        the user to recall a 56-character filename. Returns ``None`` when there
-        is nothing to suggest.
+        TASK-33007.3 (recognition over recall, TASK-369): the listing shows
+        as visible "Served now" rows, not a ghost completion only a hidden
+        key accepts. Discovery is dropped whenever the provider or its
+        endpoint changes, so the overlay is always this endpoint's own; an
+        earlier provider's overlay is cleared, never left for a return trip.
         """
-        ids = sorted(
-            {
-                str(getattr(model, "model_id", "") or "").strip()
-                for model in self._model_discovery_models
-                if str(getattr(model, "model_id", "") or "").strip()
-            }
-        )
-        return SuggestFromList(ids, case_sensitive=False) if ids else None
-
-    def _refresh_model_field_suggester(self) -> None:
-        """Point the Model field's suggester at the current discovered models."""
         try:
-            self.query_one(
-                "#settings-model-value", Input
-            ).suggester = self._model_field_suggester()
-        except (QueryError, AttributeError):
-            pass
+            picker = self.query_one("#settings-model-picker")
+        except QueryError:
+            return
+        provider = self._provider_widget_value()
+        previous = self._model_picker_overlay_provider
+        if previous and provider_config_key(previous) != provider_config_key(provider):
+            picker.set_discovered_models(previous, (), notify=False)
+        self._model_picker_overlay_provider = provider
+        picker.set_discovered_models(
+            provider,
+            tuple(
+                str(getattr(model, "model_id", "") or "")
+                for model in self._model_discovery_models
+            ),
+            notify=False,
+            served_now=True,
+        )
+
+    def _set_model_field_value(
+        self, value: str, *, provider: str | None = None, quiet: bool = True
+    ) -> None:
+        """Write the Default model value to its adapter and its picker (R8).
+
+        Every programmatic writer of ``#settings-model-value`` goes through
+        here. A quiet write posts no ``Input.Changed``, so the picker would
+        never hear of it on its own.
+
+        Args:
+            value: The model id to show and hold.
+            provider: The provider the form now holds; when given, the picker
+                re-scopes to it, so no earlier provider's model stays listed.
+            quiet: Write without posting ``Input.Changed`` (the caller staged
+                the draft itself); False lets the change handler stage it.
+        """
+        try:
+            adapter = self.query_one("#settings-model-value", Input)
+        except QueryError:
+            return
+        if quiet:
+            with adapter.prevent(Input.Changed):
+                adapter.value = value
+        else:
+            adapter.value = value
+        self._sync_model_picker(provider)
+
+    def _sync_model_picker(
+        self, provider: str | None = None, *, reload: bool = False
+    ) -> None:
+        """Show the adapter's value in the picker (AC#7).
+
+        Args:
+            provider: When given, re-scope the picker to this provider.
+            reload: Re-read the provider's lists, e.g. after Save selected
+                added ids to them.
+        """
+        # Imported here: the picker module stays off the Settings route's
+        # pre-import payload (ADR-097); the card that composes it is lazy too.
+        from ...Widgets.model_search_picker import normalize_model_id
+
+        try:
+            adapter = self.query_one("#settings-model-value", Input)
+            picker = self.query_one("#settings-model-picker")
+        except QueryError:
+            return
+        if provider is not None:
+            picker.refresh_provider(
+                provider, current_model=adapter.value, force=reload
+            )
+        elif picker.value != normalize_model_id(adapter.value):
+            picker.set_model_value(adapter.value)
 
     @staticmethod
     def _model_to_activate_after_save(
@@ -15717,8 +15773,8 @@ class SettingsScreen(BaseAppScreen):
             model_input.value, saved_model_ids
         )
         if next_value and next_value != model_input.value:
-            # Setting .value fires Input.Changed, which stages the model draft.
-            model_input.value = next_value
+            # Not quiet: Input.Changed stages the model draft.
+            self._set_model_field_value(next_value, quiet=False)
 
     async def _save_selected_discovered_provider_models(self) -> None:
         provider = self._provider_widget_value()
@@ -15798,11 +15854,12 @@ class SettingsScreen(BaseAppScreen):
             # retype from memory of a name the cleared discovery list no longer
             # shows.
             self._activate_saved_model_if_field_empty(saved_model_ids)
+            # The saved ids now group as saved in the Default model picker.
+            self._sync_model_picker(provider, reload=True)
             self._model_discovery_status = (
                 message or f"Saved {len(saved_model_ids)} discovered model(s)."
             )
             self._refresh_model_discovery_widgets()
-            self._refresh_model_field_suggester()
             self.app.notify("Discovered models saved.", severity="information")
             return
 
@@ -17024,7 +17081,12 @@ class SettingsScreen(BaseAppScreen):
                     "letters, numbers, hyphens, underscores, and provider aliases only",
                 ),
             )
-        if field_id == "settings-model-value":
+        # TASK-33007.3: the adapter is hidden; users focus the picker.
+        if field_id in {
+            "settings-model-value",
+            "model-search-picker-input",
+            "model-search-picker-results",
+        }:
             return (
                 ("Focused setting", "Model"),
                 (
@@ -23440,20 +23502,14 @@ class SettingsScreen(BaseAppScreen):
         except QueryError:
             pass
         self._sync_provider_credential_widget(provider_value)
+        self._syncing_provider_model_value = True
         try:
-            self._syncing_provider_model_value = True
-            try:
-                model_input = self.query_one("#settings-model-value", Input)
-                # task-15673/15740: the flag misses the posted message; the
-                # echo staged the nav model as an edit, marking the category
-                # dirty so this method's own unsaved-changes guard refused
-                # the NEXT navigation apply.
-                with model_input.prevent(Input.Changed):
-                    model_input.value = model_value
-            finally:
-                self._syncing_provider_model_value = False
-        except QueryError:
-            pass
+            # task-15673/15740: a quiet write -- the posted echo staged the
+            # nav model as an edit, marking the category dirty so this
+            # method's own unsaved-changes guard refused the NEXT apply.
+            self._set_model_field_value(model_value, provider=provider_value)
+        finally:
+            self._syncing_provider_model_value = False
         self._sync_provider_model_profile_widgets(provider_value, model_value)
         self._update_provider_dynamic_widgets()
         self._update_draft_status_widgets(SettingsCategoryId.PROVIDERS_MODELS)
@@ -29354,16 +29410,11 @@ class SettingsScreen(BaseAppScreen):
         )
         if provider_changed:
             self._stage_provider_value("model", provider_default_model or None)
-            try:
-                default_model_input = self.query_one("#settings-model-value", Input)
-            except QueryError:
-                pass
-            else:
-                # task-15740: the model is staged explicitly one line up; the
-                # unguarded echo re-staged it a second time through the
-                # handler. Same class as the flagged sites, no flag at all.
-                with default_model_input.prevent(Input.Changed):
-                    default_model_input.value = provider_default_model
+            # task-15740: staged explicitly one line up, so the write is
+            # quiet; the picker re-scopes to the new provider (AC#6).
+            self._set_model_field_value(
+                provider_default_model, provider=staged_provider
+            )
         model = str(self._provider_setting_values_mapping().get("model") or "")
         self._sync_provider_model_profile_widgets(staged_provider, model)
         self._reset_provider_model_discovery_state()
@@ -29472,8 +29523,32 @@ class SettingsScreen(BaseAppScreen):
             return
         self._apply_provider_value_change(select_value)
 
+    # Named handlers, not @on: @on would need the picker class imported with
+    # this module (ADR-097 pre-import payload).
+    def on_model_search_picker_model_selected(self, event) -> None:
+        """Stage a chosen model as the default for new chats (AC#3, C4).
+
+        Any listed id replaces a default that is already set; the saved
+        model list is untouched (ADR-002: Save selected persists ids).
+
+        Args:
+            event: The picker's choice.
+        """
+        event.stop()
+        self._set_model_field_value(event.model_id, quiet=False)
+
+    def on_model_search_picker_model_value_changed(self, event) -> None:
+        """Stage a typed Custom ID; an invalid one holds no model (AC#5).
+
+        Args:
+            event: The picker's Custom ID edit, or its rollback.
+        """
+        event.stop()
+        self._set_model_field_value(event.model_id or "", quiet=False)
+
     @on(Input.Changed, "#settings-model-value")
     def handle_model_value_changed(self, event: Input.Changed) -> None:
+        self._sync_model_picker()
         if self._syncing_provider_model_value:
             return
         model_value = event.value.strip()
@@ -29821,7 +29896,7 @@ class SettingsScreen(BaseAppScreen):
         event.stop()
         focus_by_key = {
             "provider": "#settings-provider-search",
-            "model": "#settings-model-value",
+            "model": "#model-search-picker-input",
             "endpoint": "#settings-provider-endpoint-value",
             "api_key": "#settings-provider-api-key",
             "credential_env_var": "#settings-provider-credential-env-var",
@@ -32011,8 +32086,8 @@ class SettingsScreen(BaseAppScreen):
                 finally:
                     self._syncing_provider_selection = False
                 self._sync_provider_manual_widget(provider)
-                self.query_one("#settings-model-value", Input).value = str(
-                    values["model"]
+                self._set_model_field_value(
+                    str(values["model"]), provider=provider, quiet=False
                 )
                 endpoint_input = self.query_one(
                     "#settings-provider-endpoint-value", Input

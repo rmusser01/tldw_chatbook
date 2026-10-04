@@ -5194,11 +5194,17 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
-        model_input.value = "gpt-shortcut-check"
-        screen.handle_model_value_changed(Input.Changed(model_input, model_input.value))
+        adapter = screen.query_one("#settings-model-value", Input)
+        adapter.value = "gpt-shortcut-check"
+        screen.handle_model_value_changed(Input.Changed(adapter, adapter.value))
+        await pilot.pause()
         screen._provider_test_result = None
-        model_input.focus()
+        # TASK-33007.3, rewritten on purpose: the Model field users type in is
+        # the Default model picker's; a typed id is a Custom ID edit there
+        # (#settings-model-value is its hidden adapter).
+        picker = screen.query_one("#settings-model-picker")
+        model_input = picker.query_one("#model-search-picker-input", Input)
+        picker.toggle_custom_mode()
         await pilot.pause()
 
         assert screen.app.focused is model_input
@@ -5207,6 +5213,7 @@ async def test_settings_provider_text_inputs_do_not_trigger_footer_shortcuts(
         await pilot.pause()
 
         assert model_input.value == "srt"
+        assert adapter.value == "srt"
         assert saved == []
         # TASK-366: editing a provider input (the model here) marks the last
         # Test Provider result stale rather than leaving a now-inaccurate verdict.
@@ -13953,7 +13960,9 @@ async def test_settings_invalid_input_keeps_error_tint_while_focused():
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the visible one-row Model field
+        # is the picker's (#settings-model-value is a hidden adapter).
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.add_class("settings-invalid-input")
         await pilot.pause()
 

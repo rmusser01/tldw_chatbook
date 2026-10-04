@@ -1674,27 +1674,43 @@ def test_model_to_activate_after_save_prefers_first_saved_when_field_empty():
 
 
 @pytest.mark.asyncio
-async def test_model_field_suggester_completes_discovered_ids():
-    """TASK-369: the Model field offers discovered model ids for typeahead, so a
-    prefix completes to the full gguf name."""
-    from types import SimpleNamespace
+@private_profile_test
+async def test_model_picker_prefix_search_finds_a_discovered_id(request):
+    """TASK-369, rewritten on purpose for TASK-33007.3 AC#9: the ghost-text
+    typeahead is gone; a prefix typed into the Default model picker lists the
+    discovered gguf id as a visible row, and Enter chooses it."""
+    from textual.widgets import OptionList
 
-    screen = _bare_settings_screen({})
-    screen._model_discovery_models = (
-        SimpleNamespace(model_id="gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"),
-        SimpleNamespace(model_id="mistral-7b-instruct.Q5_K_M.gguf"),
-    )
+    gguf = "gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"
+    app = _build_test_app()
+    app.app_config["chat_defaults"] = {"provider": "llama_cpp", "model": ""}
+    app.app_config["api_settings"] = {"llama_cpp": {"api_url": "http://127.0.0.1:9099"}}
+    app.providers_models = {"llama_cpp": []}
+    host = StyledSettingsDestinationHarness(app, "settings")
+    async with host.run_test(size=(211, 44)) as pilot:
+        await _open_settings_category(pilot, "#settings-category-providers-models")
+        screen = _active_destination_screen(host)
+        screen._model_discovery_models = (
+            SimpleNamespace(model_id=gguf),
+            SimpleNamespace(model_id="mistral-7b-instruct.Q5_K_M.gguf"),
+        )
+        screen._refresh_model_picker_discovered()
+        field = screen.query_one("#model-search-picker-input", Input)
+        results = screen.query_one("#model-search-picker-results", OptionList)
+        field.focus()
+        await pilot.pause()
+        await pilot.press(*"gemma")
+        await pilot.pause()
 
-    suggester = screen._model_field_suggester()
-    assert suggester is not None
-    assert (
-        await suggester.get_suggestion("gemma")
-        == "gemma-4-26B-A4B-it-ultra.Q4_K_M.gguf"
-    )
-
-    # No discovered models -> nothing to suggest.
-    screen._model_discovery_models = ()
-    assert screen._model_field_suggester() is None
+        listed = [
+            str(results.get_option_at_index(index).prompt)
+            for index in range(results.option_count)
+        ]
+        assert listed == ["Served now", gguf]
+        assert field.suggester is None
+        await pilot.press("enter")
+        await pilot.pause()
+        assert screen.query_one("#settings-model-value", Input).value == gguf
 
 
 def test_discovery_row_labels_use_user_vocabulary_not_internal_jargon():
@@ -1814,7 +1830,10 @@ async def test_test_provider_button_runs_with_provider_input_focused(request):
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the Model field users focus is
+        # the Default model picker's (#settings-model-value is a hidden,
+        # unfocusable adapter).
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.focus()
         await pilot.pause()
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.
@@ -1865,7 +1884,10 @@ async def test_t_hotkey_does_not_run_test_while_input_focused():
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
 
-        model_input = screen.query_one("#settings-model-value", Input)
+        # TASK-33007.3, rewritten on purpose: the Model field users focus is
+        # the Default model picker's (#settings-model-value is a hidden,
+        # unfocusable adapter).
+        model_input = screen.query_one("#model-search-picker-input", Input)
         model_input.focus()
         await pilot.pause()
         # Sanity: this is exactly the state that would make the 't' hotkey no-op.

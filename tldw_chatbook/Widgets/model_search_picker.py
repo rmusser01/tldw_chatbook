@@ -187,6 +187,7 @@ class ModelSearchPicker(Widget):
         providers_models: Mapping[str, object] | None = None,
         show_custom_button: bool = True,
         show_provenance: bool = False,
+        catalog_scope_service: object | None = None,
     ) -> None:
         """Initialize the controlled picker.
 
@@ -201,12 +202,15 @@ class ModelSearchPicker(Widget):
                 action. Full settings reuses its existing adjacent action.
             show_provenance: Whether to group resolved options by their typed
                 model provenance. Existing callers retain flat results.
+            catalog_scope_service: The catalog service a surface owns; the
+                app's ``llm_provider_catalog_scope_service`` is the fallback.
         """
         super().__init__(id=id)
         self._provider_select_id = provider_select_id
         self._initial_providers_models = providers_models
         self._show_custom_button = show_custom_button
         self._show_provenance = show_provenance
+        self._catalog_scope_service = catalog_scope_service
         self._provider = ""
         self._selected_model = self._normalize_model(current_model)
         self._model_before_custom = self._selected_model
@@ -218,6 +222,7 @@ class ModelSearchPicker(Widget):
         self._result_model_ids_by_option_id: dict[str, str] = {}
         self._committed_index: int | None = None
         self._discovered_model_ids: dict[str, tuple[str, ...]] = {}
+        self._served_now_provider_keys: set[str] = set()
         self._load_errors: dict[str, bool] = {}
         self._load_counts: dict[str, int] = {}
         self._preserve_committed_on_next_input_focus = False
@@ -253,7 +258,10 @@ class ModelSearchPicker(Widget):
                 compact=True,
                 tooltip="Enter an exact model ID that is not in the list.",
             )
-            custom_button.display = self._show_custom_button
+            if not self._show_custom_button:
+                # Only the hidden state is inline, so a host's stylesheet can
+                # still decide when a shown button is displayed (Settings).
+                custom_button.display = False
             yield custom_button
         yield Static("Loading models...", id="model-search-picker-status", markup=False)
         results = OptionList(
@@ -333,7 +341,8 @@ class ModelSearchPicker(Widget):
 
             options = await resolve_provider_model_options(
                 self._providers_models(),
-                getattr(self.app, "llm_provider_catalog_scope_service", None),
+                self._catalog_scope_service
+                or getattr(self.app, "llm_provider_catalog_scope_service", None),
                 provider=normalized_provider,
                 current_model=self._selected_model,
                 merge_cap=None,
@@ -409,6 +418,7 @@ class ModelSearchPicker(Widget):
         model_ids: tuple[str, ...] | list[str],
         *,
         notify: bool = True,
+        served_now: bool = False,
     ) -> None:
         """Merge models returned by an explicit endpoint probe into the picker.
 
@@ -421,8 +431,15 @@ class ModelSearchPicker(Widget):
             model_ids: Discovered model identifiers.
             notify: Post a parent-facing provenance refresh message. The modal
                 disables this only for its own derived overlay updates.
+            served_now: The listing is the current endpoint's own, dropped by
+                its host whenever that endpoint changes (Settings), so its
+                new ids group as "Served now" instead of custom.
         """
         cache_key = provider_config_key(provider)
+        if served_now:
+            self._served_now_provider_keys.add(cache_key)
+        else:
+            self._served_now_provider_keys.discard(cache_key)
         normalized_ids: list[str] = []
         for model_id in model_ids:
             normalized = self._normalize_model(model_id)
@@ -552,20 +569,28 @@ class ModelSearchPicker(Widget):
             if isinstance(option, ResolvedProviderModelOption)
         ]
         seen_model_ids = {option.model_id for option in options}
-        for model_id in self._discovered_model_ids.get(
-            provider_config_key(self._provider), ()
-        ):
+        cache_key = provider_config_key(self._provider)
+        served_now = cache_key in self._served_now_provider_keys
+        for model_id in self._discovered_model_ids.get(cache_key, ()):
             if model_id in seen_model_ids:
                 continue
             options.append(
                 ResolvedProviderModelOption(
                     label=model_id,
                     model_id=model_id,
-                    source="manual_discovery_unfenced",
+                    source=(
+                        "manual_discovery_exact"
+                        if served_now
+                        else "manual_discovery_unfenced"
+                    ),
                     capability_status="unknown",
                     persisted=False,
-                    provenance=ConsoleModelProvenance.CUSTOM_UNVERIFIED,
-                    verified_for_connection=False,
+                    provenance=(
+                        ConsoleModelProvenance.SERVED_NOW
+                        if served_now
+                        else ConsoleModelProvenance.CUSTOM_UNVERIFIED
+                    ),
+                    verified_for_connection=served_now,
                 )
             )
             seen_model_ids.add(model_id)
