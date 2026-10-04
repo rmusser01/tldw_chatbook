@@ -842,3 +842,54 @@ async def test_an_image_command_takes_only_the_draft_its_send_captured(monkeypat
             )
     finally:
         prepared.set()
+
+
+async def test_a_failed_image_batch_still_offers_a_command_its_take_left_behind(
+    monkeypatch,
+):
+    """Review (Qodo #4): a draft replaced before the command took it made the
+    take remove nothing -- and keep nothing, so when the batch then failed
+    there was no command left to offer. The replacement stays, and the failure
+    row still says how to send the command again."""
+    batch = _BlockingImageBatch()
+    preparing = threading.Event()
+    prepared = threading.Event()
+    real_prepare = image_module.prepare_generation_request
+
+    def slow_prepare(*args, **kwargs):
+        preparing.set()
+        prepared.wait(30)
+        return real_prepare(*args, **kwargs)
+
+    configure_backend = _configure_image_backend(monkeypatch, batch)
+
+    def configure(console) -> None:
+        configure_backend(console)
+        monkeypatch.setattr(image_module, "prepare_generation_request", slow_prepare)
+
+    try:
+        async with _console_sending_video(
+            monkeypatch, "enter", batch, draft=IMAGE_DRAFT, configure=configure
+        ) as (app, console, _cleanups):
+            said = _record_system_messages(monkeypatch, console)
+            origin = console._ensure_console_chat_store().active_session_id
+            assert await _until(preparing.is_set, 10), "the command never ran"
+            composer = console._console_composer_or_none()
+            _key(app, "ctrl+u")
+            assert await _until(lambda: composer.draft_text() == "", 5)
+            await _type_into(app, composer, TYPED)
+            prepared.set()
+            assert await _until(batch.started.is_set, 10), "the image batch never ran"
+            batch.release.set()
+            assert await _until(
+                lambda: not console._image._console_imagegen_inflight_sessions(), 5
+            )
+            await asyncio.sleep(0.3)
+            assert composer.draft_text() == TYPED, (
+                f"the failure overwrote the replacement draft: {composer.draft_text()!r}"
+            )
+            assert _said_how_to_resend(said, IMAGE_DRAFT, origin), (
+                f"the failure never said how to send the command again: {said}"
+            )
+    finally:
+        prepared.set()

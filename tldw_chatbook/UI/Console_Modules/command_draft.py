@@ -16,7 +16,8 @@ anything:
   empty. A chat switch, a load or another send always advances the
   composer's draft generation; typing does not. Otherwise the user's newer
   draft stays, and the failure row carries the command so it can be sent
-  again.
+  again -- also when the take removed nothing, because the draft had already
+  changed: the command is kept either way.
 
 The command comes back as its own segments -- the literal draft it was -- not
 as a paste: a draft holding a paste is never parsed as a command, so a paste
@@ -41,17 +42,24 @@ this task, set by ``command_handoff`` inside the command's own worker."""
 
 @dataclass(frozen=True)
 class TakenCommandDraft:
-    """A command draft taken out of the composer.
+    """A running command's captured draft, and whether the take removed it.
 
     Attributes:
-        composer: The composer it was taken from.
+        composer: The composer it was taken from, or None.
         stash: The captured draft, segments included.
-        generation: The composer's draft generation right after the take.
+        generation: The composer's draft generation right after the take, or
+            None when the take removed nothing -- the composer no longer held
+            the captured draft -- so it must never be put back.
     """
 
     composer: Any
     stash: Any
-    generation: int
+    generation: int | None
+
+    @property
+    def removed(self) -> bool:
+        """Whether the take removed the draft from the composer."""
+        return self.generation is not None
 
 
 def take_command_draft(
@@ -65,20 +73,23 @@ def take_command_draft(
             used when the composer holds exactly the captured draft.
 
     Returns:
-        What was taken, or None when nothing was: no composer, an empty
-        draft, or a captured draft the composer no longer holds.
+        The captured command, ``removed`` or not: a captured draft the
+        composer no longer holds stays in it, but is still kept so a failure
+        can say how to send it again. None only when there is no command to
+        keep (an empty draft, or no capture and no composer).
     """
+    captured = CAPTURED_COMMAND_DRAFT.get()
     if composer is None:
         clear_draft()
-        return None
-    stash = CAPTURED_COMMAND_DRAFT.get() or composer.capture_draft_for_send()
+        return None if captured is None else TakenCommandDraft(None, captured, None)
+    stash = captured or composer.capture_draft_for_send()
     if stash is None:
         clear_draft()
         return None
     if _holds_exactly(composer, stash):
         clear_draft()
     elif not composer.commit_captured_draft(stash):
-        return None
+        return TakenCommandDraft(composer, stash, None)
     return TakenCommandDraft(composer, stash, _generation(composer))
 
 
@@ -90,13 +101,16 @@ def restore_command_draft(composer: Any | None, taken: TakenCommandDraft | None)
         taken: What ``take_command_draft`` returned.
 
     Returns:
-        "" when the command is back in the composer (or nothing was taken);
-        otherwise a sentence for the failure row saying how to send it again.
+        "" when the command is back in the composer (or there was none);
+        otherwise -- the take removed nothing, or the composer has changed
+        since -- a sentence for the failure row saying how to send it again.
     """
     if taken is None:
         return ""
     if (
-        composer is taken.composer
+        taken.removed
+        and composer is not None
+        and composer is taken.composer
         and _generation(composer) == taken.generation
         and composer.draft_text() == ""
     ):
@@ -109,7 +123,18 @@ def restore_command_draft(composer: Any | None, taken: TakenCommandDraft | None)
 
 
 def with_resend_hint(message: str, hint: str) -> str:
-    """Append ``hint`` (from ``restore_command_draft``) to a failure row."""
+    """Append a resend hint to a failure row.
+
+    Args:
+        message: The failure row, with or without its closing period.
+        hint: What ``restore_command_draft`` returned: "" when the command
+            is back in the composer, else the sentence saying how to send it
+            again.
+
+    Returns:
+        ``message`` unchanged for an empty ``hint``; otherwise ``message``
+        ending in exactly one period, a space, then ``hint``.
+    """
     if not hint:
         return message
     return f"{message.rstrip('.')}. {hint}"
