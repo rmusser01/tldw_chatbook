@@ -387,8 +387,24 @@ class _ConsoleTurnCustodyRecord:
     inputs: _ConsoleTurnCustodyInputs = field(default_factory=_ConsoleTurnCustodyInputs, repr=False)
     task: asyncio.Task[Any] | None = field(default=None, repr=False)
     archive_conversation_id: str | None = None
-    #: The controller's code-owned copy for a refusal before acceptance.
-    refusal: str = field(default="", repr=False)
+
+
+class _ConsoleTurnRefusedError(RuntimeError):
+    """A custodied turn refused before durable acceptance, with its reason.
+
+    TASK-33621.2: the refusal copy is the turn's OUTCOME, so it travels on
+    the task's terminal exception to `_finish_custodied_turn`, which hands
+    it to the recovery entry. It is not stored on the custody record: that
+    record holds lifetime handles only (pinned by
+    `test_runtime_owned_custody_tracks_only_lifetime_handles`). The message
+    stays the fixed diagnostic text; the copy is kept off `args` so a
+    logged or re-raised exception does not repeat it.
+    """
+
+    def __init__(self, message: str, *, reason: str = "") -> None:
+        super().__init__(message)
+        #: The code-owned copy the unsent-turn shelf states; may be empty.
+        self.reason = reason
 
 
 @dataclass(frozen=True, slots=True)
@@ -2468,14 +2484,14 @@ class ConsoleRuntime:
                 self._app, record.archive_conversation_id
             )
             if refusal:
-                # TASK-33621.2: the parked turn's shelf entry states this
-                # refusal too, like a controller refusal's below.
-                record.refusal = refusal
                 notify = getattr(self._app, "notify", None)
                 if callable(notify):
                     notify(refusal, severity="warning")
-                raise RuntimeError(
-                    "Console conversation is unavailable for submission."
+                # TASK-33621.2: the parked turn's shelf entry states this
+                # refusal too, like a controller refusal's below.
+                raise _ConsoleTurnRefusedError(
+                    "Console conversation is unavailable for submission.",
+                    reason=refusal,
                 )
 
         def mark_durable_acceptance() -> None:
@@ -2533,8 +2549,10 @@ class ConsoleRuntime:
                 is not None
             )
         ):
-            record.refusal = str(getattr(result, "visible_copy", "") or "")
-            raise RuntimeError("Console turn was refused before durable acceptance.")
+            raise _ConsoleTurnRefusedError(
+                "Console turn was refused before durable acceptance.",
+                reason=str(getattr(result, "visible_copy", "") or ""),
+            )
         run_state_for = getattr(controller, "run_state_for", None)
         run_state = (
             run_state_for(request.session_id) if callable(run_state_for) else None
@@ -2664,7 +2682,9 @@ class ConsoleRuntime:
             self._recovery_turns_by_session.pop(entry.session_id, None)
         return True
 
-    def _record_turn_recovery(self, record: _ConsoleTurnCustodyRecord) -> None:
+    def _record_turn_recovery(
+        self, record: _ConsoleTurnCustodyRecord, *, reason: str = ""
+    ) -> None:
         request = record.request
         if (
             request is None
@@ -2680,7 +2700,7 @@ class ConsoleRuntime:
             draft=request.draft,
             attachments=record.inputs.attachments,
             insertion_order=self._recovery_order,
-            reason=record.refusal,
+            reason=reason,
         )
         self._turn_recoveries[entry.turn_id] = entry
         self._recovery_turns_by_session.setdefault(entry.session_id, []).append(
@@ -2718,7 +2738,14 @@ class ConsoleRuntime:
                 and recover_before_acceptance
                 and not record.inputs.durable_accepted
             ):
-                self._record_turn_recovery(record)
+                self._record_turn_recovery(
+                    record,
+                    reason=(
+                        exc.reason
+                        if isinstance(exc, _ConsoleTurnRefusedError)
+                        else ""
+                    ),
+                )
             logger.warning(
                 "Console runtime turn ended with exception_type={}",
                 type(exc).__name__,
