@@ -94,7 +94,7 @@ OpenAI-compatible**.
 | Tools | Built-in tool gates (all off by default) | MCP ▸ Servers ▸ built-in row ▸ **Tool gates**, or `[tools]` in config.toml — no Settings category owns them |
 | Notes sync | Folder + on/off toggle | [Library ▸ Notes](library/notes.md), the toolbar's Sync panel — not in Settings |
 | Appearance | Theme and splash screen card | Settings ▸ Appearance |
-| Voice | Spoken replies — PocketTTS, OmniVoice (local, installs its model here), Official OpenAI or a compatible endpoint; sample + "Test and Hear" (endpoint/model under Advanced) | Settings ▸ Speech & TTS |
+| Voice | Spoken replies — "No voice for now" (the default), PocketTTS (its own local server), OpenAI (your OpenAI key), a Custom endpoint, or OmniVoice (local, installs its model here); sample + "Test and Hear" (endpoint, model, voice and format under Advanced) | Settings ▸ Speech & TTS |
 | Protect keys | Config encryption (password at startup) | Settings ▸ Privacy & Security ▸ **Encryption**: Encrypt keys, Change password, Turn off encryption (each asks for the master password) |
 
 The Tools step is the only place in setup that turns a tool on, and it says
@@ -117,12 +117,45 @@ app's internal `chat_with_llm` tool, which the in-process server cannot run,
 is never offered. A self-hosted model whose context window the app has not
 read yet gets a plain request with no tools until it can be sized.
 
-The Voice step leads with a sample text and **Test and Hear**; the endpoint,
-model, and output settings sit under its "Advanced" section. Advancing saves
-the voice settings; the step reports the result itself and refuses to move on
-if the save failed, so setup never raises a pop-up notification over a later
-step's buttons. On terminals smaller than about 100×30 the wizard shows a
-one-line nudge — everything still works, steps just scroll.
+The Voice step's first choice is **No voice for now**, and it is selected
+unless a voice is already saved: Next then writes nothing, and the step says
+so ("Nothing is saved. Set up a voice any time in Settings ▸ Speech & TTS.").
+On a re-run the step starts from the voice you saved, for example "Current
+voice: OpenAI · tts-1-hd · shimmer — unchanged unless you edit it.", and Next
+leaves it exactly as it was unless you change something, test a sample, or
+change **Use this voice when Chatbook reads replies aloud**.
+
+A line under the service choice says whether it will work: "PocketTTS — not
+running at 127.0.0.1:8000" (one quick connection check), "OpenAI — uses your
+OpenAI key (key found)", and so on. **Test and Hear** plays a short sample;
+Enter in **Sample text** runs it too (the hint line says so). A failed test
+starts "Test failed —" and names the cause: the server isn't running at that
+address, the key was rejected, there is no speech endpoint at that host, it
+timed out, or the reply wasn't audio. A successful test ticks **Use this voice
+when Chatbook reads replies aloud**; untick it to save the service without
+making it the voice replies use. The endpoint, authentication, model, voice
+and format sit under "Advanced"; Voice and Format are pickers with an
+"Other…" choice, and editing one of these away from the selected service's
+own values switches the service to **Custom** (your edits are kept if you
+switch away and back).
+
+**PocketTTS** is a separate local server, not part of Chatbook: install
+`pocket-tts` (from PyPI) and start it with `pocket-tts serve`. Chatbook talks
+to its own API at `http://127.0.0.1:8000/tts` (its default port; change the
+endpoint under Advanced if you started it on another port). It returns WAV
+audio only.
+
+**OpenAI** needs an OpenAI API key. If none is found, paste one into the
+masked **OpenAI API key** field that appears: it is kept in setup until you
+press Next, then saved where Settings ▸ Speech & TTS keeps it, so **Protect
+keys** can still encrypt it. You can also pick another service or choose "No
+voice for now". **Leave setup and add key in Settings…** asks first — setup
+picks up at Voice next time.
+
+When Voice does save, the step reports the result itself and refuses to move
+on if the save failed, so setup never raises a pop-up notification over a
+later step's buttons. On terminals smaller than about 100×30 the wizard shows
+a one-line nudge — everything still works, steps just scroll.
 
 Choosing **OmniVoice** shows a local panel instead of the endpoint fields: it
 tells you if the `omnivoice_tts` engine is missing, installs the 1.1 GB model
@@ -136,9 +169,9 @@ saved — and if the connection check failed while you were setting up (a
 rejected API key, an unreachable local server), the summary says so instead
 of showing a ✓, the progress tracker marks those steps with !, and moving
 past the model step asks for an explicit "Continue anyway". The Voice line names
-the saved service (for example "✓ Voice — OmniVoice (default voice)"), says
-when a voice was saved without being made the default, and reads "not set up
-(optional)" when you skipped the step.
+the saved service, model and voice (for example "✓ Voice — OpenAI · tts-1-hd ·
+shimmer"), says when a voice was saved without being made the default, and
+reads "not set up (optional)" when no voice is saved.
 
 The Summary's exits are **Review provider setup**, **Add your first document**
 (lands on Library's Import canvas — this is where your content lives),

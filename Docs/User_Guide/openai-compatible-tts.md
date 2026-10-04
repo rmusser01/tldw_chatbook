@@ -1,11 +1,16 @@
 # Using OpenAI-compatible TTS servers — point speech at your own server
 
 tldw_chatbook's OpenAI TTS provider can talk to **any server that speaks the
-OpenAI speech API** (`POST /v1/audio/speech`), not just OpenAI itself. That
-includes local, keyless engines such as **pocket-tts**, and self-hosted
-gateways. When you point it at your own server, your server's model and
-voice names are passed through exactly as you type them, and no API key is
-required.
+OpenAI speech API** (`POST /v1/audio/speech`), not just OpenAI itself — local
+engines and self-hosted gateways alike. When you point it at your own server,
+your server's model and voice names are passed through exactly as you type
+them, and no API key is required.
+
+It also speaks **pocket-tts**'s own API. The official pocket-tts server
+(`pip install pocket-tts`, then `pocket-tts serve`) does **not** serve the
+OpenAI route — it answers `POST /v1/audio/speech` with 404. It serves
+`POST /tts` instead, so a Base URL whose path is exactly `/tts` makes
+Chatbook send that request (see the worked example below).
 
 ## What you need
 
@@ -69,18 +74,23 @@ with a **Save** / **Revert** action row at the bottom.
 
 ## Worked example: pocket-tts
 
-pocket-tts is a small local TTS engine that exposes the OpenAI speech API
-and needs no API key. With its server running (see its own docs for the
-start command and port):
+pocket-tts is a small local TTS engine (Kyutai) that needs no API key. Install
+it with `pip install pocket-tts` and start its server with `pocket-tts serve`
+(it listens on port 8000 unless you pass `--port`). Its own API is
+`POST /tts`, which Chatbook speaks when the Base URL ends in `/tts`:
 
 | Setting | Value |
 |---------|-------|
 | Configure Provider | OpenAI |
-| Base URL | `http://127.0.0.1:<its-port>/v1/audio/speech` |
+| Base URL | `http://127.0.0.1:8000/tts` (use your `--port` if you changed it) |
 | Credential | leave unset |
 | Default TTS Provider | OpenAI |
-| Model policy / Model value | Exact / the model name from pocket-tts's docs |
-| Voice policy / Voice value | Exact / a pocket-tts voice name (or Server default) |
+| Model policy / Model value | Exact / `pocket-tts` (the server ignores it) |
+| Voice policy / Voice value | Exact / a built-in voice such as `alba`, `marius`, `jean` or `eve` (or Server default) |
+| Output format | `wav` — pocket-tts returns WAV only, and any other format is refused before the request |
+
+The first-run setup's Voice step has a **PocketTTS** choice that fills in
+exactly these values.
 
 ## If you run an AllTalk server
 
@@ -167,7 +177,10 @@ custom endpoint — the request fails at speak time.
 
 - **"Unable to connect to TTS service"** — the server isn't running at the
   Base URL, or the URL is wrong. Confirm you included the `/v1/audio/speech`
-  path: requests go to the Base URL exactly as written.
+  path (or `/tts` for pocket-tts): requests go to the Base URL exactly as
+  written.
+- **HTTP 404 from a pocket-tts server** — the Base URL points at the OpenAI
+  route. pocket-tts serves `/tts`; use `http://127.0.0.1:<port>/tts`.
 - **Model or voice names only pass through for custom Base URLs.** Against
   the official OpenAI endpoint, a model outside `tts-1`/`tts-1-hd` falls
   back to `tts-1`, and a voice outside OpenAI's six falls back to `alloy`.
