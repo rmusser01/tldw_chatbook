@@ -18,6 +18,8 @@ from collections.abc import Callable
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from textual.pilot import Pilot
+from textual.screen import Screen
 from textual.widgets import ListView
 
 import tldw_chatbook.app  # noqa: F401  -- collection-time import (bootstrap profile)
@@ -82,13 +84,28 @@ def _seed_characters(monkeypatch, records: list[dict]) -> None:
     patch_character_paging(monkeypatch)
 
 
-def painted_rows(screen) -> list[str]:
-    """Every compositor row as plain text: what the terminal shows."""
+def painted_rows(screen: Screen) -> list[str]:
+    """Every compositor row as plain text: what the terminal shows.
+
+    Args:
+        screen: The mounted screen whose compositor output is read.
+
+    Returns:
+        One string per terminal row, top to bottom, as currently painted.
+    """
     return [strip.text for strip in screen._compositor.render_strips()]
 
 
-def click_meta_cells(screen) -> list[tuple[int, int, str, str]]:
-    """Every painted cell run that carries an ``@click`` action."""
+def click_meta_cells(screen: Screen) -> list[tuple[int, int, str, str]]:
+    """Every painted cell run that carries an ``@click`` action.
+
+    Args:
+        screen: The mounted screen whose compositor output is scanned.
+
+    Returns:
+        ``(x, y, text, action)`` for each painted segment whose style meta
+        holds ``@click``; empty when no painted text is clickable markup.
+    """
     hits = []
     for y, strip in enumerate(screen._compositor.render_strips()):
         x = 0
@@ -100,12 +117,15 @@ def click_meta_cells(screen) -> list[tuple[int, int, str, str]]:
     return hits
 
 
-async def settle(pilot) -> None:
+async def settle(pilot: Pilot) -> None:
     """Let the screen's own workers finish, then repaint twice.
 
     Only workers owned by the current screen: the full app runs app-wide
     workers that never finish, so ``app.workers.wait_for_complete()`` would
     wait forever there.
+
+    Args:
+        pilot: The running test pilot.
     """
     await pilot.pause()
     screen = pilot.app.screen
@@ -122,9 +142,23 @@ async def settle(pilot) -> None:
 
 
 async def wait_until(
-    pilot, predicate: Callable[[], bool], *, timeout: float = 20.0, what: str = ""
+    pilot: Pilot,
+    predicate: Callable[[], bool],
+    *,
+    timeout: float = 20.0,
+    what: str = "",
 ) -> None:
-    """Poll ``predicate`` with a monotonic deadline."""
+    """Poll ``predicate`` with a monotonic deadline.
+
+    Args:
+        pilot: The running test pilot.
+        predicate: Returns True once the awaited state holds.
+        timeout: Seconds to wait before failing.
+        what: Names the awaited state in the failure message.
+
+    Raises:
+        AssertionError: ``predicate`` stayed False for ``timeout`` seconds.
+    """
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if predicate():
