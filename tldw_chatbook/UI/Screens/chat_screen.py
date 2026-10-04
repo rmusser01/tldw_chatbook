@@ -154,6 +154,7 @@ from ..Console_Modules.provider_continuation_recovery import (
     ProviderContinuationRecoveryCallout,
     ProviderContinuationTranscriptRegion as ConsoleTranscriptRegion,
     TraceCallRecoveryCallout,
+    blocked_turn_reason,
     dispatch_trace_call_recovery_action,
     trace_call_recovery_state,
 )
@@ -14306,11 +14307,9 @@ class ChatScreen(BaseAppScreen):
             )
         can_save_chatbook = self._console_can_save_chatbook_flag(pending_launch)
         evidence_state = build_console_evidence_display_state(pending_launch)
-        # TASK-24602: the controller already records a terminal FAILED run
-        # state with user-visible copy (`_set_run_state(ConsoleRunState(
-        # ConsoleRunStatus.FAILED, visible_copy))` on the agent-run failure
-        # path). Nothing read it here, so the pinned authority line had no
-        # way to know the last send had failed and answered "Ready".
+        # TASK-24602 / TASK-33621.2: a FAILED run and a turn stuck in a trace
+        # recovery pause both carry visible copy; unread here, the pinned
+        # authority line answered "Ready".
         run_controller = self._console_chat_controller
         run_state = getattr(run_controller, "run_state", None)
         run_failed = getattr(run_state, "status", None) is ConsoleRunStatus.FAILED
@@ -14330,6 +14329,7 @@ class ChatScreen(BaseAppScreen):
             run_failure_reason=(
                 str(getattr(run_state, "visible_copy", "") or "") if run_failed else ""
             ),
+            run_blocked_reason=blocked_turn_reason(run_controller),
             provider_label=settings_readiness.provider_display_name or "Provider",
             model_label=model,
             provider_ready=provider_ready,
@@ -15021,9 +15021,7 @@ class ChatScreen(BaseAppScreen):
         composer = self._console_composer_or_none()
         has_draft = bool(composer and composer.draft_text().strip())
         controller = self._console_chat_controller
-        run_state = (
-            getattr(controller, "run_state", None) if controller is not None else None
-        )
+        run_state = getattr(controller, "run_state", None)
         store = self._console_chat_store
         active_session_id = store.active_session_id if store is not None else None
         image_edit_active = (
@@ -15061,6 +15059,7 @@ class ChatScreen(BaseAppScreen):
             readiness_word=""
             if self.size.width < CONSOLE_SINGLE_PANE_COLUMNS
             else build_console_readiness_presentation(readiness[1]).primary_label,
+            blocked_turn=blocked_turn_reason(controller),
         )
 
     def _console_provider_blocker_copy(
@@ -18585,7 +18584,8 @@ class ChatScreen(BaseAppScreen):
         controller = self._console_chat_controller
         run_state = controller.run_state if controller is not None else None
         if run_state is None or run_state.status not in CONSOLE_ACTIVE_RUN_STATUSES:
-            return ""
+            reason = blocked_turn_reason(controller)  # TASK-33621.2: a stuck turn
+            return f"Blocked — {reason}" if reason else ""
         # Every interrupt kind owns its waiting copy; approval takes priority.
         # The Inspector counts approval rounds from the same session registry.
         if controller.has_pending_approval_round(session_id or ""):

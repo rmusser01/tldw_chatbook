@@ -2280,6 +2280,18 @@ def build_console_controllers(
                 )
             )
         ),
+        # TASK-33621.2: the oldest recovery's refusal copy, for the shelf.
+        turn_recovery_reason=(
+            lambda session_id: next(
+                (
+                    entry.reason
+                    for entry in screen._console_runtime().recoveries_for_session(
+                        session_id
+                    )
+                ),
+                "",
+            )
+        ),
         restore_turn_recovery=(
             lambda turn_id: screen._console_runtime().restore_turn_recovery(turn_id)
         ),

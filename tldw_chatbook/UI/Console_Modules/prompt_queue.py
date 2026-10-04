@@ -145,6 +145,30 @@ class ConsolePromptQueuePresentation:
     turn_recovery_id: str | None = field(default=None, repr=False)
 
 
+#: TASK-33621.2: the widest unsent-turn summary that leaves whole Restore and
+#: Discard buttons on an 80-column shelf (80 - 9 - 15, less a margin).
+TURN_RECOVERY_SUMMARY_CELLS = 52
+
+
+def turn_recovery_label(
+    reason: str, *, budget: int = TURN_RECOVERY_SUMMARY_CELLS
+) -> str:
+    """Return the unsent-turn summary: the refusal reason, fitted to ``budget``.
+
+    Args:
+        reason: The controller's refusal copy, or "" when none was retained.
+        budget: Cells the label may use on the shelf.
+
+    Returns:
+        ``Not sent: <reason>`` (ellipsized), or the generic label.
+    """
+    text = " ".join(str(reason or "").split()).rstrip(".")
+    if not text:
+        return "Unsent turn needs attention"
+    label = f"Not sent: {text}"
+    return label if len(label) <= budget else label[: budget - 1].rstrip() + "…"
+
+
 def derive_prompt_queue_presentation(
     snapshot: PromptQueueSnapshot,
     activity: ConsoleControllerActivity,
@@ -152,6 +176,7 @@ def derive_prompt_queue_presentation(
     composer_collapsed: bool = False,
     dispatch_recovery_blocked: bool = False,
     turn_recovery_id: str | None = None,
+    turn_recovery_reason: str = "",
     failed_turn_preview: str | None = None,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary from bounded previews only.
@@ -169,6 +194,8 @@ def derive_prompt_queue_presentation(
             shelf never carries them (TASK-33625.5).
         turn_recovery_id: An unsent turn needing attention. It outranks every
             other state and keeps the shelf visible with no queued entries.
+        turn_recovery_reason: Why that turn was refused; the shelf states it
+            in place of the generic label (TASK-33621.2).
         failed_turn_preview: Bounded one-line preview of the prompt whose turn
             failed and paused the queue (the caller's ``make_prompt_preview``),
             or ``None`` when the newest assistant message on the active
@@ -266,7 +293,11 @@ def derive_prompt_queue_presentation(
         "",
     )
     if turn_recovery_id is not None:
-        state_label = "Unsent turn needs attention"
+        # An empty queue drops the "Queue 0/10 · " prefix (sync_presentation).
+        prefix = len(f"Queue {count}/{MAX_CONSOLE_QUEUE_ENTRIES} · ") if count else 0
+        state_label = turn_recovery_label(
+            turn_recovery_reason, budget=TURN_RECOVERY_SUMMARY_CELLS - prefix
+        )
         pause_label = ""
         primary_action = "turn-recovery"
         pause_enabled = False
@@ -424,7 +455,9 @@ class ConsolePromptQueueRegion(Widget):
         except NoMatches:
             return True
         summary.update(
-            f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
+            presentation.state_label
+            if presentation.primary_action == "turn-recovery" and not presentation.count
+            else f"Queue {presentation.count}/{MAX_CONSOLE_QUEUE_ENTRIES} · "
             f"{presentation.state_label}"
         )
         preview.update(
@@ -536,6 +569,7 @@ class ConsolePromptQueueUIController:
         load_recovered_turn: Callable[[str], None],
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
+        turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
     ) -> None:
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
@@ -550,6 +584,7 @@ class ConsolePromptQueueUIController:
         self._commit_captured_draft = commit_captured_draft
         self._commit_queued_draft = commit_queued_draft
         self._turn_recovery_ids = turn_recovery_ids
+        self._turn_recovery_reason = turn_recovery_reason
         self._restore_turn_recovery = restore_turn_recovery
         self._discard_turn_recovery = discard_turn_recovery
         self._load_recovered_turn = load_recovered_turn
@@ -732,6 +767,9 @@ class ConsolePromptQueueUIController:
                 )
             ),
             turn_recovery_id=turn_recovery_id,
+            turn_recovery_reason=(
+                self._turn_recovery_reason(session_id) if turn_recovery_id else ""
+            ),
             failed_turn_preview=(
                 failed_turn.preview if failed_turn is not None else None
             ),

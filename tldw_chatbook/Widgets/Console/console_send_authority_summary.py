@@ -146,6 +146,10 @@ def project_console_send_authority(
         run = "Blocked"
     elif state.run_active:
         run = "Running"
+    elif state.run_blocked_reason:
+        # TASK-33621.2: an accepted turn paused before the provider was
+        # contacted is not "Ready"; the transcript callout holds its actions.
+        run = f"Blocked — {state.run_blocked_reason}"
     elif state.run_failed:
         # TASK-24602. Ordered BELOW everything above it deliberately: a run in
         # flight, a pending approval and a blocked provider all describe what
