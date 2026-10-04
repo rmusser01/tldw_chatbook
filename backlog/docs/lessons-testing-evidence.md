@@ -58,6 +58,131 @@ the test must take what the text says and execute it through the real tool or ro
 the real first-request plan, read each alias the note names, call `fs_list` with it). A
 text-shape assertion cannot notice that the thing it describes moved.
 
+## A parametrize id of `live` skips the test unless `--run-live` is given
+
+**TASK-33621.33, 2026-10-03.** A new W003 checker test used
+`@pytest.mark.parametrize(..., ids=["live", "dead"])`. In scratch runs (a
+copy of the file outside the repo, used for red-on-dev and mutation checks)
+both cases ran, and the `live` case caught a mutation. In the worktree the
+same file reported `140 passed, 1 skipped`: `Tests/conftest.py`'s
+`pytest_collection_modifyitems` adds `skip("Need --run-live option to run")`
+to every item with `"live" in item.keywords`, and an exact param id is a
+keyword. The mutation evidence came from a run the repo's own command never
+reproduces. Renaming the ids to `live-def-takes-pick`/`dead-def-takes-pick`
+made both run. A test name such as `test_live_x` is not affected: only the
+exact keyword `live` (a param id, a marker, a class or module named `live`)
+is. **What to do:** read the skip count in the summary, not just the pass
+count, and run `-rs` once when it is nonzero. Never use `live` as a param id
+unless the case really needs a live server.
+
+## An unchanged census does not show that a change kept a checker's recall
+
+**TASK-33621.33, 2026-10-03.** AC#6 taught W003 to ignore dead code: a def
+that a later def of the same name rebinds. The first cut called every
+earlier def in a scope's name table dead, and the evidence offered was that
+the W003 census stayed byte-identical (69 rows). It did. But 166 real-tree
+defs had become dead, and only 18 really were (`@overload` stubs and true
+duplicates). The rest were live: property getters beside their `@x.setter`
+(one of them schedules a callable), and defs in `if`/`else` or
+`try`/`except` alternatives. None of them reached a wait push that day, so
+no row moved; the first one that did would have been missed in silence. A
+checkpoint review found it by probing those shapes, not by reading the
+census. **What to do:** when a change makes a checker ignore something,
+count what it now ignores on the real tree and read that list, alongside
+the row diff. Identical rows only say that nothing reachable changed today.
+
+**It happened again in the same PR's review round (PR #2987, 2026-10-03).**
+A precision fix ("an unrelated callback creates a wait row") left a push out
+when the names its callback settles missed the pushing function's own
+future names -- compared across scopes. A helper's parameter
+(`partial(settle, answer)`), a callback's local alias (`fut = answer`) and
+a pusher-side alias (`answer = self._answer`) all read as "a different
+future" and were dropped. The census stayed byte-identical and all 228
+tests passed. Running the previous head's checker and the new one over
+hand-written shapes found six lost shapes; working through what the rule
+actually has to prove found 23. **And a third time, on the fix for those.**
+The "proof" that replaced the name match showed only that the callback
+settles a DIFFERENT future -- never that the awaited future is independent
+of it. A done-callback, a relay that awaits or polls the settled future, or
+a handoff chains the two, and the await hangs exactly as before: 18 more
+shapes 5918cfd1df reported were silent, again with a byte-identical census
+and a green suite. **And a fourth time, on the fix for that.** The proof
+checked the callback's CALLS ("every call settles or reads what it
+settles") and wrote that down as "settling is all it does". But a callback
+whose settled future nothing reads can only matter through its OTHER
+effects -- a nonlocal, item or attribute store that a relay polls or a
+property setter acts on, an await, a `with` block, a returned value -- and
+none of those is a call. Ten more shapes 5918cfd1df reported went silent;
+census byte-identical, suite green. In none of those rounds did the
+settling rule drop a real-tree push (per-function push counts stayed
+identical to 5918cfd1df's, and the real tree has no direct-form callback
+at all). **The decision (round 4): stop proving.** Only a direct settle
+-- `callback=other.set_result`, a `partial` of it, a one-call lambda with
+plain arguments -- is left out; every def or method callback counts by
+shape, and the four precision controls that needed the proof are now
+expected rows, named as accepted false positives. **And a fifth time, on
+that decision's own words.** Round 4 wrote that those forms' "whole effect
+is visible in the push expression". It is not when the receiver is
+`self.X`: reading it can run a property getter, a reactive or
+`__getattribute__`, and the `self.X = loop.create_future()` before it a
+setter, a watcher, a validator or `__setattr__` -- none of which is an `.X`
+node the package-wide use count saw. Nine shapes (`@property`,
+`property(...)`, a base class's property in another module, a reactive's
+watcher and validator, `__setattr__`, a class-level `X` behind a
+conditional store) were rows on origin/dev and 5918cfd1df and silent at
+a106783a85. So was a relay branching on `other.cancel()`'s answer: "a
+settle call's receiver hands nothing on" ignored that `cancel()` reports
+whether the callback ran, and that `set_result` raises when it did. Round 5
+accepts only a bare LOCAL future (reading a local runs no code), drops
+`partial` (only its name made it `functools.partial`), and exempts a settle
+elsewhere only as a `cancel()`/`set()` statement. The real tree still has
+no direct-form callback, so none of it moved a row. **And a sixth time, on
+round 5's own fix.** A `cancel()` statement inside a NESTED def or
+generator still counted as "no read", but the nested scope holds the future
+in a closure cell that `__closure__`, `inspect.getclosurevars` or a
+generator's locals read without loading the name; and a task's
+`get_stack()` or `sys._current_frames()` reaches the pusher's frame through
+APIs the list did not name. Eight more shapes that were rows on origin/dev
+and 5918cfd1df were silent at f606e0c3ef, census byte-identical.
+
+**The outcome (round 6, 2026-10-04): the rule was removed.** Every callback
+push counts by shape again, exactly as 5918cfd1df counted it, and the
+thread's precision gap -- a callback that settles only a different future
+still makes a wait row -- is kept on purpose: every former precision
+control for it (25 cases) is now an expected row in one test of accepted
+false positives. No version of the rule ever dropped a real-tree push, so
+it bought no precision here, and each of its five versions lost some
+recall. A false row costs one census line a reviewer can annotate; a missed
+wait is a frozen UI.
+
+**For a precision fix:** run the old and new checker over the shapes the
+fix drops, write down what dropping a match actually requires (here: the
+awaited future cannot depend on the callback running at all), and check
+that the rule establishes THAT -- not a weaker neighbour of it. A name
+match in another scope proves nothing, neither does "it settles something
+else", and neither does "its calls only settle" -- nor "its effect is
+visible in the expression" when the expression reads an attribute, nor
+"nothing loads the name" when a closure or a frame can reach it. **And
+before the second review round, count what the rule drops on the real
+tree:** a precision rule that drops nothing there buys no precision yet,
+while every premise it needs is one more place to lose recall. Remove it
+rather than patch it again.
+
+**The same PR's history claims needed the same treatment (round 7,
+2026-10-04).** Round 6 wrote test comments such as "silent at a106783a85
+and f606e0c3ef", "at every head of the PR #2987 review" and "Strict-xfail
+known misses at a106783a85". Three were false: a lambda-closure shape was
+already a row at f606e0c3ef (that round's own red run showed it), another
+shape was silent at the round-2 and round-3 heads, and the xfails existed
+only at f606e0c3ef. A checkpoint review caught them by running each head's
+checker. Re-checking every such claim the same way -- each W003 test's
+source sets recorded once by a pytest plugin that wraps the collectors,
+then run through a git-archive copy of the checker at every head -- found
+four more comments that were false for some of the cases below them
+("each shape below", "any premise below"). **What to do:** a "row at X,
+silent at Y" claim is evidence like any other. Generate it from that
+per-head table, and name the table or the case it covers.
+
 ## A provider preset's own tests never touched the surfaces users set it up with
 
 **TASK-33510/33511, 2026-09-29.** About 30 engine presets shipped across #2828, #2872, #2889
