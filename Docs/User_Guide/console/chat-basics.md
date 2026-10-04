@@ -384,9 +384,18 @@ statistics tools.
 
 ### Sending, streaming, and stopping
 
-- Enter sends the draft. The reply row appears immediately with a dim
-  "Generating…" placeholder, then streams in with a "[streaming]" suffix
-  until it completes.
+- Enter sends the draft. Your message appears in the transcript at once,
+  marked **Sending…**, while Console prepares the turn: the header reads
+  **Running**, the tab shows **●**, the status row shows **Run: Sending…** and
+  Send reads **Sending...** (its strip: "Queue opens once this turn is
+  accepted"). The draft stays in the composer until the turn is accepted, then
+  clears; if the turn is refused before that, the **Sending…** row disappears
+  and the draft is kept, or offered back on the shelf as `Not sent: <reason>`
+  with **Restore**.
+  Slash commands, `! ` commands and Enter during a run (which queues) skip this
+  step.
+- The reply row then appears with a dim "Generating…" placeholder and streams
+  in with a "[streaming]" suffix until it completes.
 - While a run is active a **Stop** button (warning-tinted, "Stop this tab's
   run.") appears at the right end of the composer row, after Dictate and
   Redirect; the collapsed composer strip gets its own Stop. The keyboard
@@ -474,7 +483,8 @@ top of the control deck (above the status row) shows `Queue N/10`, whether it is
 of the next prompt, and **Manage** plus a state-specific action such as
 **Pause**, **Resume**, **Retry**, **Resume next**, **Review**, or **Try again**.
 
-- **Preparing...** means the turn has not crossed the accepted boundary yet;
+- **Sending...** and then **Preparing...** mean the turn has not crossed the
+  accepted boundary yet;
   the draft stays in the composer and the strip beside the button reads
   "Queue opens once this turn is accepted". Once the turn is accepted, an
   empty draft reads "Type to queue". A regenerate or continue never opens the

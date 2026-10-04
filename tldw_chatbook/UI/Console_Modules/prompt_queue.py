@@ -34,6 +34,7 @@ from tldw_chatbook.Chat.console_display_state import (
     QUEUE_REASON_FULL,
     QUEUE_REASON_PREPARING,
     QUEUE_REASON_RUN_HOLD,
+    SEND_LABEL_SENDING,
 )
 from tldw_chatbook.Chat.console_prompt_queue import (
     MAX_CONSOLE_QUEUE_ENTRIES,
@@ -178,6 +179,7 @@ def derive_prompt_queue_presentation(
     turn_recovery_id: str | None = None,
     turn_recovery_reason: str = "",
     failed_turn_preview: str | None = None,
+    sending: bool = False,
 ) -> ConsolePromptQueuePresentation:
     """Derive exact visible queue vocabulary from bounded previews only.
 
@@ -206,6 +208,9 @@ def derive_prompt_queue_presentation(
             attachments); the shelf then shows a bare "Turn failed" with
             Retry. A FAILED pause given ``None`` offers Resume, because a
             Retry there could only refuse (TASK-33621.19).
+        sending: An Enter is acknowledged on screen but not yet admitted
+            (TASK-33620.5): Send reads "Sending..." and refuses, and its
+            reason is the queue's, never the empty-draft copy.
 
     Returns:
         The immutable shelf/composer presentation: Send label and gate, shelf
@@ -220,7 +225,11 @@ def derive_prompt_queue_presentation(
     # names the actual wait and fits the strip's 52-cell budget. Only a
     # prompt-chain turn is ever queue-accepted: regenerate / continue / an
     # agent wake occupy the slot with no chain, so no queue opens behind them.
-    if activity.occupies_slot and not queue_owned:
+    if sending and not activity.occupies_slot and not queue_owned:
+        send_label = SEND_LABEL_SENDING
+        send_enabled = False
+        send_tooltip = QUEUE_REASON_PREPARING
+    elif activity.occupies_slot and not queue_owned:
         send_label = "Preparing..."
         send_enabled = False
         send_tooltip = (
@@ -570,6 +579,7 @@ class ConsolePromptQueueUIController:
         edit_refusal: Callable[[str], str],
         sync_ui: Callable[[], Awaitable[None]],
         turn_recovery_reason: Callable[[str], str] = lambda _session_id: "",
+        sending_accessor: Callable[[str], bool] | None = None,
     ) -> None:
         self._chat_controller_accessor = chat_controller_accessor
         self._capture_configuration = capture_configuration
@@ -590,6 +600,7 @@ class ConsolePromptQueueUIController:
         self._load_recovered_turn = load_recovered_turn
         self._edit_refusal = edit_refusal
         self._sync_ui = sync_ui
+        self._sending_accessor = sending_accessor
 
     async def handle_primary_intent(
         self,
@@ -772,6 +783,9 @@ class ConsolePromptQueueUIController:
             ),
             failed_turn_preview=(
                 failed_turn.preview if failed_turn is not None else None
+            ),
+            sending=bool(
+                self._sending_accessor and self._sending_accessor(session_id)
             ),
         )
         if controller._chat_start.is_prepared(session_id):

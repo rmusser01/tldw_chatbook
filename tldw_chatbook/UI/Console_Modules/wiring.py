@@ -306,7 +306,17 @@ def _admit_console_turn_to_runtime(screen: Any, draft: str, session_id: str) -> 
                 0
             ],
         )
-        turn_id = screen._console_runtime().accept_turn(request)
+        # TASK-33620.5: an acknowledged Enter's "Sending…" row lives until the
+        # store echo lands or this turn's custody ends without one.
+        send_ack = getattr(screen, "_console_send_ack", None)
+        turn_id = screen._console_runtime().accept_turn(
+            request,
+            terminal_callback=(
+                send_ack.custody_callback(session_id) if send_ack is not None else None
+            ),
+        )
+        if send_ack is not None:
+            send_ack.mark_admitted(session_id)
     except KeyError as error:
         if store is not None:
             try:
@@ -2428,6 +2438,10 @@ def build_console_controllers(
             )
         ),
         sync_ui=lambda: screen._sync_native_console_chat_ui(),
+        sending_accessor=lambda session_id: bool(
+            (send_ack := getattr(screen, "_console_send_ack", None))
+            and send_ack.active_for(session_id)
+        ),
     )
     screen._hooks = ConsoleHooksController(
         hook_permissions_accessor=lambda: (

@@ -392,6 +392,17 @@ def _every_shelf_presentation(derive=derive_prompt_queue_presentation):
             turn_recovery_id="turn-a",
         ),
     )
+    # TASK-33620.5: an Enter acknowledged as "Sending..." while an earlier
+    # unsent turn still offers recovery -- the one sending state with a shelf.
+    yield (
+        "sending-beside-unsent-turn-recovery",
+        derive(
+            _shelf_snapshot(PromptQueueMode.DRAINING, count=0),
+            _activity(),
+            turn_recovery_id="turn-a",
+            sending=True,
+        ),
+    )
     # TASK-33621.2: a refused send states the controller's reason. The
     # second is fitted to the budget left behind a full queue's prefix.
     for count, refusal in (

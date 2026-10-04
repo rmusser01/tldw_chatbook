@@ -132,7 +132,10 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # Tests/UI/test_backup_restore_setup_entry.py -- setup's Restore entry opens
 # on Inspect, names the format, and explains a settings file, a folder and a
 # disabled Create.
-MINIMUM_FILES = 151
+# TASK-33620.5 raised it to 152 (dev's floor plus its one file):
+# test_console_send_acknowledgement.py pins the Enter acknowledgement painted
+# before admission (~75-110 s serial locally).
+MINIMUM_FILES = 152
 
 
 def read_census(path: Path) -> list[str]:

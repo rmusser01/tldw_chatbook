@@ -2290,6 +2290,18 @@ class ConsoleComposerBar(Horizontal):
         """
         self._refresh_send_price_for_pointer()
 
+    def show_send_acknowledged(self, label: str, reason: str) -> None:
+        """Make Send read ``label`` and refuse with ``reason`` (TASK-33620.5).
+
+        The first frame of an acknowledged Enter, painted before its admission
+        runs; every other cached action fact is kept, and the next screen sync
+        derives the same label from the prompt-queue presentation.
+        """
+        self._send_label = label
+        self._send_blocked = True
+        self._queue_blocked_reason = reason
+        self._sync_current_action_state()
+
     def sync_action_state(
         self,
         *,
