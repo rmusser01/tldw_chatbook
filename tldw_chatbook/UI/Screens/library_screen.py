@@ -533,9 +533,8 @@ from ..Library_Modules.library_ingest_state import LibraryIngestState
 from ..Library_Modules.library_media_state import (
     LibraryMediaState,
 )
-from ..Library_Modules.library_notes_state import (
-    LibraryNotesState,
-)
+from ..Library_Modules.library_notes_state import LibraryNotesState
+from ..Library_Modules import library_notes_sync_attention as notes_sync_attention
 from ..Library_Modules.library_notes_work_session import (
     NotesWorkSessionEvent,
     NotesWorkSessionPhase,
@@ -9872,6 +9871,11 @@ class LibraryScreen(BaseAppScreen):
             self._artifacts_controller.dispose()
         # No super().on_unmount(): the dispatcher already invokes
         # BaseAppScreen.on_unmount separately for this Unmount event (TASK-31418).
+        # TASK-34000.2 fix round 1: the sync runtime's status listener is
+        # paired with mount/unmount for the same reason as the registry's.
+        notes_sync_attention.release_library_notes_sync_attention_listener(
+            getattr(self, "_notes_controller", None)
+        )
         registry = self._library_ingest_registry()
         if registry is not None:
             registry.remove_listener(self._handle_library_ingest_registry_changed)
@@ -17391,7 +17395,9 @@ class LibraryScreen(BaseAppScreen):
         # ``build_library_notes_list_state`` -- whether a note is OPEN is a
         # fact about the screen beside the list, not about the rows.
         state = dataclasses.replace(
-            state, note_open=bool(self._notes_state.selected_note_id)
+            state,
+            note_open=bool(self._notes_state.selected_note_id),
+            sync_attention=bool(self._notes_state.tree_attention_folder_ids),
         )
         if self._notes_state.select_mode:
             projection = self._build_library_notes_tree_projection()
@@ -17421,13 +17427,8 @@ class LibraryScreen(BaseAppScreen):
                     expanded_folder_ids=getattr(
                         self._notes_state, "tree_expanded_ids", set()
                     ),
-                    protected_folder_ids=getattr(
-                        self._notes_state, "tree_protected_folder_ids", frozenset()
-                    ),
-                    inactive_managed_folder_ids=getattr(
-                        self._notes_state,
-                        "tree_inactive_managed_folder_ids",
-                        frozenset(),
+                    **notes_sync_attention.library_notes_tree_folder_sets(
+                        self._notes_state
                     ),
                 )
                 if branches
@@ -17464,6 +17465,9 @@ class LibraryScreen(BaseAppScreen):
         self._notes_state.tree_protected_folder_ids = frozenset()
         self._notes_state.tree_inactive_managed_folder_ids = frozenset()
         self._notes_state.filter_browse_receipt = None
+        notes_sync_attention.schedule_library_notes_sync_attention(
+            getattr(self, "_notes_controller", None)
+        )
 
     def _library_notes_placement_order(self) -> str:
         """Return the repository placement order the Sort value asks for.

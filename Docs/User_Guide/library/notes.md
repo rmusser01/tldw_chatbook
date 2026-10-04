@@ -456,7 +456,7 @@ action so the list retains its row budget.
 | Control | What it does |
 |---|---|
 | "‹ Notes" / "‹ Back to list" | Returns to the list (your text is already saved — see autosave below). One wording across Edit, Preview, and Info: "‹ Notes" at wide sizes, "‹ Back to list" on a compact terminal. |
-| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write, so just after you save it usually still shows the PREVIOUS one: a save schedules the write, and the folder pass that performs it runs a moment later. Reopen the note to see the new time. That is the row being accurate rather than reassuring — it is telling you the file has not been written yet (task-32640). |
+| Where this note lives | One row under the title, on a terminal 80 columns or wider. A note that exists only in the Library database reads "In the Library database only — no file on disk". A note that lasting sync keeps in step with a file reads "In a synced folder", then that file's path, then when the file was last written — the file's own time, so an edit made in Obsidian counts too. The path is elided in the middle when the pane is narrower than the row, keeping the file name; the write time is dropped before the path is, and the first part is never shortened. Both facts are read fresh when the note opens, from the sync relationship and from the file itself rather than from anything stored on the note. The time is the file's last write: a save schedules the write and the folder pass that performs it runs a moment later, so the row re-reads itself once that pass has landed (it waits up to five seconds for it) rather than on the save; reopen the note if it still names the previous write. That is the row being accurate rather than reassuring — it is telling you whether the file has been written (task-32640). When the note's sync folder is held for attention — an open sync entry, a conflict waiting for review, a failed pass — the row says so right after the world, "In a synced folder · ⚠ Sync needs attention · …", and the status line above the editor reads "Saved HH:MM in Notes · ⚠ Sync needs attention · Next: Open Manage sync folders." instead of a plain "Saved": your text is in Notes, but nothing reaches the file until the folder is resolved (TASK-34000.2). |
 | **Edit** | Shows the editable title, keywords and body. This is the default view when you open a note. Keywords sit on their own row under the title — comma-separated, edited in place, and reachable with one Tab from the title, so you no longer have to open **Info** to add one. It is the same shape as the Title field, which costs the body five rows at a wide size and one on a compact terminal. The same field appears in Info's Properties; whichever you type in, it is the same keywords. |
 | **Preview** | Shows the note's title above the body, rendered as Markdown, without replacing your draft. It takes the whole work pane, and it takes keyboard focus when you open it, so `pgup`/`pgdn` page the rendered note straight away — no click inside the box first. If the body's first line is an H1 that exactly repeats the note's title (`# ` and the same words — the shape most exported Markdown files have), Preview shows it once, as the title line, instead of printing it twice. A rendered heading is left-aligned, where the rest of the body begins, rather than centred like a page banner — so a note whose title came from Obsidian frontmatter, which never matches its first heading exactly, shows a title and a heading rather than two titles. An Obsidian callout renders as a quoted block headed by its type, on its own line above the body — `> [!note] Title` becomes "Note: Title", `> [!warning]` on its own becomes "Warning" — rather than printing its `[!note]` marker or running the type into the first line of the callout; a callout written without the space (`>[!note]`), a folded one (`> [!note]-` / `+`), a nested one (`> > [!tip]`) and a capitalised type (`[!TODO]`) all render the same way, and an example inside a fenced code block is left exactly as you wrote it. Tab moves through the same controls Edit offers, and the footer names each one as you reach it. Escape leaves Preview for the **list**, not back to Edit — the footer says so, "esc back to notes" on a wide terminal and "esc notes" on a compact one (the same key, the same destination, shortened to fit). The status line does not offer to keep editing while Preview is showing; it names **Edit** instead. |
 | **Info** | Shows Properties (including comma-separated keywords, note dates/version, and **Linked from**), Reuse & Export, and Danger sections. Each property is on its own row, labelled — Created, Modified, Version, Words — rather than joined into one sentence: on a wide terminal the values line up in a second column, and on a compact one the rows keep a single column so a timestamp is never cut off the pane. |
@@ -815,6 +815,34 @@ produced no signal at all: Chatbook watches the folder, not the notes
 database, so a note you saved stayed in Notes only and its file kept its old
 bytes until something else touched the disk — with the row reading
 "✓ Up to date" the whole time.
+
+A folder that is **held for attention** — a sync entry that could not be
+completed, a conflict or deletion waiting for your review, a failed pass — is
+not syncing in either direction until you act, and every Notes surface says so
+rather than only Manage sync folders (TASK-34000.2, review finding N-02): the
+folder's tree row reads "⚠ Needs attention" in place of "⇄ Sync managed", the
+list's idle status reads "Library notes · ⚠ A sync folder needs attention ·
+Next: Open Manage sync folders." in place of "Ready", and the editor of any
+note in that folder says "Saved HH:MM in Notes · ⚠ Sync needs attention" with
+"In a synced folder · ⚠ Sync needs attention · …" under its title. These
+surfaces follow the folder as its state changes — a hold that a background pass
+produces while you sit idle (a disk edit colliding with a note edit, say)
+reaches them within a moment, without a keypress — and they return to the
+healthy wording the same way once the folder is resolved. Before this
+an ordinary edit — Ctrl+End, then a word without Enter, in a vault whose files
+end with a newline — left a `postcondition_failed` entry open on the folder
+while the tree, the list and the editor went on saying Sync managed, Ready and
+Saved, and later edits on both sides silently diverged. That edit now
+completes (the written file is compared with what the note writes, newline
+convention included), and the entry's row in **Manage sync folders** reads
+"⚠ Needs attention · Next: Resolve recovery" with **Recovery** first.
+**Recovery** closes the open entry at the baseline it can prove on disk and in
+Notes, mutating neither side, then checks the folder again: whatever changed
+on one side since is synced, and a change on both sides becomes an ordinary
+"Both file and note changed" review (Keep both / Keep file / Keep note / Skip
+for now) — never a silent winner, and never "Recovery failed — RuntimeError"
+next to a **Check changes** that refused the same entry. A folder already
+stuck that way by an earlier build is healed by the same button.
 
 **What this covers, exactly: editing an existing synced note in the Library
 note editor.** That is the one write into a note that tells lasting sync

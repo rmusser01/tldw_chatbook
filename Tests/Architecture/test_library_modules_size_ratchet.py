@@ -412,7 +412,13 @@ _BUDGETS: dict[str, int] = {
     # test_obsidian_review_defaults_on_shows_skips_and_never_touches_the_vault`
     # -- without the handler the toggle press never re-checks and the test reds
     # on "Turning Obsidian vault off never re-ran the check."
-    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6366,
+    #
+    # 2026-10-03, TASK-34000.2: 6366 -> 6311 (-55), a MOVE. The note
+    # location loader's body and its file-written label moved into
+    # `library_notes_sync_attention.py` (which now also answers whether the
+    # note's sync folder is held for attention); the controller keeps a
+    # three-line delegator and one scheduling call.
+    "tldw_chatbook/UI/Library_Modules/library_notes_controller.py": 6311,
     # See the dev-side-controller note above the character-repair row. Dev
     # landed this file at 195 lines; the +3 is this merge's own port -- the
     # `apply_navigation_context` gate read the flat `_library_prompts_
