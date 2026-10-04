@@ -1,5 +1,0 @@
-from common import *
-p=json.loads((S/'task-13-preflight-selection.json').read_text())
-selectors=[s for k in ['behavior_groups','static_groups'] for g in p[k] for s in g['selectors']]
-dump('authorized-selection-at-execution.json',{'selectors':selectors,'proposed_case_count':55,'selection_source_sha256':sha((S/'task-13-preflight-selection.json').read_bytes())})
-sys.exit(run('selected',[PYTHON,'-m','pytest','-q','-p','no:randomly','--basetemp=/private/tmp/pr2995-task13/selected',*selectors,'--junitxml='+str(O/'selected.xml')]))

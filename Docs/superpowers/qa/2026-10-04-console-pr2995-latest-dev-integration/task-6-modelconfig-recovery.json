@@ -1,9 +1,0 @@
-{
-  "base": "786c1771cdd4e1311f54c4b26473808ea1cb4c31",
-  "pinned_dev": "df2ba424de63576d36d9c3e38387c84285303f1c",
-  "ref": "refs/heads/codex/pr2995-task6-pre-modelconfig-786c1771cd",
-  "bundle": "/private/tmp/pr2995-task6/pre-modelconfig-786c1771cd.bundle",
-  "mode": "0o600",
-  "sha256": "ed79d4c51283913ec8938eaf12917a66002176beda6fb17eca4bc09fe54413cc",
-  "verify": "The bundle contains this ref:\n786c1771cdd4e1311f54c4b26473808ea1cb4c31 refs/heads/codex/pr2995-task6-pre-modelconfig-786c1771cd\nThe bundle records a complete history.\nThe bundle uses this hash algorithm: sha1\n/private/tmp/pr2995-task6/pre-modelconfig-786c1771cd.bundle is okay\n"
-}

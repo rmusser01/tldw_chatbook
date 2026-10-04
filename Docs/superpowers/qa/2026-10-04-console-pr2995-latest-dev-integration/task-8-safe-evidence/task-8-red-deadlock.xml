@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="5.665" timestamp="2026-10-04T04:10:53.073538-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_chat_start" name="test_prepared_worker_decision_and_close_terminate[False]" time="5.509"><failure message="AssertionError: prepared decision recursively acquired the plain lock&#10;assert not True&#10; +  where True = is_alive()&#10; +    where is_alive = &lt;Thread(Thread-2 (decide), started daemon 6144323584)&gt;.is_alive">Tests/Chat/test_console_chat_start.py:3076: in test_prepared_worker_decision_and_close_terminate
-    assert not worker.is_alive(), "prepared decision recursively acquired the plain lock"
-E   AssertionError: prepared decision recursively acquired the plain lock
-E   assert not True
-E    +  where True = is_alive()
-E    +    where is_alive = &lt;Thread(Thread-2 (decide), started daemon 6144323584)&gt;.is_alive</failure></testcase></testsuite></testsuites>

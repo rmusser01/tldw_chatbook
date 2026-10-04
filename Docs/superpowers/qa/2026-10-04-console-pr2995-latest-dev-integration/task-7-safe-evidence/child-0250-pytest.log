@@ -1,7 +1,0 @@
-.                                                                        [100%]
-- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-functional-adoption-green-profile-tfeukmu0/pytest/test_vllm_console_durable_fork0/private-profile-process/pytest.xml -
-============================= slowest 25 durations =============================
-5.28s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_durable_fork_excludes_endpoint_and_keeps_live_policy
-
-(2 durations < 1s hidden.)
-1 passed in 8.83s

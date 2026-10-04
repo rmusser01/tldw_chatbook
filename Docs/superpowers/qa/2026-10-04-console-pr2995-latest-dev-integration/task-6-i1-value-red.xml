@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.385" timestamp="2026-10-04T01:17:21.597449-07:00" hostname="Roberts-MacBook-Pro-2.local"><testcase classname="Tests.Chat.test_console_fork_transition_census" name="test_setattr_on_detached_receiver_still_checks_assigned_message_escape" time="0.244"><failure message="assert () == ((6, None),)&#10;  &#10;  Right contains one more item: (6, None)&#10;  Use -v to get more diff">Tests/Chat/test_console_fork_transition_census.py:1583: in test_setattr_on_detached_receiver_still_checks_assigned_message_escape
-    assert _mutation_events(node) == ((6, None),)
-E   assert () == ((6, None),)
-E     
-E     Right contains one more item: (6, None)
-E     Use -v to get more diff</failure></testcase></testsuite></testsuites>

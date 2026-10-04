@@ -1,3 +1,0 @@
-PASS tldw_chatbook/UI/Screens/chat_screen.py
-PASS tldw_chatbook/UI/Console_Modules/session.py
-PASS tldw_chatbook/UI/Console_Modules/wiring.py

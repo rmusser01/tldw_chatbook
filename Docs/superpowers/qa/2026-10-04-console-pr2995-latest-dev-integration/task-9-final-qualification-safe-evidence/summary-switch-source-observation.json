@@ -1,7 +1,0 @@
-{
-  "status": "source observation only; no production repair proposed",
-  "source_owner": "tldw_chatbook/Chat/console_interrupt_rounds.py::InterruptRoundHost._reproject_pending_decision_for_session",
-  "observation": "Legacy branch passes the native approval head to set_pending_approval. It does not directly call _maybe_fire_permission_summary. The session-kind refresh excludes approval; the attach/remount-head routes do call the trigger.",
-  "evidence_boundary": "Original test currently fails before reaching its intended switch/remount phase due absent fixture state. Its assertion must establish a functional failure after scoped fixture initialization/alias reconstruction.",
-  "unchanged_semantic_body": "Original BASE _reproject_pending_decision_for_session maps exactly through approved live bindings; no behavior change in the bounded-provider repair."
-}

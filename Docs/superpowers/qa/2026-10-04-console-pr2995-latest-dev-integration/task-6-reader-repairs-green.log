@@ -1,8 +1,0 @@
-...                                                                      [100%]
-- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-reader-repairs-green.xml -
-============================= slowest 25 durations =============================
-6.14s call     Tests/UI/test_library_conversation_reader.py::test_page_drift_confirms_exact_identity_before_declaring_deletion
-5.41s call     Tests/UI/test_library_conversation_reader.py::test_reader_info_is_explicit_and_truthful
-
-(7 durations < 1s hidden.)
-3 passed in 13.40s

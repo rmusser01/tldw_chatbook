@@ -1,7 +1,0 @@
-{
-  "file": "Tests/MCP/test_approval_timeout_policy.py",
-  "original_sha256": "d900491ac17176ec007a80c1000cb2af0885bafb0d2314b0a5a3373454473d5b",
-  "adapted_sha256": "92670048f9f0c55d9749e000a3b48358f9db878e9112975f7e7351411fff98a0",
-  "exact_original_bytes_restored_by_two_declared_additions": true,
-  "parameters_assertions_original_statements_unchanged": true
-}

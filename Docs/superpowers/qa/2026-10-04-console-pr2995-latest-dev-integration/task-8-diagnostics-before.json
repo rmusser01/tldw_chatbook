@@ -1,9 +1,0 @@
-{
-  "argv": [
-    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
-    "scripts/check_persistent_diagnostic_inventory.py",
-    "--diff"
-  ],
-  "exit": 0,
-  "seconds": 38.966940374986734
-}

@@ -1,7 +1,0 @@
-from common import *
-argv=['git','-c','gc.auto=0','rebase','--onto',NEW,OLD]
-dump('rebase-argv.json',{'argv':argv,'head':git('rev-parse','HEAD').decode().strip()})
-r=subprocess.run(argv,cwd=W,capture_output=True,text=True)
-(O/'rebase.log').write_text(r.stdout+r.stderr)
-dump('rebase-result.json',{'exit':r.returncode,'head':git('rev-parse','HEAD').decode().strip(),'status':git('status','--porcelain').decode()})
-print(r.stdout+r.stderr);sys.exit(r.returncode)

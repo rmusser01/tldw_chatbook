@@ -1,6 +1,0 @@
-{
-  "fix_base": "71cc9db79fd802a0fc1c656f3186c415e2e844a9",
-  "red_scanner_AST_exact_FIX_BASE": true,
-  "red_test_source_sha256": "1a24c47abcdd3109c18f229bd04915f939d994380d23282c3183a19a93824610",
-  "review_sha256": "1aafd3c6c93ae2fc5dc33ed6bbaaa1c9f902918c732c8d8fbca1b061484d0223"
-}

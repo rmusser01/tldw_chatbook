@@ -1,7 +1,0 @@
-.................................................                        [100%]
-- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-i1-green.xml -
-============================= slowest 25 durations =============================
-7.94s call     Tests/Chat/test_console_fork_transition_census.py::test_public_fork_transition_inventory_is_bidirectional
-
-(24 durations < 1s hidden.)
-49 passed in 13.12s

@@ -1,7 +1,0 @@
-.                                                                        [100%]
-- generated xml file: /private/tmp/task9-remaining-fixtures/test_suspend_preserves_coordin0/private-profile-process/pytest.xml -
-============================= slowest 25 durations =============================
-5.12s call     Tests/UI/test_console_auto_speak_wiring.py::TestSuspendGuardUnit::test_suspend_preserves_coordinator_only_while_result_pending
-
-(2 durations < 1s hidden.)
-1 passed in 6.88s

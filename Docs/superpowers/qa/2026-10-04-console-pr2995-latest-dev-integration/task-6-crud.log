@@ -1,8 +1,0 @@
-...                                                                      [100%]
-- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-6-crud.xml -
-============================= slowest 25 durations =============================
-4.59s call     Tests/DB/test_chachanotes_conversation_writer_collision.py::test_add_conversation_survives_the_concurrent_chunk_commit_load_probe
-1.82s call     Tests/DB/test_chachanotes_conversation_writer_collision.py::test_conversation_fork_survives_a_chunk_commit_inside_the_read_to_write_gap
-
-(7 durations < 1s hidden.)
-3 passed in 7.43s

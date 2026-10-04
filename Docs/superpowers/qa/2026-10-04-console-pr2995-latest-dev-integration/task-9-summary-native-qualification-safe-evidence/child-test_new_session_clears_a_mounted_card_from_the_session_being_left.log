@@ -1,7 +1,0 @@
-.                                                                        [100%]
-- generated xml file: /private/tmp/task9-native-green/test_new_session_clears_a_moun0/private-profile-process/pytest.xml -
-============================= slowest 25 durations =============================
-4.88s call     Tests/UI/test_console_parallel_runs.py::test_new_session_clears_a_mounted_card_from_the_session_being_left
-
-(2 durations < 1s hidden.)
-1 passed in 7.09s

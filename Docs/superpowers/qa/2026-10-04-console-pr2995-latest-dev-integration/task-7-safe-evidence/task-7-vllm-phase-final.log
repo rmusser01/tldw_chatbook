@@ -1,8 +1,0 @@
-..                                                                       [100%]
-- generated xml file: /Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook/.superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-7-vllm-phase-final.xml -
-============================= slowest 25 durations =============================
-9.11s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_chat_core_state]
-9.01s call     Tests/UI/test_console_provider_apply_defaults_flow.py::test_vllm_console_handoff_restores_projections_when_rollback_sync_fails[_sync_console_settings_summary]
-
-(4 durations < 1s hidden.)
-2 passed in 21.18s

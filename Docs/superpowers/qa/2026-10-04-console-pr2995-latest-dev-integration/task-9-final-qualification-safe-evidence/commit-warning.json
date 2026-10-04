@@ -1,8 +1,0 @@
-{
-  "commit": "432c636fb596c073c5e33ab933ec704a814a3837",
-  "warnings": [
-    "Existing git gc.log prevents automatic cleanup.",
-    "There are too many unreachable loose objects."
-  ],
-  "no_repository_housekeeping": true
-}

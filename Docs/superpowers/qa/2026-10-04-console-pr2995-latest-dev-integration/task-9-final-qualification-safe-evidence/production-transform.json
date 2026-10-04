@@ -1,7 +1,0 @@
-{
-  "before_sha256": "4401a2b9a2141eb238e726c6dd6aa9334a3dd825b4024c01133a80a17461e203",
-  "after_sha256": "79ef60ea42e432ab007fbd60a05ab3484e0abfa1f24ea2239f38cbc4a272483b",
-  "reverse_exact_two_substitutions_byte_equal": true,
-  "lines": 29327,
-  "cap": 29367
-}

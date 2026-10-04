@@ -1,2 +1,0 @@
-timestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 99 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).
-check_timestamp_writers: OK

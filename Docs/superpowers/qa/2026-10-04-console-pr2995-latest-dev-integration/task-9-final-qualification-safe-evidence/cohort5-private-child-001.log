@@ -1,7 +1,0 @@
-.                                                                        [100%]
-- generated xml file: /private/tmp/task9-final-5/test_an_ask_hold_shows_the_car0/private-profile-process/pytest.xml -
-============================= slowest 25 durations =============================
-11.87s call     Tests/UI/test_console_compaction_hold_flow.py::test_an_ask_hold_shows_the_card_and_each_action_completes[compact_and_send]
-
-(2 durations < 1s hidden.)
-1 passed in 13.86s
