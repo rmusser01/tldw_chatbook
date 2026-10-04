@@ -7506,7 +7506,7 @@ class ConsoleChatController:
             self.store.session_thinking_history_policy(session_id)
         )
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
+            resolution = await self._resolve_for_send_bounded(
                 self._provider_selection_for_session(session_id)
             )
         except Exception:
@@ -20476,9 +20476,7 @@ class ConsoleChatController:
         if builder is None or session is None or not callable(build_preview):
             return _empty_profile_context_snapshot()
         try:
-            resolution = await self.provider_gateway.resolve_for_send(
-                provider_selection
-            )
+            resolution = await self._resolve_for_send_bounded(provider_selection)
             if not getattr(resolution, "ready", True):
                 return _empty_profile_context_snapshot()
             profile_provider = await asyncio.to_thread(
