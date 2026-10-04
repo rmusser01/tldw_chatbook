@@ -1894,7 +1894,7 @@ class ChatScreen(BaseAppScreen):
     # staged-chip strip — and toasts intercept clicks, so a click aimed at those
     # controls during a ~5s toast dismisses the toast instead of pressing the
     # button. Dock the Console toast rack TOP-right, below the nav, header and
-    # control rows (5 cells, TASK-34100.5), clear of the composer's controls.
+    # control rows and the tab strip (8 cells, TASK-34100.5), clear of composer.
     # Kept in BUNDLED_CSS (not the CSS_PATH bundle) so it applies in both the
     # real app and ConsolidatedCSSApp-based test harnesses, which load the
     # generated widget-defaults sheet but not necessarily the full CSS_PATH
@@ -1903,7 +1903,7 @@ class ChatScreen(BaseAppScreen):
     ChatScreen ToastRack {
         dock: top;
         align: right top;
-        margin-top: 5;
+        margin-top: 8;
         margin-bottom: 0;
     }
     """

@@ -277,8 +277,9 @@ and nothing about it is sent to the model.
 
 **Arriving from setup.** Finishing first-run setup with **Start chatting**
 opens one chat on the saved provider and model, with no notice. Notices that
-do appear in Console are drawn below the nav tabs, header and control rows,
-so they never cover the tab bar, the voice controls or the readiness badge.
+do appear in Console are drawn below the nav tabs, header and control rows
+and the chat tab strip, so they never cover the tab bar, the voice controls,
+the readiness badge or the New tab and Temporary buttons.
 "A Console turn completed while hidden" appears only when the turn finished
 while Console was not on screen, or in a tab you were not viewing. A dialog
 open over Console (Switch model, Rename, the command palette) does not count

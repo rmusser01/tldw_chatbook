@@ -30,6 +30,9 @@ async def test_console_toast_paints_below_the_nav_header_and_status_rows(
             chat.query_one("#console-speech-controls"),
             chat.query_one("#workbench-header-status"),
             chat.query_one("#console-control-bar"),
+            # Review round 2 (V2-F10, live g5-v2-oai 06): a toast over the
+            # transcript tab strip swallowed clicks on New tab / Temporary.
+            chat.query_one("#console-native-tab-strip"),
         ]
         app.notify("A short Console notice that wraps onto a second line here.")
         for _ in range(40):
