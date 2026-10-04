@@ -30,25 +30,35 @@ def _no_real_run_id(monkeypatch):
 
 
 def _node(number, *, head=OLD, armed="2026-10-03T10:00:00Z", state="BEHIND", repo=None, draft=False,
-          committed="2026-10-03T09:00:00Z", ref=None):
+          committed="2026-10-03T09:00:00Z", ref=None, threads=()):
     return {
         "number": number, "id": f"PR_{number}", "isDraft": draft, "headRefOid": head,
         "headRefName": ref or f"feat/{number}", "mergeStateStatus": state,
         "headRepository": {"nameWithOwner": repo or mq.REPO},
         "autoMergeRequest": {"enabledAt": armed} if armed else None,
         "commits": {"nodes": [{"commit": {"committedDate": committed}}]},
+        "reviewThreads": {"nodes": [{"isResolved": resolved} for resolved in threads]},
     }
 
 
-def _check(conclusion="success", completed="2026-10-03T11:58:00Z", url="https://run/1"):
-    return {"status": "completed", "conclusion": conclusion, "completed_at": completed, "html_url": url}
+def _check(conclusion="success", completed="2026-10-03T11:58:00Z", url="https://run/1", suite=None):
+    check = {"status": "completed", "conclusion": conclusion, "completed_at": completed, "html_url": url}
+    if suite is not None:
+        check["check_suite"] = {"id": suite}
+    return check
 
 
 class FakeGh:
-    """Records every mutating call; serves scripted reads."""
+    """Records every mutating call; serves scripted reads.
+
+    Like the real API (spike evidence), the rebase mutation returns the PRE-rebase head and the
+    branch moves a moment later: the first `rebase_lag` single-PR rereads after a successful
+    rebase still show the old head, later ones show NEW. `rebase_lag=None`: it never moves.
+    `events` holds the recorded calls interleaved with ("read_pr", head) for every single-PR read.
+    """
 
     def __init__(self, nodes, *, checks=None, runs=None, comments=None, rebase_error=False,
-                 reread=None, dispatch_refused=()):
+                 reread=None, dispatch_refused=(), rebase_lag=1, disarm_error=False):
         self.nodes = {n["number"]: n for n in nodes}
         self.checks = checks or {}
         self.runs = runs or {}
@@ -56,17 +66,28 @@ class FakeGh:
         self.rebase_error = rebase_error
         self.reread = reread or {}
         self.dispatch_refused = set(dispatch_refused)
+        self.rebase_lag = rebase_lag
+        self.disarm_error = disarm_error
+        self.rereads_since_rebase = None
         self.calls = []
+        self.events = []
         self.reads = 0
+
+    def _record(self, call):
+        self.calls.append(call)
+        self.events.append(call)
 
     def graphql(self, query, **v):
         if "updatePullRequestBranch" in query:
-            self.calls.append(("rebase", v["id"], v["oid"]))
+            self._record(("rebase", v["id"], v["oid"]))
             if self.rebase_error:
                 raise mq.GhError("rebase refused")
-            return {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": NEW}}}}
+            self.rereads_since_rebase = 0
+            return {"data": {"updatePullRequestBranch": {"pullRequest": {"headRefOid": v["oid"]}}}}
         if "disablePullRequestAutoMerge" in query:
-            self.calls.append(("disarm", v["id"]))
+            self._record(("disarm", v["id"]))
+            if self.disarm_error:
+                raise mq.GhError("Pull request is not in the correct state to disable auto-merge")
             return {"data": {}}
         self.reads += 1
         if "comments(last" in query:
@@ -74,6 +95,11 @@ class FakeGh:
             return {"data": {"repository": {"pullRequest": {"comments": {"nodes": [{"body": b} for b in bodies]}}}}}
         if "pullRequest(number" in query:
             node = self.reread.get(v["number"], self.nodes[v["number"]])
+            if self.rereads_since_rebase is not None:
+                self.rereads_since_rebase += 1
+                if self.rebase_lag is not None and self.rereads_since_rebase > self.rebase_lag:
+                    node = dict(node, headRefOid=NEW, mergeStateStatus="BLOCKED")
+            self.events.append(("read_pr", node["headRefOid"]))
             return {"data": {"repository": {"pullRequest": node}}}
         if "pullRequests(" in query:
             return {"data": {"repository": {"pullRequests": {"nodes": list(self.nodes.values())}}}}
@@ -92,18 +118,18 @@ class FakeGh:
             return {"workflow_runs": runs}
         if method == "POST" and path.endswith("/dispatches"):
             workflow = path.split("/workflows/")[1].split("/")[0]
-            self.calls.append(("dispatch", workflow, dict(fields or {})))
+            self._record(("dispatch", workflow, dict(fields or {})))
             if workflow in self.dispatch_refused:
                 raise mq.GhError("HTTP 422: Workflow does not have 'workflow_dispatch' trigger")
             return None
         if method == "POST" and path.endswith("/cancel"):
-            self.calls.append(("cancel", path.split("/runs/")[1].split("/")[0]))
+            self._record(("cancel", path.split("/runs/")[1].split("/")[0]))
             return None
         if method == "DELETE" and "/actions/runs/" in path:
-            self.calls.append(("delete", path.rsplit("/", 1)[1]))
+            self._record(("delete", path.rsplit("/", 1)[1]))
             return None
         if method == "POST" and path.endswith("/comments"):
-            self.calls.append(("comment", int(path.split("/issues/")[1].split("/")[0]), fields["body"]))
+            self._record(("comment", int(path.split("/issues/")[1].split("/")[0]), fields["body"]))
             return None
         raise AssertionError(f"unexpected rest call {method} {path}")
 
@@ -179,10 +205,27 @@ def test_dispatch_refused_is_named_in_the_comment():
 
 
 def test_comments_are_deduplicated_by_marker():
-    gh = FakeGh([_node(1, state="DIRTY")], comments={1: [f"<!-- merge-queue:evict:{OLD} -->\nold"]})
+    gh = FakeGh([_node(1, state="DIRTY")], comments={1: [f"<!-- merge-queue:evict-conflict:{OLD} -->\nold"]})
     _run(gh)
     assert ("disarm", "PR_1") in gh.calls
     assert not any(c[0] == "comment" for c in gh.calls)
+
+
+def test_eviction_for_a_new_reason_on_the_same_head_still_comments():
+    """A re-armed PR evicted again on the same head, for a different reason, must be told why."""
+    gh = FakeGh([_node(1, state="DIRTY")], comments={1: [f"<!-- merge-queue:evict-stuck:{OLD} -->\nold"]})
+    _run(gh)
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"<!-- merge-queue:evict-conflict:{OLD} -->" in comment[2]
+
+
+def test_disarm_failure_still_comments():
+    """A merge fires push:dev and pull_request:closed; the losing run's disarm hits an
+    already-disarmed PR. That must not crash the run or skip the comment."""
+    gh = FakeGh([_node(1, state="DIRTY")], disarm_error=True)
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+    assert any(c[0] == "comment" and "conflicts with dev" in c[2] for c in gh.calls)
 
 
 def test_first_failure_dispatches_a_retry():
@@ -193,11 +236,35 @@ def test_first_failure_dispatches_a_retry():
 
 
 def test_queue_tick_failure_is_not_a_ci_failure():
+    """The run failed (its queue-tick did), but its check suite reported the required check green."""
     runs = {OLD: [{"id": 9, "path": ".github/workflows/derived-artifacts.yml", "event": "pull_request",
-                   "status": "completed", "conclusion": "failure"}]}
-    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check("success")]}, runs=runs)
+                   "status": "completed", "conclusion": "failure", "check_suite_id": 900,
+                   "updated_at": "2026-10-03T11:59:00Z"}]}
+    gh = FakeGh([_node(1, state="CLEAN")], checks={OLD: [_check("success", suite=900)]}, runs=runs)
     assert _run(gh)[0][1].kind == "wait"
     assert gh.calls == []
+
+
+def _broken_run(rid, conclusion, updated):
+    """A required-workflow run that completed red without ever reporting the required check."""
+    return {"id": rid, "path": ".github/workflows/derived-artifacts.yml", "event": "workflow_dispatch",
+            "status": "completed", "conclusion": conclusion, "check_suite_id": 500 + rid,
+            "updated_at": updated, "html_url": f"https://run/{rid}"}
+
+
+def test_run_that_failed_without_reporting_the_check_counts_as_a_failure():
+    """A startup failure (e.g. a broken derived-artifacts.yml on the branch) reports no check run.
+    It must count as a failure -- one retries, two evict -- not as 'no run', which would
+    re-dispatch forever."""
+    once = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [_broken_run(31, "startup_failure", "2026-10-03T11:00:00Z")]})
+    assert _run(once)[0][1].kind == "retry"
+    twice = FakeGh([_node(1, state="BLOCKED")], runs={OLD: [
+        _broken_run(31, "startup_failure", "2026-10-03T11:00:00Z"),
+        _broken_run(32, "timed_out", "2026-10-03T11:30:00Z"),
+    ]})
+    decision = _run(twice)[0][1]
+    assert decision.kind == "evict" and decision.links == ("https://run/31", "https://run/32")
+    assert ("disarm", "PR_1") in twice.calls
 
 
 def test_cleanup_deletes_only_bot_approval_runs():
@@ -297,17 +364,66 @@ def test_max_fronts_per_run_is_bounded():
 
 
 def test_still_unknown_after_rereads_waits():
+    """After each merge the next front is routinely UNKNOWN for a while: 12 rereads, 10 s apart."""
     sleeps = []
     gh = FakeGh([_node(1, state="UNKNOWN")], reread={1: _node(1, state="UNKNOWN")})
     decisions = mq.run(gh, "on", now=lambda: NOW, sleep=lambda s: sleeps.append(s), log=lambda m: None)
     assert decisions[0][1].kind == "wait"
-    assert sleeps == [mq.UNKNOWN_SLEEP_S] * mq.UNKNOWN_REREADS
+    assert sleeps == [10] * 12
 
 
-def test_rebase_failure_same_head_not_dirty_does_nothing():
+def test_first_rebase_failure_warns_without_evicting():
     gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, state="BEHIND")})
     _run(gh)
+    assert [c[0] for c in gh.calls] == ["rebase", "comment"]
+    body = gh.calls[1][2]
+    assert f"<!-- merge-queue:rebase-failed:{OLD} -->" in body
+    assert "rebasing onto dev failed (rebase refused); will retry once" in body
+
+
+def test_repeated_rebase_failure_evicts():
+    """A PR that stays BEHIND (not DIRTY) while every rebase fails would otherwise stall the line."""
+    gh = FakeGh([_node(1)], rebase_error=True, reread={1: _node(1, state="BEHIND")},
+                comments={1: [f"<!-- merge-queue:rebase-failed:{OLD} -->\nfirst failure"]})
+    _run(gh)
+    assert ("disarm", "PR_1") in gh.calls
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"<!-- merge-queue:evict-rebase:{OLD} -->" in comment[2]
+    assert "rebase onto dev keeps failing: rebase refused" in comment[2]
+
+
+def test_rebase_dispatches_only_after_the_new_head_appears():
+    """updatePullRequestBranch returns the PRE-rebase head and the branch moves about 1 s later
+    (spike). The queue polls until a reread shows the new head, and only then dispatches CI and
+    comments with the NEW sha."""
+    sleeps = []
+    gh = FakeGh([_node(1)], rebase_lag=2)
+    mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
+    required = ("dispatch", "derived-artifacts.yml", {"ref": "feat/1", "inputs[pr]": "1"})
+    assert gh.events.index(("read_pr", NEW)) < gh.events.index(required)
+    assert sleeps == [mq.REBASE_POLL_S] * 3
+    comment = next(c for c in gh.calls if c[0] == "comment")
+    assert f"<!-- merge-queue:rebased:{NEW} -->" in comment[2] and f"`{NEW[:10]}`" in comment[2]
+    assert OLD not in comment[2]
+
+
+def test_rebase_whose_head_never_moves_dispatches_nothing():
+    sleeps = []
+    gh = FakeGh([_node(1)], rebase_lag=None)
+    mq.run(gh, "on", now=lambda: NOW, sleep=sleeps.append, log=lambda m: None)
     assert [c[0] for c in gh.calls] == ["rebase"]
+    assert sleeps == [mq.REBASE_POLL_S] * mq.REBASE_POLLS
+
+
+def test_blocked_green_evicts_only_with_unresolved_threads():
+    """A green check with BLOCKED is often mergeStateStatus lagging; only real unresolved
+    conversations evict at once."""
+    gh = FakeGh([_node(1, state="BLOCKED", threads=(True, False))], checks={OLD: [_check()]})
+    decision = _run(gh)[0][1]
+    assert decision.kind == "evict" and "unresolved conversations" in decision.reason
+    gh = FakeGh([_node(1, state="BLOCKED", threads=(True,))], checks={OLD: [_check()]})
+    assert _run(gh)[0][1].kind == "wait"
+    assert gh.calls == []
 
 
 def test_gh_argument_typing():

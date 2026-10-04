@@ -35,10 +35,14 @@ QUEUE_WORKFLOW = "merge-queue.yml"
 YOUNG_HEAD = timedelta(minutes=3)
 STUCK_GREEN = timedelta(minutes=15)
 MAX_FRONTS_PER_RUN = 10
-UNKNOWN_REREADS = 3
-UNKNOWN_SLEEP_S = 5
+UNKNOWN_REREADS = 12
+UNKNOWN_SLEEP_S = 10
+# updatePullRequestBranch returns the PRE-rebase head; the branch moves about 1 s later (spike).
+REBASE_POLLS = 10
+REBASE_POLL_S = 3
 PASSING = frozenset({"success", "neutral", "skipped"})
 LIVE_RUN_STATUSES = frozenset({"queued", "in_progress", "waiting", "requested", "pending"})
+BROKEN_RUN_CONCLUSIONS = frozenset({"failure", "startup_failure", "timed_out"})
 
 
 @dataclass(frozen=True)
@@ -49,6 +53,7 @@ class CheckRun:
     conclusion: str | None
     completed_at: datetime | None
     url: str
+    suite_id: int | None = None
 
 
 @dataclass(frozen=True)
@@ -65,15 +70,21 @@ class PrState:
     merge_state: str
     head_committed_at: datetime
     checks: tuple[CheckRun, ...] = ()
+    unresolved_threads: int = 0
 
 
 @dataclass(frozen=True)
 class Action:
-    """The single decision for the front PR: wait, rebase, dispatch, retry or evict."""
+    """The single decision for the front PR: wait, rebase, dispatch, retry or evict.
+
+    `slug` names an eviction's cause in its comment marker (`evict-<slug>`), so a re-armed PR
+    evicted again on the same head for a different reason is still told why.
+    """
 
     kind: str
     reason: str
     links: tuple[str, ...] = ()
+    slug: str = ""
 
 
 def line_of(prs: list[PrState]) -> list[PrState]:
@@ -105,7 +116,7 @@ def decide_front(pr: PrState, now: datetime) -> Action:
     if state == "BEHIND":
         return Action("rebase", "behind dev")
     if state == "DIRTY":
-        return Action("evict", "conflicts with dev")
+        return Action("evict", "conflicts with dev", slug="conflict")
     if any(c.status != "completed" for c in pr.checks):
         return Action("wait", "required check running")
     finished = sorted(
@@ -120,14 +131,17 @@ def decide_front(pr: PrState, now: datetime) -> Action:
     failed = [c for c in finished if c.conclusion not in PASSING]
     if latest.conclusion not in PASSING:
         if len(failed) >= 2:
-            return Action("evict", "required check failed twice", tuple(c.url for c in failed[-2:]))
+            return Action("evict", "required check failed twice", tuple(c.url for c in failed[-2:]), "failed-twice")
         return Action("retry", "required check failed once; retrying", (latest.url,))
-    if state in ("CLEAN", "UNSTABLE", "HAS_HOOKS"):
+    if state == "BLOCKED" and pr.unresolved_threads > 0:
+        return Action("evict", "green but blocked by unresolved conversations", slug="blocked")
+    # BLOCKED with nothing unresolved is usually mergeStateStatus lagging the green check.
+    if state in ("CLEAN", "UNSTABLE", "HAS_HOOKS", "BLOCKED"):
         if latest.completed_at is not None and now - latest.completed_at > STUCK_GREEN:
-            return Action("evict", "green for over 15 minutes but auto-merge did not fire; re-arm to retry")
+            return Action(
+                "evict", "green for over 15 minutes but auto-merge did not fire; re-arm to retry", slug="stuck",
+            )
         return Action("wait", "green; auto-merge should fire")
-    if state == "BLOCKED":
-        return Action("evict", "green but blocked by unresolved conversations or reviews")
     return Action("wait", f"merge state {state}")
 
 
@@ -175,6 +189,7 @@ PR_FIELDS = """
   headRepository { nameWithOwner }
   autoMergeRequest { enabledAt }
   commits(last: 1) { nodes { commit { committedDate } } }
+  reviewThreads(first: 100) { nodes { isResolved } }
 """
 LINE_QUERY = (
     "query($owner: String!, $name: String!) { repository(owner: $owner, name: $name) {"
@@ -220,6 +235,7 @@ def _parse_pr(node: dict) -> PrState:
         is_draft=node["isDraft"],
         merge_state=node["mergeStateStatus"],
         head_committed_at=_ts(commits[0]["commit"]["committedDate"]) if commits else datetime.now(timezone.utc),
+        unresolved_threads=sum(1 for t in node["reviewThreads"]["nodes"] if not t["isResolved"]),
     )
 
 
@@ -239,7 +255,8 @@ def read_checks(gh: GhApi, sha: str) -> tuple[CheckRun, ...]:
     path = f"repos/{REPO}/commits/{sha}/check-runs?check_name={quote(REQUIRED_CHECK)}&filter=all&per_page=100"
     data = gh.rest("GET", path) or {}
     return tuple(
-        CheckRun(c["status"], c.get("conclusion"), _ts(c.get("completed_at")), c["html_url"])
+        CheckRun(c["status"], c.get("conclusion"), _ts(c.get("completed_at")), c["html_url"],
+                 (c.get("check_suite") or {}).get("id"))
         for c in data.get("check_runs", [])
     )
 
@@ -256,22 +273,35 @@ def _workflow_name(run: dict) -> str:
     return str(run.get("path", "")).split("/")[-1].split("@")[0]
 
 
-def live_required_runs(gh: GhApi, sha: str) -> tuple[CheckRun, ...]:
-    """Live runs of the required workflow on this head, standing in for the check run its
-    needs-gated aggregate job does not report until the lanes finish (verified live: run
-    37156228421 showed `total_count: 0` for the required check while its lanes were still
-    running, so an in-flight front PR would otherwise look like it has no run at all and get
-    re-dispatched on every tick). Modeled by run STATUS only, never by conclusion -- the queue
-    must not read a workflow-run conclusion as a merge signal (spec section 6).
+def required_run_stand_ins(gh: GhApi, sha: str, checks: tuple[CheckRun, ...]) -> tuple[CheckRun, ...]:
+    """Required-workflow runs on this head that have not reported the required check, as stand-ins.
+
+    - A LIVE run stands in as an in-flight check: the required check is a needs-gated aggregate
+      with no check run until the lanes finish (verified live: run 37156228421 showed
+      `total_count: 0` while its lanes ran), so an in-flight front PR would otherwise look like
+      it has no run and get re-dispatched on every tick.
+    - A COMPLETED run that failed (`BROKEN_RUN_CONCLUSIONS`) with no required check run in its
+      check suite stands in as one failure: a startup failure, e.g. a broken
+      derived-artifacts.yml on the branch, would otherwise read as "no run" and be re-dispatched
+      forever. A failed run whose suite DID report the required check is not a CI failure (its
+      queue-tick may have failed); that check run already speaks for it.
+
+    A workflow-run conclusion is only ever read as a failure here, never as a merge signal
+    (spec section 6). The queue's own run (GITHUB_RUN_ID) is never counted.
     """
     own_run_id = int(os.environ.get("GITHUB_RUN_ID", "0") or 0)
-    return tuple(
-        CheckRun(run["status"], None, None, run.get("html_url", ""))
-        for run in runs_on(gh, sha)
-        if _workflow_name(run) == REQUIRED_WORKFLOW
-        and run.get("status") in LIVE_RUN_STATUSES
-        and run.get("id") != own_run_id
-    )
+    reported_suites = {c.suite_id for c in checks if c.suite_id is not None}
+    stand_ins = []
+    for run in runs_on(gh, sha):
+        if _workflow_name(run) != REQUIRED_WORKFLOW or run.get("id") == own_run_id:
+            continue
+        url = run.get("html_url", "")
+        if run.get("status") in LIVE_RUN_STATUSES:
+            stand_ins.append(CheckRun(run["status"], None, None, url))
+        elif (run.get("status") == "completed" and run.get("conclusion") in BROKEN_RUN_CONCLUSIONS
+              and run.get("check_suite_id") not in reported_suites):
+            stand_ins.append(CheckRun("completed", "failure", _ts(run.get("updated_at")), url))
+    return tuple(stand_ins)
 
 
 def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]) -> None:
@@ -281,15 +311,20 @@ def _best_effort(log: Callable[[str], None], what: str, fn: Callable[[], object]
         log(f"  best-effort {what} failed: {exc}")
 
 
-def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> None:
-    """Post a comment unless one of this kind already exists for this head."""
+def comment_once(gh: GhApi, number: int, kind: str, sha: str, body: str) -> bool:
+    """Post a comment unless one of this kind already exists for this head.
+
+    Returns:
+        True if it posted, False if the marker was already there.
+    """
     marker = f"<!-- merge-queue:{kind}:{sha} -->"
     owner, name = _owner_name()
     data = gh.graphql(COMMENTS_QUERY, owner=owner, name=name, number=number)
     bodies = [n.get("body") or "" for n in data["data"]["repository"]["pullRequest"]["comments"]["nodes"]]
     if any(marker in b for b in bodies):
-        return
+        return False
     gh.rest("POST", f"repos/{REPO}/issues/{number}/comments", {"body": f"{marker}\n{body}"})
+    return True
 
 
 def dispatch(gh: GhApi, workflow: str, ref: str, pr_number: int | None = None) -> None:
@@ -315,29 +350,50 @@ def _workflows_to_redispatch(runs: list[dict]) -> list[str]:
 
 
 def _evict(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -> None:
-    gh.graphql(DISARM_MUTATION, id=pr.node_id)
+    # Best-effort: a merge fires both push:dev and pull_request:closed, so two racing runs can
+    # evict the same PR and the second disarm hits an already-disarmed PR.
+    _best_effort(log, f"disarm #{pr.number}", lambda: gh.graphql(DISARM_MUTATION, id=pr.node_id))
     links = "".join(f"\n- {u}" for u in action.links)
     comment_once(
-        gh, pr.number, "evict", pr.head_sha,
+        gh, pr.number, f"evict-{action.slug}", pr.head_sha,
         f"Merge queue: removed from the line ({action.reason}). Auto-merge is now off. Fix the cause, then "
         f"re-arm with `gh pr merge {pr.number} --auto --merge` to rejoin at the back.{links}",
     )
     log(f"  evicted #{pr.number}: {action.reason}")
 
 
-def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
+def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None], sleep: Callable[[float], None]) -> None:
     try:
-        result = gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
+        gh.graphql(REBASE_MUTATION, id=pr.node_id, oid=pr.head_sha)
     except GhError as exc:
         fresh = read_pr(gh, pr.number)
         if fresh.head_sha != pr.head_sha:
             log(f"  rebase skipped: head moved to {fresh.head_sha[:10]}")
         elif fresh.merge_state == "DIRTY":
-            _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)"), log)
+            _evict(gh, fresh, Action("evict", "conflicts with dev (rebase refused)", slug="conflict"), log)
         else:
-            log(f"  rebase failed, left alone: {exc}")
+            error = str(exc)[:200]
+            posted = comment_once(
+                gh, pr.number, "rebase-failed", pr.head_sha,
+                f"Merge queue: rebasing onto dev failed ({error}); will retry once, then remove from the line.",
+            )
+            if posted:
+                log(f"  rebase failed, will retry once: {exc}")
+            else:
+                _evict(gh, fresh, Action("evict", f"rebase onto dev keeps failing: {error}", slug="rebase"), log)
         return
-    new_head = result["data"]["updatePullRequestBranch"]["pullRequest"]["headRefOid"]
+    # The mutation returns the PRE-rebase headRefOid and the branch moves about 1 s later, so
+    # wait for the new head to appear before dispatching CI on it.
+    new_head = None
+    for _ in range(REBASE_POLLS):
+        sleep(REBASE_POLL_S)
+        fresh = read_pr(gh, pr.number)
+        if fresh.head_sha != pr.head_sha:
+            new_head = fresh.head_sha
+            break
+    if new_head is None:
+        log(f"  rebase of #{pr.number} accepted but the head never moved; a later tick recovers it")
+        return
     old_runs = runs_on(gh, pr.head_sha)
     # Dispatch the required check *before* cancelling anything on the old head: queue-tick runs
     # inside its own derived-artifacts run, and an auto_merge_enabled-triggered merge-queue.yml
@@ -367,10 +423,12 @@ def _rebase(gh: GhApi, pr: PrState, log: Callable[[str], None]) -> None:
     log(f"  rebased #{pr.number} {pr.head_sha[:10]} -> {new_head[:10]}")
 
 
-def apply(gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None]) -> None:
+def apply(
+    gh: GhApi, pr: PrState, action: Action, log: Callable[[str], None], sleep: Callable[[float], None],
+) -> None:
     """Perform one decided action (spec section 7)."""
     if action.kind == "rebase":
-        _rebase(gh, pr, log)
+        _rebase(gh, pr, log, sleep)
     elif action.kind in ("dispatch", "retry"):
         dispatch(gh, REQUIRED_WORKFLOW, pr.head_ref, pr.number)
         if action.kind == "retry":
@@ -444,13 +502,14 @@ def run(
         pr = settle_unknown(gh, pr, sleep)
         if pr.armed_at is None:
             continue
-        pr = replace(pr, checks=read_checks(gh, pr.head_sha) + live_required_runs(gh, pr.head_sha))
+        checks = read_checks(gh, pr.head_sha)
+        pr = replace(pr, checks=checks + required_run_stand_ins(gh, pr.head_sha, checks))
         action = decide_front(pr, now())
         decisions.append((pr.number, action))
         log(f"#{pr.number}: {action.kind} - {action.reason}")
         if mode == "on":
             cleanup_approval_runs(gh, pr, log)
-            apply(gh, pr, action, log)
+            apply(gh, pr, action, log, sleep)
         if action.kind != "evict":
             break
     return decisions

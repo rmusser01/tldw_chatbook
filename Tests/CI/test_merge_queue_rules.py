@@ -64,14 +64,15 @@ def test_rearmed_pr_rejoins_at_the_back():
         (_pr(merge_state="CLEAN", checks=(_check(minutes_ago=5),)), "wait"),
         (_pr(merge_state="UNSTABLE", checks=(_check(minutes_ago=5),)), "wait"),
         (_pr(merge_state="CLEAN", checks=(_check(minutes_ago=16),)), "evict"),
-        (_pr(merge_state="BLOCKED", checks=(_check(minutes_ago=1),)), "evict"),
+        (_pr(merge_state="BLOCKED", checks=(_check(minutes_ago=1),), unresolved_threads=1), "evict"),
+        (_pr(merge_state="BLOCKED", checks=(_check(minutes_ago=1),), unresolved_threads=0), "wait"),
         (_pr(merge_state="CLEAN", checks=(_check("failure", minutes_ago=20), _check(minutes_ago=3))), "wait"),
     ],
     ids=[
         "unknown-waits", "behind-rebases", "dirty-evicts", "running-waits", "no-run-dispatches",
         "only-cancelled-dispatches", "young-head-waits", "first-failure-retries", "second-failure-evicts",
-        "green-clean-waits", "green-unstable-waits", "stuck-green-evicts", "green-blocked-evicts",
-        "retry-that-passed-waits",
+        "green-clean-waits", "green-unstable-waits", "stuck-green-evicts", "green-blocked-unresolved-evicts",
+        "green-blocked-nothing-unresolved-waits", "retry-that-passed-waits",
     ],
 )
 def test_decide_front_table(pr, kind):
