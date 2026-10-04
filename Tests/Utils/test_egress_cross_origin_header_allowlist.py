@@ -998,6 +998,36 @@ async def test_aiohttp_session_level_auth_does_not_follow_cross_origin_redirect(
 
 
 @pytest.mark.asyncio
+async def test_aiohttp_session_constructor_cookie_does_not_follow_cross_origin_redirect():
+    """``ClientSession(cookies=...)`` stores domainless cookies, which aiohttp
+    sends to every host; a cookie a response set is scoped to its origin."""
+    aiohttp = pytest.importorskip("aiohttp")
+    from yarl import URL
+
+    from tldw_chatbook.Utils.egress import (
+        EgressFetchError,
+        _aiohttp_session_level_credential,
+        guarded_fetch_aiohttp,
+    )
+
+    session = _FakeAiohttpSessionWithDefaults(CROSS_ORIGIN_ROUTES)
+    session.cookie_jar = aiohttp.CookieJar()
+    session.cookie_jar.update_cookies(
+        {"sid": "scoped"}, response_url=URL("https://feed.example/")
+    )
+    assert _aiohttp_session_level_credential(session) is None
+
+    # What ``ClientSession(cookies={...})`` does at construction.
+    session.cookie_jar.update_cookies({"session": SENTINEL})
+    assert _aiohttp_session_level_credential(session) == "cookie 'session'"
+    with pytest.raises(EgressFetchError, match="session-level"):
+        await guarded_fetch_aiohttp(
+            "https://feed.example/start", session=session, max_bytes=1024
+        )
+    assert all("evil.example" not in u for u, _ in session.seen)
+
+
+@pytest.mark.asyncio
 async def test_aiohttp_session_default_credential_header_does_not_follow_cross_origin_redirect():
     """A session-DEFAULT header (not the ``headers=`` argument) rides inside
     ``session.get()`` too; a credential-shaped one must refuse the hop."""
