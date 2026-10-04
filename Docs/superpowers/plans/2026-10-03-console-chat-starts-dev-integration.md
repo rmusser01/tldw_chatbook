@@ -14,6 +14,10 @@ ADR required: no
 ADR path: `backlog/decisions/219-console-chat-destinations-and-bounded-starts.md` (existing), with current ADR-163, ADR-126, ADR-158 and both exact ADR-147 provider-routing/archive contracts retained.
 Reason: integrate the approved design with already-shipped owners and migrations. No new continuation policy, runtime, dependency or permission authority is introduced.
 
+## Current migration integration (2026-10-04)
+
+Dev PR3002 now owns ChaChaNotes75→76 for the notes_au trigger repair under ADR-208. The unmerged native chat-start receipt migration moves to76→77; current source paths are `chachanotes_v76_to_v77_agent_chat_starts.sql` and `test_chachanotes_v77_agent_chat_starts_migration.py`. AgentRuns21→22 is unchanged. Preserve shipped75→76, all predecessor data/checkpoints and exact backup catalogs; qualify the real75→76→77 runner and standalone76→77 path. Earlier completed steps and QA below retain the versions they actually tested. The active follow-up is [Task6 of the review/merge plan](2026-10-03-console-pr2995-review-and-merge.md), governed by ADR-219/158/208/126; this reconciliation adds no new storage policy.
+
 ## Global Constraints
 
 - Frozen dev is `f0ffcf9e819b577bd38c416f38550969c75fb5a0`; reviewed source is `53065745187aaf4d47fc4357bb9096aa28fd5673`. Keep the original `codex/console-chat-starts` branch intact. Publishing branch is `codex/console-chat-starts-dev` in `/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook`.
