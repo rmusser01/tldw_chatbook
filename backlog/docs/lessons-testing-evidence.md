@@ -328,6 +328,23 @@ ran". Worktrees share remote refs, so extract the baseline with
 `git archive $(git merge-base HEAD origin/dev)`, and build file lists with
 `git diff --name-only $(git merge-base HEAD origin/dev)..HEAD`.
 
+**An archived baseline has no `.git`, so git-history tests take another path there
+(TASK-33622.17, 2026-10-03).** Comparing 19 head failures against a `git archive`
+tree, two looked branch-only. Both were artifacts of the missing `.git`:
+- `test_task_15743_exception_types_survive_loguru_forwarding` uses its pinned
+  archaeology commits when `git` can reach them. The worktree reaches them through
+  the shared object store and fails. The archive cannot, so it takes the
+  current-source fallback and passes.
+- `test_task_15743_reviewed_delta_is_complete` skips in the archive for the same
+  reason.
+
+Six other git-history tests failed on both sides, but for different reasons: a
+`CalledProcessError` from `git show` in the archive, an assertion or a 300 s
+timeout in the worktree. So for any test that shells out to `git`, an archive
+baseline is not a baseline. Read what the head failure names. Here every message
+named a file the change did not touch. For a real comparison, run the test in a
+git checkout of the base.
+
 ## A call counter on a function's home module misses every `from`-import
 
 **TASK-33005 final review I-6, 2026-10-02.** The keystroke census patched
