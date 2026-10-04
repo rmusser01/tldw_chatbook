@@ -2756,12 +2756,12 @@ class InterruptRoundHost:
         if self.read_controller_set_pending_decision() is not None:
             self.read_controller_project_pending_decision_for_active_session()()
             return
-        if self.read_controller_set_pending_approval() is not None:
-            self.read_controller_set_pending_approval()(
-                self.read_controller__head_round_payload()(
-                    self.payloads["approval"], session_id
-                )
-            )
+        if (setter := self.read_controller_set_pending_approval()) is not None:
+            head = self.read_controller__head_round_payload()
+            payload = head(self.payloads["approval"], session_id)
+            setter(payload)
+            if isinstance(payload, dict):
+                self.read_controller__maybe_fire_permission_summary()(payload)
         self.read_controller__remount_parked_skill_install()(session_id)
         self.read_controller__remount_parked_skill_script()(session_id)
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import threading
 
 import pytest
 
@@ -18,6 +19,7 @@ from Tests.UI.test_product_maturity_gate1_core_loop_screen_adaptation import (
 from Tests.UI.app_factory import _build_test_app as _build_base_test_app
 from Tests.UI.background_signals import wait_for_signal
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
+from tldw_chatbook.Agents.approval_provenance import ApprovalDecisions
 from tldw_chatbook.Agents.mcp_tool_provider import MCPPendingCall
 from tldw_chatbook.Chat.console_agent_bridge import (
     AgentLiveSnapshot,
@@ -508,33 +510,70 @@ async def test_background_approval_parks_with_badge_and_single_toast(request) ->
             ],
             "timeout_seconds": 30.0,
         }
-        console._park_console_approval(background)
-        await pilot.pause(0.3)
+        round_id = "seeded-round"
+        native_host = controller._interrupt_host
+        original_payload = controller._parked_approval_payloads[round_id]
+        round_state = {
+            "event": threading.Event(),
+            "decisions": ApprovalDecisions(),
+            "session_id": background,
+            "run_id": None,
+            "names": ("mcp__srv__tool",),
+            "calls": (),
+            "revoked": False,
+            "summary": None,
+            "summary_fired": False,
+            "cancel_event": None,
+            "visit_event": controller._bind_visit_cancel_signal(),
+        }
+        try:
+            assert native_host.register_round("approval", round_id, round_state)
+            assert native_host._publish_pending_decision(
+                round_state=round_state,
+                payload=original_payload,
+                decision_type="approval",
+                decision_id=round_id,
+                timeout_seconds=30.0,
+                retained_store=controller._parked_approval_payloads,
+            )
+            console._park_console_approval(background)
+            await pilot.pause(0.3)
 
-        approval_card = console.query_one("#chat-approval-card")
-        assert not approval_card.display  # parked: never mounted over the viewed tab
-        approval_toasts = [n for n in notifications if "needs approval" in n]
-        assert len(approval_toasts) == 1
-        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            approval_card = console.query_one("#chat-approval-card")
+            assert (
+                not approval_card.display
+            )  # parked: never mounted over the viewed tab
+            approval_toasts = [n for n in notifications if "needs approval" in n]
+            assert len(approval_toasts) == 1
+            assert (
+                controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            )
 
-        # Visiting mounts the card through the existing mount path.
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.3)
-        assert console.query_one("#chat-approval-card").display
+            # Visiting mounts the card through the existing mount path.
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.3)
+            assert console.query_one("#chat-approval-card").display
 
-        # A second visit-away-and-back (no new decision) re-mounts the SAME
-        # card without a second toast -- card state derives from the run's
-        # pending-approval state, not mounted-widget lifetime.
-        controller.switch_session(viewed)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert not console.query_one("#chat-approval-card").display
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert console.query_one("#chat-approval-card").display
-        assert len([n for n in notifications if "needs approval" in n]) == 1
+            # A second visit-away-and-back (no new decision) re-mounts the SAME
+            # card without a second toast -- card state derives from the run's
+            # pending-approval state, not mounted-widget lifetime.
+            controller.switch_session(viewed)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert not console.query_one("#chat-approval-card").display
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert console.query_one("#chat-approval-card").display
+            assert len([n for n in notifications if "needs approval" in n]) == 1
+        finally:
+            controller._cancel_pending_decisions_for_session(background)
+            with native_host.lock:
+                if native_host.registries["approval"].get(round_id) is round_state:
+                    native_host.registries["approval"].pop(round_id)
+            native_host.unpark_round_payload("approval", round_id)
+            controller._forget_hidden_decision(round_id)
 
 
 @private_profile_test
@@ -584,24 +623,59 @@ async def test_needs_approval_tab_marker_click_routes_to_review_action(request) 
             ],
             "timeout_seconds": 30.0,
         }
-        console._park_console_approval(background)
-        await pilot.pause(0.3)
+        round_id = "seeded-round-tab"
+        native_host = controller._interrupt_host
+        original_payload = controller._parked_approval_payloads[round_id]
+        round_state = {
+            "event": threading.Event(),
+            "decisions": ApprovalDecisions(),
+            "session_id": background,
+            "run_id": None,
+            "names": ("mcp__srv__tool",),
+            "calls": (),
+            "revoked": False,
+            "summary": None,
+            "summary_fired": False,
+            "cancel_event": None,
+            "visit_event": controller._bind_visit_cancel_signal(),
+        }
+        try:
+            assert native_host.register_round("approval", round_id, round_state)
+            assert native_host._publish_pending_decision(
+                round_state=round_state,
+                payload=original_payload,
+                decision_type="approval",
+                decision_id=round_id,
+                timeout_seconds=30.0,
+                retained_store=controller._parked_approval_payloads,
+            )
+            console._park_console_approval(background)
+            await pilot.pause(0.3)
 
-        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
-        assert store.active_session_id == viewed  # still viewing the other tab
+            assert (
+                controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            )
+            assert store.active_session_id == viewed  # still viewing the other tab
 
-        tab_button = console.query_one(f"#console-session-tab-{background}", Button)
-        tab_button.press()
-        await pilot.pause(0.3)
+            tab_button = console.query_one(f"#console-session-tab-{background}", Button)
+            tab_button.press()
+            await pilot.pause(0.3)
 
-        assert store.active_session_id == background
-        card = console.query_one("#chat-approval-card")
-        assert card.display
-        # `host` (the `ConsoleHarness` App under `run_test`) holds live
-        # focus -- `app` is the plain, never-run `TldwCli` instance handed
-        # to `ChatScreen` only for `app_instance` config/service lookups.
-        assert isinstance(host.focused, Select)
-        assert "approval-row-decision" in host.focused.classes
+            assert store.active_session_id == background
+            card = console.query_one("#chat-approval-card")
+            assert card.display
+            # `host` (the `ConsoleHarness` App under `run_test`) holds live
+            # focus -- `app` is the plain, never-run `TldwCli` instance handed
+            # to `ChatScreen` only for `app_instance` config/service lookups.
+            assert isinstance(host.focused, Select)
+            assert "approval-row-decision" in host.focused.classes
+        finally:
+            controller._cancel_pending_decisions_for_session(background)
+            with native_host.lock:
+                if native_host.registries["approval"].get(round_id) is round_state:
+                    native_host.registries["approval"].pop(round_id)
+            native_host.unpark_round_payload("approval", round_id)
+            controller._forget_hidden_decision(round_id)
 
 
 @private_profile_test
@@ -650,8 +724,14 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
         store.switch_session(viewed)  # keep viewing A
 
         notifications: list[str] = []
-        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        controller.app.notify = lambda message, **kwargs: notifications.append(
+            str(message)
+        )
 
+        prior_cancel_present = background in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(background)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[background] = owned_cancel_event
         decision_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_mcp_approvals,
@@ -669,52 +749,70 @@ async def test_park_toast_survives_a_viewed_run_completion_re_invocation(
                 session_id=background,
             )
         )
-        await pilot.pause(0.3)
+        try:
+            await pilot.pause(0.3)
 
-        approval_toasts = [n for n in notifications if "needs approval" in n]
-        assert len(approval_toasts) == 1
-        round_id = controller._head_round_payload(
-            controller._parked_approval_payloads, background
-        )["round_id"]
-
-        # A's own real terminal transition -- A stays active/viewed
-        # throughout, so `_set_run_state`'s non-active toast branch never
-        # even considers B; nothing about B's round changes here.
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
-            session_id=viewed,
-        )
-        await pilot.pause(0.1)
-        controller._set_run_state(
-            ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
-            session_id=viewed,
-        )
-        await pilot.pause(0.2)
-
-        # A re-marshal/re-derive re-invoking the shared park seam for B's
-        # SAME, still-outstanding round (round_id unchanged) -- the
-        # hazard TASK-1141 guards against regardless of which real
-        # trigger UAT actually hit.
-        assert (
-            controller._head_round_payload(
+            approval_toasts = [n for n in notifications if "needs approval" in n]
+            assert len(approval_toasts) == 1
+            round_id = controller._head_round_payload(
                 controller._parked_approval_payloads, background
             )["round_id"]
-            == round_id
-        )
-        console._park_console_approval(background)
-        await pilot.pause(0.1)
 
-        approval_toasts_after = [n for n in notifications if "needs approval" in n]
-        assert len(approval_toasts_after) == 1, (
-            f"expected exactly 1 park toast total across the re-invocation, "
-            f"got {approval_toasts_after}"
-        )
+            # A's own real terminal transition -- A stays active/viewed
+            # throughout, so `_set_run_state`'s non-active toast branch never
+            # even considers B; nothing about B's round changes here.
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.STREAMING, "Agent running."),
+                session_id=viewed,
+            )
+            await pilot.pause(0.1)
+            controller._set_run_state(
+                ConsoleRunState(ConsoleRunStatus.COMPLETED, "Response complete."),
+                session_id=viewed,
+            )
+            await pilot.pause(0.2)
 
-        controller.resolve_pending_approval(
-            {"mcp__srv__tool": "deny"}, round_id=round_id
-        )
-        decisions = await asyncio.wait_for(decision_task, timeout=2.0)
-        assert decisions == {"mcp__srv__tool": "deny"}
+            # A re-marshal/re-derive re-invoking the shared park seam for B's
+            # SAME, still-outstanding round (round_id unchanged) -- the
+            # hazard TASK-1141 guards against regardless of which real
+            # trigger UAT actually hit.
+            assert (
+                controller._head_round_payload(
+                    controller._parked_approval_payloads, background
+                )["round_id"]
+                == round_id
+            )
+            console._park_console_approval(background)
+            await pilot.pause(0.1)
+
+            approval_toasts_after = [n for n in notifications if "needs approval" in n]
+            assert len(approval_toasts_after) == 1, (
+                f"expected exactly 1 park toast total across the re-invocation, "
+                f"got {approval_toasts_after}"
+            )
+
+            controller.resolve_pending_approval(
+                {"mcp__srv__tool": "deny"}, round_id=round_id
+            )
+            decisions = await asyncio.wait_for(decision_task, timeout=2.0)
+            assert decisions == {"mcp__srv__tool": "deny"}
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decision_task.done():
+                    controller._cancel_pending_decisions_for_session(background)
+                await asyncio.wait_for(asyncio.shield(decision_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(background)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[background] = (
+                            prior_cancel_event
+                        )
+                    else:
+                        controller._active_cancel_events.pop(background)
 
 
 @private_profile_test
@@ -1634,6 +1732,10 @@ async def test_mounted_round_survives_switch_away_and_switch_back(request) -> No
         # needs free to marshal its widget mutations back onto (verified
         # empirically while writing this test -- the round never resolved,
         # `result_holder` stayed empty until the 2s join timeout).
+        prior_cancel_present = session_a in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(session_a)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[session_a] = owned_cancel_event
         decisions_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_mcp_approvals,
@@ -1641,31 +1743,47 @@ async def test_mounted_round_survives_switch_away_and_switch_back(request) -> No
                 session_id=session_a,
             )
         )
-        await pilot.pause(0.3)
+        try:
+            await pilot.pause(0.3)
 
-        approval_card = console.query_one("#chat-approval-card")
-        assert approval_card.display  # mounted immediately -- A was active
+            approval_card = console.query_one("#chat-approval-card")
+            assert approval_card.display  # mounted immediately -- A was active
 
-        controller.switch_session(session_b)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        assert not console.query_one("#chat-approval-card").display
+            controller.switch_session(session_b)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            assert not console.query_one("#chat-approval-card").display
 
-        controller.switch_session(session_a)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        # The fix: the card re-mounts. Pre-fix this was `False` (no
-        # retained payload to re-derive from).
-        assert console.query_one("#chat-approval-card").display
+            controller.switch_session(session_a)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            # The fix: the card re-mounts. Pre-fix this was `False` (no
+            # retained payload to re-derive from).
+            assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
-        controller.resolve_pending_approval(
-            {"mcp__srv__tool": "approve_once"}, round_id=round_id
-        )
-        decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
-        assert decisions == {"mcp__srv__tool": "approve_once"}
+            round_id = controller._head_round_payload(
+                controller._parked_approval_payloads, session_a
+            )["round_id"]
+            controller.resolve_pending_approval(
+                {"mcp__srv__tool": "approve_once"}, round_id=round_id
+            )
+            decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
+            assert decisions == {"mcp__srv__tool": "approve_once"}
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decisions_task.done():
+                    controller._cancel_pending_decisions_for_session(session_a)
+                await asyncio.wait_for(asyncio.shield(decisions_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(session_a)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[session_a] = prior_cancel_event
+                    else:
+                        controller._active_cancel_events.pop(session_a)
 
 
 @private_profile_test
@@ -1698,6 +1816,10 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left(
 
         # See the sibling test above for why this is `asyncio.to_thread` +
         # an awaited Task, never a blocking `Thread.join()`.
+        prior_cancel_present = session_a in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(session_a)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[session_a] = owned_cancel_event
         decisions_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_mcp_approvals,
@@ -1705,30 +1827,46 @@ async def test_new_session_clears_a_mounted_card_from_the_session_being_left(
                 session_id=session_a,
             )
         )
-        await pilot.pause(0.3)
-        assert console.query_one("#chat-approval-card").display
+        try:
+            await pilot.pause(0.3)
+            assert console.query_one("#chat-approval-card").display
 
-        new_session = controller.new_session()
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        # The fix: brand-new tab shows no stale card from session A.
-        assert not console.query_one("#chat-approval-card").display
+            new_session = controller.new_session()
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            # The fix: brand-new tab shows no stale card from session A.
+            assert not console.query_one("#chat-approval-card").display
 
-        # Composes with fix 1: switching back to A re-mounts it.
-        controller.switch_session(session_a)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        assert console.query_one("#chat-approval-card").display
+            # Composes with fix 1: switching back to A re-mounts it.
+            controller.switch_session(session_a)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            assert console.query_one("#chat-approval-card").display
 
-        round_id = controller._head_round_payload(
-            controller._parked_approval_payloads, session_a
-        )["round_id"]
-        controller.resolve_pending_approval(
-            {"mcp__srv__tool": "deny"}, round_id=round_id
-        )
-        decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
-        assert decisions == {"mcp__srv__tool": "deny"}
-        assert new_session.id != session_a
+            round_id = controller._head_round_payload(
+                controller._parked_approval_payloads, session_a
+            )["round_id"]
+            controller.resolve_pending_approval(
+                {"mcp__srv__tool": "deny"}, round_id=round_id
+            )
+            decisions = await asyncio.wait_for(decisions_task, timeout=2.0)
+            assert decisions == {"mcp__srv__tool": "deny"}
+            assert new_session.id != session_a
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decisions_task.done():
+                    controller._cancel_pending_decisions_for_session(session_a)
+                await asyncio.wait_for(asyncio.shield(decisions_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(session_a)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[session_a] = prior_cancel_event
+                    else:
+                        controller._active_cancel_events.pop(session_a)
 
 
 @private_profile_test
@@ -1767,8 +1905,14 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        controller.app.notify = lambda message, **kwargs: notifications.append(
+            str(message)
+        )
 
+        prior_cancel_present = background in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(background)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[background] = owned_cancel_event
         decision_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_skill_install_confirm,
@@ -1776,38 +1920,71 @@ async def test_background_skill_install_confirm_parks_badges_toasts_and_mounts_o
                 session_id=background,
             )
         )
-        await pilot.pause(0.3)
+        try:
+            await pilot.pause(0.3)
 
-        install_card = console.query_one("#chat-skill-install-card")
-        assert not install_card.display  # parked: never mounted over the viewed tab
-        approval_toasts = [n for n in notifications if "needs approval" in n]
-        assert len(approval_toasts) == 1
-        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            install_card = console.query_one("#chat-skill-install-card")
+            assert not install_card.display  # parked: never mounted over the viewed tab
+            approval_toasts = [
+                n
+                for n in notifications
+                if "needs confirmation for a skill install" in n
+            ]
+            assert len(approval_toasts) == 1
+            assert (
+                controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            )
 
-        # Visiting mounts the card through the existing mount path.
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        assert console.query_one("#chat-skill-install-card").display
+            # Visiting mounts the card through the existing mount path.
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            assert console.query_one("#chat-skill-install-card").display
 
-        # Switch-away-and-back re-mounts the SAME round without a second toast.
-        controller.switch_session(viewed)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert not console.query_one("#chat-skill-install-card").display
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert console.query_one("#chat-skill-install-card").display
-        assert len([n for n in notifications if "needs approval" in n]) == 1
+            # Switch-away-and-back re-mounts the SAME round without a second toast.
+            controller.switch_session(viewed)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert not console.query_one("#chat-skill-install-card").display
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert console.query_one("#chat-skill-install-card").display
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation for a skill install" in n
+                    ]
+                )
+                == 1
+            )
 
-        request_id = controller._head_round_payload(
-            controller._parked_skill_install_payloads, background
-        )["request_id"]
-        controller.resolve_pending_skill_install(True, request_id=request_id)
-        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
-        assert allowed is True
-        assert background not in controller._pending_approvals
+            request_id = controller._head_round_payload(
+                controller._parked_skill_install_payloads, background
+            )["request_id"]
+            controller.resolve_pending_skill_install(True, request_id=request_id)
+            allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+            assert allowed is True
+            assert background not in controller._pending_approvals
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decision_task.done():
+                    controller._cancel_pending_decisions_for_session(background)
+                await asyncio.wait_for(asyncio.shield(decision_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(background)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[background] = (
+                            prior_cancel_event
+                        )
+                    else:
+                        controller._active_cancel_events.pop(background)
 
 
 @private_profile_test
@@ -1836,8 +2013,14 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
         store.switch_session(viewed)  # keep viewing the first session
 
         notifications: list[str] = []
-        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        controller.app.notify = lambda message, **kwargs: notifications.append(
+            str(message)
+        )
 
+        prior_cancel_present = background in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(background)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[background] = owned_cancel_event
         decision_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_skill_script_confirm,
@@ -1845,36 +2028,69 @@ async def test_background_skill_script_confirm_parks_badges_toasts_and_mounts_on
                 session_id=background,
             )
         )
-        await pilot.pause(0.3)
+        try:
+            await pilot.pause(0.3)
 
-        script_card = console.query_one("#chat-skill-script-card")
-        assert not script_card.display  # parked: never mounted over the viewed tab
-        approval_toasts = [n for n in notifications if "needs approval" in n]
-        assert len(approval_toasts) == 1
-        assert controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            script_card = console.query_one("#chat-skill-script-card")
+            assert not script_card.display  # parked: never mounted over the viewed tab
+            approval_toasts = [
+                n
+                for n in notifications
+                if "needs confirmation to run a skill script" in n
+            ]
+            assert len(approval_toasts) == 1
+            assert (
+                controller.run_marker_for(background) is ConsoleRunMarker.NEEDS_APPROVAL
+            )
 
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.2)
-        assert console.query_one("#chat-skill-script-card").display
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.2)
+            assert console.query_one("#chat-skill-script-card").display
 
-        controller.switch_session(viewed)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert not console.query_one("#chat-skill-script-card").display
-        controller.switch_session(background)
-        await console._sync_native_console_chat_ui()
-        await pilot.pause(0.1)
-        assert console.query_one("#chat-skill-script-card").display
-        assert len([n for n in notifications if "needs approval" in n]) == 1
+            controller.switch_session(viewed)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert not console.query_one("#chat-skill-script-card").display
+            controller.switch_session(background)
+            await console._sync_native_console_chat_ui()
+            await pilot.pause(0.1)
+            assert console.query_one("#chat-skill-script-card").display
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation to run a skill script" in n
+                    ]
+                )
+                == 1
+            )
 
-        request_id = controller._head_round_payload(
-            controller._parked_skill_script_payloads, background
-        )["request_id"]
-        controller.resolve_pending_skill_script(True, False, request_id=request_id)
-        decision = await asyncio.wait_for(decision_task, timeout=2.0)
-        assert decision == {"allow": True, "remember": False}
-        assert background not in controller._pending_approvals
+            request_id = controller._head_round_payload(
+                controller._parked_skill_script_payloads, background
+            )["request_id"]
+            controller.resolve_pending_skill_script(True, False, request_id=request_id)
+            decision = await asyncio.wait_for(decision_task, timeout=2.0)
+            assert decision == {"allow": True, "remember": False}
+            assert background not in controller._pending_approvals
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decision_task.done():
+                    controller._cancel_pending_decisions_for_session(background)
+                await asyncio.wait_for(asyncio.shield(decision_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(background)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[background] = (
+                            prior_cancel_event
+                        )
+                    else:
+                        controller._active_cancel_events.pop(background)
 
 
 @private_profile_test
@@ -1906,8 +2122,14 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        controller.app.notify = lambda message, **kwargs: notifications.append(
+            str(message)
+        )
 
+        prior_cancel_present = background in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(background)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[background] = owned_cancel_event
         decision_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_skill_install_confirm,
@@ -1915,21 +2137,57 @@ async def test_skill_install_park_toast_survives_a_re_invocation_for_the_same_ro
                 session_id=background,
             )
         )
-        await pilot.pause(0.3)
-        assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._head_round_payload(
-            controller._parked_skill_install_payloads, background
-        )["request_id"]
+        try:
+            await pilot.pause(0.3)
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation for a skill install" in n
+                    ]
+                )
+                == 1
+            )
+            request_id = controller._head_round_payload(
+                controller._parked_skill_install_payloads, background
+            )["request_id"]
 
-        # Re-invoke the shared park seam for the SAME, still-outstanding
-        # skill-install round.
-        console._park_console_approval(background)
-        await pilot.pause(0.1)
-        assert len([n for n in notifications if "needs approval" in n]) == 1
+            # Re-invoke the shared park seam for the SAME, still-outstanding
+            # skill-install round.
+            console._park_console_approval(background)
+            await pilot.pause(0.1)
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation for a skill install" in n
+                    ]
+                )
+                == 1
+            )
 
-        controller.resolve_pending_skill_install(True, request_id=request_id)
-        allowed = await asyncio.wait_for(decision_task, timeout=2.0)
-        assert allowed is True
+            controller.resolve_pending_skill_install(True, request_id=request_id)
+            allowed = await asyncio.wait_for(decision_task, timeout=2.0)
+            assert allowed is True
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decision_task.done():
+                    controller._cancel_pending_decisions_for_session(background)
+                await asyncio.wait_for(asyncio.shield(decision_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(background)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[background] = (
+                            prior_cancel_event
+                        )
+                    else:
+                        controller._active_cancel_events.pop(background)
 
 
 @private_profile_test
@@ -1957,8 +2215,14 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
         store.switch_session(viewed)
 
         notifications: list[str] = []
-        app.notify = lambda message, **kwargs: notifications.append(str(message))
+        controller.app.notify = lambda message, **kwargs: notifications.append(
+            str(message)
+        )
 
+        prior_cancel_present = background in controller._active_cancel_events
+        prior_cancel_event = controller._active_cancel_events.get(background)
+        owned_cancel_event = threading.Event()
+        controller._active_cancel_events[background] = owned_cancel_event
         decision_task = asyncio.create_task(
             asyncio.to_thread(
                 controller.request_skill_script_confirm,
@@ -1966,21 +2230,57 @@ async def test_skill_script_park_toast_survives_a_re_invocation_for_the_same_rou
                 session_id=background,
             )
         )
-        await pilot.pause(0.3)
-        assert len([n for n in notifications if "needs approval" in n]) == 1
-        request_id = controller._head_round_payload(
-            controller._parked_skill_script_payloads, background
-        )["request_id"]
+        try:
+            await pilot.pause(0.3)
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation to run a skill script" in n
+                    ]
+                )
+                == 1
+            )
+            request_id = controller._head_round_payload(
+                controller._parked_skill_script_payloads, background
+            )["request_id"]
 
-        # Re-invoke the shared park seam for the SAME, still-outstanding
-        # skill-script round.
-        console._park_console_approval(background)
-        await pilot.pause(0.1)
-        assert len([n for n in notifications if "needs approval" in n]) == 1
+            # Re-invoke the shared park seam for the SAME, still-outstanding
+            # skill-script round.
+            console._park_console_approval(background)
+            await pilot.pause(0.1)
+            assert (
+                len(
+                    [
+                        n
+                        for n in notifications
+                        if "needs confirmation to run a skill script" in n
+                    ]
+                )
+                == 1
+            )
 
-        controller.resolve_pending_skill_script(True, False, request_id=request_id)
-        decision = await asyncio.wait_for(decision_task, timeout=2.0)
-        assert decision == {"allow": True, "remember": False}
+            controller.resolve_pending_skill_script(True, False, request_id=request_id)
+            decision = await asyncio.wait_for(decision_task, timeout=2.0)
+            assert decision == {"allow": True, "remember": False}
+        finally:
+            owned_cancel_event.set()
+            try:
+                if not decision_task.done():
+                    controller._cancel_pending_decisions_for_session(background)
+                await asyncio.wait_for(asyncio.shield(decision_task), timeout=2.0)
+            finally:
+                if (
+                    controller._active_cancel_events.get(background)
+                    is owned_cancel_event
+                ):
+                    if prior_cancel_present:
+                        controller._active_cancel_events[background] = (
+                            prior_cancel_event
+                        )
+                    else:
+                        controller._active_cancel_events.pop(background)
 
 
 @pytest.mark.asyncio

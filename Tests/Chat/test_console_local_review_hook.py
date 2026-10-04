@@ -7,14 +7,17 @@ stamps, ONE approval round trip per batch, verdicts only ever "proceed".
 import asyncio
 import contextlib
 import json
+import os
 import threading
 import time
 import weakref
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from Tests.Agents.hook_test_utils import trusted_hook_engine
+from Tests.private_profile import private_profile_test
 
 import tldw_chatbook.Chat.console_chat_controller as controller_mod
 from tldw_chatbook.Agents.agent_models import (
@@ -946,6 +949,7 @@ def test_compose_local_provider_eligible(monkeypatch, tmp_path):
     assert gate is not None and gate.server_key == "local:__local__"
 
 
+@pytest.mark.bootstrap_profile
 def test_default_chat_local_provider_uses_scratch_not_config_or_cwd(
     monkeypatch,
     tmp_path,
@@ -1011,19 +1015,17 @@ def test_default_chat_local_provider_rejects_after_scratch_close(tmp_path):
     assert scratch_spaces.wait_for_cleanup(timeout_seconds=2.0)
 
 
+@private_profile_test
 @pytest.mark.bootstrap_profile
 def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per_call(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
 
     class AppDatabase:
         def __init__(self):
@@ -1079,20 +1081,18 @@ def test_compose_local_provider_reuses_app_database_and_loads_runtime_source_per
     assert database.searches == 1
 
 
+@private_profile_test
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compose_local_provider_wires_transactional_watchlists_commands(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
     database = SubscriptionsDB(tmp_path / "subscriptions.db")
     local_service = LocalWatchlistsService(db_factory=lambda: database)
@@ -1198,20 +1198,18 @@ def test_compose_local_provider_routes_schedule_through_shared_app_command_servi
     ]
 
 
+@private_profile_test
 @pytest.mark.bootstrap_profile
 @pytest.mark.asyncio
 async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordinator(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     RuntimeSourceStateStore(default_runtime_policy_path()).save(RuntimeSourceState())
 
     class Coordinator:
@@ -1255,19 +1253,17 @@ async def test_compose_local_provider_routes_long_watchlists_work_to_app_coordin
     assert coordinator.briefings == [(5, 2)]
 
 
+@private_profile_test
 @pytest.mark.bootstrap_profile
 def test_console_watchlists_real_reads_leave_app_owned_state_unchanged(
-    monkeypatch, tmp_path
+    monkeypatch, tmp_path, request
 ):
     monkeypatch.setattr(
         controller_mod,
         "get_cli_setting",
         _console_settings(workspace_root=str(tmp_path)),
     )
-    profile = tmp_path / "profile" / "config.toml"
-    profile.parent.mkdir()
-    profile.write_text("", encoding="utf-8")
-    monkeypatch.setenv("TLDW_CONFIG_PATH", str(profile))
+    profile = Path(os.environ["TLDW_CONFIG_PATH"])
     policy_store = RuntimeSourceStateStore(default_runtime_policy_path())
     policy_store.save(RuntimeSourceState())
 
@@ -1659,6 +1655,7 @@ def test_compose_local_provider_without_session_registers_no_todo_spec(
     assert "todo_write" not in {entry.name for entry in local_provider.list_catalog()}
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_wires_the_sessions_exact_todo_store(
     monkeypatch, tmp_path
 ):
@@ -1714,6 +1711,7 @@ def test_compose_local_provider_unknown_session_registers_no_todo_spec(
     assert _registered_task_tools(local_provider) == set()
 
 
+@pytest.mark.bootstrap_profile
 def test_compose_local_provider_without_bridge_registers_no_todo_spec(
     monkeypatch, tmp_path
 ):
@@ -1866,6 +1864,10 @@ def test_pretooluse_hook_denies_before_permission_store(tmp_path):
         ],
         RUN,
     )
+    assert normalize_tool_review(verdicts["git_status"]).approval_decision == "approved"
+    verdicts = {
+        key: normalize_tool_review(value).verdict for key, value in verdicts.items()
+    }
     assert verdicts["fs_list"] != "proceed"
     assert verdicts["fs_list"].startswith("hook: ")
     assert verdicts["git_status"] == "proceed"

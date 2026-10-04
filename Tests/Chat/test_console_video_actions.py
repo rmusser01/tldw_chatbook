@@ -90,10 +90,6 @@ def _video_action_screen(tmp_path, *, container="mp4"):
     # thing; it runs too late for the store assignment.
     stub_fleet_controller(screen, context="video actions bare screen")
     stub_library_activity_controller(screen, context="video actions bare screen")
-    screen._console_chat_store = store
-    screen._ensure_console_chat_store = lambda: store
-    screen._sync_native_console_chat_ui = AsyncMock()
-    screen.run_worker = lambda awaitable, **_kwargs: pending_workers.append(awaitable)
     build_console_controllers(
         screen,
         rag_source_types_accessor=lambda: (),
@@ -103,6 +99,10 @@ def _video_action_screen(tmp_path, *, container="mp4"):
         ),
         read_trace_recovery_state=lambda: chat_screen.trace_call_recovery_state,
     )
+    screen._console_chat_store = store
+    screen._ensure_console_chat_store = lambda: store
+    screen._sync_native_console_chat_ui = AsyncMock()
+    screen.run_worker = lambda awaitable, **_kwargs: pending_workers.append(awaitable)
     screen._console_video_store = video_store
     return (
         screen,

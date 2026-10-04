@@ -328,3 +328,40 @@ def test_the_store_read_happens_on_the_spawning_thread_not_the_worker(monkeypatc
     # ...and the actual work is still off-thread, which is the point of the
     # worker in the first place.
     assert summarizer_threads and spawning_thread not in summarizer_threads
+
+
+@pytest.mark.bootstrap_profile
+def test_legacy_session_reprojection_fires_summary_once_for_same_payload(monkeypatch):
+    ctrl, payload, mounted = _parked_controller(monkeypatch, "always")
+    ctrl._remount_parked_skill_install = lambda session_id: None
+    ctrl._remount_parked_skill_script = lambda session_id: None
+    ctrl._reproject_pending_decision_for_session("s1")
+    ctrl._reproject_pending_decision_for_session("s1")
+    assert len(mounted) == 2
+    assert all(item is payload for item in mounted)
+    assert _ThreadStub.started == [True]
+    assert ctrl._pending_approval_rounds["r1"]["summary_fired"] is True
+
+
+def test_legacy_session_reprojection_clears_no_payload_without_summary(monkeypatch):
+    ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+    ctrl._parked_approval_payloads.clear()
+    ctrl._remount_parked_skill_install = lambda session_id: None
+    ctrl._remount_parked_skill_script = lambda session_id: None
+    ctrl._reproject_pending_decision_for_session("s1")
+    assert mounted == [None]
+    assert _ThreadStub.started == []
+
+
+def test_unified_session_reprojection_returns_before_legacy_summary(monkeypatch):
+    ctrl, _payload_, mounted = _parked_controller(monkeypatch, "always")
+    unified = []
+    chat_create = []
+    ctrl.set_pending_decision = lambda projection: None
+    ctrl.project_pending_decision_for_active_session = lambda: unified.append(True)
+    ctrl._remount_parked_chat_create = chat_create.append
+    ctrl._reproject_pending_decision_for_session("s1")
+    assert chat_create == ["s1"]
+    assert unified == [True]
+    assert mounted == []
+    assert _ThreadStub.started == []
