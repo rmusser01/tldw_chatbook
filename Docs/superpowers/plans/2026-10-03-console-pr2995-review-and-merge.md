@@ -303,6 +303,26 @@ Reason: the exact original failure and immutable f800 trace show submission refu
 - [ ] In Tests/Chat/test_console_automatic_library_preparation.py import existing Tests.private_profile.private_profile_test, decorate only test_explicit_evidence_lease_cancel_keeps_original_staged below its existing asyncio marker and add request alongside monkeypatch. Preserve every original body statement/assertion and every other existing function AST. Add only one positive actual async hook-admission precondition immediately after real controller construction, before scheduling submission, so later reached capture/cancel assertions cannot be vacuous. No production hook/admission/config/source/permission policy, conftest enrollment, marker/skip/xfail, timeout or capture-barrier weakening.
 - [ ] Qualify only this one repaired node with stable source/test hashes, retain the fixed reason/admitted-child snapshot and original capture/cancel/persistence assertions, and carry22 prior passes through exact other-function ASTs. Run only remaining previously unexecuted selected Chat nodes and directly affected static/formatter/source-map guards. The independent remaining/UI/native/derived receipts carry by exact identity; no replay of passing cohorts. Freeze source correction and exact before/after fixture map for independent scoped integration review.
 
+#### Task11 remaining inherited admission fixtures: one bounded batch
+
+ADR required: no new ADR
+ADR path: N/A (test-only canonical private-profile admission).
+Reason: ten remaining selected functions reproduce the same immutable f800 RecoveryRequired snapshot failure with raw_source_selection_changed equality; each refuses actual hook admission before its original evidence/recovery phase. The eleventh function already admits under its existing module bootstrap profile and stays unchanged.
+
+- [ ] Preserve original failure and all observation-only setup receipts. These are setup evidence, not functional RED. Add only the existing private_profile_test import/decorator and request argument to these ten functions; retain all original decorators, arguments, body statements and assertions:
+- `Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_survives_preaccept_failure`
+- `Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_never_releases_newer_launch`
+- `Tests/Chat/test_console_automatic_library_preparation.py::test_explicit_evidence_lease_releases_exact_launch_only_after_acceptance`
+- `Tests/Chat/test_console_automatic_library_preparation.py::test_ready_close_removes_echo_idempotently_and_preserves_evidence_launch`
+- `Tests/Chat/test_console_automatic_library_preparation.py::test_recovery_uses_frozen_staged_inputs_and_leaves_new_state_staged`
+- `Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_releases_only_its_frozen_evidence_lease`
+- `Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_app_disposal_scrubs_content_when_evidence_release_raises`
+- `Tests/Chat/test_console_dispatch_recovery_fix_round3.py::test_discard_releases_only_exact_frozen_evidence_once`
+- `Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_release_fault_cannot_skip_owner_cleanup`
+- `Tests/Chat/test_console_dispatch_recovery_fix_round4.py::test_close_session_releases_exact_evidence_once_and_preserves_replacement`
+- [ ] Add eight positive actual async hook-admission witnesses immediately after their direct real-controller construction. For the two round4 callers, add one shared witness immediately after _controller(tmp_path) inside _accepted_evidence_recovery, before its original setup/submit. Repository census confirms the helper has exactly these two callers. Preserve every other helper/function AST; exact reversal must reconstruct each original file. No production/config/permission/conftest changes, marker/skip/xfail/timeout additions, or assertion weakening.
+- [ ] Run only the remaining previously unexecuted selected nodes once, including the unchanged existing-bootstrap durable-turn function. Preserve all prior passing receipts by exact source/AST carry, then scoped formatter/fatal/whitespace and source/test/QA maps. Freeze report and independent scoped integration review before Task9 source selection.
+
 ## External review and publication
 
 - [x] Independent task review of Task1, then whole-branch review of the rebased PR. Package diffs before dispatch; reviewers do not repeat completed test runs.
