@@ -10,12 +10,15 @@ tick. A user who retyped into that gap sent a duplicate they never saw.
 
 This module owns a view-only acknowledgement per Enter: a USER row marked
 "Sending…" plus the run-active facts the header, tab marker, Run chip and
-Send control derive from. It is painted on the screen pump, and the unchanged
-send is handed to the app pump only after a refresh has laid that frame out
-(live: on screen 89-97 ms after Enter, hand-off at +58-68 ms). Nothing here
-writes the store, the runtime or the durable turn; the row is released when
-the store's own echo lands, when the dispatch admits no turn, or when the
-runtime's custody of the admitted turn ends (a refusal before the echo).
+Send control derive from. It is pushed to those widgets on the screen pump,
+then the unchanged send is handed to the app pump at once. No wait is added
+before the send: the frame reaches the terminal on the screen's next refresh,
+which lands while the send runs its own awaited steps ahead of admission
+(mounted harness: frame on screen 36-46 ms after Enter, admission at 80-110
+ms). Nothing here writes the store, the runtime or the durable turn; the row
+is released when the store's own echo lands, when the dispatch admits no
+turn, or when the runtime's custody of the admitted turn ends (a refusal
+before the echo).
 
 Imported on the first Enter only, so it adds nothing to the ADR-097 boot
 census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
@@ -23,9 +26,9 @@ census; boot-time readers go through ``getattr(screen, ACK_ATTRIBUTE)``.
 
 from __future__ import annotations
 
-import asyncio
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 import contextlib
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any
@@ -39,14 +42,23 @@ from tldw_chatbook.Chat.console_chat_models import (
     ConsoleMessageRole,
     ConsoleRunMarker,
 )
+from tldw_chatbook.UI.Console_Modules.provider_continuation_recovery import (
+    blocked_turn_reason,
+)
+from tldw_chatbook.Widgets.Console.console_composer_bar import (
+    classify_console_raw_draft,
+)
 
 #: Screen attribute holding the lazily created acknowledgement.
 ACK_ATTRIBUTE = "_console_send_ack"
 #: Run chip / hidden mode-bar copy while a send is acknowledged.
 SENDING_RUN_COPY = "Sending…"
-#: Frame-length waits the dispatch may spend on the acknowledgement's layout.
-_PAINT_HOPS = 6
-_PAINT_HOP_SECONDS = 1 / 60
+#: The acknowledged Enter whose send is running in this task. A worker the
+#: send starts (a hook review's continuation) copies it with the context, so
+#: an admission binds to the Enter that dispatched it, never a newer one.
+_DISPATCHING: ContextVar[object | None] = ContextVar(
+    "console_send_ack_dispatching", default=None
+)
 
 
 @dataclass
@@ -86,10 +98,6 @@ class ConsoleSendAcknowledgement:
     def active_for(self, session_id: str | None) -> bool:
         return session_id in self._pending
 
-    def pending_row_id(self, session_id: str | None) -> str | None:
-        pending = self._pending.get(session_id)
-        return pending.row.id if pending is not None else None
-
     def run_copy(self, session_id: str | None) -> str:
         return SENDING_RUN_COPY if self.active_for(session_id) else ""
 
@@ -122,15 +130,24 @@ class ConsoleSendAcknowledgement:
             return rows
         return [*rows, pending.row]
 
+    @contextlib.contextmanager
+    def dispatching(self, token: object | None) -> Iterator[None]:
+        """Bind runtime admissions made inside this block to ``token``."""
+        reset = _DISPATCHING.set(token)
+        try:
+            yield
+        finally:
+            _DISPATCHING.reset(reset)
+
     def custody_callback(self, session_id: str) -> Callable[[bool], None] | None:
-        """Runtime terminal callback that releases this session's row."""
-        pending = self._pending.get(session_id)
+        """Runtime terminal callback that releases the dispatching send's row."""
+        pending = self._dispatching_send(session_id)
         if pending is None:
             return None
         return partial(self._custody_ended, pending.token)
 
     def mark_admitted(self, session_id: str) -> None:
-        if (pending := self._pending.get(session_id)) is not None:
+        if (pending := self._dispatching_send(session_id)) is not None:
             pending.admitted = True
 
     def dispatch_finished(self, token: object | None) -> None:
@@ -145,6 +162,13 @@ class ConsoleSendAcknowledgement:
             return
         del self._pending[pending.session_id]
         self._on_release()
+
+    def _dispatching_send(self, session_id: str) -> _PendingSend | None:
+        """This session's pending send, only while its own dispatch runs here."""
+        pending = self._pending.get(session_id)
+        if pending is None or pending.token is not _DISPATCHING.get():
+            return None
+        return pending
 
     def _by_token(self, token: object | None) -> _PendingSend | None:
         return next(
@@ -165,7 +189,9 @@ def acknowledgement_for(screen: Any) -> ConsoleSendAcknowledgement:
 
 
 def _torn_down(screen: Any) -> bool:
-    return bool(getattr(screen, "_closing", False) or getattr(screen, "_closed", False))
+    from tldw_chatbook.UI.Screens.chat_screen import _console_screen_is_torn_down
+
+    return _console_screen_is_torn_down(screen)
 
 
 def _request_resync(screen: Any) -> None:
@@ -179,6 +205,7 @@ def _resync(screen: Any) -> None:
         return
     screen._last_native_transcript_refresh_key = None
     if screen._console_sync_in_progress:
+        # The running sync re-arms itself for this request when it settles.
         screen._console_sync_requested = True
         return
     screen.run_worker(
@@ -186,52 +213,61 @@ def _resync(screen: Any) -> None:
     )
 
 
-def _acknowledgeable(screen: Any, stash: Any, session_id: str) -> bool:
-    """Only an idle session's plain text draft is certain to become a turn.
+def _acknowledged_text(screen: Any, stash: Any, session_id: str) -> str | None:
+    """Return the text an idle session's chat draft is sent as, else ``None``.
 
-    Slash and raw commands and empty drafts take other paths; a live run, a
-    question card or a queue turns Enter into Queue or an answer, each of
-    which already has its own visible surface.
+    Slash commands, a typed ``! `` local command and empty drafts take other
+    paths (an escaped ``\\! `` draft is chat, sent without its backslash; a
+    pasted ``! `` is chat too). A live run, a question card or a queue turns
+    Enter into Queue or an answer, each of which has its own visible surface;
+    behind a Blocked turn (TASK-33621.2) the send is refused, never sent.
     """
-    text = getattr(stash, "text", "") or ""
-    if not text.strip() or text.lstrip().startswith(("/", "!")):
-        return False
+    if stash is None:
+        return None
+    classified = classify_console_raw_draft(stash)
+    text = classified.text
+    if classified.kind == "raw" or not text.strip() or text.lstrip().startswith("/"):
+        return None
     controller = getattr(screen, "_console_chat_controller", None)
     if controller is None:
-        return False
+        return None
     activity = controller.activity_for(session_id)
-    return not (
+    if (
         activity.accepted_live_turn
         or activity.occupies_slot
         or activity.queued_count
         or controller.run_state_for(session_id).is_stop_allowed
-    )
+        or blocked_turn_reason(controller)
+    ):
+        return None
+    return text
 
 
-def schedule_acknowledged_send(
-    screen: Any,
-    stash: Any,
-    session_id: str,
-    send: Callable[[], Awaitable[bool]],
-) -> None:
-    """Paint the acknowledgement, then run ``send`` on the app pump after it.
+def schedule_acknowledged_send(screen: Any, pending_send: Any) -> None:
+    """Paint the acknowledgement, then run the Enter's send on the app pump.
 
     Args:
         screen: The Console ``ChatScreen`` that captured the Enter.
-        stash: The draft captured at the keypress.
-        session_id: The session the draft belongs to.
-        send: The unchanged visible-action send, bound to its Enter token.
+        pending_send: The keypress capture: session id, draft stash and the
+            token the visible-action send consumes.
     """
+    session_id = pending_send.session_id
+    send = partial(
+        screen._send_console_message_from_visible_action,
+        pending_send_token=pending_send.token,
+    )
     ack = acknowledgement_for(screen)
+    text = _acknowledged_text(screen, pending_send.stash, session_id)
     token = (
-        ack.begin(session_id, stash.text, _session_message_ids(screen, session_id))
-        if _acknowledgeable(screen, stash, session_id)
+        ack.begin(session_id, text, _session_message_ids(screen, session_id))
+        if text is not None
         else None
     )
 
     async def observed_send() -> bool:
         try:
-            return await send()
+            with ack.dispatching(token):
+                return await send()
         finally:
             ack.dispatch_finished(token)
 
@@ -243,13 +279,18 @@ def schedule_acknowledged_send(
 
 
 async def _paint_then(screen: Any, dispatch: Callable[[], None]) -> None:
-    """Paint on this pump; the dispatch runs after the frame reaches the screen."""
+    """Push the acknowledgement on this pump, then hand the send off at once.
+
+    Every acknowledged fact is on its widget before the send starts. The
+    frame itself goes out on the screen's next refresh, during the send's
+    own awaited steps before its synchronous admission; the mounted test
+    reads the frame on screen at the instant admission starts. Waiting here
+    for that refresh (TASK-33620.5's first cut: frame-length timer hops)
+    delayed every reply by ~60 ms and no test could tell it apart from not
+    waiting.
+    """
     try:
         await paint_acknowledgement(screen)
-        # Let the row's and chip's own pumps post their Layout requests ahead
-        # of the hand-off, so the next refresh normally lays both out.
-        for _ in range(3):
-            await asyncio.sleep(0)
     except Exception as exc:  # noqa: BLE001 -- the send must never depend on its paint
         # Type only: an exception's text can carry the draft or session ids.
         logger.warning(
@@ -257,50 +298,7 @@ async def _paint_then(screen: Any, dispatch: Callable[[], None]) -> None:
             type(exc).__name__,
         )
     finally:
-        if not screen.call_after_refresh(_dispatch_once_laid_out, screen, dispatch, 0):
-            dispatch()
-
-
-def _dispatch_once_laid_out(
-    screen: Any, dispatch: Callable[[], None], hops: int
-) -> None:
-    """Dispatch once a refresh has laid the row and the Run chip out.
-
-    The mounted row and the shown chip post their own Layout requests from
-    their own pumps after the paint. Dispatching after the first refresh left
-    the old arrangement on screen for the whole blocking admission (mounted
-    harness: header, tab dot and Send updated; row and chip missing). A
-    ``call_after_refresh`` hop cannot wait for them: with nothing dirty yet
-    the screen runs it at once, and six such hops took 0.3 ms without the
-    loop ever yielding. Each further hop is one frame-length timer instead,
-    bounded by ``_PAINT_HOPS``.
-    """
-    if hops < _PAINT_HOPS and not _acknowledgement_laid_out(screen):
-        try:
-            screen.set_timer(
-                _PAINT_HOP_SECONDS,
-                partial(_dispatch_once_laid_out, screen, dispatch, hops + 1),
-            )
-            return
-        except Exception:  # noqa: BLE001 -- a closing screen still sends
-            pass
-    dispatch()
-
-
-def _acknowledgement_laid_out(screen: Any) -> bool:
-    ack = getattr(screen, ACK_ATTRIBUTE, None)
-    session_id = screen._console_chat_store.active_session_id
-    row_id = ack.pending_row_id(session_id) if ack is not None else None
-    if row_id is None:
-        return True
-    try:
-        if not screen.query_one(f"#console-message-{row_id}").region.area:
-            return False
-        chips = screen.query_one("#console-status-chips")
-        chip = chips.query_one("#console-run-chip")
-    except NoMatches:
-        return False
-    return bool(chip.region.area) or bool(getattr(chips, "collapsed", False))
+        dispatch()
 
 
 async def paint_acknowledgement(screen: Any) -> None:

@@ -11,10 +11,12 @@ sync tick.
 
 These tests drive the real ChatScreen send path (driver-delivered Enter, the
 app's eager task factory, a real in-memory ChaChaNotes store and runtime) and
-read what the compositor actually painted. The send's admission gate (the
-hook-permission snapshot, the dispatch's first awaited step) and provider
-validation are each held open, so "painted before admission" is an ordering
-fact in one recorded sequence, never a wall-clock race.
+read what the compositor actually wrote to the terminal. The ordering test
+holds nothing before admission: the send runs its real awaited steps, and the
+frame on screen is read at the instant the synchronous admission starts --
+the frame the user looks at for the whole block. Provider validation, which
+comes after admission, is held open. The other mounted tests hold the send's
+hook-permission snapshot only to get a deterministic moment to look at.
 """
 
 from __future__ import annotations
@@ -187,15 +189,23 @@ class HeldAdmission:
         console._hooks._permissions = lambda: _Owner(real())
 
 
-def mark_admission(console, timeline: Timeline) -> None:
-    """Record when the synchronous runtime admission starts."""
+def mark_admission(console, timeline: Timeline) -> list[Paint | None]:
+    """Record when the synchronous admission starts, and what is on screen.
+
+    Returns a list that receives, at that instant, the last frame written to
+    the terminal (``None`` when nothing was written since ``install``).
+    """
+    shown: list[Paint | None] = []
     real = console._session._build_console_turn_execution_context
 
     def recording_build(session_id):
         timeline.mark("admission")
+        paints = [value for kind, value in timeline.entries if kind == "paint"]
+        shown.append(paints[-1] if paints else None)
         return real(session_id)
 
     console._session._build_console_turn_execution_context = recording_build
+    return shown
 
 
 def press(host, key: str, char: str | None = None) -> None:
@@ -251,32 +261,37 @@ def build() -> tuple:
 
 
 @pytest.mark.asyncio
-async def test_enter_paints_a_sending_row_before_admission_and_validation():
-    """AC#1/#2/#5: the acknowledgement frame precedes admission and validation."""
+@pytest.mark.parametrize("size", [(80, 24), (160, 45), (235, 52)])
+async def test_enter_paints_a_sending_row_before_admission_and_validation(size):
+    """AC#1/#2/#5/#6: the frame on screen when admission starts is acknowledged.
+
+    Nothing is held before admission, so the hand-off timing is exercised as
+    production runs it: a dispatch that reached admission before the frame
+    was written would leave the pre-Enter frame (draft in the composer, no
+    row, idle header) on screen for the whole block, and this test reads
+    exactly that frame. Negative controls (mounted, TASK-33620.5 review): with
+    the paint removed the frame read at admission has no row; with admission
+    not marked on the acknowledgement, the row is gone while validating.
+    """
     host, gateway, timeline = build()
-    async with host.run_test(size=(160, 45)) as pilot:
+    async with host.run_test(size=size) as pilot:
         with eager_tasks():
             console, _composer = await ready_console(host, pilot, gateway)
-            gate = HeldAdmission(console)
-            mark_admission(console, timeline)
+            at_admission = mark_admission(console, timeline)
             timeline.install()
             try:
                 timeline.mark("enter")
                 press(host, "enter", "\r")
-                await until(gate.entered.is_set)
-                # The app pump is now awaiting the held send, as it does in
-                # production during admission: no Pilot idle wait here. What
-                # the compositor holds IS the last painted frame.
-                held = paint_state(host)
-                assert held.user_row and held.sending, held
-                assert held.tab_running and held.run_chip, held
-                assert not held.header_idle, held
-                assert not held.empty_state and not held.empty_draft_reason, held
-                assert not gateway.validation_started.is_set()
-                assert gateway.stream_calls == 0
-
-                gate.release.set()
                 await until(gateway.validation_started.is_set)
+                # The frame the user looked at while the admission blocked.
+                assert len(at_admission) == 1, at_admission
+                shown = at_admission[0]
+                assert shown is not None, "nothing was written before admission"
+                assert shown.user_row and shown.sending, shown
+                assert shown.tab_running and shown.run_chip, shown
+                assert not shown.header_idle, shown
+                assert not shown.empty_state, shown
+                assert not shown.empty_draft_reason, shown
                 validating = paint_state(host)
                 assert validating.user_row and validating.run_chip, validating
                 assert not validating.header_idle, validating
@@ -284,7 +299,6 @@ async def test_enter_paints_a_sending_row_before_admission_and_validation():
                 assert not validating.empty_state, validating
                 assert gateway.stream_calls == 0
             finally:
-                gate.release.set()
                 gateway.validation_release.set()
             await until(lambda: gateway.stream_calls == 1)
             await until(lambda: REPLY in "\n".join(_painted_lines(host)))
@@ -313,6 +327,9 @@ async def test_enter_paints_a_sending_row_before_admission_and_validation():
     ]
     assert not [i for i, paint in pending if paint.empty_draft_reason]
     assert not [i for i, paint in pending if i > acknowledged and paint.empty_state]
+    # Once acknowledged, the message never leaves the transcript: the
+    # "Sending…" row stays until the store's echo takes its place.
+    assert not [i for i, paint in pending if i > acknowledged and not paint.user_row]
 
 
 @pytest.mark.asyncio
@@ -378,6 +395,45 @@ async def test_turn_refused_before_its_echo_releases_the_row_and_offers_recovery
             shelf = turn_recovery_label(REFUSAL)
             assert shelf.startswith("Not sent: Hook admission refused"), shelf
             assert shelf in "\n".join(_painted_lines(host))
+            assert gateway.stream_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_durable_commit_releases_the_row_and_restores_send():
+    """AC#3: a durable-commit failure leaves no "Sending…" and offers the turn."""
+    host, gateway, _timeline = build()
+    async with host.run_test(size=(160, 45)) as pilot:
+        with eager_tasks():
+            console, _composer = await ready_console(host, pilot, gateway)
+            store = console._ensure_console_chat_store()
+
+            def refuse_commit(*_args, **_kwargs):
+                raise RuntimeError("durable commit refused for this test")
+
+            store.commit_durable_turn = refuse_commit
+            gate = HeldAdmission(console)
+            try:
+                press(host, "enter", "\r")
+                await until(gate.entered.is_set)
+                held = paint_state(host)
+                assert held.user_row and held.sending, held
+            finally:
+                gate.release.set()
+                # The durable commit comes after provider validation.
+                gateway.validation_release.set()
+            await until(lambda: not console._console_runtime().has_custodied_turns())
+            await until(lambda: paint_state(host).header_idle)
+            await pilot.pause()
+            settled = paint_state(host)
+            painted = "\n".join(_painted_lines(host))
+            assert not settled.sending and not settled.run_chip, settled
+            assert settled.header_idle, settled
+            # Send is Send again, and the shelf offers the refused turn back
+            # (measured: "Not sent: Couldn't save the prepared turn. Retry
+            # or…" with Restore and Discard).
+            assert "Sending" not in painted
+            assert "Not sent: " in painted and "Restore" in painted, painted
+            assert not console._console_send_ack.active_for(store.active_session_id)
             assert gateway.stream_calls == 0
 
 
@@ -501,15 +557,37 @@ def test_acknowledgement_row_stands_in_until_the_store_echo_lands():
 def test_acknowledgement_released_when_custody_ends_without_an_echo():
     ack, released = _ack()
     token = ack.begin("s1", DRAFT, [])
-    callback = ack.custody_callback("s1")
-    assert ack.custody_callback("other-session") is None
-    ack.mark_admitted("s1")
+    with ack.dispatching(token):
+        callback = ack.custody_callback("s1")
+        assert ack.custody_callback("other-session") is None
+        ack.mark_admitted("s1")
+    assert callback is not None
     ack.dispatch_finished(token)  # admitted: the turn still owns the row
     assert ack.active_for("s1") and released == []
     callback(False)  # e.g. durable commit failed, turn refused
     assert not ack.active_for("s1") and released == [1]
     callback(False)
     assert released == [1]  # a stale token never releases a newer send
+
+
+def test_admission_binds_only_to_the_enter_whose_send_is_running():
+    """An admission made for an earlier Enter never claims a newer one's row.
+
+    A hook review's worker admits its turn later, with the Enter that started
+    it (whose row was released when the review opened) still bound; a newer
+    Enter's row in the same tab must not become "admitted" by it, or that row
+    would outlive a refused send.
+    """
+    ack, released = _ack()
+    earlier = ack.begin("s1", DRAFT, [])
+    ack.dispatch_finished(earlier)  # the review opened: no turn admitted yet
+    newer = ack.begin("s1", "a newer draft", [])
+    with ack.dispatching(earlier):  # the review worker admits its own turn
+        assert ack.custody_callback("s1") is None
+        ack.mark_admitted("s1")
+    assert ack.custody_callback("s1") is None  # outside any dispatch
+    ack.dispatch_finished(newer)  # the newer send was refused
+    assert not ack.active_for("s1") and released == [1, 1]
 
 
 def test_acknowledgement_released_when_dispatch_admits_no_turn():
@@ -583,3 +661,76 @@ def test_sending_presentation_replaces_the_empty_draft_reason():
         queue_blocked_reason=sending.send_tooltip,
     )
     assert reason == QUEUE_REASON_PREPARING
+
+
+def _stash(text: str, *, typed_raw: bool = False, pasted: bool = False):
+    from tldw_chatbook.Widgets.Console.console_composer_bar import ConsoleDraftStash
+
+    return ConsoleDraftStash(
+        segments=[], text=text, has_paste=pasted, raw_cli_prefix_typed=typed_raw
+    )
+
+
+class _Controller:
+    """An idle (or busy) Console controller, as the acknowledgement reads it."""
+
+    def __init__(self, **activity) -> None:
+        from types import SimpleNamespace
+
+        from tldw_chatbook.Chat.console_chat_models import (
+            ConsoleControllerActivity,
+            ConsoleRunStatus,
+        )
+
+        fields = {
+            "session_id": "s1",
+            "occupies_slot": False,
+            "preparing_before_acceptance": False,
+            "accepted_live_turn": False,
+            "needs_approval": False,
+            "queued_count": 0,
+            "queue_paused": False,
+            "terminal_notification_eligible": False,
+        }
+        self._activity = ConsoleControllerActivity(**{**fields, **activity})
+        self.run_state = SimpleNamespace(status=ConsoleRunStatus.IDLE)
+
+    def activity_for(self, _session_id):
+        return self._activity
+
+    def run_state_for(self, _session_id):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(is_stop_allowed=False)
+
+    def trace_call_recovery_preparation(self):
+        return None
+
+
+def test_only_an_idle_chat_draft_is_acknowledged(monkeypatch):
+    """A typed ``! `` local command is skipped; any other ``!`` text is chat."""
+    from types import SimpleNamespace
+
+    from tldw_chatbook.UI.Console_Modules import send_acknowledgement as module
+
+    def text_for(stash, controller=None):
+        screen = SimpleNamespace(_console_chat_controller=controller or _Controller())
+        return module._acknowledged_text(screen, stash, "s1")
+
+    assert text_for(_stash(DRAFT)) == DRAFT
+    assert text_for(_stash("! ls", typed_raw=True)) is None
+    assert text_for(_stash("! ls", pasted=True)) == "! ls"
+    assert text_for(_stash("!important: read this")) == "!important: read this"
+    # An escaped local command is chat, sent (and echoed) without the escape.
+    assert text_for(_stash(r"\! ls", typed_raw=True)) == "! ls"
+    assert text_for(_stash("/help")) is None
+    assert text_for(_stash("   ")) is None
+    assert text_for(None) is None
+    assert text_for(_stash(DRAFT), _Controller(queued_count=1)) is None
+    assert text_for(_stash(DRAFT), _Controller(occupies_slot=True)) is None
+    assert text_for(_stash(DRAFT), _Controller(accepted_live_turn=True)) is None
+    # TASK-33621.2: behind a Blocked turn the send is refused, never sent.
+    monkeypatch.setattr(
+        module, "blocked_turn_reason", lambda _controller: "trace capture blocked"
+    )
+    assert text_for(_stash(DRAFT)) is None

@@ -14802,23 +14802,20 @@ class ChatScreen(BaseAppScreen):
 
         TASK-347: the header chip and Inspector status/live-work surfaces
         read this so they stop claiming "Ready"/"No active work" mid-run.
-        TASK-33620.5: an acknowledged Enter counts; a Blocked turn does not.
         """
         store = self._console_chat_store
         session_id = store.active_session_id if store is not None else None
+        send_ack = getattr(self, "_console_send_ack", None)  # TASK-33620.5
+        if send_ack is not None and send_ack.active_for(session_id):
+            return True  # An acknowledged Enter; a Blocked turn never is.
         image_edit_active = (
             session_id is not None
             and self._image._h3_image_edit_registry().active(session_id) is not None
         )
         controller = self._console_chat_controller
-        send_ack = getattr(self, "_console_send_ack", None)
-        return (
-            image_edit_active
-            or bool(send_ack and send_ack.active_for(session_id))
-            or (
-                controller is not None
-                and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
-            )
+        return image_edit_active or (
+            controller is not None
+            and controller.run_state.status in CONSOLE_ACTIVE_RUN_STATUSES
         )
 
     def _build_console_workbench_state(self, control_state: ConsoleControlState):
@@ -22531,25 +22528,14 @@ class ChatScreen(BaseAppScreen):
                 )
                 self._console_pending_send = None
                 return
-            # Enter and Send converge on the same visible-action handler, run
-            # on the app pump with the keypress snapshot; runtime custody owns
-            # accepted work, and a Send held for hook review goes on in a
-            # ChatScreen worker (TASK-33621.28). TASK-33620.5: an idle plain
-            # send is first painted as "Sending…" so admission never runs
-            # behind an unchanged screen.
-            from ..Console_Modules.send_acknowledgement import (
-                schedule_acknowledged_send,
-            )
+            # Enter and Send converge on the same visible-action handler.
+            # Scheduling it on the app pump preserves the keypress snapshot;
+            # app-owned runtime custody owns accepted work, except that a Send
+            # held for hook review goes on in a ChatScreen worker (TASK-33621.28).
+            # TASK-33620.5: an idle chat send is painted "Sending…" first.
+            from ..Console_Modules import send_acknowledgement
 
-            schedule_acknowledged_send(
-                self,
-                stash,
-                session_id,
-                partial(
-                    self._send_console_message_from_visible_action,
-                    pending_send_token=pending_send.token,
-                ),
-            )
+            send_acknowledgement.schedule_acknowledged_send(self, pending_send)
             return
         if event.key in {"pageup", "pagedown"}:
             # TASK-348: scrollback must be keyboard-reachable. The composer
