@@ -362,12 +362,21 @@ def _minimal_v26(path: Path) -> None:
 
     _minimal_v24(path)
     with sqlite3.connect(path) as connection:
-        connection.executescript(CharactersRAGDB._MIGRATE_V24_TO_V25_SQL)
-        connection.execute("ALTER TABLE conversations ADD COLUMN context_summary TEXT")
-        connection.execute(
-            "ALTER TABLE conversations ADD COLUMN summary_boundary_message_id TEXT"
+        # task-19565: the steps execute the on-disk migration files (the
+        # embedded constants were deleted); the fixture runs the same files,
+        # which include the context_summary ALTERs the old constants lacked.
+        connection.executescript(
+            (
+                Path(__file__).parents[2]
+                / "tldw_chatbook/DB/migrations/chachanotes_v24_to_v25_message_generation_metadata.sql"
+            ).read_text(encoding="utf-8")
         )
-        connection.executescript(CharactersRAGDB._MIGRATE_V25_TO_V26_SQL)
+        connection.executescript(
+            (
+                Path(__file__).parents[2]
+                / "tldw_chatbook/DB/migrations/chachanotes_v25_to_v26_conversation_context_summary.sql"
+            ).read_text(encoding="utf-8")
+        )
 
 
 def _table_names(connection: sqlite3.Connection) -> set[str]:

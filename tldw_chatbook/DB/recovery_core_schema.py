@@ -9,6 +9,9 @@ are supported; Prompts v4 is retained alongside its installed v5 catalog.
 TASK-33621.3 requalified db.chachanotes.primary at v74 (the ALTER-added
 console_auxiliary_attempts.failure_reason) from a fresh actual constructor.
 PR #2946 requalified v75, including continuation receipts, from the same constructor.
+TASK-19565 requalified v76 the same way: the notes_au guard step recreates the
+trigger with the body the catalog already carried, so all 533 entries are
+unchanged and only the version moves.
 """
 
 PROMPTS_DRAFTS_TABLE_SQL = "CREATE TABLE LocalPromptDrafts (\n                        draft_id INTEGER PRIMARY KEY AUTOINCREMENT,\n                        content TEXT NOT NULL CHECK(length(trim(content)) > 0),\n                        created_at TEXT NOT NULL,\n                        updated_at TEXT NOT NULL,\n                        version INTEGER NOT NULL DEFAULT 1 CHECK(version >= 1)\n                    )"
@@ -22,7 +25,7 @@ PROMPTS_V4_TO_V5_SQL = (
 CORE_SCHEMAS = (
     (
         'db.chachanotes.primary',
-        75,
+        76,
         (
             "CREATE INDEX character_conversation_search_dirty_authority_revision\n  ON character_conversation_search_dirty(data_authority_id, source_revision)",
             "CREATE INDEX character_conversation_search_documents_character\n  ON character_conversation_search_documents(\n    data_authority_id, character_id, generation_id, conversation_id\n  )",

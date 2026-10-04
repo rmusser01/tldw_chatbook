@@ -451,6 +451,15 @@ def test_genuine_v2_upgrade_preserves_unrelated_rows_and_accepts_server_target(
 
 
 def test_workspace_v3_inline_migration_matches_packaged_sql_byte_for_byte() -> None:
+    """task-19565: the kept workspace .sql twins must stay byte-identical.
+
+    WorkspaceDB executes its class constants, not these files; the files are
+    reference copies shipped in the wheel, so each surviving twin is pinned
+    byte-for-byte (v2->v3 here; v3->v4/v4->v5/v5->v6 in their migration
+    tests). The unpinned twins (v1->v2 procedural, v6->v7, v7->v8) were
+    deleted instead -- an unpinned reference is indistinguishable from a
+    stale one.
+    """
     migration_path = (
         Path(__file__).parents[2]
         / "tldw_chatbook/DB/migrations/workspaces_v2_to_v3_research_source_operations.sql"

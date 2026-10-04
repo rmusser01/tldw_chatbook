@@ -93,22 +93,15 @@ new_id = chunking_service.duplicate_template(
 
 ### Document Configuration
 
-```python
-# Set configuration for a document
-config = {
-    "template": "academic_paper",
-    "chunk_size": 500,
-    "chunk_overlap": 50,
-    "method": "structural",
-    "enable_late_chunking": True
-}
-chunking_service.set_document_config(media_id=123, config=config)
+This library reads a document's stored configuration; it does not write it.
+`set_document_config` and `clear_document_config` were removed (TASK-19566): they
+had no callers. Local ingestion and the Library re-chunk flow stamp the
+configuration they used (`Local_Ingestion/local_file_ingestion.py`,
+`Library/library_rechunk_service.py`).
 
+```python
 # Get configuration
 config = chunking_service.get_document_config(media_id=123)
-
-# Clear configuration (revert to defaults)
-chunking_service.clear_document_config(media_id=123)
 
 # Find all documents using a template
 docs = chunking_service.get_documents_using_template("academic_paper")

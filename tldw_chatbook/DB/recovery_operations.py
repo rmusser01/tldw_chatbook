@@ -1232,7 +1232,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
             stamp = connection.execute(
                 "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
             ).fetchone()
-            if stamp != (75,):
+            if stamp != (76,):
                 return ("unsupported_schema_version",)
         return ()
 

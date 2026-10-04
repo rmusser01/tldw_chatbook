@@ -1421,6 +1421,12 @@ def isolate_test_environment(monkeypatch, tmp_path, request):
             # full-app superseded-navigation case; same admission signature
             # and same class as the console integration suites above.
             "test_fleet_teardown_notice.py",
+            # TASK-19566 F9: the chatbook thinking round-trip suite drives the
+            # real importer (which constructs CharactersRAGDB); under the
+            # per-test env redirect the guarded config loader fails closed
+            # with RecoveryRequired("raw_source_selection_changed") before any
+            # assertion runs -- same admission signature as the suites above.
+            "test_chatbook_thinking_round_trip.py",
         }
     )
     test_data_dir = (
