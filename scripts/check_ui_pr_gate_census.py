@@ -125,7 +125,8 @@ CENSUS_PATH = REPO_ROOT / "scripts" / "ui_pr_gate_census.txt"
 # in the visible tab raises no hidden notice (test_console_visible_turn_
 # attention.py). About 3.5 min serial under load average 30 locally.
 # TASK-33620.9 adds the private-profile mounted rename publication regressions.
-MINIMUM_FILES = 147
+# TASK-31245 adds the private-profile hydration and handle-ownership regressions.
+MINIMUM_FILES = 148
 
 
 def read_census(path: Path) -> list[str]:

@@ -11,6 +11,42 @@ bring the incident.
 
 ---
 
+## A warning-free batch can still retain worker-owned database files
+
+**TASK-31245 / TASK-33620.9, 2026-10-04.** After explicit Console fixture
+retirement, a 144-case affected batch passed without warnings but a read-only
+post-teardown census still counted 75 workspace SQLite descriptors plus WAL/SHM
+files. Constructor owners had been captured correctly; `WorkspaceDB.close()`
+only closes the calling thread's cache. Allocation stacks identified finite
+scope reads and a saved-chat membership projection retry opening their own
+executor caches. Real file-backed REDs asserted that each callback left one
+extra registered handle, including the projection's retryable-failure path.
+
+Use the installed operation-owned boundary **inside** the finite callback's
+thread. Preserve pre-existing caller caches, memory/custom owners and work still
+running after await cancellation. Do not close foreign-thread handles from a
+fixture or lower the warning threshold. The corrected projection test and
+filtered mounted rename leave no workspace files after teardown without GC or
+observer cleanup. A passing warning sentinel proves only that its threshold was
+not exceeded; inspect ownership directly before claiming terminal retirement.
+
+The initial observer covered constructor profiles, not every test `tmp_path`.
+Adding the current run's explicit temporary root exposed Chat handles that the
+first filter could not see. Local quiescence then retired them, but the shared
+fixture called runtime disposal again: `detach_view` refreshed attention/local
+marks and reopened the same file. The strict 152-case run passed every body but
+exited 1 with eight Chat SQLite handles. Register exact test-owned databases for
+terminal retirement **after the fixture's last successful disposal**; do not
+treat an early `_disposed` admission latch as a completion receipt. Keep the
+observer read-only and distinguish successful test bodies from its process gate.
+
+Saved-sidebar construction separately admitted an unmounted save timer because
+ordinary reactive assignment treated hydration as an edit. Two restored-state
+REDs caught the timer; watcher-free `set_reactive` removed only that admission.
+Retain the mounted user-edit/debounce/quit-flush checks when changing hydration.
+
+---
+
 ## Awaiting a coalesced UI sync does not prove exact transcript publication
 
 **TASK-31245, 2026-10-04, dev f800952214.** Warm History-to-Character reopening

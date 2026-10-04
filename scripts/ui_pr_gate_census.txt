@@ -152,3 +152,6 @@ Tests/UI/test_library_note_autosave_recovers.py
 
 # TASK-33620.9: durable rename publication through the mounted rail menu.
 Tests/UI/test_console_rename_consistency.py
+
+# TASK-31245: constructor hydration and finite workspace handle ownership.
+Tests/UI/test_console_fixture_ownership.py

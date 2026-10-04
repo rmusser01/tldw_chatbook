@@ -22,12 +22,13 @@ from dataclasses import replace
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_workspace_tray_recompose_guard import (
     APP_SIZE,
-    _RecomposeCounter,
-    _build_test_app,
-    _settled_tray,
     ConsoleHarness,
+    _build_test_app,
+    _RecomposeCounter,
+    _settled_tray,
 )
 from tldw_chatbook.Widgets.Console.console_workspace_context import (
     ConsoleWorkspaceContextTray,

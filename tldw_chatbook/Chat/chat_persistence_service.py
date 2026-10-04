@@ -109,6 +109,7 @@ from tldw_chatbook.Chat.console_project_instructions import (
 )
 from tldw_chatbook.Chat.rag_scope import serialize_scope
 from tldw_chatbook.Chat.message_metadata import MessageMetadata
+from tldw_chatbook.DB.base_db import operation_owned_connection
 from tldw_chatbook.DB.ChaChaNotes_DB import (
     CharactersRAGDB,
     ConflictError,
@@ -2560,7 +2561,8 @@ class ChatPersistenceService:
             raise ValueError(
                 "Workspace registry is required for workspace conversations"
             )
-        workspace = self.workspace_registry.get_workspace(safe_workspace_id)
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            workspace = self.workspace_registry.get_workspace(safe_workspace_id)
         if workspace is None:
             raise ValueError(f"Unknown workspace: {safe_workspace_id}")
         return safe_workspace_id
@@ -2596,13 +2598,14 @@ class ChatPersistenceService:
         conversation_id: str,
         title: str,
     ) -> Any:
-        return self.workspace_registry.link_membership(
-            workspace_id,
-            item_type="conversation",
-            item_id=conversation_id,
-            role="workspace-thread",
-            title=title,
-        )
+        with operation_owned_connection(getattr(self.workspace_registry, "db", None)):
+            return self.workspace_registry.link_membership(
+                workspace_id,
+                item_type="conversation",
+                item_id=conversation_id,
+                role="workspace-thread",
+                title=title,
+            )
 
     def update_conversation_system_prompt(
         self,

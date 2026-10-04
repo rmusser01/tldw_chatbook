@@ -11,6 +11,7 @@ from textual.widgets import Button, Input, Static
 from Tests.UI.test_console_character_activation_presentation import (
     _until,
     activation_library,  # noqa: F401
+    register_activation_database,
 )
 from Tests.UI.test_console_native_chat_flow import _static_plain_text
 from Tests.UI.test_console_workbench_contract import (
@@ -84,6 +85,7 @@ async def test_cancelled_rename_settles_committed_title_before_releasing_worker(
     monkeypatch,
     tmp_path,
     departure: str,
+    request,
 ) -> None:
     """Cancelling an await cannot cancel the SQLite write already in its thread.
 
@@ -92,6 +94,7 @@ async def test_cancelled_rename_settles_committed_title_before_releasing_worker(
         monkeypatch: Hold only the durable write to establish cancellation order.
         tmp_path: Owns the independent database for a profile departure.
         departure: Cancellation or profile change while the write is running.
+        request: Registers the exact secondary profile's terminal fixture owner.
     """
     owner, _, db = activation_library
     _configure_native_ready_console(owner)
@@ -108,6 +111,7 @@ async def test_cancelled_rename_settles_committed_title_before_releasing_worker(
         second_db = CharactersRAGDB(
             tmp_path / "departed-profile.sqlite", client_id="rename-departure"
         )
+        register_activation_database(request, second_db)
         second_db.add_conversation({"id": "exact", "title": "Independent profile"})
 
     def held_update(*args, **kwargs):
@@ -159,10 +163,6 @@ async def test_cancelled_rename_settles_committed_title_before_releasing_worker(
                 )
         finally:
             owner.chachanotes_db = db
-            if second_db is not None:
-                from Tests.conftest import _close_database_instance
-
-                _close_database_instance(second_db)
 
 
 @pytest.mark.asyncio
@@ -216,13 +216,14 @@ async def test_rename_modal_rejects_a_changed_profile_before_dispatch(
             ).value = "Wrong profile rename"
             await pilot.press("enter")
             await pilot.pause()
-            await chat.workers.wait_for_complete(
-                [
-                    worker
-                    for worker in chat.workers
-                    if worker.group == "console-conversation-rename"
-                ]
-            )
+            # An empty list means "all workers" to Textual, including the
+            # refresh workers intentionally cancelled by a profile departure.
+            # This guard rejects admission rather than starting a rename.
+            assert not [
+                worker
+                for worker in chat.workers
+                if worker.group == "console-conversation-rename"
+            ]
             assert db.get_conversation_by_id("exact")["title"] == old_title
             assert (
                 second_db.get_conversation_by_id("exact")["title"] == "Another profile"

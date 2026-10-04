@@ -24785,7 +24785,11 @@ class ChatScreen(BaseAppScreen):
                 self.ui_state.last_active_section = sidebar_data.get(
                     "last_active_section", None
                 )
-                self.sidebar_state = dict(self.ui_state.collapsible_states)
+                # Hydration is not a user edit. Firing the save watcher here
+                # starts a debounce timer before this screen has an app context.
+                self.set_reactive(
+                    ChatScreen.sidebar_state, dict(self.ui_state.collapsible_states)
+                )
                 self._sidebar_state_persistence_error = None
         except Exception as error:
             self._sidebar_state_persistence_error = type(error).__name__

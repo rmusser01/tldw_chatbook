@@ -41,6 +41,7 @@ from ...Chat.rag_scope import (
     scope_empty_notice,
     resolve_effective_scope,
 )
+from ...DB.base_db import run_owned_db_call
 from ...RAG_Search.fusion import resolve_hybrid_alpha
 from ...RAG_Search.local_citation_capture import (
     LocalEvidenceContext,
@@ -1124,7 +1125,8 @@ async def resolve_scope_for_session(
                     registry_service, workspace_id
                 )
             elif not use_cache:
-                ws_scope = await asyncio.to_thread(
+                ws_scope = await run_owned_db_call(
+                    registry_db,
                     _read_fresh_workspace_scope_sync,
                     registry_service,
                     workspace_id,
@@ -1132,8 +1134,8 @@ async def resolve_scope_for_session(
             elif registry_is_memory:
                 ws_scope = registry_service.get_workspace_scope(workspace_id)
             else:
-                ws_scope = await asyncio.to_thread(
-                    registry_service.get_workspace_scope, workspace_id
+                ws_scope = await run_owned_db_call(
+                    registry_db, registry_service.get_workspace_scope, workspace_id
                 )
         except Exception:
             # A malformed or unreadable stored scope is not equivalent to no

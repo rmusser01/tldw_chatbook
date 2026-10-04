@@ -51,6 +51,9 @@ from Tests.UI.background_signals import (
     wait_for_background_signal,
 )
 from Tests.UI.app_factory import _build_test_app
+from Tests.UI.console_fixture_ownership import (  # explicit pytest fixture export
+    owned_console_apps as owned_console_apps,  # noqa: PLC0414
+)
 from Tests.UI.test_character_session_prompt_seed import (
     _character_screen,
     _roleplay_card,
@@ -79,6 +82,8 @@ from tldw_chatbook.Widgets.Console.console_fork_chat_modal import (
 from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSwitcherChoice,
 )
+
+pytestmark = pytest.mark.bootstrap_profile
 
 
 @pytest.mark.asyncio
@@ -644,6 +649,9 @@ async def test_character_handoff_uses_current_canonical_defaults_not_stale_sessi
 ):
     card = _roleplay_card(name="Alba")
     screen = _character_screen(monkeypatch, card)
+    # This source-bound module deliberately retains one private config cache.
+    # Establish this test's old value rather than assuming an earlier case did
+    # not already publish the new value into that shared mapping.
     screen.app_instance.app_config.setdefault("chat_defaults", {})["model"] = (
         "canonical-stale-model"
     )
@@ -1025,6 +1033,7 @@ async def test_apply_console_switcher_choice_none_is_a_noop():
 @pytest.mark.asyncio
 async def test_promote_console_temporary_session_writes_durable_rows_to_the_database(
     tmp_path,
+    owned_console_apps,
 ):
     """Saving a temporary chat must produce a REAL, readable conversation row
     (and its messages) in `chachanotes_db` -- not just an in-memory flag flip.
@@ -1037,6 +1046,7 @@ async def test_promote_console_temporary_session_writes_durable_rows_to_the_data
     """
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     host = ConsoleHarness(app)
 
@@ -1079,6 +1089,7 @@ async def test_promote_console_temporary_session_writes_durable_rows_to_the_data
 @pytest.mark.asyncio
 async def test_promote_console_temporary_session_second_call_does_not_duplicate_the_row(
     tmp_path,
+    owned_console_apps,
 ):
     """Promoting an already-saved session again must not write a second
     conversation row -- `promote_ephemeral_session` is idempotent, and the
@@ -1086,6 +1097,7 @@ async def test_promote_console_temporary_session_second_call_does_not_duplicate_
     creating a fresh conversation on every click."""
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     host = ConsoleHarness(app)
 
@@ -1301,9 +1313,11 @@ async def test_fork_validation_freezes_the_accepted_title_until_retry():
 @pytest.mark.asyncio
 async def test_durable_fork_orders_commit_projection_registration_and_activation(
     tmp_path,
+    owned_console_apps,
 ):
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     app.workspace_registry_service.create_workspace(
         workspace_id="ws-fork",
@@ -1466,9 +1480,12 @@ async def test_fork_stage_error_names_safe_content_class_only(content_class):
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_durable_collision_fails_closed_without_publication(tmp_path):
+async def test_ambiguous_durable_collision_fails_closed_without_publication(
+    tmp_path, owned_console_apps
+):
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     host = ConsoleHarness(app)
 
@@ -1517,9 +1534,12 @@ async def test_ambiguous_durable_collision_fails_closed_without_publication(tmp_
 
 
 @pytest.mark.asyncio
-async def test_workspace_projection_failure_keeps_one_open_fork_pending_retry(tmp_path):
+async def test_workspace_projection_failure_keeps_one_open_fork_pending_retry(
+    tmp_path, owned_console_apps
+):
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     app.workspace_registry_service.create_workspace(
         workspace_id="ws-fork-pending",
@@ -1706,9 +1726,12 @@ async def test_temporary_activation_failure_open_reuses_registered_id_once():
 
 
 @pytest.mark.asyncio
-async def test_ambiguous_durable_commit_reconciles_without_second_bundle(tmp_path):
+async def test_ambiguous_durable_commit_reconciles_without_second_bundle(
+    tmp_path, owned_console_apps
+):
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     host = ConsoleHarness(app)
 
@@ -1765,9 +1788,12 @@ async def test_ambiguous_durable_commit_reconciles_without_second_bundle(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_postcommit_registration_failure_open_retry_reuses_identity(tmp_path):
+async def test_postcommit_registration_failure_open_retry_reuses_identity(
+    tmp_path, owned_console_apps
+):
     app = _build_test_app()
     db = _real_chachanotes_db(tmp_path)
+    owned_console_apps(app.console_runtime, db)
     app.chachanotes_db = db
     host = ConsoleHarness(app)
 

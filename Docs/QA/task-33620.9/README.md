@@ -53,6 +53,16 @@ amendment; no schema, dependency, event bus or GC policy changed.
   no added/removed messages or sinks. Whitespace clean.
 - The rename UI module is added to the PR fast-lane census. No full sweep ran.
 
+Later qualification fixes retire finite workspace callback caches and explicit
+test-owned databases after the last successful runtime disposal. The final
+combined targeted gate is **155 passed, no warnings**, with strict process exit
+0 and zero database files after every teardown across both private constructor
+profiles and the run's temporary root. All **14 rename workflows** separately
+pass the same strict gate. The earlier failures/warnings above remain historical;
+see the [ownership checkpoint](../task-31245/ownership-qualification-2026-10-04.md)
+for valid REDs, unsuccessful teardown attempts, inherited broader failures and
+the standalone activation gate. Native acceptance remains separate.
+
 Reproduce the affected batch with the repository Python >=3.12 environment:
 
 ```sh

@@ -2,6 +2,18 @@
 
 This directory records measured evidence, not blanket release acceptance.
 
+The [2026-10-04 ownership checkpoint](ownership-qualification-2026-10-04.md)
+records hydration, fixture and finite-scope corrections: final **155 affected
+Console tests** and **71 activation/reuse tests** pass without warnings.
+The strict read-only census checks constructor profiles and each run's explicit
+temporary root, with zero retained database files after every teardown;
+intermediate leaks and inherited broader failures remain in the receipt.
+Native/full-corpus/performance qualification is not complete.
+The [native qualification checklist](native-qualification-checklist.md) is
+prepared but remains HOLD pending a frozen synthetic-data launch packet.
+The [fixture rebuild proposal](fixture-rebuild-proposal.md) describes the next
+checkpoint; the old ignored corpus/launcher is unavailable here.
+
 The [2026-09-07 switcher follow-up](switcher-reuse-and-mode-follow-up.md) records
 the duplicate-tab and selected-mode corrections reported during manual QA.
 

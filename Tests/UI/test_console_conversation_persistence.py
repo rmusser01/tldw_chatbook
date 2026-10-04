@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.test_console_left_rail import make_console_pilot
 
 pytestmark = pytest.mark.bootstrap_profile

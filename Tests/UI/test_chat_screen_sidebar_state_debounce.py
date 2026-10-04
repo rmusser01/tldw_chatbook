@@ -46,7 +46,7 @@ async def _mounted_console_screen(pilot):
 async def test_saved_sidebar_state_restores_during_fresh_screen_construction(
     request, saved_states, monkeypatch, tmp_path, captured_lines
 ):
-    """Restoration must reach the reactive watcher after its timer state exists."""
+    """Restoration skips save admission; a later user edit still flushes."""
     sidebar = {
         "collapsible_states": saved_states,
         "search_query": "saved search",

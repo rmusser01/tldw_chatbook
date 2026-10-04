@@ -39,6 +39,7 @@ import pytest
 from textual.css.query import QueryError
 
 from Tests.private_profile import private_profile_test
+from Tests.UI.console_fixture_ownership import owned_console_apps  # noqa: F401
 from Tests.UI.consolidated_css import ConsolidatedCSSApp
 from Tests.UI.test_destination_shells import _build_test_app
 from tldw_chatbook.Chat.console_chat_models import FEEDBACK_ACTIVE_RUN_STATUSES
@@ -71,6 +72,8 @@ from tldw_chatbook.UI.Console_Modules.video import ConsoleVideoController
 from tldw_chatbook.UI.Console_Modules.workspace import ConsoleWorkspaceController
 from tldw_chatbook.UI.Screens.chat_screen import ChatScreen
 from tldw_chatbook.Workspaces.models import RuntimeBindingKind, RuntimeBindingStatus
+
+pytestmark = pytest.mark.bootstrap_profile
 
 #: (screen attribute, controller class), in the order the wiring builds them.
 _EXPECTED_SLOTS: list[tuple[str, type]] = [
@@ -385,7 +388,9 @@ async def test_review_selection_controller_is_late_bound_without_sibling_objects
     assert controller._native_messages_accessor() is native_messages
 
 
-def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> None:
+def test_send_price_controller_is_constructed_with_late_bound_screen_edges(
+    monkeypatch,
+) -> None:
     screen = _unmounted_console()
     controller = getattr(screen, "_send_price", None)
     assert isinstance(controller, ConsoleSendPriceController), (
@@ -397,7 +402,6 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> 
     launch = object()
     projection = object()
     screen._session._ensure_active_console_session_settings = lambda: settings
-    screen._console_chat_store = store
     screen._pending_console_launch_context = launch
     screen._ensure_console_chat_controller = lambda: SimpleNamespace(
         provider_messages_for_next_send_estimate=(
@@ -405,13 +409,17 @@ def test_send_price_controller_is_constructed_with_late_bound_screen_edges() -> 
         )
     )
 
-    assert controller._settings_accessor() is settings
-    assert controller._chat_store_accessor() is store
-    assert controller._pending_launch_accessor() is launch
-    assert controller._provider_history_accessor("session-1") == (
-        projection,
-        "session-1",
-    )
+    # This compatibility property writes through to the runtime owner. Restore
+    # the real store before teardown, rather than leaving an opaque test token.
+    with monkeypatch.context() as scoped:
+        scoped.setattr(screen, "_console_chat_store", store)
+        assert controller._settings_accessor() is settings
+        assert controller._chat_store_accessor() is store
+        assert controller._pending_launch_accessor() is launch
+        assert controller._provider_history_accessor("session-1") == (
+            projection,
+            "session-1",
+        )
 
 
 def test_draft_spend_refresh_is_wired_with_late_bound_screen_edges() -> None:
@@ -799,14 +807,16 @@ def test_composer_accessor_is_late_bound(attr, accessor_name):
         ("_message", "_current_chat_store_accessor"),
     ],
 )
-def test_current_chat_store_accessor_reads_the_live_attribute(attr, accessor_name):
+def test_current_chat_store_accessor_reads_the_live_attribute(
+    attr, accessor_name, monkeypatch
+):
     """`lambda: self._console_chat_store` -- a bare attribute read, late."""
     screen = _unmounted_console()
     sentinel = object()
-    screen._console_chat_store = sentinel
-
-    accessor = getattr(getattr(screen, attr), accessor_name)
-    assert accessor() is sentinel, f"{attr}.{accessor_name} snapshotted the value"
+    with monkeypatch.context() as scoped:
+        scoped.setattr(screen, "_console_chat_store", sentinel)
+        accessor = getattr(getattr(screen, attr), accessor_name)
+        assert accessor() is sentinel, f"{attr}.{accessor_name} snapshotted the value"
 
 
 def test_workspace_resolves_the_session_sibling_at_call_time():
