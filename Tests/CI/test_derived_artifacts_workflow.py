@@ -100,7 +100,7 @@ def test_required_aggregator_fails_when_either_lane_fails():
         assert "exit 1" in verdict["run"]
 
 
-def test_ui_fast_lane_runs_the_census_in_contiguous_serial_shards():
+def test_ui_fast_lane_runs_the_census_in_serial_round_robin_shards():
     """TASK-32908: the run CI performs must be the run the census was verified
     against.
 
@@ -111,8 +111,8 @@ def test_ui_fast_lane_runs_the_census_in_contiguous_serial_shards():
     people to ignore it.
 
     TASK-34353: the serial census outgrew the job's 20-minute cap, so it runs
-    as parallel CONTIGUOUS shards -- each one an unbroken, in-order run of
-    census lines -- never an interleaved or xdist split.
+    as parallel round-robin shards picked by the census checker -- each one a
+    subsequence of the census, in census order -- never an xdist split.
     """
     job = _workflow()["jobs"]["ui-fast-lane"]
 
@@ -136,14 +136,66 @@ def test_ui_fast_lane_runs_the_census_in_contiguous_serial_shards():
         for step in job["steps"]
         if step.get("name") == "Run the gated Tests/UI slice"
     )["run"]
-    assert "scripts/ui_pr_gate_census.txt" in run
-    # Contiguous slice [start, end) of the census, sized by the matrix.
-    assert "start=$(( index * ${#UI_FILES[@]} / total ))" in run
-    assert "end=$(( (index + 1) * ${#UI_FILES[@]} / total ))" in run
-    assert 'SHARD=("${UI_FILES[@]:start:end-start}")' in run
+    # The census checker reads scripts/ui_pr_gate_census.txt and picks the shard, sized by the matrix; its output goes
+    # through a file (so its failure fails the step) and an empty shard is
+    # refused (bare `pytest` would collect the whole tree).
+    assert "scripts/check_ui_pr_gate_census.py --shard" in run
+    assert '"${{ strategy.job-index }}" "${{ strategy.job-total }}"' in run
+    assert 'mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"' in run
+    assert 'test "${#SHARD[@]}" -gt 0' in run
     assert 'pytest "${SHARD[@]}"' in run
     assert "-n auto" not in run and "--dist" not in run
     assert "-p no:randomly" not in run  # not installed; order is collection order
+
+
+@pytest.mark.parametrize("total", [1, 2, 3, 5])
+def test_ui_gate_shards_cover_the_census_once_each_in_census_order(total):
+    """TASK-34353: the shards the UI lane runs are exactly the census.
+
+    Drives the real `--shard` command the workflow runs, for each shard of a
+    `total`-way split: every census file lands in exactly one shard, no shard
+    is empty, and each shard keeps census order.
+    """
+    import subprocess
+    import sys
+
+    checker = PROJECT_ROOT / "scripts" / "check_ui_pr_gate_census.py"
+    census = [
+        line.strip()
+        for line in (PROJECT_ROOT / "scripts" / "ui_pr_gate_census.txt")
+        .read_text(encoding="utf-8")
+        .splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+    shards = [
+        subprocess.run(
+            [sys.executable, str(checker), "--shard", str(index), str(total)],
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split()
+        for index in range(total)
+    ]
+
+    assert all(shards)
+    assert sorted(path for shard in shards for path in shard) == sorted(census)
+    for shard in shards:
+        assert shard == [path for path in census if path in shard]
+
+
+def test_ui_gate_shard_refuses_an_index_outside_the_split():
+    """A mistyped matrix must fail the step, not silently gate nothing."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "check_ui_pr_gate_census",
+        PROJECT_ROOT / "scripts" / "check_ui_pr_gate_census.py",
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(ValueError):
+        module.shard(["a", "b"], 2, 2)
 
 
 def test_ui_gate_census_is_non_empty_and_every_entry_exists():

@@ -150,12 +150,12 @@ jobs:
     #
     # TASK-34353: the serial census itself then reached 14-19 min against this
     # job's 20-min cap, and PRs adding census files timed out with zero failing
-    # tests (#2992 three times). So the census runs as CONTIGUOUS shards: each
-    # shard is an unbroken run of census lines in census order, on the same
-    # minimal dependency set. What changes is only that a later shard no longer
-    # runs after an earlier shard's files -- a file that needed that was relying
-    # on leaked state, which is a bug the shard split surfaces, not hides.
-    # Add a shard (not minutes) when one nears the cap.
+    # tests (#2992 three times). So the census runs as round-robin shards
+    # (`check_ui_pr_gate_census.py --shard`): each shard is a subsequence of
+    # the census, in census order, on the same minimal dependency set. What
+    # changes is only which files run before a given file -- a file that needed
+    # a particular predecessor was relying on leaked state, which is a bug the
+    # split surfaces, not hides. Add a shard (not minutes) when one nears the cap.
     name: UI Fast Lane
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
@@ -183,14 +183,15 @@ jobs:
       - name: Run the gated Tests/UI slice
         run: |
           # Census order is the run order; see the checker for why it may not
-          # silently shrink. This shard runs census lines [start, end).
-          mapfile -t UI_FILES < <(grep -vE '^\s*(#|$)' scripts/ui_pr_gate_census.txt)
-          index=${{ strategy.job-index }}
-          total=${{ strategy.job-total }}
-          start=$(( index * ${#UI_FILES[@]} / total ))
-          end=$(( (index + 1) * ${#UI_FILES[@]} / total ))
-          SHARD=("${UI_FILES[@]:start:end-start}")
-          echo "Gating shard $((index + 1))/$total: census files $((start + 1))-$end of ${#UI_FILES[@]}."
+          # silently shrink. Written to a file first so a failing checker fails
+          # the step (bash -e) instead of yielding an empty list.
+          python scripts/check_ui_pr_gate_census.py --shard \
+            "${{ strategy.job-index }}" "${{ strategy.job-total }}" \
+            > "$RUNNER_TEMP/ui-shard.txt"
+          mapfile -t SHARD < "$RUNNER_TEMP/ui-shard.txt"
+          # An empty shard would make bare `pytest` collect the whole tree.
+          test "${#SHARD[@]}" -gt 0
+          echo "Gating shard $(( ${{ strategy.job-index }} + 1 ))/${{ strategy.job-total }}: ${#SHARD[@]} Tests/UI files."
           pytest "${SHARD[@]}" \
             --timeout=180 \
             --tb=short

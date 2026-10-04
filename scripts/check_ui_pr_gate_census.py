@@ -97,8 +97,36 @@ def read_census(path: Path) -> list[str]:
     return entries
 
 
-def main() -> int:
-    """Verify the PR-gate census is intact.
+def shard(entries: list[str], index: int, total: int) -> list[str]:
+    """Pick one UI Fast Lane shard: every `total`-th entry from `index`.
+
+    Round-robin, not contiguous halves (TASK-34353): the census's slow files
+    sit together (the Console cluster), so a contiguous split measured 14.2
+    vs 2.3 min where round-robin gives 6.8 vs 9.7. Each shard is still a
+    subsequence of the census, so census order holds inside it.
+
+    Args:
+        entries: The census, in file order.
+        index: This shard, 0-based (`strategy.job-index`).
+        total: The shard count (`strategy.job-total`).
+
+    Returns:
+        This shard's paths, in census order.
+
+    Raises:
+        ValueError: When `index` is not in `range(total)`.
+    """
+    if not 0 <= index < total:
+        raise ValueError(f"shard index {index} is not in range({total})")
+    return entries[index::total]
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Verify the PR-gate census is intact, or print one shard of it.
+
+    Args:
+        argv: Command-line arguments; ``--shard INDEX TOTAL`` prints that
+            shard's paths, one per line, instead of checking the census.
 
     Returns:
         0 when every listed path exists, is unique, sits under `Tests/UI/`, and
@@ -109,6 +137,10 @@ def main() -> int:
         return 1
 
     entries = read_census(CENSUS_PATH)
+    args = sys.argv[1:] if argv is None else argv
+    if args[:1] == ["--shard"]:
+        print("\n".join(shard(entries, int(args[1]), int(args[2]))))
+        return 0
     problems: list[str] = []
 
     seen: set[str] = set()
