@@ -349,6 +349,7 @@ The judge's mockup also lists a 'Reasoning replay override' row here, but that c
 - [ ] #10 '/' field search reaches fields inside closed disclosures and opens the one it lands in. Tests/UI/test_settings_search_index.py stays green.
 - [ ] #11 Ids that tests query are kept (#settings-snapshot-controls, #settings-discovered-models-list, #settings-model-catalog-group, #settings-mc-auto-*, #settings-model-context-window). Any test changed on purpose is named in the PR.
 - [ ] #12 Live captures show Saved model list open after a discovery at 211x44 and Catalog refresh open at 235x52.
+- [ ] #13 With every Advanced disclosure closed, live captures at 211x44 for Anthropic and llama.cpp still show Connect through Model defaults without scrolling (a re-check of TASK-33007.5 AC#9, which was captured before this fold).
 
 ### References
 
@@ -446,6 +447,7 @@ task-33007.2 AC#3 fixes the lost first character. This rider covers what is left
 - [ ] #2 After r ▸ Discard changes, the Provider control shows the saved provider and no filtered list is left open.
 - [ ] #3 At 211x44 and 235x52, whenever the provider list is visible, its whole frame is drawn inside the card, right edge included.
 - [ ] #4 A keyboard-only live capture at 211x44 shows the control after a choice and after Revert.
+- [ ] #5 After the fix, live captures at 211x44 for Anthropic and llama.cpp still show Connect through Model defaults without scrolling (a re-check of TASK-33007.5 AC#9, which was captured before this task).
 
 ### References
 
