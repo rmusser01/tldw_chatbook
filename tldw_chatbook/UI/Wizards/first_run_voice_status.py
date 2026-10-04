@@ -45,6 +45,11 @@ AUTH_HELP_COPY = (
     "API key uses your OpenAI key: the one from the Provider step or pasted "
     "here, the one saved in Settings, or OPENAI_API_KEY."
 )
+#: The hint line while Sample text shows: Enter there runs the test, Enter
+#: anywhere else still advances (review round 1, F13). 79 cells: it fits 80.
+KEY_HINTS_WITH_SAMPLE = (
+    "Enter / Ctrl+N next · Enter in Sample text tests · Ctrl+B back · Esc exit setup"
+)
 LEAVE_TITLE = "Leave setup?"
 LEAVE_MESSAGE = (
     "Settings ▸ Speech & TTS opens so you can add the OpenAI key. Your progress "
@@ -267,6 +272,7 @@ __all__ = [
     "CANCELLED_COPY",
     "DEFAULT_HELP_COPY",
     "DEFAULT_STATUS_COPY",
+    "KEY_HINTS_WITH_SAMPLE",
     "KEY_NEEDED_COPY",
     "LEAVE_MESSAGE",
     "LEAVE_TITLE",

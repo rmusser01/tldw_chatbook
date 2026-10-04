@@ -74,11 +74,14 @@ _PROBED_PRESETS = {voice_state.VOICE_PRESET_POCKET_TTS, voice_state.VOICE_PRESET
 class VoiceSetupStep(OmniVoiceStepBase):
     """Compact OpenAI-compatible TTS setup shared by Quick and Full tracks."""
 
-    #: TASK-34100.8 (voice-speech-05): Enter in Sample text runs the test
-    #: instead of advancing, so this step's hint line says so.
-    KEY_HINTS = (
-        "Enter in Sample text tests it · Ctrl+N next · Ctrl+B back · Esc exit setup"
-    )
+    @property
+    def KEY_HINTS(self) -> str:  # noqa: N802 - the container reads this name
+        """TASK-34100.8 (voice-speech-05): Enter in Sample text runs the test,
+        so the hint line says so -- while Sample text is on screen (review
+        round 1, G8-V1-F6), and still saying Enter advances elsewhere (F13)."""
+        if self._preset == voice_state.VOICE_PRESET_NONE:
+            return ""
+        return voice_status.KEY_HINTS_WITH_SAMPLE
 
     def __init__(self, wizard=None, config=None, **kwargs: Any) -> None:
         super().__init__(wizard=wizard, config=config, **kwargs)
@@ -524,6 +527,9 @@ class VoiceSetupStep(OmniVoiceStepBase):
         except NoMatches:
             return
         self._sync_default_box()
+        sync_hints = getattr(self.wizard, "_sync_exit_controls", None)
+        if callable(sync_hints):
+            sync_hints()  # the hint line follows the chosen service
 
     def _sync_default_box(self) -> None:
         """Lock "Use this voice…" on while the OpenAI slot reads replies (F1)."""

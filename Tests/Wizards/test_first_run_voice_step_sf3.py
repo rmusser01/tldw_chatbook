@@ -805,16 +805,31 @@ async def test_enter_in_sample_text_tests_instead_of_advancing(monkeypatch) -> N
         container.show_step(index)
         await pilot.pause()
         step = container.steps[index]
-        hints = str(wizard.query_one("#setup-key-hints", Static).render())
-        assert hints.startswith("Enter in Sample text tests it")
+        hints = wizard.query_one("#setup-key-hints", Static)
+        # Review round 1 (G8-V1-F6): "No voice for now" hides Sample text,
+        # so the hint line is the wizard's own until a service shows it.
+        assert str(hints.render()) == (
+            "Enter / Ctrl+N next · Ctrl+B back · Esc exit setup"
+        )
         step._select_preset_button("setup-voice-preset-pocket")
         await pilot.pause()
+        # Review round 1 (F13): Enter still advances from every other field.
+        assert str(hints.render()) == (
+            "Enter / Ctrl+N next · Enter in Sample text tests · Ctrl+B back "
+            "· Esc exit setup"
+        )
         step.query_one("#setup-voice-sample", Input).focus()
         await pilot.press("enter")
         await pilot.pause(0.2)
 
         assert calls == [voice_state.DEFAULT_SAMPLE_TEXT]
         assert container.current_step == index
+
+        step._select_preset_button("setup-voice-preset-none")
+        await pilot.pause()
+        assert str(hints.render()) == (
+            "Enter / Ctrl+N next · Ctrl+B back · Esc exit setup"
+        )
 
 
 # -- AC#5: an Advanced edit makes the service Custom and is kept -------------------
