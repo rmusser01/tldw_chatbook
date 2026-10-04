@@ -18387,3 +18387,9 @@ limits, closed the qualification task against its actual criteria, and kept the
 full OpenAI human realtime coverage item separate. Read linked acceptance evidence
 before asking for another UAT run; a newer branch or an omitted summary entry does
 not by itself establish a new defect or invalidate human acceptance.
+
+## A timer callback awaiting rollback can block navigation
+
+**TASK-32108.1 / PR3011, 2026-10-04.** Cancelling the ordered Resume worker on suspension fixed hidden hydration, but its async timer entry then waited for held rollback on the Screen message pump. The real ordinary-return test timed out waiting for subsequent navigation. Textual set_timer queues its callback through call_next. Keep the callback synchronous and drain rollback in an owned worker, shield the prior wait, and cancel the rollback owner only once. Repeating cancel at a later suspend or character retirement separately interrupted cleanup in both held-rollback controls.
+
+The same test hook assumed every native UI sync had a current Worker. Real attach reconciliation also calls sync outside a Worker; the hook raised NoActiveWorker there. Restrict a worker barrier to its actual group and delegate other calls to production behavior. Final original ordering assertions and held-rollback journeys pass; private controls distinguish lifecycle defects from this hook error.

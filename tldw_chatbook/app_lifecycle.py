@@ -550,10 +550,12 @@ class LifecycleMixin:
                     if worker.group in {
                         "console-sync",
                         "console-resume-navigation-startup",
+                        "console-resume-navigation-dispatch",
                     }
                 ]
                 for worker in view_workers:
-                    worker.cancel()
+                    if not worker.is_finished and not worker.is_cancelled:
+                        worker.cancel()
                 # Cancelled view workers finish their rollback before the
                 # runtime and screens disappear. Accepted execution remains
                 # owned by the runtime's existing disposal policy.

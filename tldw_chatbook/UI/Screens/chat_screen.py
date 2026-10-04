@@ -47,6 +47,7 @@ from textual.events import (
 from textual.message_pump import NoActiveAppError
 from textual.reactive import reactive
 from textual.widget import Widget
+from textual.worker import Worker
 from textual.widgets import Button, Static, Select, Collapsible, Input
 
 from ..Navigation.base_app_screen import BaseAppScreen
@@ -7230,6 +7231,8 @@ class ChatScreen(BaseAppScreen):
     _failed_character_conversation_target: "CharacterConversationActivationRequest | None" = None
     _pending_character_return_focus_id: str | None = None
     _resume_navigation_startup_in_progress: bool = False
+    _resume_navigation_startup_worker: Worker | None = None
+    _resume_navigation_dispatch_worker: Worker | None = None
     _pending_conversation_settings_return_claim: (
         HandoffClaim[ConversationSettingsReturnIntent] | None
     ) = None
@@ -16823,7 +16826,10 @@ class ChatScreen(BaseAppScreen):
         failure: Exception | None = None
         try:
             if not self._console_attach_sync_complete:
-                await self._sync_native_console_chat_ui()
+                # An explicit Resume owns its final presentation. An early sync
+                # creates a competing default session and paints it first.
+                if not self._resume_navigation_startup_in_progress:
+                    await self._sync_native_console_chat_ui()
                 self._console_attach_sync_complete = True
             if not self._console_attach_runtime_reconciled:
                 runtime = self._console_runtime()
@@ -16892,10 +16898,12 @@ class ChatScreen(BaseAppScreen):
                 ),
             )
         if self._resume_navigation_startup_in_progress:
-            self.set_timer(
-                self.CONSUMER_SETTLE_HEDGE_SECONDS,
-                self._start_resume_navigation_startup,
-            )
+            self._console_resume_handoff_timers = [
+                self.set_timer(
+                    self.CONSUMER_SETTLE_HEDGE_SECONDS,
+                    self._start_resume_navigation_startup,
+                )
+            ]
         else:
             self.set_timer(
                 self.CONSUMER_SETTLE_HEDGE_SECONDS, self._consume_pending_chat_handoff
@@ -16976,22 +16984,83 @@ class ChatScreen(BaseAppScreen):
         self._console_mount_visit_refreshed = True
 
     def _start_resume_navigation_startup(self) -> None:
-        """Start the one ordered worker for an explicit saved-chat resume."""
+        """Dispatch settlement without blocking the screen message pump."""
         if _console_screen_is_torn_down(self):
             self._resume_navigation_startup_in_progress = False
             return
-        self.run_worker(
+        self._resume_navigation_dispatch_worker = self.run_worker(
+            self._settle_and_start_resume_navigation(),
+            exclusive=True,
+            group="console-resume-navigation-dispatch",
+        )
+
+    async def _settle_and_start_resume_navigation(self) -> None:
+        """Start one visible request after the prior visit's rollback settles."""
+        if _console_screen_is_torn_down(self):
+            self._resume_navigation_startup_in_progress = False
+            return
+        previous = self._resume_navigation_startup_worker
+        if previous is not None:
+            if not previous.is_finished and not previous.is_cancelled:
+                previous.cancel()
+            await asyncio.shield(
+                asyncio.gather(previous.wait(), return_exceptions=True)
+            )
+        if (
+            not self.is_current
+            or _console_screen_is_torn_down(self)
+            or self._resume_navigation_startup_worker is not previous
+            or (
+                self._pending_resume_local_conversation_id is None
+                and self._pending_character_conversation_target is None
+            )
+        ):
+            return
+        self._resume_navigation_startup_in_progress = True
+        self._resume_navigation_startup_worker = self.run_worker(
             self._consume_resume_navigation_startup(),
             exclusive=True,
             group="console-resume-navigation-startup",
         )
 
+    async def _retire_resume_navigation_startup(self) -> bool:
+        """Retire an older request and drain its rollback before a newer choice."""
+        worker = self._resume_navigation_startup_worker
+        dispatch = self._resume_navigation_dispatch_worker
+        had_request = bool(
+            self._pending_resume_local_conversation_id is not None
+            or self._pending_character_conversation_target is not None
+            or (worker is not None and not worker.is_finished)
+        )
+        for timer in getattr(self, "_console_resume_handoff_timers", ()):
+            timer.stop()
+        self._console_resume_handoff_timers = []
+        self._pending_resume_local_conversation_id = None
+        self._pending_character_conversation_target = None
+        if dispatch is not None:
+            if not dispatch.is_finished and not dispatch.is_cancelled:
+                dispatch.cancel()
+            await asyncio.shield(
+                asyncio.gather(dispatch.wait(), return_exceptions=True)
+            )
+        if worker is not None:
+            if not worker.is_finished and not worker.is_cancelled:
+                worker.cancel()
+            await asyncio.shield(
+                asyncio.gather(worker.wait(), return_exceptions=True)
+            )
+            if self._resume_navigation_startup_worker is worker:
+                self._resume_navigation_startup_worker = None
+        if had_request:
+            self._resume_navigation_startup_in_progress = False
+        return had_request
+
     async def _consume_resume_navigation_startup(self) -> None:
         """Consume older Console intents before the explicit resume target."""
         target = self._pending_resume_local_conversation_id
         typed_target = self._pending_character_conversation_target
-        self._pending_resume_local_conversation_id = None
-        self._pending_character_conversation_target = None
+        worker = self._resume_navigation_startup_worker
+        cancelled = False
         opened: bool | None = None
         try:
             if target is None and typed_target is None:
@@ -17015,8 +17084,20 @@ class ChatScreen(BaseAppScreen):
                 opened = await self._workspace.open_console_workspace_conversation(
                     target
                 )
+        except asyncio.CancelledError:
+            # The opener settles owned hydration before propagating cancellation.
+            # Keep this exact request for the next ordinary visible visit.
+            cancelled = True
+            raise
         finally:
-            self._resume_navigation_startup_in_progress = False
+            if not cancelled and (
+                self._pending_resume_local_conversation_id == target
+                and self._pending_character_conversation_target is typed_target
+            ):
+                self._pending_resume_local_conversation_id = None
+                self._pending_character_conversation_target = None
+            if self._resume_navigation_startup_worker is worker:
+                self._resume_navigation_startup_in_progress = False
         await self._consume_pending_conversation_resume()
         if opened is True:
             return
@@ -17128,6 +17209,8 @@ class ChatScreen(BaseAppScreen):
         runtime = self._console_runtime()
         generation = getattr(self, "_console_runtime_attachment_generation", None)
         self._console_runtime_attachment_retired = True
+        self._pending_resume_local_conversation_id = None
+        self._pending_character_conversation_target = None
         runtime.detach_view(self, generation)
         dismiss_project_decisions = getattr(
             getattr(self, "_session", None),
@@ -23649,6 +23732,16 @@ class ChatScreen(BaseAppScreen):
         """
         if not self._hooks.review_open:
             self._hooks.cancel_pending()
+        for resume_worker in (
+            self._resume_navigation_dispatch_worker,
+            self._resume_navigation_startup_worker,
+        ):
+            if (
+                resume_worker is not None
+                and not resume_worker.is_finished
+                and not resume_worker.is_cancelled
+            ):
+                resume_worker.cancel()
         controller = self._console_chat_controller
         if controller is not None:
             controller.on_console_view_visibility_changed(False)

@@ -1379,3 +1379,34 @@ async def test_saved_buddy_bulk_reads_allow_loop_progress_and_recheck_owner(
     finally:
         release.set()
         db.close_connection()
+
+
+@pytest.mark.asyncio
+async def test_deferred_transcript_scroll_after_close_keeps_draft(monkeypatch):
+    from tldw_chatbook.UI.Navigation.buddy_conversation import open_buddy_conversation
+
+    app = Harness()
+    async with app.run_test(size=(100, 36)) as pilot:
+        binding = BuddyBinding.for_session(app.target)
+        modal = open_buddy_conversation(app, binding, allow_voice=False)
+        await pilot.pause()
+        modal.query_one("#buddy-reply", TextArea).load_text("Retain after close")
+        await pilot.pause()
+        callbacks = []
+        original_after_refresh = modal.call_after_refresh
+        monkeypatch.setattr(modal, "call_after_refresh", callbacks.append)
+        modal._last_transcript = None
+        modal.refresh_projection()
+        assert callbacks == [modal._scroll_latest]
+        monkeypatch.setattr(modal, "call_after_refresh", original_after_refresh)
+        modal.query_one("#buddy-close", Button).press()
+        await until(lambda: app.screen is not modal)
+        await pilot.pause()
+        assert not modal._visible
+        assert not list(modal.query("#buddy-conversation-body"))
+        callbacks[0]()
+        await pilot.pause()
+        assert modal.coordinator.drafts[binding] == "Retain after close"
+        assert app.store.active_session_id == app.other.id
+        assert app.other.draft == "Unrelated Console draft"
+        assert not app.gateway.started.is_set()

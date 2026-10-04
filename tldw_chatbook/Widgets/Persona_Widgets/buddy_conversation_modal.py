@@ -242,6 +242,8 @@ class BuddyConversationModal(SafeModalDismissMixin, ModalScreen[None]):
             )
 
     def _scroll_latest(self) -> None:
+        if not self.is_mounted or not self._visible:
+            return
         self.query_one("#buddy-conversation-body", VerticalScroll).anchor()
         self._new_updates = False
         self.query_one("#buddy-latest", Button).label = "Latest"

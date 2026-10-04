@@ -767,6 +767,9 @@ async def _complete_character_conversation_post_commit(
     prior_resume_gate = getattr(
         candidate, "_resume_navigation_startup_in_progress", False
     )
+    retire_resume = getattr(candidate, "_retire_resume_navigation_startup", None)
+    if callable(retire_resume) and await retire_resume():
+        prior_resume_gate = False
     candidate._resume_navigation_startup_in_progress = True
     try:
         await app.push_screen(candidate)

@@ -5,7 +5,7 @@ status: Done
 assignee:
   - '@codex'
 created_date: '2026-09-09 04:32'
-updated_date: '2026-10-04 17:12'
+updated_date: '2026-10-04 18:24'
 labels: []
 dependencies: []
 priority: high
@@ -88,6 +88,10 @@ The new checks and the previous 153 have no duplicate test identities: 334 uniqu
 <!-- SECTION:IMPLEMENTATION_NOTES:END -->
 
 2026-10-04 publication integration: merged dev7446e3a627 into codex/chatbook-buddy-uat at709434b5aff9. Only appended lesson entries conflicted and both sides were retained. Four repaired modules had incoming changes, so 22 relevant Home Resume, shutdown/recompose, config projection and cold saved-owner cases were checked on merged sources: all passed in128.77s. Six product modules compile; current-dev Ruff511/511 and Bandit24/24 comparisons introduce zero findings; whitespace and independent integration review pass. Receipt: Docs/Reviews/artifacts/buddy-uat-20261003/dev-integration-20261004.json. Prior334 unique passes keep original tested-source attribution; repeated22 are not added to that total. Recorded human local voice and native geometry acceptance remains accepted without another UAT/provider/audio run. TASK31585 AC9 stays separate. Existing ADR094/139/147 apply; no new ADR or behavior change beyond the four recorded repairs.
+
+PR3011 review follow-up: two new navigation races are verified in source: started ordered Resume survives suspension, and an older queued Home target competes with a newer character postcommit. Reopened only the focused repair task TASK-32108.1 and defect-regression criterion pending its fresh proof. Recorded human voice/native acceptance remains accepted and is not reopened. The loader validation recommendation has no unvalidated behavioral consumer; both paths use the existing canonical strict parser.
+
+PR3011 remaining review defects are resolved in TASK32108.1. Fresh49-case qualification and no-introduced static findings cover suspension, rollback, character supersession, cold ordered presentation and deferred Buddy close. Original human voice/native acceptance remains accepted and unrepeated; prior334 checks keep source attribution. Report and source-bound review receipt are updated; existing ADR094/139/147 apply. TASK31585 AC9 remains separate.
 <!-- SECTION:NOTES:END -->
 
 ## Final Summary

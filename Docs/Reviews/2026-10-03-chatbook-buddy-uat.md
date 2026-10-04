@@ -104,6 +104,18 @@ The prior 334 unique targeted passes remain attributed to their original tested 
 
 [Separate integration receipt](artifacts/buddy-uat-20261003/dev-integration-20261004.json) records exact source, test-log/JUnit hashes and baseline comparisons. Existing ADR-094, ADR-139 and ADR-147 continue to govern the four repairs; no new ADR is required.
 
+## PR3011 review follow-up — 2026-10-04
+
+The published branch review exposed additional visit-lifetime defects. Started Resume now cancels on suspension and retains its exact target after rollback. A separate owned dispatch worker waits for rollback without blocking the screen message pump; cancellation reaches each owner once, and stale dispatches cannot start work. A newer committed character choice retires old Home targets and drains prior rollback before presentation. Permanent unmount clears the retained request. Shutdown includes the dispatch worker in its existing scoped drain.
+
+Cold ordered Resume now leaves the initial presentation to its canonical opener instead of first painting a default chat. Closing Buddy also makes its deferred transcript scroll inert, preserving its draft and the unrelated Console selection. The warm timer census reads both tracked lists and continues to pin all seven ordinary consumers plus ordered Resume.
+
+**49 unique focused checks passed:** 21 ordered lifecycle/census cases in 108.10 seconds and 28 Home, shutdown, config, saved-owner and close cases in 292.73 seconds. All original Roleplay assertions remain intact; its mounted harnesses use existing private admitted profiles. Isolated negative controls reproduce suspension, stale hedge, repeated cancellation, competing cold sync and dismissed-modal failures. Eight product modules compile. Ruff516/516 and Bandit24/24 comparisons against dev8f83422dde introduce no findings; all four changed test files pass Ruff and formatting. Independent final review found no actionable correctness issue.
+
+The model-validation recommendation was checked against both behavioral consumers. They already use the canonical strict `parse_preferences` contract; immutable bindings and strict booleans reject malformed values while preserving independent defaults. Loader projection remains a deep copy with meaningful section absence. A second validation model would duplicate the existing ADR139 contract without fixing an unsafe consumer.
+
+The earlier334 passes and22 integration repeats remain historical, source-attributed evidence. This fresh49-case qualification covers the review repairs and adds no new human microphone/playback or native claim. Accepted voice/native UAT remains accepted. The [separate review receipt](artifacts/buddy-uat-20261003/pr3011-review-20261004.json) records source hashes, passing runs, valid negative controls and unsuccessful setup/exploratory attempts separately. Existing ADR094/139/147 apply; no new architectural boundary.
+
 ## Coverage limits and retained attempts
 
 - TASK-32108 is closed against its four recorded qualification outcomes. TASK-31585 AC9 retains the separate exact-native-revision and full application-configured OpenAI human realtime coverage limits. Earlier Chatbook native and local human voice acceptance is preserved; server React evidence remains separate.
