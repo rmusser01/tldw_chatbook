@@ -1375,7 +1375,7 @@ async def test_vllm_console_handoff_replaces_only_active_session_without_config_
     request,
     monkeypatch,
 ) -> None:
-    """Calling any durable writer or rebasing from saved vLLM loses this contract."""
+    """Verified adoption changes only the active session, preserving durable config."""
 
     from tldw_chatbook.UI.Navigation.pending_handoff_store import HandoffChannel
     from tldw_chatbook.UI.Navigation.vllm_handoff import VllmConsoleIntent
