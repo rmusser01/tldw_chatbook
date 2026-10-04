@@ -304,6 +304,16 @@ def test_rejects_ipv4_mapped_ipv6_loopback():
         validate_outbound_url("http://[::ffff:127.0.0.1]/")
 
 
+def test_nat64_address_is_judged_by_the_ipv4_it_embeds():
+    # 64:ff9b::/96 (RFC 6052): on a DNS64 network every IPv4-only host
+    # resolves here, so the prefix cannot be refused wholesale (ADR-206).
+    for url in ("http://[64:ff9b::7f00:1]/", "http://[64:ff9b::c0a8:101]/"):
+        with pytest.raises(LocalToolError):
+            validate_outbound_url(url)
+    public = "http://[64:ff9b::5db8:d822]/"
+    assert validate_outbound_url(public) == public
+
+
 def test_rejects_userinfo_host_trick():
     # The real host is 127.0.0.1; "example.com" is userinfo. No DNS needed.
     with pytest.raises(LocalToolError):
