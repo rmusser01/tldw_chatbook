@@ -1,0 +1,57 @@
+# preflight at 769dff7edc, 2026-10-04 02:51 (finding 2)
+
+Command, from a clean worktree at 769dff7edc (git status --short printed nothing):
+PYTHON=<venv>/bin/python ./scripts/preflight.sh > log 2>&1; echo rc=$?
+
+Full output, unpiped:
+
+preflight: using <venv>/bin/python (3.12.11)
+
+=== generated stylesheets ===
+CSS bundle reproduces from its source modules.
+widget_defaults_self.tcss reproduces from its Python sources.
+widget_defaults_scoped.tcss reproduces from its Python sources.
+screen_css_self.tcss reproduces from its Python sources.
+screen_css_scoped.tcss reproduces from its Python sources.
+screen_agentic_library.tcss reproduces from its Python sources.
+screen_agentic_settings.tcss reproduces from its Python sources.
+screen_feature_evals.tcss reproduces from its Python sources.
+screen_feature_scheduling.tcss reproduces from its Python sources.
+screen_feature_workflows.tcss reproduces from its Python sources.
+screen_modal_console_delete_receipt.tcss reproduces from its Python sources.
+screen_feature_watchlists.tcss reproduces from its Python sources.
+
+=== Canvas Mermaid generated assets ===
+Canvas Mermaid assets reproduce: 6 outputs (4 derived from pinned inputs, 2 vendored digests verified)
+
+=== profile-owned path census ===
+profile-owned path census verified: 54 executable occurrence(s) across 22 file(s), all matched by 51 approved exceptions.
+
+=== production diagnostic inventory ===
+diagnostic inventory verified: 640 owners, 1426 TASK-492 calls, 56 TASK-31551 calls, 7603 TASK-494 calls, 16 sink files
+
+=== backlog task ids ===
+No duplicate task IDs across 4905 task files in backlog/tasks, backlog/archive/tasks (filenames + frontmatter); all task paths are Windows-compatible.
+
+=== readable backlog task files ===
+All 4905 task files in backlog/tasks, backlog/archive/tasks are readable (frontmatter + owned-section markers).
+
+=== chachanotes table allowlist ===
+chachanotes: 117 declared tables, all present in VALID_TABLES['chachanotes'].
+
+=== index plan pins ===
+index plan pins: 306 index names declared under tldw_chatbook/DB, 306 census rows, 88 plan-pinned.
+check_index_plan_pins: OK
+
+=== textual worker contract ===
+textual worker contract: no synchronous run_worker targets; 340 post-await DOM lookup(s) in 161 function(s), none new; 5 baseline lookup(s) resolved; 69 wait-for-dismiss push(es) reachable from 27 non-worker entry point(s), none new.
+
+=== timestamp writers ===
+timestamp writers: 0 datetime.utcnow() site(s), 0 naive_now_iso, 99 offset_now_iso, 18 strftime_iso occurrence(s) (117 pinned).
+check_timestamp_writers: OK
+
+=== gated Tests/UI census ===
+OK: 122 Tests/UI files in the PR gate (floor 121); every listed path exists.
+
+preflight: all derived-artifact checks passed.
+rc=0

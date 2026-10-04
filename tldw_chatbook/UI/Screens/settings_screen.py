@@ -24972,7 +24972,10 @@ class SettingsScreen(BaseAppScreen):
             for node in event.widget.ancestors_with_self
         ):
             # TASK-33007.4: opening the Inspector's "config key" disclosure
-            # must keep naming the field the user was on.
+            # must keep naming the field the user was on. Traced: without
+            # this, the title's MouseDown focus resets the guide to its
+            # no-focus copy, which wraps 2 rows taller and moves the title
+            # out from under the pointer, so the click never reaches it.
             return
         active_category = self._active_category_id()
         widget_id = str(getattr(event.widget, "id", "") or "")
