@@ -1069,6 +1069,20 @@ edge you need in the winning rule, and measure `styles.margin` rather than
 reading the sheets. The same effect makes a `margin-bottom: 0` that sits next
 to `margin-left: 1` in the same rule redundant (`#remote-variant-sort`).
 
+## Widening `#card > .row` to `#card .row` also catches nested groups' rows
+
+**TASK-33007.6 fix round 1, 2026-10-04.** Task 6 moved two compact-workbench
+rows into Advanced disclosures, and it changed
+`#settings-providers-models-card > .settings-input-row` to a descendant selector
+so the rows still stacked at <=100 columns. That selector also matched Catalog
+refresh's per-provider rows and Custom endpoints' edit rows. Neither had matched
+before, and both have compact rules of their own. Each provider row gained the
+rule's `margin-bottom`, and the open catalog group grew from 71 to 96 rows at
+100x40. Full-screen captures cannot show this, because the rule applies only at
+<=100 columns. The fix names the containers that received the moved rows. When a
+selector follows rows into a new wrapper, list every row it matches before and
+after, by layout, height and `styles.margin`, at the width where it applies.
+
 ## An empty Static still takes its row: hide it, don't just clear it
 
 **TASK-33003.8, Chat settings choice rows, 2026-09-30.** Each provider-choice

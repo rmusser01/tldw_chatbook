@@ -643,6 +643,24 @@ import -- module import runs before the Tests/conftest.py config sandbox and
 dies on the real profile's `RecoveryRequired` instead of red-proofing
 anything.
 
+## That plugin's shared profile turns config-writing tests red together
+
+**TASK-33007.6 fix round 1, 2026-10-04.** The plugin above marks every node
+`bootstrap_profile`, and `Tests/conftest.py` gives all bootstrap nodes in one
+worker the same profile (`_BOOTSTRAP_CONFIG_ROOT`). Task 6 moved the Prompt-cache
+snapshot block and counted `test_llamacpp_snapshot_settings.py` as "11 base
+reds", so the move had no green guard. Under the plugin the file failed 11 of
+15 on both sides. Each of the 15 nodes passed in its own pytest process at base
+and at head. The failures were leaks between tests:
+- the malformed-preferences cases run first and leave `keep_count =
+  "broken-private-value"` in the shared config, so later cases raise
+  `ValidationError` or find the controls disabled;
+- `[size0]` saves `enabled = true`, so `[size1]`'s Space turns it off.
+
+A whole-file red under the plugin is not a base red for a test that writes
+config. Run such a file one node per process (each process gets a fresh
+bootstrap root) before calling its reds environmental.
+
 ## Compare against the branch's merge base, not whatever `origin/dev` is now
 
 **TASK-33005 final fix wave, 2026-10-02.** The branch was rebased onto
