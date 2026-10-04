@@ -3,6 +3,7 @@
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 
 import pytest
 
@@ -501,3 +502,123 @@ def test_transient_uncertainty_is_store_scoped_and_stale_owner_cannot_poison_rep
     finally:
         first_db.close()
         second_db.close()
+
+
+@pytest.mark.parametrize(
+    "replacement_owner, unknown_root",
+    [("replacement", False), ("replacement", True), ("owner", False)],
+)
+def test_late_recovery_cleanup_preserves_new_owner_uncertainty(
+    db, monkeypatch, replacement_owner, unknown_root
+):
+    from tldw_chatbook.DB.AgentRuns_DB import AgentRunsDB
+
+    old = db.automatic_work
+    old_root, old_source = source_run(db)
+    retired = prepare(db, old_source, "old-target", "retired")
+    assert old.accept_chat_start(retired.id, owner_id="owner")
+    assert old.complete_chat_start(retired.id, owner_id="owner")
+    old._restrict_chat_start(retired.id, owner_id="owner", chain_id=old_root)
+    peer = AgentRunsDB(db.db_path, client_id="replacement", reconcile_on_init=False)
+    committed, release = threading.Event(), threading.Event()
+    transaction = old.transaction
+
+    @contextmanager
+    def pause_after_real_commit():
+        with transaction() as conn:
+            yield conn
+        committed.set()
+        assert release.wait(10)
+
+    monkeypatch.setattr(old, "transaction", pause_after_real_commit)
+
+    def recover_old():
+        from tldw_chatbook.DB.base_db import operation_owned_connection
+
+        with operation_owned_connection(db):
+            return old.recover(current_owner_id="first-recovery")
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        recovery = pool.submit(recover_old)
+        try:
+            assert committed.wait(5)
+            ledger = peer.automatic_work
+            ledger.recover(current_owner_id=replacement_owner)
+            root = chain(
+                peer, conversation="replacement-source", submission="replacement"
+            )
+            source = peer.create_run(
+                conversation_id="replacement-source",
+                agent_kind="primary",
+                work_chain_id=root,
+            )
+            start = prepare(
+                peer, source, "target", "uncertain", owner_id=replacement_owner
+            )
+            assert ledger.accept_chat_start(start.id, owner_id=replacement_owner)
+            ledger._restrict_chat_start(
+                start.id,
+                owner_id=replacement_owner,
+                chain_id=None if unknown_root else root,
+            )
+            manual = chain(peer, conversation="manual", submission="manual")
+            if replacement_owner == "owner":
+                # Refresh a captured key after commit: this new unknown-root
+                # callback must not be retired as the earlier known-root entry.
+                ledger._restrict_chat_start(retired.id, owner_id="owner", chain_id=None)
+            before = ledger.snapshot(root)
+            assert before.status == "active" and before.used["generation"] == 1
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            release.set()
+            assert recovery.result(timeout=5) == 0
+            assert (
+                ledger.read_chat_start_attempt(
+                    start.id, owner_id=replacement_owner
+                ).state
+                == "accepted"
+            )
+            assert ledger.snapshot(root).used == before.used
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            if replacement_owner == "owner":
+                with pytest.raises(
+                    AutomaticWorkRefused, match="settlement_unconfirmed"
+                ):
+                    ledger.check_active(manual, owner_id=replacement_owner)
+                ledger._clear_chat_start_restriction(retired.id, owner_id="owner")
+                assert (
+                    ledger.check_active(manual, owner_id=replacement_owner).status
+                    == "active"
+                )
+            # Same-owner recovery has not reconciled the accepted uncertainty.
+            ledger.recover(current_owner_id=replacement_owner)
+            with pytest.raises(AutomaticWorkRefused, match="settlement_unconfirmed"):
+                prepare(peer, source, "sibling", "sibling", owner_id=replacement_owner)
+            assert not ledger.abort_chat_start(start.id, owner_id=replacement_owner)
+            assert not ledger.accept_chat_start(start.id, owner_id=replacement_owner)
+            # Verified settlement retains the original charge and root pause.
+            assert ledger.mark_chat_start_review_required(
+                start.id, owner_id=replacement_owner
+            )
+            with pytest.raises(AutomaticWorkRefused, match="interrupted_work"):
+                ledger.check_active(root, owner_id=replacement_owner)
+            assert ledger.snapshot(root).used == before.used
+            ledger.recover(current_owner_id="sequential-replacement")
+            healthy = chain(peer, conversation="healthy", submission="healthy")
+            assert (
+                ledger.check_active(healthy, owner_id="sequential-replacement").status
+                == "active"
+            )
+        finally:
+            release.set()
+            try:
+                recovery.result(timeout=5)
+            finally:
+                peer.automatic_work._clear_chat_start_restriction(
+                    "uncertain", owner_id=replacement_owner
+                )
+                peer.automatic_work._clear_chat_start_restriction(
+                    retired.id, owner_id="owner"
+                )
+                peer.close()

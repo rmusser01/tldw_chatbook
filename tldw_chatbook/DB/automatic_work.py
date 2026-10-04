@@ -39,7 +39,7 @@ _CLOCK_OWNER_ID = uuid4().hex
 
 # Failed durable settlement must deny the same runtime's sibling work, including
 # through another handle. Only identities live here; recovery remains durable.
-_UNCONFIRMED_STARTS: dict[tuple[str, str, str], str | None] = {}
+_UNCONFIRMED_STARTS: dict[tuple[str, str, str], tuple[str | None, object]] = {}
 _UNCONFIRMED_STARTS_LOCK = threading.RLock()
 
 
@@ -82,7 +82,7 @@ class AutomaticWorkLedger:
         with _UNCONFIRMED_STARTS_LOCK:
             _UNCONFIRMED_STARTS[
                 (self._restriction_database(), owner_id, attempt_id)
-            ] = chain_id
+            ] = (chain_id, object())
 
     def _clear_chat_start_restriction(self, attempt_id: str, *, owner_id: str) -> None:
         with _UNCONFIRMED_STARTS_LOCK:
@@ -98,8 +98,8 @@ class AutomaticWorkLedger:
         ).fetchone()
         with _UNCONFIRMED_STARTS_LOCK:
             members = tuple(
-                member
-                for (database, owner, _), member in _UNCONFIRMED_STARTS.items()
+                entry[0]
+                for (database, owner, _), entry in _UNCONFIRMED_STARTS.items()
                 if database == self._restriction_database()
                 and (current is None or owner == current["owner_id"])
             )
@@ -1181,6 +1181,7 @@ class AutomaticWorkLedger:
         but cannot grant the old owner new execution authority.
         """
         _identity(current_owner_id)
+        database = self._restriction_database()
         with self.transaction() as conn:
             # Revoke even completed owners: their surviving child callbacks
             # may otherwise look fully accounted and escape the unfinished scan.
@@ -1217,11 +1218,17 @@ class AutomaticWorkLedger:
                 "UPDATE automatic_work_chains SET status='review_required', pause_reason='interrupted_work' WHERE id=?",
                 [(chain_id,) for chain_id in chains],
             )
+            # Snapshot only the entries covered while this transaction owns
+            # recovery. Later recoveries/setters may run before our return.
+            with _UNCONFIRMED_STARTS_LOCK:
+                recovered_restrictions = tuple(
+                    (key, entry)
+                    for key, entry in _UNCONFIRMED_STARTS.items()
+                    if key[0] == database and key[1] != current_owner_id
+                )
         with _UNCONFIRMED_STARTS_LOCK:
-            for key in tuple(_UNCONFIRMED_STARTS):
-                if (
-                    key[0] == self._restriction_database()
-                    and key[1] != current_owner_id
-                ):
+            for key, entry in recovered_restrictions:
+                # A fresh write to even the same key is new uncertainty.
+                if _UNCONFIRMED_STARTS.get(key) is entry:
                     _UNCONFIRMED_STARTS.pop(key)
         return len(chains)
