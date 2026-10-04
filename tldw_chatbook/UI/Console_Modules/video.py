@@ -1220,10 +1220,16 @@ class ConsoleVideoController:
             )
             return
         inflight.add(session.id)
-        # Capture draft before clearing so we can restore it on failure.
-        composer = self._console_composer_or_none()
-        saved_draft = composer.draft_text() if composer is not None else ""
-        self._clear_console_composer_draft()
+        # Lazy: keeps command_draft off the boot path (ADR-097).
+        from .command_draft import (
+            restore_command_draft,
+            take_command_draft,
+            with_resend_hint,
+        )
+
+        taken = take_command_draft(
+            self._console_composer_or_none(), self._clear_console_composer_draft
+        )
         cancel_event = threading.Event()
         self._console_videogen_cancel_events()[session.id] = cancel_event
         message_id = str(uuid4())
@@ -1254,16 +1260,16 @@ class ConsoleVideoController:
                 video_store=self._ensure_console_video_store(),
             )
         except Exception as exc:  # noqa: BLE001 - reported to the user, never a bare crash
-            if composer is not None and saved_draft:
-                composer.clear_draft()
-                composer.insert_text_as_paste(saved_draft)
+            hint = restore_command_draft(self._console_composer_or_none(), taken)
             logger.error(
                 "Console video operation={} failed error_type={}",
                 "generation",
                 type(exc).__name__,
             )
             await self._append_native_console_system_message(
-                f"Video generation failed ({type(exc).__name__}).",
+                with_resend_hint(
+                    f"Video generation failed ({type(exc).__name__}).", hint
+                ),
                 session_id=session.id,
             )
         finally:

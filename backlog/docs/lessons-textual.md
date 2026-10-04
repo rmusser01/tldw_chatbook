@@ -1503,3 +1503,23 @@ treat `WorkerCancelled` as "over", not "broken". Test it with keys delivered
 the way the driver does (`_key`), and use a bounded `_pump_runs` poll on BOTH
 pumps (`Tests/UI/test_console_video_send_freeze.py`). Do not use Pilot here:
 its idle wait never returns while a pump is parked.
+
+**Third trap: unfreezing a flow makes its "nobody can act now" code
+reachable (checkpoint review of the same fix).** Once the hand-off kept the
+Console live during a generation, the user could type, switch chats or press
+Stop -- and `/generate-video`'s failure path, written when none of that was
+possible, ran `composer.clear_draft()` then pasted the saved command back. A
+review repro on the fix build (Enter the command → Generate → type "what about
+a sailboat?" → Stop) wiped the typed text with no undo, and after a chat switch
+it wiped the OTHER chat's draft, because every Console chat shares one
+composer. The pasted-back command was also unusable: a draft holding a paste is
+never parsed as a command, so Enter sent it to the model as chat. Five mounted
+tests went red on exactly that. `/generate-image` had the same code. The fix
+(`UI/Console_Modules/command_draft.py`): take only the revision the send
+captured (`commit_captured_draft`), and put it back only into the same draft
+scope while that is still empty. A chat switch, a load or another send always
+advances the composer's draft generation; typing does not. Restore with
+`restore_stashed_draft`, which brings back the original segments, so the draft
+is not marked as a paste. **When a fix lets the user act during something that
+used to block them, grep that flow for every save/clear/restore of shared UI
+state and ask what happens if they typed in between.**

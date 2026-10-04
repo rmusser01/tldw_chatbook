@@ -1707,19 +1707,45 @@ async def test_generate_image_handler_prompt_present_never_resolves_llm_context(
 
 
 class _FakeComposer:
-    """Minimal composer double: draft_text()/clear_draft()/insert_text_as_paste()."""
+    """Minimal composer double for the draft-revision API a command takes and
+    restores its draft through (``UI/Console_Modules/command_draft.py``):
+    text, user edit serial, and a draft generation that every scope change
+    (clear, commit, restore) advances."""
 
     def __init__(self, text: str = ""):
         self._text = text
+        self.edit_serial = 0
+        self._generation = 0
 
     def draft_text(self) -> str:
         return self._text
 
     def clear_draft(self) -> None:
         self._text = ""
+        self._generation += 1
 
-    def insert_text_as_paste(self, text: str) -> None:
-        self._text = text
+    def capture_draft_for_send(self):
+        if not self._text:
+            return None
+        return SimpleNamespace(
+            text=self._text, edit_serial=self.edit_serial, generation=self._generation
+        )
+
+    def capture_draft_snapshot(self):
+        return SimpleNamespace(generation=self._generation)
+
+    def commit_captured_draft(self, stash) -> bool:
+        if self._generation != stash.generation or not self._text.startswith(
+            stash.text
+        ):
+            return False
+        self._text = self._text[len(stash.text) :]
+        self._generation += 1
+        return True
+
+    def restore_stashed_draft(self, stash) -> None:
+        self._text = stash.text + self._text
+        self._generation += 1
 
 
 @pytest.mark.asyncio

@@ -34,6 +34,11 @@ writing them into your chat database.
   with **Enter** or the **Send** button: **Stop**, **F1** help, **Ctrl+Q**
   and other commands (`/stop`, `/help`, …) keep working. Sending the same
   unchanged draft again while its first run is still going does nothing.
+- If a generation fails or you stop it, the `/generate-video` command
+  comes back into the composer so **Enter** runs it again. If you have
+  typed something new or switched chats in the meantime, your new text is
+  left alone and the failure message shows the command to send again.
+  `/generate-image` works the same way.
 
 ### Backends
 

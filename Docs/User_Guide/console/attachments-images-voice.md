@@ -113,6 +113,11 @@ get: "No image generation backend configured. Set
 [image_generation].default_backend, or use /generate-image :backend
 <prompt>."
 
+If a batch fails, the command comes back into the composer so **Enter**
+runs it again. Anything you typed after sending it stays in the composer;
+if the composer has changed since (new text, another chat), your text is
+left alone and the failure message shows the command to send again.
+
 ### Voice dictation — the Mic button
 
 The **Mic** button walks through four states:

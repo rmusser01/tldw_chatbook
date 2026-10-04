@@ -1364,10 +1364,16 @@ class ConsoleImageController:
             )
             return
         inflight.add(session.id)
-        # Capture draft before clearing so we can restore it on zero-success.
-        composer = self._console_composer_or_none()
-        saved_draft = composer.draft_text() if composer is not None else ""
-        self._clear_console_composer_draft_fn()
+        # Lazy: keeps command_draft off the boot path (ADR-097).
+        from .command_draft import (
+            restore_command_draft,
+            take_command_draft,
+            with_resend_hint,
+        )
+
+        taken = take_command_draft(
+            self._console_composer_or_none(), self._clear_console_composer_draft_fn
+        )
         try:
             count = clamp_initial_batch(cfg.default_batch, cfg.max_variants_per_message)
             batch = await asyncio.to_thread(
@@ -1384,13 +1390,12 @@ class ConsoleImageController:
                 cfg_scale=prepared.cfg_scale,
             )
             if not batch.successes:
-                # Restore the saved draft so the user can edit and retry.
-                if composer is not None and saved_draft:
-                    composer.clear_draft()
-                    composer.insert_text_as_paste(saved_draft)
+                # Put the draft back so the user can edit and retry.
+                hint = restore_command_draft(self._console_composer_or_none(), taken)
                 detail = "; ".join(batch.errors) or "unknown error"
                 await self._append_native_console_system_message(
-                    f"Image generation failed: {detail}", session_id=session.id
+                    with_resend_hint(f"Image generation failed: {detail}", hint),
+                    session_id=session.id,
                 )
                 return
             ConsoleImageController._append_durable_generation_message(
@@ -1417,15 +1422,14 @@ class ConsoleImageController:
             # straight past the draft-restore logic -- the user's typed
             # prompt was gone with no way to recover it. Mirrors the
             # zero-success restore exactly.
-            if composer is not None and saved_draft:
-                composer.clear_draft()
-                composer.insert_text_as_paste(saved_draft)
+            hint = restore_command_draft(self._console_composer_or_none(), taken)
             logger.error(
                 "Image generation batch raised (exception_type={})",
                 type(exc).__name__,
             )
             await self._append_native_console_system_message(
-                f"Image generation failed: {exc}", session_id=session.id
+                with_resend_hint(f"Image generation failed: {exc}", hint),
+                session_id=session.id,
             )
         finally:
             inflight.discard(session.id)

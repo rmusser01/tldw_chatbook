@@ -50,6 +50,7 @@ from Tests.UI.test_console_hook_review_send_freeze import (
 )
 from Tests.UI.test_console_native_chat_flow import _configure_native_ready_console
 from tldw_chatbook.Chat.console_generate_video import PendingVideoArtifact
+from tldw_chatbook.UI.Console_Modules import image as image_module
 from tldw_chatbook.UI.Console_Modules import video as video_module
 from tldw_chatbook.UI.Workbench.help import WorkbenchHelpPanel
 from tldw_chatbook.Video_Generation import adapter_registry
@@ -137,12 +138,12 @@ def _send(route: str, app, console) -> None:
         _key(app, "enter", "\r")
 
 
-async def _load_draft(app, console, pilot) -> None:
+async def _load_draft(app, console, pilot, draft: str = DRAFT) -> None:
     composer = console._console_composer_or_none()
-    composer.load_draft(DRAFT)
+    composer.load_draft(draft)
     composer.focus()
     await pilot.pause()
-    assert composer.draft_text() == DRAFT
+    assert composer.draft_text() == draft
 
 
 def _cost_confirm(app):
@@ -203,10 +204,36 @@ def _dialogs_titled(app, title: str) -> list[ConfirmationDialog]:
     ]
 
 
+def _confirm_button(dialog) -> Button | None:
+    """``dialog``'s confirm button once the dialog has composed it, else None.
+
+    A pushed dialog is on ``app.screen_stack`` before its children exist, so
+    querying a button as soon as the dialog appears races its compose -- it
+    raised ``NoMatches`` in 2 of 6 loaded runs (TASK-33622.16 review)."""
+    if not dialog.is_mounted:
+        return None
+    return next(iter(dialog.query("#confirm-button").results(Button)), None)
+
+
+async def _press_confirm(app, title: str, why: str) -> None:
+    """Press the confirm button of the dialog titled ``title`` once it exists
+    -- a synthetic click its own pump handles."""
+
+    def button() -> Button | None:
+        dialogs = _dialogs_titled(app, title)
+        return _confirm_button(dialogs[-1]) if dialogs else None
+
+    assert await _until(lambda: button() is not None, 5), why
+    button().press()
+
+
 @contextlib.asynccontextmanager
-async def _console_sending_video(monkeypatch, route: str, backend: _PaidBackend):
-    """Run the real ``TldwCli`` on its Console, send ``DRAFT`` by ``route``
-    and yield ``(app, console, cleanups)``.
+async def _console_sending_video(
+    monkeypatch, route: str, backend, *, draft: str = DRAFT, configure=None
+):
+    """Run the real ``TldwCli`` on its Console, send ``draft`` by ``route``
+    and yield ``(app, console, cleanups)``. ``configure(console)`` installs
+    the backend stand-in (default: ``backend`` as the paid video backend).
 
     ``ChatScreen`` pushes the cost confirm on its ``app_instance``, which in
     a ``ConsoleHarness`` is a TldwCli that is not running -- the confirm never
@@ -231,8 +258,11 @@ async def _console_sending_video(monkeypatch, route: str, backend: _PaidBackend)
         ), "the Console composer never mounted"
         await pilot.pause(0.2)
         console = app.screen
-        _configure_paid_backend(monkeypatch, console, backend)
-        await _load_draft(app, console, pilot)
+        if configure is None:
+            _configure_paid_backend(monkeypatch, console, backend)
+        else:
+            configure(console)
+        await _load_draft(app, console, pilot, draft)
         _send(route, app, console)
         try:
             yield app, console, cleanups
@@ -244,8 +274,10 @@ async def _confirm_generate(app, route: str) -> None:
     """Answer the cost confirm with a synthetic click its own pump handles,
     so a test of a later leg reaches it even on dev, where the keyboard could
     not answer the confirm at all."""
-    confirm = await _wait_for_cost_confirm(app, route)
-    confirm.query_one("#confirm-button", Button).press()
+    await _wait_for_cost_confirm(app, route)
+    await _press_confirm(
+        app, COST_CONFIRM, f"{route}: the cost confirm has no Generate"
+    )
 
 
 async def _wait_for_storage_choice(app) -> ConsoleVideoCapacityModal:
@@ -396,12 +428,9 @@ async def test_the_storage_choice_after_an_enter_send_answers_its_keys(monkeypat
         await _assert_pumps_run(app, console, "F1 under the storage choice")
         assert app.screen is choice
         _key(app, "escape")
-        assert await _until(
-            lambda: bool(_dialogs_titled(app, "Discard generated video?")), 5
-        ), "Escape never reached the storage choice"
-        _dialogs_titled(app, "Discard generated video?")[0].query_one(
-            "#confirm-button", Button
-        ).press()
+        await _press_confirm(
+            app, "Discard generated video?", "Escape never reached the storage choice"
+        )
         assert await _until(lambda: app.screen is console, 5)
         assert await _until(lambda: _video_idle(console), 5), (
             "the discarded video's send never settled"
@@ -549,3 +578,267 @@ async def test_a_command_whose_modal_wait_is_cancelled_ends_quietly(monkeypatch)
         await asyncio.sleep(0.3)
         _send("send-button", app, console)
         assert await _until(lambda: len(_dialogs_titled(app, COST_CONFIRM)) == 1, 5)
+
+
+# -- the draft a failed generation puts back ---------------------------------
+#
+# The hand-off keeps the Console live while a generation runs, so the user can
+# type, switch chats and press Stop -- none of which dev's parked pumps let
+# them do. The command takes its own draft when the paid work starts and puts
+# it back when that work fails; that put-back must never overwrite what the
+# user has done since, and must come back as a command, not a paste (a
+# paste-bearing draft is never parsed as one).
+
+TYPED = "what about a sailboat"
+IMAGE_DRAFT = "/generate-image a red fox asleep in the snow"
+
+
+def _type(app, text: str) -> None:
+    for char in text:
+        _key(app, "space" if char == " " else char, char)
+
+
+def _record_system_messages(monkeypatch, console) -> list[tuple[str, str | None]]:
+    said: list[tuple[str, str | None]] = []
+    original = console._append_native_console_system_message
+
+    async def _record(message, *, session_id=None):
+        said.append((message, session_id))
+        await original(message, session_id=session_id)
+
+    monkeypatch.setattr(console, "_append_native_console_system_message", _record)
+    return said
+
+
+async def _generation_took_the_draft(app, console, backend, route: str):
+    await _confirm_generate(app, route)
+    assert await _until(backend.started.is_set, 10), (
+        f"{route}: Generate never started the generation"
+    )
+    composer = console._console_composer_or_none()
+    assert await _until(lambda: composer.draft_text() == "", 5), (
+        f"{route}: the generation never took its draft"
+    )
+    return composer
+
+
+async def _type_into(app, composer, text: str) -> None:
+    composer.focus()
+    await asyncio.sleep(0.1)
+    _type(app, text)
+    assert await _until(lambda: composer.draft_text() == text, 5), (
+        f"typing during the generation never reached the composer: "
+        f"{composer.draft_text()!r}"
+    )
+
+
+def _said_how_to_resend(said, command: str, session_id: str) -> bool:
+    return any(command in message and sid == session_id for message, sid in said)
+
+
+@pytest.mark.parametrize("route", ROUTES)
+async def test_stop_keeps_a_draft_typed_during_the_generation(route, monkeypatch):
+    """Review blocker: typing while a video generates, then Stop, wiped the
+    typed text -- the failure path cleared the composer and pasted the
+    command back. The typed draft stays, and the failure row carries the
+    command so it can be sent again."""
+    backend = _PaidBackend()
+    async with _console_sending_video(monkeypatch, route, backend) as (
+        app,
+        console,
+        _cleanups,
+    ):
+        said = _record_system_messages(monkeypatch, console)
+        origin = console._ensure_console_chat_store().active_session_id
+        composer = await _generation_took_the_draft(app, console, backend, route)
+        await _type_into(app, composer, TYPED)
+        stop = console.query_one("#console-stop-generation", Button)
+        assert await _until(lambda: stop.display and not stop.disabled, 5)
+        stop.press()
+        assert await _until(backend.cancelled.is_set, 5)
+        assert await _until(lambda: _video_idle(console), 5)
+        await asyncio.sleep(0.3)
+        assert composer.draft_text() == TYPED, (
+            f"{route}: Stop overwrote the draft typed during the generation: "
+            f"{composer.draft_text()!r}"
+        )
+        assert not composer.has_paste_segments()
+        assert _said_how_to_resend(said, DRAFT, origin), (
+            f"{route}: the failure never said how to send the command again: {said}"
+        )
+
+
+async def test_a_failed_generation_puts_the_command_back_ready_to_resend(monkeypatch):
+    """With nothing typed since, a failure puts the command back as the
+    literal draft it was -- not a paste, which the send never parses as a
+    command (Enter would have sent it to the model as a chat prompt) -- so
+    Enter runs it again."""
+    backend = _PaidBackend()
+    async with _console_sending_video(monkeypatch, "enter", backend) as (
+        app,
+        console,
+        _cleanups,
+    ):
+        composer = await _generation_took_the_draft(app, console, backend, "enter")
+        backend.release.set()  # the stand-in fails once released
+        assert await _until(lambda: _video_idle(console), 5)
+        assert await _until(lambda: composer.draft_text() == DRAFT, 5), (
+            f"the failed command never came back: {composer.draft_text()!r}"
+        )
+        assert not composer.has_paste_segments(), (
+            "the command came back as a paste, so Enter would send it as chat"
+        )
+        composer.focus()
+        await asyncio.sleep(0.2)
+        _key(app, "enter", "\r")
+        assert await _until(lambda: _cost_confirm(app) is not None, 10), (
+            "Enter on the restored draft never re-ran /generate-video"
+        )
+        _key(app, "escape")
+        assert await _until(lambda: app.screen is console, 5)
+
+
+@pytest.mark.parametrize("other_draft", ["", TYPED], ids=["empty", "typed"])
+async def test_a_failed_generation_never_writes_into_the_chat_switched_to(
+    other_draft, monkeypatch
+):
+    """Review aggravation: the composer is shared by every Console chat, so
+    a failure after a switch cleared the OTHER chat's draft and pasted the
+    command into it. That chat's draft stays as it is -- empty or typed;
+    the origin chat is told how to send the command again."""
+    backend = _PaidBackend()
+    async with _console_sending_video(monkeypatch, "enter", backend) as (
+        app,
+        console,
+        _cleanups,
+    ):
+        said = _record_system_messages(monkeypatch, console)
+        origin = console._ensure_console_chat_store().active_session_id
+        composer = await _generation_took_the_draft(app, console, backend, "enter")
+        other = console._ensure_console_chat_controller().new_session().id
+        await console._sync_native_console_chat_ui()
+        assert await _until(
+            lambda: console._console_visible_draft_session_id == other, 5
+        ), "the Console never switched to the new chat"
+        if other_draft:
+            await _type_into(app, composer, other_draft)
+        backend.release.set()  # the stand-in fails once released
+        assert await _until(lambda: _video_idle(console), 5)
+        await asyncio.sleep(0.3)
+        assert composer.draft_text() == other_draft, (
+            f"the failure wrote into the chat switched to: {composer.draft_text()!r}"
+        )
+        assert not composer.has_paste_segments()
+        assert _said_how_to_resend(said, DRAFT, origin), said
+
+
+class _BlockingImageBatch:
+    """Stand-in for ``run_generation_batch``: blocks until released, then
+    raises, the way an unreachable backend does after its timeout."""
+
+    def __init__(self) -> None:
+        self.started = threading.Event()
+        self.release = threading.Event()
+
+    def __call__(self, **_kwargs):
+        self.started.set()
+        self.release.wait(30)
+        raise RuntimeError("image backend unreachable")
+
+
+def _configure_image_backend(monkeypatch, batch: _BlockingImageBatch):
+    def configure(_console) -> None:
+        monkeypatch.setattr(
+            image_module,
+            "get_image_generation_config",
+            lambda: SimpleNamespace(
+                default_backend="swarmui",
+                default_batch=1,
+                max_variants_per_message=8,
+                context_llm_enabled=False,
+                context_llm_turns=10,
+                context_llm_timeout_seconds=15.0,
+            ),
+        )
+        monkeypatch.setattr(
+            image_module,
+            "list_image_models_for_catalog",
+            lambda: [{"name": "swarmui", "is_configured": True}],
+        )
+        monkeypatch.setattr(image_module, "run_generation_batch", batch)
+
+    return configure
+
+
+async def test_a_failed_image_batch_keeps_a_draft_typed_while_it_ran(monkeypatch):
+    """``/generate-image`` takes and puts back its draft the same way, and an
+    Enter send no longer parks the pump under it, so the same typed-text wipe
+    was reachable there."""
+    batch = _BlockingImageBatch()
+    async with _console_sending_video(
+        monkeypatch,
+        "enter",
+        batch,
+        draft=IMAGE_DRAFT,
+        configure=_configure_image_backend(monkeypatch, batch),
+    ) as (app, console, _cleanups):
+        said = _record_system_messages(monkeypatch, console)
+        origin = console._ensure_console_chat_store().active_session_id
+        assert await _until(batch.started.is_set, 10), "the image batch never ran"
+        composer = console._console_composer_or_none()
+        assert await _until(lambda: composer.draft_text() == "", 5)
+        await _type_into(app, composer, TYPED)
+        batch.release.set()
+        assert await _until(
+            lambda: not console._image._console_imagegen_inflight_sessions(), 5
+        )
+        await asyncio.sleep(0.3)
+        assert composer.draft_text() == TYPED, (
+            f"the failed image batch overwrote the typed draft: "
+            f"{composer.draft_text()!r}"
+        )
+        assert _said_how_to_resend(said, IMAGE_DRAFT, origin), said
+
+
+async def test_an_image_command_takes_only_the_draft_its_send_captured(monkeypatch):
+    """``/generate-image`` awaits its prompt preparation before it takes its
+    draft, and the hand-off lets keys typed right after Enter land in that
+    window. The command takes only the draft its send captured -- what was
+    typed after the keypress stays in the composer -- where it used to take
+    the whole live draft with it."""
+    batch = _BlockingImageBatch()
+    preparing = threading.Event()
+    prepared = threading.Event()
+    real_prepare = image_module.prepare_generation_request
+
+    def slow_prepare(*args, **kwargs):
+        preparing.set()
+        prepared.wait(30)
+        return real_prepare(*args, **kwargs)
+
+    configure_backend = _configure_image_backend(monkeypatch, batch)
+
+    def configure(console) -> None:
+        configure_backend(console)
+        monkeypatch.setattr(image_module, "prepare_generation_request", slow_prepare)
+
+    try:
+        async with _console_sending_video(
+            monkeypatch, "enter", batch, draft=IMAGE_DRAFT, configure=configure
+        ) as (app, console, _cleanups):
+            assert await _until(preparing.is_set, 10), "the command never ran"
+            composer = console._console_composer_or_none()
+            _type(app, " " + TYPED)
+            assert await _until(
+                lambda: composer.draft_text() == f"{IMAGE_DRAFT} {TYPED}", 5
+            ), (
+                f"typing after Enter never reached the composer: {composer.draft_text()!r}"
+            )
+            prepared.set()
+            assert await _until(batch.started.is_set, 10), "the image batch never ran"
+            await asyncio.sleep(0.3)
+            assert composer.draft_text() == f" {TYPED}", (
+                f"the command took text typed after its send: {composer.draft_text()!r}"
+            )
+    finally:
+        prepared.set()

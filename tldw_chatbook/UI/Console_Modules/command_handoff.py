@@ -13,8 +13,12 @@ a parked Console pump could not handle the Stop button that cancels the run.
 
 So every command runs in a Console worker and the send returns at once, the
 same way from every route (a spoken "Console, send." too: a command is never
-"sent", so it has no outcome to wait for). A command's captured draft stays in
-the composer until the command itself takes it, as before.
+"sent", so it has no outcome to wait for). The one exception is an
+argument-free ``/rewind``, which the send still runs itself: it opens its
+picker with a ``push_screen`` callback and never waits on it. A command's captured draft stays in
+the composer until the command itself takes it, as before -- and the worker
+carries that capture, so the command takes only that revision
+(``command_draft``).
 
 Handing off lets a second press of the same draft arrive while the first
 command is still running -- on a parked pump it queued behind it and found the
@@ -32,6 +36,8 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 from textual.worker import WorkerCancelled
+
+from .command_draft import CAPTURED_COMMAND_DRAFT
 
 if TYPE_CHECKING:
     from tldw_chatbook.Chat.console_command_grammar import CommandParse
@@ -68,7 +74,9 @@ def run_console_command(
         logger.debug("Console command repeat dropped while its first run is in flight")
         return
     in_flight.add(key)
-    command = _dispatch_then_release(screen, parse, in_flight, key)
+    command = _dispatch_then_release(
+        screen, parse, in_flight, key, None if isinstance(captured, str) else captured
+    )
     try:
         screen.run_worker(command, group=COMMAND_WORKER_GROUP, exclusive=False)
     except BaseException:
@@ -78,8 +86,14 @@ def run_console_command(
 
 
 async def _dispatch_then_release(
-    screen: Any, parse: CommandParse, in_flight: set[tuple], key: tuple
+    screen: Any,
+    parse: CommandParse,
+    in_flight: set[tuple],
+    key: tuple,
+    stash: ConsoleDraftStash | None,
 ) -> None:
+    # Set inside the worker's own task, so it is this command's alone.
+    CAPTURED_COMMAND_DRAFT.set(stash)
     try:
         await screen._dispatch_console_command(parse)
     except WorkerCancelled:
