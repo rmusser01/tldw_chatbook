@@ -169,5 +169,11 @@ reuse-decision unit files passed **40 tests**.
 
 The changed tests pass Ruff and all four Python paths pass formatting.
 Workspace's 69 inherited Ruff diagnostics match the exact base, with none added.
+After rebasing onto `dev 9878fd251a`, the four-file gate passed **69 tests**
+in 210.09 seconds with no warnings and no diagnostic plugin. All eleven
+derived-artifact guards passed; the first sandboxed attempt could not obtain
+the pinned Mermaid input, and the network-enabled rerun verified its hashes
+and completed successfully. Changed-path Ruff, formatting, and whitespace
+checks also passed after the rebase.
 Native terminal, Windows, participant, and deferred performance qualifications
 remain open. TASK-31245 remains In Progress.

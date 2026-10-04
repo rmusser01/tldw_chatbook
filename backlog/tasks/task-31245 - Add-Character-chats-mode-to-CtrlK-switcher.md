@@ -5,7 +5,7 @@ status: In Progress
 assignee:
   - '@codex'
 created_date: '2026-09-04 02:09'
-updated_date: '2026-10-04 14:46'
+updated_date: '2026-10-04 14:51'
 labels:
   - console
   - switcher
@@ -105,6 +105,8 @@ Bounded verification follow-up: a repeated unit-plus-installed-History run showe
 Final queued-worker correction uses functools.partial of the async refresh method; Textual rejects ordinary lambdas (caught by seven actual-worker failures and reviewer before publication). Unit regression now checks deferred creation plus async-callable compatibility and captured query. Final12unit+14installed+41activity gate67passed47.28s/no warnings; descriptor plateau unchanged. All added test Ruff/format checks and whitespace pass; preflight clear and no new workspace diagnostics. Ready for remote review/check gate; no native or GC qualification waiver.
 
 2026-10-04: Reproduced and repaired Character activation rejecting a coalesced broad Console sync before its transcript publication. Await the existing transcript renderer before focus and strict exact-ready proof; authority, rollback, cancellation, and modal ownership unchanged. Deterministic installed regression valid RED then GREEN; reuse/mode gate 15 passed, presentation ownership 14 passed after explicit private-profile marker, activation/reuse unit gate 40 passed. Independent review found no production blocker and its rollback-fixture coverage finding was corrected. Changed tests Ruff clean; four Python paths format clean; no added workspace lint diagnostics. Existing ADR-120 applies, no new ADR. QA receipt in Docs/QA/task-31245/switcher-reuse-and-mode-follow-up.md; lesson in lessons-console-wiring.md. Native/Windows/participant/performance gaps remain open and task remains In Progress.
+
+Post-rebase verification on dev 9878fd251a: all four affected test files passed together, 69 passed in 210.09s with no warnings or diagnostic plugin. All eleven derived-artifact guards passed; sandboxed pinned-input network failure was resolved by an authorized network-enabled verification rerun. Changed-path static and whitespace checks remain green.
 <!-- SECTION:NOTES:END -->
 
 ### Approved native follow-up — 2026-09-07
