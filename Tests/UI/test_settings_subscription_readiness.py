@@ -170,8 +170,10 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         assert credential_io.readers[0] != threading.get_ident()
+        # TASK-33007.2, rewritten on purpose: the Credentials status line is
+        # gone; the API key row's help carries the subscription copy.
         await wait_for_copy(
-            screen, "#settings-provider-credential-status", "Checking Claude"
+            screen, "#settings-provider-api-key-help", "Checking Claude"
         )
         model = screen.query_one("#settings-model-value", Input)
         model.value = "unsaved-model"
@@ -183,7 +185,7 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
         )
         credential_io.release.set()
         await wait_for_copy(
-            screen, "#settings-provider-credential-status", "Claude subscription"
+            screen, "#settings-provider-api-key-help", "Claude subscription"
         )
         # TASK-33002.2: labelled rows; the Config row states the outcome.
         await wait_for_copy(
@@ -211,7 +213,7 @@ async def test_settings_provider_check_refreshes_and_preserves_unsaved_fields(
             screen, "#settings-provider-test-result", "Anthropic is configured"
         )
         credential_io.clock[0] = 102.0
-        await wait_for_copy(screen, "#settings-provider-credential-status", "expired")
+        await wait_for_copy(screen, "#settings-provider-api-key-help", "expired")
         await wait_for_copy(screen, "#settings-provider-test-result", "expired")
         result = str(
             screen.query_one("#settings-provider-test-result", Static).renderable
@@ -250,11 +252,15 @@ async def test_settings_late_subscription_result_does_not_replace_edited_draft(
                 await asyncio.sleep(0.01)
         await pilot.pause(0.3)
         status = str(
-            screen.query_one("#settings-provider-credential-status", Static).renderable
+            screen.query_one("#settings-provider-api-key-help", Static).renderable
         )
         assert screen._provider_test_result == before
         if changed_field == "provider":
-            assert "local config key saved" in status
+            # TASK-33007.2, rewritten on purpose: the API key row's Source
+            # word says where the key is; its help no longer repeats it.
+            assert str(
+                screen.query_one("#settings-provider-key-status", Static).renderable
+            ) == "saved in config"
             assert "Claude" not in status
             assert (
                 screen.query_one("#settings-provider-value", Select).value == "openai"
@@ -282,7 +288,7 @@ async def test_settings_missing_subscription_reports_owner_recovery_after_comple
         credential_io.release.set()
         await wait_for_copy(
             screen,
-            "#settings-provider-credential-status",
+            "#settings-provider-api-key-help",
             "missing; log in with Claude Code",
         )
         await wait_for_copy(

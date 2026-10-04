@@ -13,11 +13,15 @@ constants below safe.
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from functools import partial
 from typing import TYPE_CHECKING
 
+from textual import events
+from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
+from textual.css.query import QueryError
 from textual.widgets import (
     Button,
     Checkbox,
@@ -39,16 +43,25 @@ from ...Chat.custom_endpoint_registry import (
     load_custom_endpoints,
 )
 from ...Chat.provider_catalog import provider_display_name
-from ...Chat.provider_readiness import provider_config_key
+from ...Chat.provider_readiness import (
+    default_api_key_env_var,
+    get_provider_readiness,
+    provider_config_key,
+)
 from ...config import provider_settings_for_key
 from ...LLM_Provider_Catalog.model_catalog_settings import (
     AUTO_REFRESH_PROVIDER_LIST_KEYS,
 )
+from ...Widgets.model_search_picker import PickerSearchInput
 from ..Screens.settings_context_memory import model_context_window_state
-from ..Screens.settings_provider_view_model import custom_endpoint_rows
+from ..Screens.settings_provider_view_model import (
+    custom_endpoint_rows,
+    provider_picker_summary,
+)
 from ..Screens.settings_screen import (
     ANTHROPIC_API_KEY_GUIDANCE_COPY,
     ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY,
+    API_URL_PROVIDER_KEYS,
     INSTANT_APPLY_BEHAVIOR_COPY,
     MODEL_DISCOVERY_CAPABILITY_WARNING,
     MODEL_DISCOVERY_EMPTY_COPY,
@@ -66,13 +79,353 @@ from ..Screens.settings_screen import (
     _anthropic_auth_source_options,
     _anthropic_auth_sources,
     _fold_long_tokens,
-    _ProviderTestResult,
 )
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
 
     from ..Screens.settings_screen import SettingsScreen
+
+
+#: TASK-33007.2: the Source word for where the shown provider or model comes
+#: from (spec §6 row grammar). Keys are exactly the sources
+#: ``resolve_effective_provider_model`` returns (TASK-1310: a stale key once
+#: rendered a raw fallback label here).
+SELECTION_SOURCE_WORDS = {
+    "settings_draft": "edited *",
+    "chat_defaults": "new-chat default",
+    "console_session": "this chat",
+    "default": "built-in",
+}
+#: The Key check row's action, labelled with the key that runs it (AC#6).
+KEY_CHECK_ACTION_LABEL = "Test (t)"
+#: ADR-012:29: the env var is the safer path, and the field holds a name.
+ENV_VAR_HELP_COPY = "safer: keeps keys out of config.toml"
+PROVIDER_CONTROL_TOOLTIP = (
+    "Type to filter providers by name or ID; Up/Down move, Enter chooses, "
+    "Esc keeps the current provider."
+)
+#: Focus can pass to the list's parent on a click; the list closes only
+#: once focus has really left the control (ModelSearchPicker's delay).
+_BLUR_CLOSE_DELAY_SECONDS = 0.05
+
+
+class ProviderFilterInput(PickerSearchInput):
+    """The one-row Provider control (TASK-33007.2 AC#1, AC#3).
+
+    It shows the chosen provider's name. Typing filters the list under it,
+    which never takes focus, so the control is one Tab stop: Up/Down move
+    the list's highlight, Enter chooses, and Escape keeps the current
+    provider.
+    """
+
+    BINDINGS = [
+        Binding("down", "move_highlight(1)", "Next provider", show=False),
+        Binding("up", "move_highlight(-1)", "Previous provider", show=False),
+    ]
+
+    def _picker(self) -> OptionList:
+        return self.screen.query_one("#settings-provider-picker", OptionList)
+
+    def action_move_highlight(self, step: int) -> None:
+        """Open the list, or move its highlight by one row.
+
+        Args:
+            step: 1 for the next row, -1 for the previous one.
+        """
+        picker = self._picker()
+        if not picker.display:
+            open_provider_list(self.screen)
+        elif step > 0:
+            picker.action_cursor_down()
+        else:
+            picker.action_cursor_up()
+
+    async def action_submit(self) -> None:
+        """Choose the highlighted provider while the list is open."""
+        picker = self._picker()
+        if picker.display:
+            picker.action_select()
+
+    def _on_key(self, event: events.Key) -> None:
+        if event.key == "escape" and self._picker().display:
+            # Input's own handlers never see it: the list closes instead.
+            event.prevent_default()
+            event.stop()
+            close_provider_list(self.screen)
+            self.select_all()  # The next keystroke filters afresh.
+
+    def _on_blur(self, event: events.Blur) -> None:
+        self.set_timer(_BLUR_CLOSE_DELAY_SECONDS, self._close_after_blur)
+
+    def _close_after_blur(self) -> None:
+        if self.is_mounted and not self.has_focus:
+            close_provider_list(self.screen)
+
+
+def open_provider_list(screen: SettingsScreen) -> None:
+    """Show the provider list, filtered by what the control holds.
+
+    Args:
+        screen: The Settings screen that owns the list.
+    """
+    try:
+        screen.query_one("#settings-provider-picker", OptionList).display = True
+    except QueryError:
+        return
+    screen._refresh_provider_picker()
+
+
+def close_provider_list(screen: SettingsScreen) -> None:
+    """Hide the list and show the chosen provider's name in the control.
+
+    Args:
+        screen: The Settings screen that owns the list.
+    """
+    try:
+        screen.query_one("#settings-provider-picker", OptionList).display = False
+    except QueryError:
+        return
+    if not sync_provider_control(screen):
+        screen._refresh_provider_picker("")
+
+
+def shown_provider_label(screen: SettingsScreen) -> str:
+    """Return the name the Provider control shows at rest.
+
+    Args:
+        screen: The Settings screen holding the draft.
+
+    Returns:
+        The display name of the provider the form holds (its draft, else the
+        saved or navigated one), or "" when none is chosen.
+    """
+    provider = str(screen._provider_display_setting_values().get("provider") or "")
+    return screen._provider_display_label(provider) if provider.strip() else ""
+
+
+def sync_provider_control(screen: SettingsScreen) -> bool:
+    """Show the chosen provider's display name unless the user is choosing.
+
+    Args:
+        screen: The Settings screen that owns the control.
+
+    Returns:
+        Whether the name changed (the list was then rebuilt unfiltered).
+    """
+    try:
+        control = screen.query_one("#settings-provider-search", Input)
+        picker = screen.query_one("#settings-provider-picker", OptionList)
+    except QueryError:
+        return False
+    if picker.display:
+        return False
+    label = shown_provider_label(screen)
+    if control.value == label:
+        return False
+    with control.prevent(Input.Changed):
+        control.value = label
+    if control.has_focus:
+        control.select_all()  # After a choice, typing filters afresh.
+    screen._refresh_provider_picker("")
+    return True
+
+
+def selection_source_word(source: object) -> str:
+    """Return the Source word for a provider or model source.
+
+    Args:
+        source: An ``EffectiveProviderModel`` source key.
+
+    Returns:
+        E.g. "new-chat default" or "edited *".
+    """
+    return SELECTION_SOURCE_WORDS.get(str(source or ""), "built-in")
+
+
+def api_key_row_copy(screen: SettingsScreen, provider: str) -> tuple[str, str]:
+    """Say where the provider's key comes from, in words (ADR-012:29).
+
+    Args:
+        screen: The Settings screen holding the draft.
+        provider: The provider the form holds.
+
+    Returns:
+        The API key row's Source word and its one-line help.
+    """
+    # TASK-34201: an unsaved Sign in with choice shows before Save.
+    readiness = get_provider_readiness(
+        provider,
+        screen._provider_auth_readiness_config(provider),
+        background_credentials=True,
+    )
+    registry = screen._provider_registry_credential_text(provider, readiness)
+    if registry is not None:
+        return "this endpoint", registry
+    if readiness.subscription_status is not None:
+        return "subscription", screen._subscription_credential_copy(
+            readiness.subscription_status
+        )
+    if readiness.reason == "Invalid provider settings":
+        return "invalid", "repair in Advanced Config or config.toml"
+    draft = screen._provider_draft()
+    if draft is not None and "api_key" in draft.dirty_keys:
+        if str(draft.values.get("api_key") or "").strip():
+            return "edited *", "masked · s saves it to config"
+        return "cleared *", "s removes the saved key"
+    if screen._provider_saved_api_key_present(provider):
+        return "saved in config", "masked · used before the env var"
+    if (readiness.api_key_source or "").startswith("env:"):
+        return "from env var", f"{readiness.env_var} in your shell"
+    if not readiness.requires_api_key:
+        return "not required", "this provider needs no key"
+    if readiness.env_var:
+        return "missing", f"paste one, or set {readiness.env_var}"
+    return "missing", "paste one to save it in config"
+
+
+def env_var_source_word(screen: SettingsScreen, provider: str, env_var: str) -> str:
+    """Say whether the key's env var is set in this shell.
+
+    Args:
+        screen: The Settings screen holding the draft.
+        provider: The provider the form holds.
+        env_var: The Env var field's value; blank means the default name.
+
+    Returns:
+        The Env var row's Source word.
+    """
+    if screen._provider_is_registry_id(provider):
+        return "this endpoint"
+    draft = screen._provider_draft()
+    if draft is not None and "credential_env_var" in draft.dirty_keys:
+        return "edited *"
+    name = env_var.strip() or default_api_key_env_var(provider_config_key(provider))
+    if not name:
+        return "not used"
+    return "set in shell" if os.environ.get(name, "").strip() else "not set"
+
+
+def endpoint_row_copy(
+    screen: SettingsScreen, provider: str, endpoint: str
+) -> tuple[str, str]:
+    """Say where the endpoint comes from and what a blank field means.
+
+    Args:
+        screen: The Settings screen holding the draft.
+        provider: The provider the form holds.
+        endpoint: The Endpoint field's value.
+
+    Returns:
+        The Endpoint row's Source word and its one-line help.
+    """
+    registry = screen._provider_registry_endpoint(provider)
+    if registry is not None:
+        url = registry[1] or "endpoint not found"
+        return "this endpoint", f"{url} · edit in Custom endpoints"
+    provider_key = provider_config_key(provider)
+    draft = screen._provider_draft()
+    if draft is not None and "endpoint" in draft.dirty_keys:
+        word = "edited *"
+    elif endpoint.strip():
+        word = "config"
+    elif provider_key in API_URL_PROVIDER_KEYS:
+        word = "not set"
+    else:
+        word = "built-in"
+    if provider_key in API_URL_PROVIDER_KEYS:
+        return word, "required: the server's base URL"
+    return word, "blank uses the provider default"
+
+
+def key_check_verdict(screen: SettingsScreen) -> str:
+    """Return this provider's latest readiness word (AC#6, spec §5).
+
+    The last check's Readiness row while it describes the draft; otherwise
+    the word the shared evidence gives the draft, e.g. 'Ready · not tested'.
+
+    Args:
+        screen: The Settings screen holding the draft and its evidence.
+
+    Returns:
+        The Key check row's verdict.
+    """
+    label, _gap, word = screen._provider_test_result.partition("\n")[0].partition(" ")
+    if label == "Readiness" and word.strip():
+        return word.strip()
+    provider = screen._provider_widget_value()
+    try:
+        model = screen.query_one("#settings-model-value", Input).value.strip()
+    except QueryError:
+        model = str(screen._provider_setting_values_mapping().get("model") or "")
+    try:
+        staged = screen._provider_test_staged_config(provider)
+        readiness = get_provider_readiness(
+            provider, staged, background_credentials=True
+        )
+    except ValueError:
+        # A draft env var name readiness rejects is the Env var row's error
+        # to show; the verdict falls back to the saved settings meanwhile.
+        readiness = get_provider_readiness(
+            provider,
+            screen._provider_readiness_app_config(),
+            background_credentials=True,
+        )
+    identity = screen._provider_current_draft_identity()
+    evidence = (
+        screen._provider_evidence_store().evidence_for(identity)
+        if identity is not None
+        else None
+    )
+    rows = screen._provider_test_rows(
+        readiness, display_name="", model=model.strip(), endpoint="", evidence=evidence
+    )
+    return rows[0][1]
+
+
+def refresh_connect_rows(screen: SettingsScreen, provider: str, endpoint: str) -> None:
+    """Re-say every Connect row's Source word, help and verdict.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        provider: The provider the form holds.
+        endpoint: The Endpoint field's value.
+    """
+    resolved = screen._resolve_provider_model_for_settings()
+    sync_provider_control(screen)
+    screen._set_static_text(
+        "#settings-provider-source", selection_source_word(resolved.provider_source)
+    )
+    screen._set_static_text(
+        "#settings-model-source", selection_source_word(resolved.model_source)
+    )
+    try:
+        env_var = screen.query_one(
+            "#settings-provider-credential-env-var", Input
+        ).value
+    except QueryError:
+        env_var = ""
+    screen._set_static_text(
+        "#settings-provider-env-var-source",
+        env_var_source_word(screen, provider, env_var),
+    )
+    endpoint_word, endpoint_help = endpoint_row_copy(screen, provider, endpoint)
+    screen._set_static_text("#settings-provider-endpoint-source", endpoint_word)
+    screen._set_static_text("#settings-provider-endpoint-help", endpoint_help)
+    refresh_key_rows(screen, provider)
+
+
+def refresh_key_rows(screen: SettingsScreen, provider: str) -> None:
+    """Re-say the API key row's source and the Key check verdict.
+
+    Args:
+        screen: The Settings screen that owns the card.
+        provider: The provider the form holds.
+    """
+    key_word, key_help = api_key_row_copy(screen, provider)
+    screen._set_static_text("#settings-provider-key-status", key_word)
+    screen._set_static_text("#settings-provider-api-key-help", key_help)
+    screen._set_static_text("#settings-provider-readiness", key_check_verdict(screen))
 
 
 def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
@@ -160,37 +513,51 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 id="settings-snapshot-result",
                 classes="settings-help-copy",
             )
-        # task-189: the Connect block (provider, model, endpoint,
-        # credentials, readiness/test) leads; sampling and tuning live in
-        # the collapsed "Generation defaults" disclosure below it.
+        # TASK-33007.2: Connect is one row per fact -- Provider, API key, Env
+        # var, Endpoint -- each with a Source word and a one-line help, and it
+        # ends in the Key check row. The Test result's labelled rows live in
+        # the Inspector's Key block, so a test never pushes Default model down.
         yield Static(
             "Connect",
             id="settings-provider-connect-title",
             classes="destination-section",
         )
-        with Vertical(id="settings-provider-picker-block"):
+        picker_groups = screen._provider_picker_groups()
+        with Horizontal(id="settings-provider-row", classes="settings-input-row"):
             yield Static("Provider", classes="settings-input-label")
-            yield Input(
+            yield ProviderFilterInput(
+                value=shown_provider_label(screen),
                 id="settings-provider-search",
-                placeholder="Search providers by name or ID",
+                classes="settings-compact-input",
+                placeholder="Type to filter providers",
+                tooltip=PROVIDER_CONTROL_TOOLTIP,
             )
-            picker = OptionList(
-                *screen._provider_picker_options(screen._provider_picker_groups()),
-                id="settings-provider-picker",
-                compact=True,
-            )
-            # task-16480: compose-time highlight so the configured
-            # provider is selected on the very first paint; the
-            # post-refresh highlight arrives too early (pre-mount) to
-            # serve as the only source.
-            screen._apply_provider_picker_highlight(picker)
-            yield picker
             yield Static(
-                "Choose a provider or enter a provider ID.",
-                id="settings-provider-search-status",
-                classes="settings-help-copy",
+                selection_source_word(resolved.provider_source),
+                id="settings-provider-source",
+                classes="settings-source-word",
                 markup=False,
             )
+            yield Static(
+                provider_picker_summary(picker_groups),
+                id="settings-provider-search-status",
+                classes="settings-row-help",
+                markup=False,
+            )
+        picker = OptionList(
+            *screen._provider_picker_options(picker_groups),
+            id="settings-provider-picker",
+            compact=True,
+        )
+        # One Tab stop (AC#1): the list follows the control's keys and opens
+        # only while the user is choosing.
+        picker.can_focus = False
+        picker.display = False
+        # task-16480: compose-time highlight so the configured provider is
+        # selected on the very first paint; the post-refresh highlight
+        # arrives too early (pre-mount) to serve as the only source.
+        screen._apply_provider_picker_highlight(picker)
+        yield picker
         with Horizontal(
             classes="settings-input-row settings-provider-manual-hidden"
         ):
@@ -237,17 +604,103 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
             screen._provider_registry_entry(provider) is not None
         )
         yield edit_endpoint
-        with Horizontal(classes="settings-input-row"):
-            yield Static("Model", classes="settings-input-label")
-            yield Input(
-                value=str(values["model"]),
-                id="settings-model-value",
-                classes="settings-compact-input",
-                placeholder="Model name",
-                suggester=screen._model_field_suggester(),
-                disabled=registry_locked,
+        # TASK-34201: Anthropic only -- an API key or the Claude subscription.
+        # The choice comes before the key rows it disables (kept visible).
+        is_anthropic = provider_config_key(provider) == "anthropic"
+        subscription_selected = (
+            is_anthropic
+            and screen._provider_auth_source_value(provider)
+            == _anthropic_auth_sources()[1]
+        )
+        with Horizontal(
+            id="settings-provider-auth-source-row",
+            classes=(
+                "settings-input-row settings-select-row"
+                if is_anthropic
+                else "settings-input-row settings-select-row settings-gated-profile-hidden"
+            ),
+        ):
+            yield Static("Sign in with", classes="settings-input-label")
+            yield Select(
+                _anthropic_auth_source_options(),
+                value=screen._provider_auth_source_value(provider),
+                id="settings-provider-auth-source",
+                classes="settings-compact-select",
+                allow_blank=False,
+                compact=True,
+                disabled=not is_anthropic,
             )
-        with Horizontal(classes="settings-input-row"):
+        yield Static(
+            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
+            if subscription_selected
+            else ANTHROPIC_API_KEY_GUIDANCE_COPY,
+            id="settings-provider-auth-source-guidance",
+            classes=(
+                "settings-status-row"
+                if is_anthropic
+                else "settings-status-row settings-gated-profile-hidden"
+            ),
+        )
+        key_word, key_help = api_key_row_copy(screen, provider)
+        with Horizontal(id="settings-provider-api-key-row", classes="settings-input-row"):
+            yield Static("API key", classes="settings-input-label")
+            yield Input(
+                value=str(values.get("api_key") or ""),
+                id="settings-provider-api-key",
+                classes="settings-compact-input",
+                placeholder=screen._provider_api_key_placeholder(provider),
+                password=True,
+                disabled=registry_locked or subscription_selected,
+            )
+            yield Button(
+                "Clear",
+                id="settings-provider-api-key-clear",
+                compact=True,
+                disabled=subscription_selected or (
+                    not screen._provider_saved_api_key_present(provider)
+                    and not bool(str(values.get("api_key") or "").strip())
+                ),
+                tooltip="Clear the API key saved in local config for this provider.",
+            )
+            yield Static(
+                key_word,
+                id="settings-provider-key-status",
+                classes="settings-source-word",
+                markup=False,
+            )
+            yield Static(
+                key_help,
+                id="settings-provider-api-key-help",
+                classes="settings-row-help",
+                markup=False,
+            )
+        with Horizontal(id="settings-provider-env-var-row", classes="settings-input-row"):
+            yield Static("Env var", classes="settings-input-label")
+            yield Input(
+                value=str(values["credential_env_var"]),
+                id="settings-provider-credential-env-var",
+                classes="settings-compact-input",
+                placeholder=screen._provider_credential_placeholder(provider),
+                disabled=registry_locked or subscription_selected,
+            )
+            yield Static(
+                env_var_source_word(
+                    screen, provider, str(values["credential_env_var"])
+                ),
+                id="settings-provider-env-var-source",
+                classes="settings-source-word",
+                markup=False,
+            )
+            yield Static(
+                ENV_VAR_HELP_COPY,
+                id="settings-provider-credential-guidance",
+                classes="settings-row-help",
+                markup=False,
+            )
+        endpoint_word, endpoint_help = endpoint_row_copy(
+            screen, provider, str(values["endpoint"])
+        )
+        with Horizontal(id="settings-provider-endpoint-row", classes="settings-input-row"):
             yield Static("Endpoint", classes="settings-input-label")
             yield SettingsURLInput(
                 value=str(values["endpoint"]),
@@ -257,6 +710,18 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 validators=[ProviderEndpointURLValidator()],
                 validate_on={"blur", "submitted"},
                 disabled=registry_locked,
+            )
+            yield Static(
+                endpoint_word,
+                id="settings-provider-endpoint-source",
+                classes="settings-source-word",
+                markup=False,
+            )
+            yield Static(
+                endpoint_help,
+                id="settings-provider-endpoint-help",
+                classes="settings-row-help",
+                markup=False,
             )
         api_mode_value, api_mode_valid = screen._provider_api_mode_display_value(
             provider
@@ -304,83 +769,6 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
                 else "settings-status-row settings-gated-profile-hidden"
             ),
         )
-        yield Static("Credentials", classes="destination-section")
-        yield Static(
-            screen._provider_credential_status(provider),
-            id="settings-provider-credential-status",
-            classes="settings-status-row",
-        )
-        # TASK-34201: Anthropic only -- an API key or the Claude subscription.
-        is_anthropic = provider_config_key(provider) == "anthropic"
-        subscription_selected = (
-            is_anthropic
-            and screen._provider_auth_source_value(provider)
-            == _anthropic_auth_sources()[1]
-        )
-        with Horizontal(
-            id="settings-provider-auth-source-row",
-            classes=(
-                "settings-input-row settings-select-row"
-                if is_anthropic
-                else "settings-input-row settings-select-row settings-gated-profile-hidden"
-            ),
-        ):
-            yield Static("Sign in with", classes="settings-input-label")
-            yield Select(
-                _anthropic_auth_source_options(),
-                value=screen._provider_auth_source_value(provider),
-                id="settings-provider-auth-source",
-                classes="settings-compact-select",
-                allow_blank=False,
-                compact=True,
-                disabled=not is_anthropic,
-            )
-        yield Static(
-            ANTHROPIC_SUBSCRIPTION_GUIDANCE_COPY
-            if subscription_selected
-            else ANTHROPIC_API_KEY_GUIDANCE_COPY,
-            id="settings-provider-auth-source-guidance",
-            classes=(
-                "settings-status-row"
-                if is_anthropic
-                else "settings-status-row settings-gated-profile-hidden"
-            ),
-        )
-        with Horizontal(classes="settings-input-row"):
-            yield Static("API key", classes="settings-input-label")
-            yield Input(
-                value=str(values.get("api_key") or ""),
-                id="settings-provider-api-key",
-                classes="settings-compact-input",
-                placeholder=screen._provider_api_key_placeholder(provider),
-                password=True,
-                disabled=registry_locked or subscription_selected,
-            )
-        with Horizontal(classes="settings-input-row"):
-            yield Static("", classes="settings-input-label")
-            yield Button(
-                "Clear saved key",
-                id="settings-provider-api-key-clear",
-                disabled=subscription_selected or (
-                    not screen._provider_saved_api_key_present(provider)
-                    and not bool(str(values.get("api_key") or "").strip())
-                ),
-                tooltip="Clear the API key saved in local config for this provider.",
-            )
-        with Horizontal(classes="settings-input-row"):
-            yield Static("Env var", classes="settings-input-label")
-            yield Input(
-                value=str(values["credential_env_var"]),
-                id="settings-provider-credential-env-var",
-                classes="settings-compact-input",
-                placeholder=screen._provider_credential_placeholder(provider),
-                disabled=registry_locked or subscription_selected,
-            )
-        yield Static(
-            "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret.",
-            id="settings-provider-credential-guidance",
-            classes="settings-status-row",
-        )
         hosted_guidance = screen._hosted_provider_guidance(
             provider, values.get("model")
         )
@@ -400,27 +788,24 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         reconnect.display = provider_config_key(provider) == "openai"
         reconnect.disabled = screen._openai_reconnect_busy
         yield reconnect
-        # task-189: the Test affordance closes the first-run Connect job
-        # (provider -> model -> endpoint -> credentials -> test) before
-        # the informational readiness and discovery sections.
-        yield Button(
-            "Test Provider",
-            id="settings-test-provider",
-            tooltip=PROVIDER_TEST_GUIDANCE,
-        )
-        # TASK-386 (AC#2): the readiness / live-probe explanation must also
-        # exist as visible static text -- a hover tooltip is invisible to
-        # keyboard users and self-occludes the result line below it.
-        yield Static(
-            PROVIDER_TEST_GUIDANCE,
-            id="settings-test-provider-guidance",
-            classes="settings-status-row",
-        )
-        yield _ProviderTestResult(
-            screen._adopt_shared_provider_test_evidence(),
-            id="settings-provider-test-result",
-            markup=False,
-        )
+        # task-189: the Test affordance closes the first-run Connect job.
+        # TASK-33005.4: 't' is the non-generating key check (D2).
+        with Horizontal(
+            id="settings-provider-key-check-row", classes="settings-input-row"
+        ):
+            yield Static("Key check", classes="settings-input-label")
+            yield Static(
+                key_check_verdict(screen),
+                id="settings-provider-readiness",
+                classes="settings-key-check-verdict",
+                markup=False,
+            )
+            yield Button(
+                KEY_CHECK_ACTION_LABEL,
+                id="settings-test-provider",
+                compact=True,
+                tooltip=PROVIDER_TEST_GUIDANCE,
+            )
         yield Static(
             screen._provider_save_result,
             id="settings-provider-save-result",
@@ -483,33 +868,27 @@ def compose_providers_models_card(screen: SettingsScreen) -> ComposeResult:
         )
         return_without_saving.display = screen._provider_can_return_without_saving()
         yield return_without_saving
-        yield Static("Provider readiness", classes="destination-section")
-        yield screen._detail_row(
-            "Readiness",
-            screen._provider_readiness_label().removeprefix("Provider readiness: "),
-            identifier="settings-provider-readiness",
-        )
-        yield screen._detail_row(
-            "Provider source",
-            screen._settings_source_label(resolved.provider_source),
-            identifier="settings-provider-source",
-        )
-        yield screen._detail_row(
-            "Model source",
-            screen._settings_source_label(resolved.model_source),
-            identifier="settings-model-source",
-        )
-        yield screen._detail_row(
-            "Endpoint",
-            screen._provider_endpoint_display_value(
-                str(values["provider"]), values["endpoint"]
-            ),
-            identifier="settings-provider-endpoint",
-        )
         yield Static(
-            screen._provider_key_status(str(values["provider"])),
-            id="settings-provider-key-status",
+            "Default model for new chats",
+            id="settings-default-model-title",
+            classes="destination-section",
         )
+        with Horizontal(id="settings-model-row", classes="settings-input-row"):
+            yield Static("Model", classes="settings-input-label")
+            yield Input(
+                value=str(values["model"]),
+                id="settings-model-value",
+                classes="settings-compact-input",
+                placeholder="Model name",
+                suggester=screen._model_field_suggester(),
+                disabled=registry_locked,
+            )
+            yield Static(
+                selection_source_word(resolved.model_source),
+                id="settings-model-source",
+                classes="settings-source-word",
+                markup=False,
+            )
         yield Static("Context capacity", classes="destination-section")
         yield Static(
             screen._provider_model_context_window_status(

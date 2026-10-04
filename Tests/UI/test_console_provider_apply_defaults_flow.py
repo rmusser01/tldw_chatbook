@@ -2474,6 +2474,9 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             evidence_token,
             ProviderProbeResult(endpoint="reachable", model_ids=("dirty-model",)),
         )
+        # TASK-33007.2: a real probe settles through this refresh, which also
+        # re-says the Key check row's verdict from the settled evidence.
+        screen._update_provider_test_result()
         screen._model_discovery_status = "Earlier discovery result."
         screen._model_discovery_selected_model_ids = {"earlier-discovered-model"}
         screen._refresh_model_discovery_widgets()
@@ -2505,20 +2508,31 @@ async def test_vllm_default_late_ack_failure_restores_complete_provider_presenta
             )
             api_key = screen.query_one("#settings-provider-api-key", Input)
             temperature = screen.query_one("#settings-model-profile-temperature", Input)
+            # TASK-33007.2, rewritten on purpose: the readiness block's
+            # Endpoint row (settings-provider-endpoint) is gone; each Connect
+            # row's Source word and help line take its facts, and
+            # settings-provider-readiness is the Key check verdict.
             dynamic_static_ids = (
                 "settings-provider-readiness",
                 "settings-provider-inspector-readiness",
                 "settings-provider-source",
                 "settings-model-source",
                 "settings-provider-endpoint-key",
-                "settings-provider-endpoint",
+                "settings-provider-search-status",
+                "settings-provider-key-status",
+                "settings-provider-api-key-help",
+                "settings-provider-env-var-source",
+                "settings-provider-endpoint-source",
+                "settings-provider-endpoint-help",
                 "settings-provider-generation-support",
                 "settings-provider-api-mode-guidance",
                 "settings-provider-credential-guidance",
                 "settings-hosted-provider-guidance",
             )
+            control = screen.query_one("#settings-provider-search", Input)
             return {
                 "provider": (provider.value, provider.disabled),
+                "provider_control": (control.value, control.disabled),
                 "manual": (manual.value, manual.placeholder, manual.disabled),
                 "model": (model.value, model.placeholder, model.disabled),
                 "endpoint": (

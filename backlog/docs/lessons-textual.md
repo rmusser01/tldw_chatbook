@@ -804,6 +804,14 @@ echo from a real commit by the event alone — compare against the **stored** va
 no-op when they match (`task_detail.py:1200`, `definition_detail.py:1391`). Never close,
 persist, or navigate on the first `Changed` after `begin_edit`/mount.
 
+**`Input` does the same (TASK-33007.2, 2026-10-03).** Settings' one-row Provider control is
+an `Input` composed with the chosen provider's name, whose `Changed` handler filters the
+provider list. Its mount echo arrived unfocused with the value "Anthropic" and filtered the
+resting list down to one row, so the help line read "1 found" before anyone typed. Ignoring
+that echo then left the help blank, because the resting copy had only ever been written by
+the echo's refresh. Treat a `Changed` whose value equals the committed display text as no
+query (`handle_provider_search_changed`), and compose the resting copy directly.
+
 ---
 
 ## `DataTable.clear()` posts a `RowHighlighted` for row 0 before the rows come back

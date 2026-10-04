@@ -3913,6 +3913,11 @@ async def test_settings_provider_picker_search_keeps_draft_endpoint_and_api_key(
         assert all(option.disabled for option in headings)
 
 
+def _focus_provider_control(screen) -> None:
+    """Focus the one-row Provider control (TASK-33007.2)."""
+    screen.query_one("#settings-provider-search", Input).focus()
+
+
 def _provider_picker_option_index(
     picker: OptionList,
     *,
@@ -3955,8 +3960,10 @@ async def test_settings_provider_picker_initial_known_provider_enter_is_noop_for
         highlighted = picker.get_option_at_index(picker.highlighted)
         assert getattr(highlighted, "provider_id", None) == "openai"
 
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: the list never takes focus; the
+        # Provider control opens it (Down) and chooses (Enter).
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.press("down", "enter")
         await pilot.pause()
 
         assert screen._provider_setting_values_mapping()["provider"] == "OpenAI"
@@ -4013,12 +4020,15 @@ async def test_settings_provider_picker_saved_unknown_activation_is_exact_noop()
         assert getattr(highlighted, "provider_id", None) == "Exact_Custom-ID"
         assert manual.value == "Exact_Custom-ID"
 
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: the Provider control opens the
+        # list and chooses; focus stays on the one Tab stop.
+        search = screen.query_one("#settings-provider-search", Input)
+        search.focus()
+        await pilot.press("down", "enter")
         await pilot.pause()
 
         assert host._exception is None
-        assert picker.has_focus
+        assert search.has_focus
         assert screen.query_one("#settings-provider-endpoint-value", Input) is endpoint
         assert screen.query_one("#settings-provider-api-key", Input) is api_key
         assert endpoint.value == "https://draft.example/v1"
@@ -4080,12 +4090,11 @@ async def test_settings_provider_picker_filtered_selection_uses_provider_lifecyc
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
 
-        search.value = "anthropic"
-        await pilot.pause()
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typing in the Provider control
+        # filters the list, and Enter chooses.
+        search.focus()
+        await pilot.press(*"anthropic", "enter")
         await pilot.pause()
 
         assert screen._provider_setting_values_mapping()["provider"] == "anthropic"
@@ -4133,16 +4142,11 @@ async def test_settings_provider_picker_enter_provider_id_focuses_manual_field(
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
 
         manual = screen.query_one("#settings-provider-manual-value", Input)
@@ -4162,15 +4166,11 @@ async def test_settings_provider_picker_rejects_unsupported_manual_id_without_lo
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
         manual = screen.query_one("#settings-provider-manual-value", Input)
         endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
@@ -4209,15 +4209,11 @@ async def test_settings_provider_picker_supported_manual_alias_uses_catalog_life
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        search = screen.query_one("#settings-provider-search", Input)
-        picker = screen.query_one("#settings-provider-picker", OptionList)
-        search.value = "provider-that-does-not-exist"
-        await pilot.pause()
-        picker.highlighted = _provider_picker_option_index(
-            picker, action="enter_provider_id"
-        )
-        picker.focus()
-        await pilot.press("enter")
+        # TASK-33007.2, rewritten on purpose: typed into the Provider control,
+        # a filter with no match leaves only the manual action, and Enter
+        # chooses it.
+        _focus_provider_control(screen)
+        await pilot.press(*"provider-that-does-not-exist", "enter")
         await pilot.pause()
 
         manual = screen.query_one("#settings-provider-manual-value", Input)
@@ -4321,15 +4317,17 @@ async def test_settings_picker_legacy_alias_row_selects_saves_and_reloads(reques
     async with host.run_test(size=(180, 50)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
-        screen.query_one("#settings-provider-search", Input).value = "legacy"
+        # TASK-33007.2, rewritten on purpose: the row is chosen by typing in
+        # the Provider control (the list never takes focus) and Enter.
+        _focus_provider_control(screen)
+        await pilot.press(*"local_llamacpp")
         await pilot.pause()
         picker = screen.query_one("#settings-provider-picker", OptionList)
         index = _provider_picker_option_index(picker, provider_id="local_llamacpp")
         assert str(picker.get_option_at_index(index).prompt) == (
             "llama.cpp (legacy alias)"
         )
-        picker.highlighted = index
-        picker.focus()
+        assert picker.highlighted == index
         await pilot.press("enter")
         await pilot.pause()
         assert (
@@ -4399,6 +4397,9 @@ async def test_settings_provider_picker_current_alias_preserves_connection_draft
 async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
     terminal_size,
 ):
+    """TASK-33007.2, rewritten on purpose: the provider list no longer sits
+    open at six rows. At rest it is hidden; opened from the Provider control
+    it is bounded and lies between the Provider row and the API key row."""
     app = _build_test_app()
     app.app_config["chat_defaults"] = {"provider": "OpenAI", "model": "gpt-4.1"}
     host = StyledSettingsDestinationHarness(app, "settings")
@@ -4408,16 +4409,13 @@ async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
         screen = _active_destination_screen(host)
         search = screen.query_one("#settings-provider-search", Input)
         picker = screen.query_one("#settings-provider-picker", OptionList)
-        status = screen.query_one("#settings-provider-search-status", Static)
-        model = screen.query_one("#settings-model-value", Input)
-        endpoint = screen.query_one("#settings-provider-endpoint-value", Input)
-        regions = [
-            search.region,
-            picker.region,
-            status.region,
-            model.region,
-            endpoint.region,
-        ]
+        api_key_row = screen.query_one("#settings-provider-api-key-row")
+        assert not picker.display
+
+        search.focus()
+        await pilot.press("down")
+        await pilot.pause()
+        regions = [search.region, picker.region, api_key_row.region]
 
         for index in range(len(regions) - 1):
             upper, lower = regions[index : index + 2]
@@ -4425,7 +4423,7 @@ async def test_settings_provider_picker_geometry_is_bounded_and_non_overlapping(
                 f"provider controls overlap at {terminal_size}: {upper} vs {lower}"
             )
             assert upper.bottom <= lower.y
-        assert 4 <= picker.region.height <= 8
+        assert 4 <= picker.region.height <= 10
         assert picker.virtual_size.height > picker.container_size.height
 
 
@@ -4495,7 +4493,9 @@ async def test_settings_provider_connect_block_precedes_collapsed_generation_def
             "#settings-provider-value",
             "#settings-model-value",
             "#settings-provider-endpoint-value",
-            "#settings-provider-credential-status",
+            # TASK-33007.2, rewritten on purpose: the Credentials status line
+            # is the API key row's Source word now.
+            "#settings-provider-key-status",
             "#settings-provider-api-key",
             "#settings-provider-api-key-clear",
             "#settings-provider-credential-env-var",
@@ -5416,44 +5416,40 @@ async def test_settings_rail_focus_draws_a_readable_edge_on_every_row(request):
 async def test_providers_models_highlighted_option_is_a_readable_bar(request):
     """TASK-33003.6 AC#5: in Settings ▸ Providers & Models the highlighted
     provider differs from the other rows by 3:1 and its label stays AA on
-    the bar, focused or not, in agentic_terminal and a light theme. The
-    shared OptionList contract painted $surface on $panel (1.12:1)."""
+    the bar, in agentic_terminal and a light theme. The shared OptionList
+    contract painted $surface on $panel (1.12:1).
+
+    TASK-33007.2, rewritten on purpose: the list opens only from the focused
+    Provider control and never takes focus itself, so there is no focus
+    outline over its rows and one state to measure: open, control focused.
+    """
     host = _styled_settings_host()
     async with host.run_test(size=(211, 44)) as pilot:
         await _open_settings_category(pilot, "#settings-category-providers-models")
         screen = _active_destination_screen(host)
         picker = screen.query_one("#settings-provider-picker", OptionList)
-        picker.scroll_visible(animate=False)
-        # The focus outline paints over this compact list's first and last
-        # rows (TASK-33007.2 owns that); keep the highlight off them.
-        picker.scroll_to(y=picker.scroll_offset.y + 2, animate=False)
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.press("down", "down", "down")
         await pilot.pause()
         for theme in ("agentic_terminal", "textual-light"):
             host.theme = theme
-            for focused in (False, True):
-                if focused:
-                    picker.focus()
-                else:
-                    host.set_focus(None)
-                await pilot.pause()
-                box = picker.content_region
-                label = str(picker.get_option_at_index(picker.highlighted).prompt)
-                strips = screen._compositor.render_strips()
-                rows = {
-                    y: strips[y].text[box.x : box.right]
-                    for y in range(box.y, box.bottom)
-                }
-                # The outline also covers each row's first cell when focused.
-                needle = label.strip()[1:8]
-                row_y = next(y for y, text in rows.items() if needle in text)
-                other_y = next(
-                    y for y, text in rows.items() if y != row_y and text.strip()
-                )
-                ink_x = box.x + rows[row_y].index(needle)
-                _, ink, bar = _rendered_cell(screen, ink_x, row_y)
-                _, _, rest = _rendered_cell(screen, ink_x, other_y)
-                assert _wcag_ratio(bar, rest) >= 3.0, (theme, focused, bar, rest)
-                assert _wcag_ratio(ink, bar) >= 4.5, (theme, focused, ink, bar)
+            await pilot.pause()
+            box = picker.content_region
+            label = str(picker.get_option_at_index(picker.highlighted).prompt)
+            strips = screen._compositor.render_strips()
+            rows = {
+                y: strips[y].text[box.x : box.right] for y in range(box.y, box.bottom)
+            }
+            needle = label.strip()
+            row_y = next(y for y, text in rows.items() if needle in text)
+            other_y = next(
+                y for y, text in rows.items() if y != row_y and text.strip()
+            )
+            ink_x = box.x + rows[row_y].index(needle)
+            _, ink, bar = _rendered_cell(screen, ink_x, row_y)
+            _, _, rest = _rendered_cell(screen, ink_x, other_y)
+            assert _wcag_ratio(bar, rest) >= 3.0, (theme, bar, rest)
+            assert _wcag_ratio(ink, bar) >= 4.5, (theme, ink, bar)
 
 
 @pytest.mark.asyncio
@@ -7852,8 +7848,13 @@ async def test_settings_provider_category_uses_effective_console_source():
 
         assert "llama_cpp" in text
         assert "qwen" in text
-        assert "Provider source: Saved chat defaults" in text
-        assert "Model source: Saved chat defaults" in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's "Provider
+        # source" / "Model source" lines are the rows' Source words now.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable)
+                == "new-chat default"
+            ), selector
         assert screen.query_one("#settings-provider-value", Select).value == "llama_cpp"
         assert screen.query_one("#settings-model-value", Input).value == "qwen"
 
@@ -9140,11 +9141,16 @@ async def test_settings_provider_keyless_local_provider_does_not_report_missing_
             screen,
             pilot,
             SettingsCategoryId.PROVIDERS_MODELS,
-            expected_text="API key: not required for this provider",
+            expected_text="this provider needs no key",
         )
         text = _visible_text(screen)
 
-        assert "API key: not required for this provider" in text
+        # TASK-33007.2, rewritten on purpose: the API key row says it.
+        assert "this provider needs no key" in text
+        assert (
+            str(screen.query_one("#settings-provider-key-status", Static).renderable)
+            == "not required"
+        )
         assert "LLAMA_CPP_API_KEY=missing" not in text
 
 
@@ -10131,7 +10137,8 @@ async def test_settings_provider_category_renders_local_api_key_setup_without_re
         assert api_key.value == ""
         text = _visible_text(screen)
         assert "API key" in text
-        assert "local config key saved" in text.lower()
+        # TASK-33007.2, rewritten on purpose: the API key row's Source word.
+        assert "saved in config" in text.lower()
         assert fake_key not in text
 
 
@@ -10977,8 +10984,12 @@ async def test_settings_provider_switch_selects_provider_default_model():
         assert screen.query_one("#settings-model-value", Input).value == "llama3"
         text = _visible_text(screen)
         assert "Provider readiness: Ollama / llama3" in text
-        assert "Provider source: Unsaved Settings draft" in text
-        assert "Model source: Unsaved Settings draft" in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's source
+        # lines are the Provider and Model rows' Source words now.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable) == "edited *"
+            ), selector
         assert "Provider readiness: Ollama / gpt-4o" not in text
 
 
@@ -11028,9 +11039,12 @@ async def test_settings_provider_switch_resets_staged_model_for_each_provider_tr
         await pilot.pause()
 
         assert model_input.value == ""
+        # TASK-33007.2, rewritten on purpose: settings-provider-readiness is
+        # the Key check row's readiness word; the provider/model pair stays in
+        # the Inspector row below.
         assert (
             str(screen.query_one("#settings-provider-readiness", Static).renderable)
-            == "Readiness: Anthropic / not selected"
+            == "Not ready · no key"
         )
         assert (
             str(
@@ -11073,12 +11087,24 @@ async def test_settings_provider_detail_shows_field_guidance_and_readable_draft_
             str(screen.query_one("#settings-category-providers-models", Button).label)
             == "> Providers & Models *"
         )
-        assert "Provider source: Unsaved Settings draft" in text
-        assert "Model source: Unsaved Settings draft" in text
-        assert "Source: settings_draft" not in text
-        assert "Model source: settings_draft" not in text
+        # TASK-33007.2, rewritten on purpose: the readiness block's source and
+        # Endpoint lines are the rows' Source words and the Endpoint field.
+        for selector in ("#settings-provider-source", "#settings-model-source"):
+            assert (
+                str(screen.query_one(selector, Static).renderable) == "edited *"
+            ), selector
+        assert "settings_draft" not in text
         assert "Endpoint key: api_settings.ollama.api_url" in text
-        assert "Endpoint: http://localhost:11434/v1/chat/completions" in text
+        assert (
+            screen.query_one("#settings-provider-endpoint-value", Input).value
+            == "http://localhost:11434/v1/chat/completions"
+        )
+        assert (
+            str(
+                screen.query_one("#settings-provider-endpoint-source", Static).renderable
+            )
+            == "config"
+        )
         assert (
             "Endpoint: api_settings.ollama.api_url=http://localhost:11434" not in text
         )
@@ -11196,7 +11222,13 @@ async def test_settings_provider_test_uses_api_settings_env_var_without_secret_l
         await _wait_for_settings_text(screen, pilot, "from env var GROQ_API_KEY")
         text = _visible_text(screen)
 
-        assert "env:GROQ_API_KEY" in text
+        # TASK-33007.2, rewritten on purpose: the API key row says where the
+        # key comes from (the readiness block's "API key: env:..." is gone).
+        assert "GROQ_API_KEY in your shell" in text
+        assert (
+            str(screen.query_one("#settings-provider-key-status", Static).renderable)
+            == "from env var"
+        )
         # TASK-33002.2 AC#3: the Key row names the source, never the value.
         assert dict(_provider_test_rows_of(screen._provider_test_result))["Key"] == (
             "from env var GROQ_API_KEY · present, not verified"
@@ -12578,11 +12610,16 @@ def test_settings_source_labels_cover_every_resolvable_source():
     never renders a raw `key.replace("_", " ")` fallback (the stale
     `console_control`/`app_reactive` keys did exactly that for
     `console_session` after task-648's rename).
+
+    TASK-33007.2, rewritten on purpose: the readiness block's source labels
+    became the Provider and Model rows' Source words.
     """
-    from tldw_chatbook.UI.Screens.settings_screen import SETTINGS_SOURCE_LABELS
+    from tldw_chatbook.UI.Settings_Modules.providers_models_card import (
+        SELECTION_SOURCE_WORDS,
+    )
 
     resolvable = {"settings_draft", "console_session", "chat_defaults", "default"}
-    assert set(SETTINGS_SOURCE_LABELS) == resolvable
+    assert set(SELECTION_SOURCE_WORDS) == resolvable
 
 
 # ---- [chat.images] render_remote_images toggle (task-1537 settings UI) ----

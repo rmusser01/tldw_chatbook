@@ -521,7 +521,9 @@ def build_field_search_index() -> None:
                 ),
             ),
             SettingsCategoryId.PROVIDERS_MODELS: (
-                ("settings-provider-value", "Provider"),
+                # TASK-33007.2: the one-row Provider control; the Select
+                # behind it is a hidden adapter.
+                ("settings-provider-search", "Provider"),
                 ("settings-provider-api-mode", "API mode"),
                 (
                     "settings-provider-api-mode",

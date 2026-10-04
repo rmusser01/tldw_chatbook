@@ -108,7 +108,9 @@ async def test_focusing_the_visible_provider_picker_shows_the_provider_purpose(
         screen = _active_destination_screen(host)
         screen._select_category(SettingsCategoryId.PROVIDERS_MODELS.value)
         await _wait_for_selector(screen, pilot, "#settings-provider-search")
-        for selector in ("#settings-provider-search", "#settings-provider-picker"):
+        # TASK-33007.2, rewritten on purpose: the list under the Provider
+        # control never takes focus, so the control is the one field.
+        for selector in ("#settings-provider-search",):
             screen.query_one(selector).focus()
             await pilot.pause()
             guide = [

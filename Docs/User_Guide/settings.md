@@ -206,8 +206,8 @@ The biggest page, and where to start.
 
 | Group | What's in it |
 |---|---|
-| **Connect** | **Provider** (a searchable list grouped Cloud / Local / Custom, whose highlighted row is a solid bar in the theme's primary text colour, plus "Manual / custom provider", under the same display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and old names still work as typed provider IDs), **Manual** (only when you pick that), **Model** (suggests discovered names), and **Endpoint**, checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." |
-| **Credentials** | **API key** (masked), **Clear saved key**, and **Env var**. A status line names the source in plain words — "API key source: local config key saved", "…: env:\<VAR\>", "…: missing; set \<VAR\> or paste a local key" — with the page's own advice: "Env vars are safer for shells, shared machines, and CI. This field stores the variable name, not the secret." A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. For **Anthropic** a **Sign in with** select comes first: **API key** or **Claude subscription**. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing, and the status line reads "Checking Claude subscription credential…" and then "Credential source: Claude subscription (not verified)", or says the credential is missing or expired and to log in with Claude Code. It follows the choice as soon as you make it, before Save. Like any field here it is an unsaved edit until **Save**. |
+| **Connect** | One row per fact, each with a **Source** word and a one-line help. **Provider** is one row and one Tab stop: it shows the chosen provider, and typing in it filters the list that opens under it by display name or ID (Up/Down move, **Enter** chooses, **Esc** keeps the current provider). The list leads with **Configured** providers (a key saved in config or set in your shell, or an endpoint you changed), then Cloud and Local, with Custom & legacy aliases last. It uses the display names Console shows — **Google Gemini**, **Mistral AI**, **Custom OpenAI-compatible**; legacy aliases say so, as in **llama.cpp (legacy alias)**, and stay selectable — and ends with **Enter provider ID**, which opens **Manual** for a custom key. For **Anthropic** a **Sign in with** row comes just above it: **API key** or **Claude subscription**. The subscription uses the credential Claude Code already holds (the macOS Keychain, or `~/.claude/.credentials.json`); Chatbook reads it, never stores or refreshes it, and requests bill your Claude plan rather than API credits. While it is chosen, **API key** and **Env var** stay visible but disabled, so switching back loses nothing, and the API key row's Source word reads **subscription** beside "Checking Claude subscription credential…" and then "Credential source: Claude subscription (not verified)", or says the credential is missing or expired and to log in with Claude Code. It follows the choice as soon as you make it, before Save; like any field here it is an unsaved edit until **Save**. **API key** is masked and says where the key comes from: **saved in config**, **from env var**, or **missing** (**edited \*** or **cleared \*** until you save); **Clear** removes a saved key. **Env var** says whether the variable is **set in shell**, with "safer: keeps keys out of config.toml". A keyless local provider (llama.cpp, oobabooga, vLLM, …) ships with an env var *name* ("if you set one on the server"); saving it with that variable unset records "no credential", so the credential check ignores the name even if you export the variable later (type the name into **Env var** to use it). The name is the shipped default, so it is back in the file and in **Env var** after the next restart, and still ignored. A variable that holds a key, a name you typed, or an explicit env-var choice you saved before is kept. **Endpoint** (**config**, **built-in** or, for a local server, **not set**) is checked when you leave the box: "Enter a full http:// or https:// URL, e.g. http://127.0.0.1:9099/v1." Connect ends in one **Key check** row: this provider's readiness word, in the Console's words ("Ready · not tested", "Ready · verified 14:01", "Not ready · no key"), and **Test (t)**. |
+| **Default model for new chats** | **Model** (suggests discovered names), with its Source word. |
 | **Model discovery** | **Discover models** queries the endpoint, **Save selected** keeps the ones you tick, **Clear** drops the discovered list. |
 | **Automatic refresh** | **Refresh on startup**, **Refresh after (hours)**, and per-provider **refresh** / **save to config** boxes. These **write immediately** (not part of the draft) and govern a *startup* refresh, so a change shows up on the next launch. |
 | **Session summary on quit** | **Show session usage summary when quitting** and **Summary duration (seconds)** (1–30, default 3). These **write immediately**. When enabled, confirming a quit (Ctrl+Q) briefly shows total session tokens and elapsed session time before the app exits; any key skips it. Off by default. |
@@ -256,8 +256,9 @@ The refresh interval accepts fractional hours; **0** refreshes on every launch.
 Empty, negative, and invalid values explain how to recover without replacing
 the saved interval. Changing these controls does not record startup consent.
 
-**Test Provider** (**t**) checks your current draft before saving, then lists
-the provider's models. Nothing is generated and nothing is saved. A URL-based
+**Test (t)** on the Key check row (or **t**) checks your current draft
+before saving, then lists the provider's models. Nothing is generated and
+nothing is saved. A URL-based
 local provider gets a short model-listing probe, sent with the draft's API key
 when it has one (a server started with a key is tested with it, never
 without), and it is listed even before you choose a model, since the list is
@@ -286,7 +287,9 @@ endpoint key that is set, and so does their listing. A missing, placeholder
 or blank key is reported as missing
 and nothing is sent. If the listing cannot run at all (for example while
 Chatbook uses a server), the result says "Key not checked" and records
-nothing. The result leads with a **Readiness** row in the same
+nothing. The result's rows appear in the inspector's **Key** block, under
+what **t** checks, so a result never pushes the card down. The result leads
+with a **Readiness** row, which the Key check row repeats, in the same
 words the Console uses for that connection ("Ready · not tested",
 "Ready · reachable 14:01", "Ready · verified 14:01" or "Not ready ·
 \<reason\>", see [Console](console.md); with no model chosen it reads "Not
@@ -309,7 +312,7 @@ names the address the field shows, for example "https://api.openai.com/v1
 (provider default)". A successful model listing does not prove that
 generation works. Running it again replaces the previous probe result: while
 the new probe runs the Endpoint row says "checking the model listing", and
-each fact appears once. If the tested values change, run **Test Provider**
+each fact appears once. If the tested values change, run **Test (t)**
 again. The last result for the saved connection is kept for the rest of the
 session, whichever surface ran it: leave Settings and return, and the rows show
 it, including a **Test connection & list models** run in Chat settings of the
@@ -329,7 +332,7 @@ result and its toast say what the save reaches: "new chats and open chats
 nobody has used yet take them; chats with work keep their own settings (change
 them in Console with Alt+M)". The State line says the same in one row:
 "Applies to new and unused open chats · used chats keep theirs (Console:
-Alt+M)". Focusing the **Provider** search or list shows its Purpose in the
+Alt+M)". Focusing the **Provider** control shows its Purpose in the
 inspector: "Sets the provider new chats start with; open chats nobody has used
 yet follow it."; **Model** reads the same way for the model.
 
@@ -444,7 +447,7 @@ search the full cached list; the disk cache contains IDs and timestamps only.
 Usage is recorded when returned. **Pricing unknown** means Chatbook has no
 verified rate for that model, not that the call is free.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.moonshot]` or `[api_settings.zai]` table, remove normalized
 duplicates, enter a nonblank model and an absolute HTTP(S) base without
 credentials in the URL, then correct timeout/retry/streaming types in
@@ -476,7 +479,7 @@ gateway models that support them. Model-specific pricing is usually
 workspace-configured; unpriced models show **pricing unknown**, which means
 no verified rate, not a free call.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.databricks]` table, set the token and an absolute HTTP(S)
 workspace URL without credentials in the URL, then correct
 timeout/retry/streaming types under **Advanced Config**. Test the draft again
@@ -594,7 +597,7 @@ comparison follow the same rules. A few notes:
 - **Kilo Gateway** reports a failure after the reply has started as a
   provider error rather than a cut-off reply.
 
-If Test Provider reports invalid settings, keep exactly one canonical
+If the key check (**t**) reports invalid settings, keep exactly one canonical
 `[api_settings.<provider>]` table (for example `[api_settings.together]`), set the API key (or its env var), and leave
 the shipped `api_base_url` unless your account documents a different one.
 Test the draft again before saving.
@@ -786,7 +789,7 @@ facts, read-only: **Endpoint** is the entry's base URL, **Endpoint key** is
 `custom_endpoints.<slug>.base_url`, and the credential line names where the
 key comes from — **env var `<NAME>` (this endpoint)**, **saved in this
 endpoint**, or **none required by this endpoint** (never the key itself, and
-never the family's own `[api_settings]` key). **Test Provider** checks the
+never the family's own `[api_settings]` key). **Test (t)** checks the
 same facts and names the entry's URL. Providers & Models cannot save a named
 endpoint, so its Model, Endpoint, API key, Env var, Context window, Generation
 defaults, and model discovery controls are disabled for one; **Edit this
@@ -1511,7 +1514,7 @@ a note on what would have to exist before Settings could own a default.
 1. **Point the app at a provider and check it works.** Open **Providers &
    Models**, pick your **Provider**, type or discover a **Model**, then fill in
    **Endpoint** for a local server or **API key** (or **Env var**) for a cloud
-   one. Press **Test Provider** *before* saving — it tests your draft. For a
+   one. Press **Test (t)** *before* saving — it tests your draft. For a
    cloud provider it checks the key with one model listing ("Ready · verified
    *HH:MM*"); for a local server it lists its models, so you can pick one even
    before a model is set. Then press **s**: a result for exactly the saved

@@ -313,9 +313,11 @@ from .settings_provider_view_model import (
     build_entry_edit_mutation,
     build_provider_picker_groups,
     build_settings_overview,
+    configured_provider_keys,
     conversations_referencing_endpoint,
     convert_slot_to_named_endpoint,
     detach_and_delete_entry,
+    provider_picker_summary,
 )
 from .settings_config_models import (
     SettingsCategoryId,
@@ -1571,17 +1573,6 @@ API_URL_PROVIDER_KEYS = {
     "oobabooga",
     "tabbyapi",
     "vllm",
-}
-SETTINGS_SOURCE_LABELS = {
-    # Keys mirror the source values resolve_effective_provider_model can
-    # return (Provider/provider_model_resolution.py) -- task-648 renamed
-    # console_control to console_session and deleted app_reactive; TASK-1310's
-    # review caught the stale keys here rendering a raw "console session"
-    # fallback label in Settings > Providers.
-    "settings_draft": "Unsaved Settings draft",
-    "console_session": "Console runtime override",
-    "chat_defaults": "Saved chat defaults",
-    "default": "Default fallback",
 }
 PROVIDER_ENDPOINT_PLACEHOLDERS = {
     "anthropic": "https://api.anthropic.com",
@@ -3313,6 +3304,9 @@ class SettingsScreen(BaseAppScreen):
             None
         )
         self._provider_subscription_test: tuple[str, int] | None = None
+        #: TASK-33007.2: providers with a credential or their own endpoint,
+        #: read when the unfiltered provider list is built.
+        self._provider_configured_keys: frozenset[str] | None = None
         self._provider_save_result = (
             "Provider settings have not been saved this session."
         )
@@ -4510,13 +4504,9 @@ class SettingsScreen(BaseAppScreen):
                         f"{row.label}: {_fold_long_tokens(row.value)}",
                     )
             return
-        self._set_static_text(
-            "#settings-provider-key-status", self._provider_key_status(provider)
-        )
-        self._set_static_text(
-            "#settings-provider-credential-status",
-            self._provider_credential_status(provider),
-        )
+        from ..Settings_Modules.providers_models_card import refresh_key_rows
+
+        refresh_key_rows(self, provider)
         tested_draft = self._provider_subscription_test
         if tested_draft is None:
             return
@@ -14351,31 +14341,6 @@ class SettingsScreen(BaseAppScreen):
             return "Local config key saved; paste a replacement to change it"
         return "Paste API key to save locally in config"
 
-    def _provider_credential_status(self, provider: str) -> str:
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(provider),
-            background_credentials=True,
-        )
-        registry_status = self._provider_registry_credential_status(provider, readiness)
-        if registry_status is not None:
-            return registry_status
-        if readiness.subscription_status is not None:
-            return self._subscription_credential_copy(readiness.subscription_status)
-        if readiness.reason == "Invalid provider settings":
-            return "Provider settings invalid; repair in Advanced Config or config.toml"
-        if self._provider_saved_api_key_present(provider):
-            return "API key source: local config key saved"
-        if readiness.api_key_source and readiness.api_key_source.startswith("env:"):
-            return f"API key source: {readiness.api_key_source}"
-        if not readiness.requires_api_key:
-            return "API key source: not required for this provider"
-        if readiness.env_var:
-            return (
-                f"API key source: missing; set {readiness.env_var} or paste a local key"
-            )
-        return "API key source: missing"
-
     def _provider_credential_placeholder(self, provider: str) -> str:
         provider_key = provider_config_key(provider)
         if not provider_key:
@@ -14424,13 +14389,6 @@ class SettingsScreen(BaseAppScreen):
             self._provider_readiness_app_config(),
             canonical_custom_endpoint_id(provider),
         )
-
-    def _provider_registry_credential_status(
-        self, provider: str, readiness: ProviderReadiness
-    ) -> str | None:
-        """Markup of :meth:`_provider_registry_credential_text`."""
-        text = self._provider_registry_credential_text(provider, readiness)
-        return None if text is None else escape_markup(text)
 
     def _provider_registry_credential_text(
         self, provider: str, readiness: ProviderReadiness
@@ -14566,8 +14524,15 @@ class SettingsScreen(BaseAppScreen):
         self, query: str = ""
     ) -> tuple[ProviderPickerGroup, ...]:
         provider = str(self._provider_display_setting_values().get("provider") or "")
+        catalog = self._provider_catalog_entries()
+        # TASK-33007.2: configured providers lead. Re-read only for the
+        # unfiltered list (compose, open, close), never per keystroke.
+        if not query.strip() or self._provider_configured_keys is None:
+            self._provider_configured_keys = configured_provider_keys(
+                catalog, self._provider_readiness_app_config(), PROVIDER_ENDPOINT_KEYS
+            )
         return build_provider_picker_groups(
-            self._provider_catalog_entries(), provider, query
+            catalog, provider, query, self._provider_configured_keys
         )
 
     def _provider_picker_options(
@@ -14597,13 +14562,24 @@ class SettingsScreen(BaseAppScreen):
     def _provider_picker_has_catalog_matches(
         groups: tuple[ProviderPickerGroup, ...],
     ) -> bool:
-        return any(group.group_id in {"cloud", "local", "custom"} for group in groups)
+        return any(
+            group.group_id in {"configured", "cloud", "local", "custom"}
+            for group in groups
+        )
 
     def _provider_picker_query(self) -> str:
+        """The open list's filter text; a closed list or the resting name
+        filters nothing (TASK-33007.2)."""
         try:
-            return self.query_one("#settings-provider-search", Input).value
+            value = self.query_one("#settings-provider-search", Input).value
+            picker = self.query_one("#settings-provider-picker", OptionList)
         except QueryError:
             return ""
+        if not picker.display:
+            return ""
+        from ..Settings_Modules.providers_models_card import shown_provider_label
+
+        return "" if value == shown_provider_label(self) else value
 
     def _apply_provider_picker_highlight(self, picker: OptionList) -> None:
         """Highlight the current provider's option, else the first selectable.
@@ -14659,8 +14635,13 @@ class SettingsScreen(BaseAppScreen):
                 "This legacy saved provider is not supported here. Choose a listed "
                 "provider to migrate it."
             )
+        elif normalized_query:
+            matches = sum(
+                len(group.options) for group in groups if group.group_id != "actions"
+            )
+            status.update(f"{matches} found · Enter picks · Esc cancels")
         else:
-            status.update("Choose a provider or enter a supported provider alias.")
+            status.update(provider_picker_summary(groups))
 
     def _provider_select_value_for_provider(self, provider: str) -> str:
         catalog_keys = self._provider_catalog_keys()
@@ -15313,26 +15294,6 @@ class SettingsScreen(BaseAppScreen):
             )
         return ""
 
-    def _provider_endpoint_display_value(
-        self, provider: str, endpoint: object | None = None
-    ) -> str:
-        registry = self._provider_registry_endpoint(provider)
-        if registry is not None:
-            return registry[1] or "endpoint not found"
-        provider_key = provider_config_key(provider)
-        endpoint_value = str(
-            endpoint
-            if endpoint is not None
-            else self._provider_endpoint_value(provider)
-        ).strip()
-        if not provider_key:
-            return "provider required before saving"
-        if endpoint_value:
-            return endpoint_value
-        if provider_key in API_URL_PROVIDER_KEYS:
-            return "not configured"
-        return "provider default"
-
     def _provider_endpoint_row(self, provider: str) -> str:
         registry = self._provider_registry_endpoint(provider)
         if registry is not None:
@@ -15342,13 +15303,6 @@ class SettingsScreen(BaseAppScreen):
             return "Endpoint key: provider required"
         endpoint_key = self._provider_endpoint_setting_key(provider)
         return f"Endpoint key: api_settings.{provider_key}.{endpoint_key}"
-
-    @staticmethod
-    def _settings_source_label(source: object) -> str:
-        source_key = str(source or "").strip()
-        if not source_key:
-            return "Unknown"
-        return SETTINGS_SOURCE_LABELS.get(source_key, source_key.replace("_", " "))
 
     @staticmethod
     def _validate_provider_endpoint(endpoint: object) -> str | None:
@@ -15381,27 +15335,6 @@ class SettingsScreen(BaseAppScreen):
     @staticmethod
     def _validate_provider_api_key(api_key: object) -> str | None:
         return provider_api_key_validation_error(api_key)
-
-    def _provider_key_status(self, provider: str) -> str:
-        readiness = get_provider_readiness(
-            provider,
-            self._provider_auth_readiness_config(provider),
-            background_credentials=True,
-        )
-        registry_status = self._provider_registry_credential_status(provider, readiness)
-        if registry_status is not None:
-            return registry_status
-        if readiness.subscription_status is not None:
-            return self._subscription_credential_copy(readiness.subscription_status)
-        if readiness.reason == "Invalid provider settings":
-            return "Provider settings invalid; repair in Advanced Config or config.toml"
-        if readiness.api_key_source:
-            return f"API key: {readiness.api_key_source}"
-        if not readiness.requires_api_key:
-            return "API key: not required for this provider"
-        if readiness.env_var:
-            return f"{readiness.env_var}=missing"
-        return "API key: missing"
 
     def _model_discovery_available(self, provider: str) -> bool:
         return (
@@ -16880,9 +16813,15 @@ class SettingsScreen(BaseAppScreen):
         )
 
     def _update_provider_test_result(self) -> None:
+        from ..Settings_Modules.providers_models_card import key_check_verdict
+
         try:
             self.query_one("#settings-provider-test-result", Static).update(
                 self._provider_test_result
+            )
+            # TASK-33007.2: the Key check row states the same verdict.
+            self.query_one("#settings-provider-readiness", Static).update(
+                key_check_verdict(self)
             )
         except (QueryError, AttributeError):
             # QueryError: widget not mounted yet. AttributeError: called on an
@@ -16914,6 +16853,8 @@ class SettingsScreen(BaseAppScreen):
         self._update_provider_test_result()
 
     def _update_provider_dynamic_widgets(self) -> None:
+        from ..Settings_Modules.providers_models_card import refresh_connect_rows
+
         try:
             provider = self._provider_widget_value()
         except QueryError:
@@ -16932,35 +16873,16 @@ class SettingsScreen(BaseAppScreen):
             model = str(
                 self._provider_setting_values_mapping().get("model") or ""
             ).strip()
-        readiness_label = self._provider_readiness_label()
-        resolved = self._resolve_provider_model_for_settings()
+        # TASK-33007.2: each Connect row says its own source; the separate
+        # readiness block is gone.
+        refresh_connect_rows(self, provider, endpoint)
         self._set_static_text(
-            "#settings-provider-source",
-            f"Provider source: {self._settings_source_label(resolved.provider_source)}",
+            "#settings-provider-inspector-readiness", self._provider_readiness_label()
         )
         self._set_static_text(
-            "#settings-model-source",
-            f"Model source: {self._settings_source_label(resolved.model_source)}",
+            "#settings-provider-endpoint-key", self._provider_endpoint_row(provider)
         )
         try:
-            self.query_one("#settings-provider-readiness", Static).update(
-                f"Readiness: {readiness_label.removeprefix('Provider readiness: ')}"
-            )
-            self.query_one("#settings-provider-inspector-readiness", Static).update(
-                readiness_label
-            )
-            self.query_one("#settings-provider-endpoint-key", Static).update(
-                self._provider_endpoint_row(provider)
-            )
-            self.query_one("#settings-provider-endpoint", Static).update(
-                f"Endpoint: {self._provider_endpoint_display_value(provider, endpoint)}"
-            )
-            self.query_one("#settings-provider-key-status", Static).update(
-                self._provider_key_status(provider)
-            )
-            self.query_one("#settings-provider-credential-status", Static).update(
-                self._provider_credential_status(provider)
-            )
             api_key_input = self.query_one("#settings-provider-api-key", Input)
             api_key_input.placeholder = self._provider_api_key_placeholder(provider)
             clear_button = self.query_one("#settings-provider-api-key-clear", Button)
@@ -22809,6 +22731,20 @@ class SettingsScreen(BaseAppScreen):
                     value,
                     identifier=f"settings-provider-field-guide-{index}",
                 )
+            # TASK-33007.2 (AC#7): the Key block holds what 't' checks and the
+            # last check's labelled rows; the card's Key check row says only
+            # the verdict, so a result never moves the card's rows.
+            yield Static("Key", classes="destination-section")
+            yield Static(
+                PROVIDER_TEST_GUIDANCE,
+                id="settings-test-provider-guidance",
+                classes="settings-detail-row",
+            )
+            yield _ProviderTestResult(
+                self._adopt_shared_provider_test_evidence(),
+                id="settings-provider-test-result",
+                markup=False,
+            )
         elif summary.category is SettingsCategoryId.LIBRARY_RAG:
             # UX review item 9 (Scope Inspector clipping): a blank spacer
             # ahead of the RAG-specific guidance, separating it from the
@@ -29436,17 +29372,32 @@ class SettingsScreen(BaseAppScreen):
 
     @on(Input.Changed, "#settings-provider-search")
     def handle_provider_search_changed(self, event: Input.Changed) -> None:
-        """Refresh only picker rows so provider connection drafts remain mounted."""
+        """Filter the provider list as the user types (TASK-33007.2 AC#3).
+
+        Only picker rows refresh, so provider connection drafts stay mounted.
+        The list opens only for typing in the focused control.
+        """
+        from ..Settings_Modules.providers_models_card import (
+            open_provider_list,
+            shown_provider_label,
+        )
 
         event.stop()
-        self._refresh_provider_picker(event.value)
+        if event.input.has_focus:
+            open_provider_list(self)
+        elif event.value != shown_provider_label(self):
+            self._refresh_provider_picker(event.value)
 
     @on(OptionList.OptionSelected, "#settings-provider-picker")
     def handle_provider_picker_selected(self, event: OptionList.OptionSelected) -> None:
         from ...Widgets.select_values import assign_select_value
+        from ..Settings_Modules.providers_models_card import close_provider_list
 
         event.stop()
         option = event.option
+        # The choice lands through the provider Select's handler, which then
+        # puts the chosen provider's name in the control.
+        close_provider_list(self)
         action = getattr(option, "action", None)
         provider_id = getattr(option, "provider_id", None)
         try:
@@ -29869,7 +29820,7 @@ class SettingsScreen(BaseAppScreen):
 
         event.stop()
         focus_by_key = {
-            "provider": "#settings-provider-value",
+            "provider": "#settings-provider-search",
             "model": "#settings-model-value",
             "endpoint": "#settings-provider-endpoint-value",
             "api_key": "#settings-provider-api-key",
@@ -29879,7 +29830,7 @@ class SettingsScreen(BaseAppScreen):
         dirty_keys = sorted(draft.dirty_keys) if draft is not None else []
         selector = next(
             (focus_by_key[key] for key in dirty_keys if key in focus_by_key),
-            "#settings-provider-value",
+            "#settings-provider-search",
         )
         try:
             self.query_one(selector).focus()

@@ -153,7 +153,10 @@ async def test_provider_picker_row_the_select_no_longer_offers_does_not_raise():
             for i in range(picker.option_count)
             if getattr(picker.get_option_at_index(i), "provider_id", None) == dropped
         )
-        picker.focus()
+        # TASK-33007.2, rewritten on purpose: the list never takes focus; the
+        # focused Provider control opens it and Enter chooses its highlight.
+        screen.query_one("#settings-provider-search", Input).focus()
+        await pilot.press("down")
         picker.highlighted = index
         await pilot.pause()
         await pilot.press("enter")
