@@ -25,6 +25,8 @@ from tldw_chatbook.Widgets.Console.console_session_switcher_modal import (
     ConsoleSessionSwitcherModal,
 )
 
+pytestmark = pytest.mark.bootstrap_profile
+
 
 @pytest_asyncio.fixture
 async def activation_library(library):  # noqa: F811 - imported pytest fixture

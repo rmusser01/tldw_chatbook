@@ -6136,9 +6136,22 @@ class ConsoleWorkspaceController:
             # boundary must establish focus before the immediate exact-visible
             # proof, including when activation began in a Context row.
             try:
+                # A whole-Console sync may coalesce into an already-running
+                # pass. Publish this target before the exact-ready proof.
+                await self._screen._sync_native_console_transcript()
                 self._screen.set_focus(
                     self._screen.query_one("#console-native-composer")
                 )
+            except asyncio.CancelledError:
+                # The caller has not received ownership yet. Settle only this
+                # exact cold runtime synchronously, then let it restore prior UI.
+                if owned is not None:
+                    store.rollback_restored_session(
+                        owned.id,
+                        expected_session=owned,
+                        prior_active_session_id=None,
+                    )
+                raise
             except Exception:  # noqa: BLE001 - preserve the owned token for rollback
                 logger.opt(exception=True).warning(
                     "Could not focus the committed character conversation"

@@ -11,6 +11,37 @@ bring the incident.
 
 ---
 
+## Awaiting a coalesced UI sync does not prove exact transcript publication
+
+**TASK-31245, 2026-10-04, dev f800952214.** Warm History-to-Character reopening
+intermittently left the switcher open despite selecting an existing runtime.
+State probes captured the target active and composer focused while the
+transcript still owned the preceding runtime, with both Console-sync flags
+set. The full sync had returned after coalescing into an in-flight pass; the
+canonical opener's strict readiness check correctly rejected the stale
+transcript and rolled back. Individual retries passed, and reconciliation
+could clear the failure before the test's five-second wait expired.
+
+The deterministic installed regression holds the full sync before transcript
+publication and opens the existing exact target. It returned postcommit
+`FAILED` before repair and `OPENED` after awaiting the existing locked transcript
+renderer before the readiness proof. A queued refresh request is not a render
+completion receipt. Activation must await the publication it promises, without
+weakening identity, visibility, focus, or overlay-owner checks. Capture the
+typed outcome and transcript owner at the failure boundary; a later timeout
+alone cannot distinguish a rejected activation from a slow successful one.
+
+Qodo's PR #3009 review exposed a second seam in this repair: direct cancellation
+of the postcommit child during publication stranded a newly hydrated runtime
+before its ownership token was returned. A real-store regression failed for
+the cold case and passed for the warm case. Shielding a caller is not shielding
+the child itself. An opener adding a suspension after acquiring ownership must
+settle that exact ownership on cancellation before propagating it; the repair
+uses the existing synchronous exact-instance guard, retaining warm sessions and
+letting the caller restore prior UI. Both cases then passed.
+
+---
+
 ## An unchanged recovery projection can still need its click latch released
 
 **TASK-32819, GitHub #2708, 2026-09-18.** A failed recovery returned the store to
