@@ -11,6 +11,7 @@ from textual import on
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Input, Label, Select, Static, TextArea
 
@@ -129,7 +130,10 @@ class BuddyCharacterReviewDialog(
                     id="buddy-animate",
                 )
                 yield Label("Portrait source (independent of expression preview)")
-                choices = [(row.source_state, row.source_state) for row in self.rows]
+                # TASK-34400: archive state names are untrusted; str prompts are markup.
+                choices = [
+                    (Content(row.source_state), row.source_state) for row in self.rows
+                ]
                 default = (
                     "idle"
                     if any(row.source_state == "idle" for row in self.rows)

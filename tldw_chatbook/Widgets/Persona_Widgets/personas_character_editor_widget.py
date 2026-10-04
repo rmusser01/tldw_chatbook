@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
+from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
@@ -636,9 +637,11 @@ class PersonasCharacterEditorWidget(Container):
                         id="personas-char-editor-expr-header",
                         classes="destination-section",
                     )
+                    # TASK-34400: style names are user-authored templates.
                     yield Static(
                         "Style: Custom",
                         id="personas-char-editor-style-readout",
+                        markup=False,
                     )
                     yield Button(
                         "Style…",
@@ -699,7 +702,8 @@ class PersonasCharacterEditorWidget(Container):
                             classes="personas-char-editor-expr-thumb",
                         )
             yield Container(id="personas-char-editor-visual-identity-host")
-        yield Static("", id="personas-char-editor-validation")
+        # TASK-34400: validation errors echo card text (names, book entries).
+        yield Static("", id="personas-char-editor-validation", markup=False)
         with Horizontal(classes="ds-toolbar"):
             yield Button(
                 "Save", id="personas-char-editor-save", classes="console-action-primary"
@@ -1692,7 +1696,8 @@ class PersonasCharacterEditorWidget(Container):
         table = self.query_one("#personas-char-editor-greetings-table", DataTable)
         table.clear()
         for i, greeting in enumerate(self._greetings):
-            table.add_row(self._greeting_preview(greeting), key=str(i))
+            # TASK-34400: a str cell parses as markup; greetings are card text.
+            table.add_row(Text(self._greeting_preview(greeting)), key=str(i))
 
     def _load_greeting_into_edit(self, index: int) -> None:
         if 0 <= index < len(self._greetings):

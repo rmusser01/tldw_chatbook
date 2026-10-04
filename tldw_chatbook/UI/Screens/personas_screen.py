@@ -166,6 +166,7 @@ from ...tldw_api.character_persona_schemas import (
     PersonaProfileCreate,
     PersonaProfileUpdate,
 )
+from ...Utils.input_validation import escape_markup
 from ...Utils.path_validation import validate_path_simple
 from ...Utils.paths import get_user_data_dir
 from ...Widgets.destination_rail import DestinationRailHandle
@@ -4572,13 +4573,14 @@ class PersonasScreen(BaseAppScreen):
         if self._edit_mode == "create":
             noun = "persona" if self.state.active_mode == "personas" else "character"
             return f"New {noun}{suffix}"
+        # TASK-34400: the shared header subtitle parses markup; names are untrusted.
         if self._edit_mode == "edit":
             name = self.state.selected_entity_name or "item"
-            return f"Editing {name}{suffix}"
+            return f"Editing {escape_markup(name)}{suffix}"
         # Upstream improvement kept: surface the selected entity in view mode
         # when it has unsaved changes, instead of the bare purpose line.
         if self.state.has_unsaved_changes and self.state.selected_entity_name:
-            return f"{self.state.selected_entity_name}{suffix}"
+            return f"{escape_markup(self.state.selected_entity_name)}{suffix}"
         return "Author the pieces that shape a chat"
 
     def _mode_descriptor_text(self, mode: str) -> str:
@@ -10212,7 +10214,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             path = await self.app.push_screen_wait(
                 EnhancedFileOpen(
-                    title=f"Replace {state_key} Persona Visual",
+                    title=f"Replace {escape_markup(state_key)} Persona Visual",
                     filters=Filters(
                         (
                             "Image Files",
@@ -12542,7 +12544,7 @@ class PersonasScreen(BaseAppScreen):
         try:
             path = await self.app.push_screen_wait(
                 EnhancedFileOpen(
-                    title=f"Replace {asset.display_label} reaction",
+                    title=f"Replace {escape_markup(asset.display_label)} reaction",
                     filters=Filters(
                         (
                             "Image Files",
@@ -13094,7 +13096,7 @@ class PersonasScreen(BaseAppScreen):
             if not self._local_character_actions_allowed():
                 return
             picker = EnhancedFileOpen(
-                title=f"Upload {state.capitalize()} Expression Image",
+                title=f"Upload {escape_markup(state.capitalize())} Expression Image",
                 filters=Filters(
                     (
                         "Image Files",
@@ -16248,7 +16250,8 @@ class PersonasScreen(BaseAppScreen):
         """Post an app notification.
 
         Args:
-            message: Text to show.
+            message: Text to show, always literally (TASK-34400: names and
+                exception text are untrusted).
             severity: Textual severity level.
             timeout: Seconds to linger before dismissing; ``None`` uses the
                 app's default (Textual's ``NOTIFICATION_TIMEOUT``, 5s). Most
@@ -16259,7 +16262,7 @@ class PersonasScreen(BaseAppScreen):
         """
         notify = getattr(self.app_instance, "notify", None)
         if callable(notify):
-            notify(message, severity=severity, timeout=timeout)
+            notify(message, severity=severity, timeout=timeout, markup=False)
 
     # ===== Key bindings =====
 

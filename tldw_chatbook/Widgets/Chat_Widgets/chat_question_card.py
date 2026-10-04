@@ -21,6 +21,7 @@ from textual import events
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Container, Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.css.query import NoMatches
 from textual.timer import Timer
 from textual.widgets import Button, Input, RadioButton, RadioSet, SelectionList, Static
@@ -333,10 +334,11 @@ class ChatQuestionCard(Container):
             self._deadline_timer = None
 
     @staticmethod
-    def _option_prompt(option: dict[str, Any]) -> str:
+    def _option_prompt(option: dict[str, Any]) -> Content:
+        # TASK-34400: options are model-authored; a str prompt parses as markup.
         label = str(option.get("label", ""))
         description = str(option.get("description") or "")
-        return f"{label} — {description}" if description else label
+        return Content(f"{label} — {description}" if description else label)
 
     def _build_section(self, key: str, index: int, question: dict[str, Any]) -> Vertical:
         options = question.get("options") or []

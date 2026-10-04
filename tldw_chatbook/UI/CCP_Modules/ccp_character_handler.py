@@ -226,10 +226,13 @@ class CCPCharacterHandler:
         return "local"
 
     def _notify(self, message: str, severity: str = "warning") -> None:
-        """Surface a notification when CCP execution helpers cannot complete."""
+        """Surface a notification when CCP execution helpers cannot complete.
+
+        Literal text (TASK-34400): messages quote server and exception text.
+        """
         notifier = getattr(self.window, "notify", None)
         if callable(notifier):
-            notifier(message, severity=severity)
+            notifier(message, severity=severity, markup=False)
 
     def _call_from_thread(self, callback: Any, *args: Any) -> Any:
         """Schedule a callback on Textual's main thread from a handler worker."""

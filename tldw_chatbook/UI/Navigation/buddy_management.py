@@ -662,7 +662,8 @@ class BuddyManagementCoordinator:
         try:
             await self.apply_choice(choice)
         except ValueError as exc:
-            self.app.notify(str(exc), severity="error")
+            # TASK-34400: exception text is not ours; a markup toast can exit the app.
+            self.app.notify(str(exc), severity="error", markup=False)
         except Exception:  # noqa: BLE001 - app boundary keeps storage faults out of the message pump
             self.app.notify(
                 "Could not finish applying Buddy settings. Reopen Buddy settings to review the current selection and retry.",

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from rich.text import Text
 from textual import events, on
 from textual.app import ComposeResult
 from textual.containers import Container, Horizontal, Vertical
@@ -129,7 +130,10 @@ class PersonasVisualIdentityPackWidget(Vertical):
         self._busy: Literal["preparing", "generating", "saving"] | None = None
 
     def compose(self) -> ComposeResult:
-        yield Static("Visual Identity", id="personas-visual-identity-title")
+        # TASK-34400: the pack title is imported/user text; never markup.
+        yield Static(
+            "Visual Identity", id="personas-visual-identity-title", markup=False
+        )
         yield Static("", id="personas-visual-identity-notice", markup=False)
         yield Input(
             placeholder="Filter expressions",
@@ -214,7 +218,7 @@ class PersonasVisualIdentityPackWidget(Vertical):
         options = self.query_one("#personas-visual-identity-results", OptionList)
         options.clear_options()
         options.add_options(
-            Option(asset.display_label, id=f"asset-{asset.asset_id}")
+            Option(Text(asset.display_label), id=f"asset-{asset.asset_id}")
             for asset in self._filtered
         )
         if self._filtered:

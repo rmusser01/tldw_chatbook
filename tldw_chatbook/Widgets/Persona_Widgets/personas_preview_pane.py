@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import re
 
-from tldw_chatbook.Utils.input_validation import escape_markup as escape
 from rich.text import Text
 from textual import on
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.content import Content
 from textual.widgets import Button, Input, Select, Static
 
 from ...Utils.input_validation import validate_text_input
@@ -120,12 +120,13 @@ class PersonasPreviewPane(Vertical):
             # Provider/model readout: which provider will answer a test reply.
             # Kept at the top of the body so it is the first thing seen when
             # the preview expands.
-            yield Static("", id="personas-preview-provider")
+            # TASK-34400: provider and model names are config text; never markup.
+            yield Static("", id="personas-preview-provider", markup=False)
             yield VerticalScroll(id="personas-preview-transcript")
             # The status line is a status region adjacent to the input, kept
             # BELOW the transcript so provider/error messages never render
             # above the chronological greeting -> User -> character history.
-            yield Static("", id="personas-preview-status")
+            yield Static("", id="personas-preview-status", markup=False)
             with Horizontal(id="personas-preview-greeting-row", classes="ds-toolbar"):
                 yield Static("Greeting:", classes="personas-preview-greeting-label")
                 yield Select(
@@ -254,7 +255,8 @@ class PersonasPreviewPane(Vertical):
             with self.prevent(Select.Changed):
                 select.set_options(
                     [
-                        (self._greeting_option_label(i, g), i)
+                        # TASK-34400: greetings are card text; a str prompt is markup.
+                        (Content(self._greeting_option_label(i, g)), i)
                         for i, g in enumerate(greetings)
                     ]
                 )
@@ -384,7 +386,11 @@ class PersonasPreviewPane(Vertical):
     _ACTION_SPAN = re.compile(r"\*([^*\n]+)\*")
 
     def _styled_line(self, line: str) -> Text:
-        """Render a transcript line: escape Rich markup, italicize *action* spans.
+        """Render a transcript line literally, italicizing *action* spans.
+
+        Built from plain segments, never parsed as markup (TASK-34400): names
+        and replies are untrusted, and escaping for Rich's parser misses a
+        backslash before ``[`` (``a\\[/]`` re-opened a live closing tag).
 
         Args:
             line: Plain transcript line (``"label: text"``).
@@ -393,7 +399,14 @@ class PersonasPreviewPane(Vertical):
             A Rich ``Text`` whose plain string equals the line with matched
             ``*...*`` asterisks removed, and with italic spans over those runs.
         """
-        return Text.from_markup(self._ACTION_SPAN.sub(r"[i]\1[/i]", escape(line)))
+        text = Text()
+        start = 0
+        for match in self._ACTION_SPAN.finditer(line):
+            text.append(line[start : match.start()])
+            text.append(match.group(1), style="italic")
+            start = match.end()
+        text.append(line[start:])
+        return text
 
     async def _render_seed_lines(self) -> None:
         """Replace the transcript with the greeting line (or nothing)."""

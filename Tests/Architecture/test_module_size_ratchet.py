@@ -105,7 +105,11 @@ _BUDGETS: dict[str, int] = {
     # 2026-10-03 (PR #2993, owner decision): +128 is formatter reflow only
     # (TASK-26000 series, Ruff 0.15.22; the file is AST-identical to the
     # 16,397-line version), so the row is re-measured, not grown.
-    "tldw_chatbook/UI/Screens/personas_screen.py": 16525,
+    # 2026-10-04 (TASK-34400, owner decision): +3 for the crash fix that stops
+    # names shaped like markup from exiting the app (the escape_markup import,
+    # its comment, and a wrapped _notify docstring line). The owner ruled to
+    # raise the row rather than squeeze unrelated code to fit.
+    "tldw_chatbook/UI/Screens/personas_screen.py": 16528,
     "tldw_chatbook/Widgets/Console/console_transcript.py": 8353,
     # TASK-33003 (Phase 3) ends at 7,764 measured, down from 7,802: .2 moved
     # the control-height rules to app CSS, .4/.5/.8 spent part of that.
