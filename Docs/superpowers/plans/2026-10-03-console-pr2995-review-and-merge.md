@@ -28,6 +28,8 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 
 ## Controller preparation
 
+- [ ] Incorporate latest dev81c7c94f48 backup-admission fix; verify reviewed feature source bytes unchanged and qualify affected backup/startup seams.
+
 - [x] Record old PR head ce918c467898eb24feff216bced45b779bf310c6 and create /private/tmp/console-pr2995-merge/pre-rebase.bundle.
 - [x] Fetch origin/dev at 01a2020981c6197e5cd9945e5287567ad977edfe and rebase the feature branch. Resolve the lessons append by keeping both original entries.
 - [x] Verify historical QA blobs and resulting source integration; refresh scoped qualification.
@@ -51,6 +53,24 @@ Reason: Restore approved draft ownership and startup ratchets; no new schema or 
 - [x] Reproduce the failed _ui_ready census. CI measured 1034 against limit1033 with console_chat_start among the new modules. Trace its import ownership and defer a genuine unnecessary boot edge; do not raise limits, refresh a failing snapshot, or delete checks.
 - [x] Run the expanded mounted matrix and directly affected handoff/composer tests, the primary-to-child shared closure regression, and affected startup/import ratchets. Capture exact commands, revisions, exits and warnings; use the shared .venv interpreter and task-private temporary profiles.
 - [x] Run fatal Ruff rules, the existing formatter ratchet for touched files, and git diff --check. Commit only source/test files and write the report with RED/GREEN evidence and self-review.
+
+### Task 2: Repair final review close-ticket and child-tool documentation findings
+
+**Files:**
+- Modify: tldw_chatbook/Chat/console_chat_controller.py (finalize_session_close only).
+- Modify: Docs/User_Guide/console/agent-runs-and-tools.md (Chat creation tools paragraph).
+- Test: Tests/Chat/test_console_runtime_shutdown.py (existing meaningful controls).
+
+**Interfaces:**
+- Consumes: runtime-owned ConsoleSessionCloseTicket, current generation and remembered session grant.
+- Produces: stale/mismatched/generation-refused tickets retain live grants; valid session close clears grants. Accurate child tool documentation.
+
+- [x] Read final-branch-review.md. Reproduce existing rejected-close grant controls and the valid-ticket cleanup control on unchanged source before repair; preserve RED evidence.
+- [x] Remove only the new prevalidation chat-create grant pop/comment at finalize_session_close. Preserve the existing validated post-ticket/generation grant cleanup and all runtime teardown behavior.
+- [x] Correct the guide: child agents may fork a chat or create a same-workspace draft; child requests require fresh confirmation. Casual destinations and bounded starts remain primary-only. Verify current prepare/bridge contracts before wording.
+- [x] Run complete Tests/Chat/test_console_runtime_shutdown.py with private profile and exact recorded command; no full suite/new markers/suppression. If baseline setup fails, diagnose/verify immutable base before repairing unrelated expectations.
+- [x] Run fatal Ruff, formatter ratchet for the touched Python file against recorded BASE, and git diff --check. Commit only these two owned paths; report exact SHA, results and retained warnings.
+- [ ] Scoped independent re-review of these two findings and this fix diff; no second whole-branch review or repeated tests without a concrete doubt.
 
 ## External review and publication
 

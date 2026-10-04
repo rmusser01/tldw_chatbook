@@ -1,0 +1,16 @@
+{
+  "name": "format-committed",
+  "revision": "0d2e581ba96ef00adb02e2c800cd449582f8a629",
+  "cwd": "/Users/macbook-dev/.codex/worktrees/console-chat-starts/tldw_chatbook",
+  "argv": [
+    "/Users/macbook-dev/Documents/GitHub/tldw_chatbook/.venv/bin/python",
+    "scripts/terminal_qualification/format_ratchet.py",
+    "verify",
+    "--baseline",
+    ".superpowers/sdd/2026-10-03-console-pr2995-review-and-merge/task-2-format-baseline.json",
+    "--head",
+    "0d2e581ba96ef00adb02e2c800cd449582f8a629"
+  ],
+  "exit": 0,
+  "log": "task-2-format-committed.log"
+}

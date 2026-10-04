@@ -1,0 +1,10 @@
+{
+  "scope": "Exact selected top-level QA report/log/receipt/helper bytes only. Historical QA byte-unchanged and prior audit retained.",
+  "files": 107,
+  "bytes": 2006773,
+  "known_local_credential_values_compared": 3,
+  "known_matches": 0,
+  "recognized_token_or_private_key_findings": 0,
+  "private_profiles_exported": false,
+  "limit": "Exact known-value and recognizable-token checks; not a general security scan."
+}
