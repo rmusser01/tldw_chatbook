@@ -173,6 +173,42 @@ async def test_chat_and_canonical_settings_open_the_same_scoped_manager(tmp_path
 
 
 @pytest.mark.asyncio
+async def test_canonical_settings_opens_global_rules_before_console_visit(tmp_path):
+    from Tests.UI.test_destination_shells import _build_test_app
+    from Tests.UI.test_response_rules_modal import ManagerHost
+    from tldw_chatbook.DB.ChaChaNotes_DB import CharactersRAGDB
+    from tldw_chatbook.UI.Screens.settings_screen import SettingsScreen
+
+    app = _build_test_app()
+    app.chachanotes_db = CharactersRAGDB(
+        tmp_path / "settings-rules.sqlite", "settings-rules"
+    )
+    settings = SettingsScreen(app)
+    settings.apply_navigation_context({"category": "hooks"})
+    try:
+        async with ManagerHost(settings).run_test(size=(120, 35)) as pilot:
+            for _ in range(25):
+                await pilot.pause()
+                if settings.query("#settings-response-rules"):
+                    break
+            settings.query_one("#settings-response-rules", Button).press()
+            for _ in range(30):
+                await pilot.pause()
+                if isinstance(settings.app.screen, ResponseRulesModal):
+                    break
+            assert isinstance(settings.app.screen, ResponseRulesModal)
+            modal = settings.app.screen
+            assert modal.scope.kind == "global"
+            assert not modal.runtime.chat_store.sessions()
+            assert app.console_runtime._chat_controller is None
+    finally:
+        owner = getattr(app, "console_runtime", None)
+        if owner is not None:
+            await owner.dispose()
+        app.chachanotes_db.close()
+
+
+@pytest.mark.asyncio
 async def test_active_run_copy_takes_priority_over_an_earlier_rule_verdict(tmp_path):
     async with mounted_rules_console(tmp_path) as case:
         seed_answer(case)

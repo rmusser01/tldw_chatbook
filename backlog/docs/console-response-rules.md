@@ -16,11 +16,15 @@ Open `/rules` or **Chat settings → Response rules**. Use `/rules workspace` fo
 
 The manager shows local pins, inherited rules and inactive drafts. Review the title, applicability, detector, correction guidance and recorded examples. Literal checks support required text, forbidden text and headings, with explicit letter-case matching. Semantic applicability and semantic checks require a judge.
 
+Global rules can be managed from F9 before opening a Chat, or after the last Chat closes. Testing an edited rule requires an open Chat with a completed example. A change that would put a known Chat over 16 effective rules is refused before saving; disable or exclude a rule first.
+
 **Test** creates an inactive revision. **Save** activates the exact tested definition only if its source and binding are still current. Changed criteria require testing; unchanged predicates and examples can reuse their recorded validation after explicit guidance review. If the original answer is unavailable, select a completed replacement example and Test again. Failed or cancelled testing retains the editor text and the existing pin.
 
 **Disable here** stops a rule in the selected scope. **Exclude here** masks the logical rule, including future inherited revisions. **Delete pin** removes the local override, allowing a broader binding to apply again. **Promote** previews the exact stored revision before applying it to a Workspace or the current profile; private examples and source text stay in their original scope.
 
 Nearest scope wins: Chat, then Workspace, then current-profile global. Global rules remain local to this profile and device. Promotion is explicit.
+
+Promoted rules retain a body-free record of their example test, so they can be disabled and enabled after the source Chat closes. Editing still requires available examples. The 8 KiB example limit applies to synthetic controls; the recorded answer uses the separate captured-context allowance.
 
 ## Checking and repair
 
@@ -39,6 +43,8 @@ Helper usage appears in the existing cost totals with its own purpose and pricin
 Private rules, fixtures, validations and assessments use local sidecar storage. They are excluded from ordinary conversation metadata, sync and export. Temporary Chats keep the same records in memory until an explicit Save adopts them atomically; failed Save retains memory state for retry. Forks do not copy Chat-local rules.
 
 Reopening a Chat does not replay learning, checks or repairs. Imported restore data remains inactive and inert. Exact local rollback is a separate recovery operation. Removing the original answer can make an editor test require a replacement example.
+
+Deleting a temporary example removes its private test material without preventing the remaining Chat from being saved. Independently retained rule definitions can still apply. Automatic repair feedback stays out of prompt-history recall. After reopening a repaired conversation, further checks use its recorded original task without restoring permission to run an automatic repair.
 
 If activation succeeds but initial repair fails or is stopped, the rule remains active and the notice distinguishes that result. The original answer and completed work remain available.
 

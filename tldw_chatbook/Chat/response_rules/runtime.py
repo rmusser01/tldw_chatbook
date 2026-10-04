@@ -42,6 +42,7 @@ from .resources import RuleHelperPool
 from .store import ResponseRuleStore
 
 if TYPE_CHECKING:
+    from tldw_chatbook.Chat.console_chat_store import ConsoleChatStore
     from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
     from tldw_chatbook.Chat.console_prompt_queue_coordinator import (
         ConsolePromptQueueCoordinator,
@@ -98,13 +99,22 @@ class ResponseRuleRuntime:
         self,
         *,
         store: ResponseRuleStore,
-        controller: ConsoleChatController,
-        queue: ConsolePromptQueueCoordinator,
+        controller: ConsoleChatController | None,
+        queue: ConsolePromptQueueCoordinator | None,
         builder: ResponseRuleBuilder,
         evaluator: ResponseRuleEvaluator,
         helpers: RuleHelperPool,
+        chat_store: ConsoleChatStore | None = None,
+        profile_current: Callable[[], bool] = lambda: True,
     ) -> None:
-        self.store, self.controller, self.queue = store, controller, queue
+        self.store = store
+        self._controller, self._queue = controller, queue
+        if chat_store is None:
+            if controller is None:
+                raise ValueError("rule_store_owner_required")
+            chat_store = controller.store
+        self.chat_store = chat_store
+        self._profile_current = profile_current
         self.builder, self.evaluator, self.helpers = builder, evaluator, helpers
         database = store.repository.db
         self.profile_id = digest_payload({"profile": str(database.db_path)})
@@ -126,10 +136,36 @@ class ResponseRuleRuntime:
         self._committing: set[str] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._unsubscribe = store.add_invalidation_listener(self._binding_changed)
-        self._unsubscribe_source = (
-            controller.store.subscribe_response_rule_invalidation(self.invalidate)
+        self._unsubscribe_source = self.chat_store.subscribe_response_rule_invalidation(
+            self.invalidate
         )
-        queue.bind_native_assessment_lookup(
+        if controller is not None:
+            self.bind_controller(controller)
+
+    @property
+    def controller(self) -> ConsoleChatController:
+        """Return the real Console owner only after execution is assembled."""
+        if self._controller is None:
+            raise RuntimeError("active_chat_required")
+        return self._controller
+
+    @property
+    def queue(self) -> ConsolePromptQueueCoordinator:
+        if self._queue is None:
+            raise RuntimeError("active_chat_required")
+        return self._queue
+
+    def profile_current(self) -> bool:
+        """Fence profile-only management independently of any active Chat."""
+        return not self._closed and self._profile_current()
+
+    def bind_controller(self, controller: ConsoleChatController) -> None:
+        """Attach later Console execution to the same profile management service."""
+        if controller.store is not self.chat_store:
+            raise ValueError("rule_store_owner_changed")
+        self._controller = controller
+        self._queue = controller.prompt_queue_coordinator
+        self.queue.bind_native_assessment_lookup(
             self.current_assessment,
             rules=self.pinned_rules,
             limit_reached=self.correction_limit_reached,
@@ -147,9 +183,7 @@ class ResponseRuleRuntime:
 
     def scopes(self, session_id: str) -> tuple[RuleScope, RuleScope | None, RuleScope]:
         """Resolve local ownership through the actual selected Chat."""
-        session = next(
-            s for s in self.controller.store.sessions() if s.id == session_id
-        )
+        session = next(s for s in self.chat_store.sessions() if s.id == session_id)
         scopes = (
             RuleScope("chat", session.persisted_conversation_id or session.id),
             (
@@ -161,6 +195,7 @@ class ResponseRuleRuntime:
         )
         with self._lock:
             self._scope_owners[session_id] = scopes
+        self.store.register_context(*scopes)
         return scopes
 
     def effective_rules(self, session_id: str) -> tuple[RuleRevision, ...]:
@@ -192,7 +227,7 @@ class ResponseRuleRuntime:
 
     def _project(self, session_id: str, **changes) -> None:
         self._states[session_id] = replace(self.state(session_id), **changes)
-        callback = getattr(self.controller, "response_rules_changed", None)
+        callback = getattr(self._controller, "response_rules_changed", None)
         if callable(callback):
             try:
                 callback(session_id)
@@ -253,7 +288,7 @@ class ResponseRuleRuntime:
     def dispose(self) -> None:
         """Seal result authority before the app's bounded transport cleanup."""
         self._closed = True
-        for session in self.controller.store.sessions():
+        for session in self.chat_store.sessions():
             self.invalidate(session.id, "shutdown")
         self._unsubscribe()
         self._unsubscribe_source()
@@ -648,6 +683,16 @@ class ResponseRuleRuntime:
                 raise
             result = failed(self.state(session_id).reason or "cancelled", "cancelled")
             self._project(session_id, phase="idle", learning=result)
+            return result
+        except ValueError as exc:
+            result = failed(
+                "too_many_effective_rules"
+                if str(exc) == "too_many_effective_rules"
+                else "save_or_learning_unavailable"
+            )
+            self._project(
+                session_id, phase="idle", learning=result, reason=result.reason
+            )
             return result
         except Exception:  # noqa: BLE001 -- leave the original answer recoverable.
             logger.warning("response_rule_learning_unavailable")

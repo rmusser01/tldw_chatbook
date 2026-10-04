@@ -27,6 +27,23 @@ class ManagerHost(ConsolidatedCSSApp):
 
 
 @pytest.mark.asyncio
+async def test_global_manager_can_disable_after_last_chat_closes(native):
+    _owner, rules, chats, session, _gateway, _controller = native
+    activate(native)
+    destination = rules.scopes(session.id)[2]
+    rules.store.promote("rule", 1, destination, expected_binding_revision=0)
+    chats.close_session(session.id)
+    modal = ResponseRulesModal(destination, rules.store, rules)
+    async with ManagerHost(modal).run_test(size=(80, 24)) as pilot:
+        for _ in range(10):
+            await pilot.pause()
+        modal.query_one("#rr-disable", Button).press()
+        for _ in range(10):
+            await pilot.pause()
+        assert rules.store.list_bindings(destination)[0].state == "disabled"
+
+
+@pytest.mark.asyncio
 async def test_global_manager_does_not_inherit_chat_only_rules(native):
     from textual.widgets import OptionList
 

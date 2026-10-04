@@ -70,6 +70,28 @@ def seed(native):
     return answer
 
 
+@pytest.mark.asyncio
+async def test_profile_rules_exist_before_console_controller_is_constructed(native):
+    from tldw_chatbook.Chat.console_chat_controller import ConsoleChatController
+
+    old_owner, _rules, _chats, _session, _gateway, _controller = native
+    owner = ConsoleRuntime(app=old_owner._app)
+    try:
+        rules = owner.ensure_response_rules()
+        assert rules is not None
+        assert owner._chat_controller is None
+        assert not rules.chat_store.sessions()
+        # Later real assembly binds the actual execution owner, not a Settings stub.
+        controller = ConsoleChatController(
+            store=rules.chat_store, provider_gateway=owner.ensure_provider_gateway()
+        )
+        owner.set_chat_controller(controller)
+        assert owner.ensure_response_rules() is rules
+        assert rules.controller is controller
+    finally:
+        await owner.dispose()
+
+
 def activate(native):
     _runtime, rules, chats, session, _gateway, _controller = native
     answer = seed(native)

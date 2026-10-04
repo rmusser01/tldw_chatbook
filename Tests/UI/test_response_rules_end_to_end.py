@@ -24,8 +24,15 @@ async def wait_for(case, predicate):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("size", [(80, 24), (120, 35)])
-async def test_learn_repair_reopen_and_exclude_through_console(tmp_path, size):
+@pytest.mark.parametrize("review_check", ["history", "ancestry"])
+async def test_learn_repair_reopen_and_exclude_through_console(
+    tmp_path, size, review_check
+):
     async with mounted_rules_console(tmp_path, size) as case:
+        from tldw_chatbook.Chat.prompt_history import PromptHistory
+
+        history = PromptHistory(tmp_path / "history.jsonl")
+        case.controller.prompt_history = history
         case.reply = "Missing proof"
         case.composer.load_draft("Explain result")
         await case.pilot.pause()
@@ -57,6 +64,9 @@ async def test_learn_repair_reopen_and_exclude_through_console(tmp_path, size):
         assert case.chats.get_message(original.id).content == original.content
         assert case.rules.state(case.session_id).assessment.outcome == "pass"
         assert case.composer.draft_text() == ""
+        if review_check == "history":
+            assert history.size == 1
+            assert (await history.get_entry(-1))["input"] == "Explain result"
         helper_calls = len(case.transport.requests)
         repairs = len(case.requests)
         saved = next(s for s in case.chats.sessions() if s.id == case.session_id)
@@ -77,6 +87,21 @@ async def test_learn_repair_reopen_and_exclude_through_console(tmp_path, size):
             if m.persisted_message_id == original_persisted_id
         ]
         assert len(originals) == 1 and originals[0].content == "Missing proof"
+        if review_check == "ancestry":
+            from Tests.Chat.response_rules_fixtures import source
+            from tldw_chatbook.Chat.response_rules.evidence import capture_rule_input
+
+            answer = case.chats.get_message(case.chats.active_leaf(case.session_id))
+            origin = source(
+                profile_id=case.rules.profile_id,
+                session_id=case.session_id,
+                conversation_id=conversation_id,
+                message_id=answer.persisted_message_id,
+                branch_id=answer.id,
+                message_version=case.chats.response_rule_source_version(answer.id),
+            )
+            captured = capture_rule_input(case.chats, origin)
+            assert captured.request_text == "Explain result"
         case.composer.load_draft("/rules")
         await case.pilot.pause()
         assert await case.pilot.click("#console-send-message")

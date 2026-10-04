@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import asdict
+from dataclasses import asdict, replace
 from typing import TYPE_CHECKING
 from uuid import uuid4
 
@@ -108,6 +108,20 @@ def validate_activation(rule: RuleRevision, validation: RuleValidation) -> None:
             raise ValueError("validation_not_discriminating")
 
 
+def body_free_validation(validation: RuleValidation) -> RuleValidation:
+    """Retain host-labelled outcomes without generated explanation or examples."""
+    return replace(
+        validation,
+        case_results=tuple(
+            replace(
+                case,
+                check=replace(case.check, reason="example_tested", evidence_refs=()),
+            )
+            for case in validation.case_results
+        ),
+    )
+
+
 class ResponseRuleRepository:
     """Persist immutable definitions and CAS bindings under the existing DB owner."""
 
@@ -158,8 +172,23 @@ class ResponseRuleRepository:
             raise ValueError("stale_rule_source")
 
     def _put_validation(
-        self, cursor: sqlite3.Cursor, rule: RuleRevision, validation: RuleValidation
+        self,
+        cursor: sqlite3.Cursor,
+        rule: RuleRevision,
+        validation: RuleValidation,
+        *,
+        detached: bool = False,
     ) -> None:
+        detached = (
+            detached
+            or cursor.execute(
+                "SELECT 1 FROM console_response_rule_bindings WHERE rule_id=? AND revision=? AND scope_kind!='chat' LIMIT 1",
+                (rule.rule_id, rule.revision),
+            ).fetchone()
+            is not None
+        )
+        if detached:
+            validation = body_free_validation(validation)
         source = validation.source
         cursor.execute(
             "INSERT INTO console_response_rule_validations VALUES (?,?,?,?,?,?) ON CONFLICT(rule_id,revision) DO UPDATE SET validation_json=excluded.validation_json,conversation_id=excluded.conversation_id,message_id=excluded.message_id,message_version=excluded.message_version",
@@ -167,8 +196,8 @@ class ResponseRuleRepository:
                 rule.rule_id,
                 rule.revision,
                 canonical_json(asdict(validation)),
-                source.conversation_id,
-                source.message_id if source.conversation_id else None,
+                source.conversation_id if not detached else None,
+                source.message_id if source.conversation_id and not detached else None,
                 source.message_version,
             ),
         )
@@ -203,6 +232,23 @@ class ResponseRuleRepository:
             ),
         )
         return updated
+
+    def _retain_validation_provenance(
+        self, cursor: sqlite3.Cursor, rule: RuleRevision, validation: RuleValidation
+    ) -> None:
+        """Keep independently promoted calibration after private source cleanup."""
+        self._put_validation(cursor, rule, validation, detached=True)
+
+    def historical_machine_parent(
+        self, conversation_id: str, assistant_id: str
+    ) -> str | None:
+        """Read inert host-recorded ancestry; this never recreates execution authority."""
+        with self.db.transaction() as cursor:
+            rows = cursor.execute(
+                "SELECT parent_assistant_message_id FROM console_machine_followup_receipts WHERE conversation_id=? AND assistant_message_id=? LIMIT 2",
+                (conversation_id, assistant_id),
+            ).fetchall()
+        return rows[0][0] if len(rows) == 1 else None
 
     def list_bindings(self, scope: RuleScope) -> tuple[RuleBinding, ...]:
         with self.db.transaction() as cursor:

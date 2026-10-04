@@ -47,7 +47,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
     ) -> None:
         super().__init__()
         self.scope, self.store, self.runtime = scope, store, runtime
-        self.session_id = runtime.controller.store.active_session_id
+        self.session_id = runtime.chat_store.active_session_id
         self._scopes = (
             runtime.scopes(self.session_id)
             if self.session_id
@@ -129,7 +129,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                     "Replacement example (only when needed)", classes="form-label"
                 )
                 messages = (
-                    self.runtime.controller.store.read_only_messages_for_session(
+                    self.runtime.chat_store.read_only_messages_for_session(
                         self.session_id
                     )
                     if self.session_id
@@ -177,10 +177,14 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
         await self._reload()
 
     def _current_scope(self) -> bool:
+        if not self.runtime.profile_current():
+            return False
+        if self.scope.kind == "global":
+            return self.scope == RuleScope("global", self.runtime.profile_id)
         try:
             return bool(
                 self.session_id
-                and self.runtime.controller.store.active_session_id == self.session_id
+                and self.runtime.chat_store.active_session_id == self.session_id
                 and self.runtime.scopes(self.session_id) == self._scopes
             )
         except (KeyError, StopIteration):
@@ -388,6 +392,8 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             self.query_one("#rr-" + name, Button).disabled = (
                 self._busy or self._selected is None
             )
+        if self.session_id is None:
+            self.query_one("#rr-test", Button).disabled = True
         self.query_one("#rr-delete", Button).disabled = (
             self._busy or self._binding is None
         )
@@ -454,6 +460,14 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
             return
         if self._busy:
             return
+        if action in {"test", "save"} and (
+            self.session_id is None
+            or self.runtime.chat_store.active_session_id != self.session_id
+        ):
+            self._status(
+                "Open a Chat and choose a completed answer to Test an edited rule."
+            )
+            return
         if not self._current_scope():
             self._status(
                 "The Chat or Workspace changed. Close this dialog and reopen it; your edits are retained here."
@@ -487,10 +501,13 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                         rule.revision,
                         destination,
                         expected_binding_revision=expected,
+                        current=self._current_scope,
                     )
                     self._status(
                         "Reviewed revision promoted. Private examples remain in their original scope."
                     )
+                except ValueError as exc:
+                    self._status(reason_copy(str(exc)))
                 except Exception:
                     self._status(
                         "Couldn't promote: the binding changed or saving failed. Review and try again."
@@ -569,6 +586,7 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                         self._expected + 1,
                     ),
                     expected_binding_revision=self._expected,
+                    current=self._current_scope,
                 )
                 await self._reload()
                 self._status(
@@ -586,9 +604,12 @@ class ResponseRulesModal(SafeModalDismissMixin, ModalScreen[None]):
                     self.scope,
                     rule.rule_id,
                     expected_binding_revision=self._expected,
+                    current=self._current_scope,
                 )
                 await self._reload()
                 self._status("Local pin deleted. Inherited rules may apply again.")
+        except ValueError as exc:
+            self._status(reason_copy(str(exc)))
         except Exception:
             self._status(
                 "Couldn't save or test: the definition is invalid, its source/binding changed, or storage is unavailable. Your edits are retained; review and try again."

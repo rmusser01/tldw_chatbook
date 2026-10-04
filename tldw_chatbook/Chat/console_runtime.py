@@ -1773,10 +1773,16 @@ class ConsoleRuntime:
 
     def set_chat_controller(self, value: Any) -> None:
         """Replace the chat-controller handle."""
-        if self._response_rules is not None and self._chat_controller is not value:
+        if (
+            self._response_rules is not None
+            and self._chat_controller is not None
+            and self._chat_controller is not value
+        ):
             self._response_rules.dispose()
             self._response_rules = None
         self._chat_controller = value
+        if self._response_rules is not None and value is not None:
+            self._response_rules.bind_controller(value)
         if value is not None:
             value._hooks_v2_runtime = self
         if value is not None and self._app is not None:
@@ -1821,9 +1827,9 @@ class ConsoleRuntime:
         from .response_rules.models import RuleHelperUsage
         from .response_rules.store import ResponseRuleStore
 
-        chats, controller = self._chat_store, self._chat_controller
+        chats, controller = self.ensure_chat_store(), self._chat_controller
         database = getattr(getattr(chats, "persistence", None), "db", None)
-        if database is None or controller is None:
+        if database is None:
             return None
         rules = chats.response_rule_store or ResponseRuleStore(
             ResponseRuleRepository(database)
@@ -1846,13 +1852,23 @@ class ConsoleRuntime:
                     clock=time.monotonic,
                 )
             )
-        evaluator = ResponseRuleEvaluator(controller.provider_gateway)
+        gateway = (
+            controller.provider_gateway
+            if controller is not None
+            else self.ensure_provider_gateway()
+        )
+        evaluator = ResponseRuleEvaluator(gateway)
         self._response_rules = ResponseRuleRuntime(
             store=rules,
             controller=controller,
-            queue=controller.prompt_queue_coordinator,
+            queue=(
+                controller.prompt_queue_coordinator if controller is not None else None
+            ),
+            chat_store=chats,
+            profile_current=lambda: not self._disposed
+            and getattr(self._app, "chachanotes_db", None) is database,
             builder=ResponseRuleBuilder(
-                controller.provider_gateway,
+                gateway,
                 evaluator,
                 self._rule_helper_pool,
                 clock=time.monotonic,

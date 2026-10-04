@@ -59,3 +59,13 @@ The requested audit clarified actual provider-resource lifetime, independent app
 ## Runtime budget handoff
 
 Actual primary AgentService settlement publishes its remaining allowance through an optional body-free callback independently of external hooks. The Console queue pins that result to the accepted custody identity; repairs narrow the captured agent budget and retain the absolute parent deadline through dispatch. Genuine hook budget records use that same custody identity and can further refuse work. Direct continuation and retry roots carry their actual allowance into shared native repair admission. No synthetic hook lifecycle is created to obtain a budget.
+
+## Implementation review clarifications
+
+Promotion retains sanitized host-labelled calibration outcomes independently of private source-row foreign keys. It copies no fixture bodies or generated explanations. Deleting temporary source messages drops their private drafts and assessments while independently pinned definitions remain adoptable with unavailable original-source provenance. Source removal therefore cannot silently fabricate a new original example or break Save.
+
+Capacity checks resolve known saved and live scope combinations under the serialized mutation boundary before activation, enabling or promotion. Logical overrides and exclusions count once. The runtime still reports couldn't verify if a later scope combination exceeds the limit; it never checks only a prefix.
+
+Global management belongs to the current profile and can be assembled before a Console controller or Chat exists. Later execution binds the real Console controller; Settings does not create a substitute execution owner. Management writes recheck profile/scope ownership inside their worker mutation boundary. Testing edits remains a Chat operation.
+
+Native repair acceptance is explicitly machine initiated for prompt-history exclusion. After reopen, the original task can be reconstructed only from inert host-recorded acceptance ancestry on the actual active branch. Historical receipts do not recreate assessment, queue or execution authority and cause no replay.

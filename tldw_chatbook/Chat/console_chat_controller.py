@@ -4266,6 +4266,7 @@ class _DurablePostcommitContinuation:
     terminal_citation_finalizer: TerminalCitationFinalizer | None = None
     hook_context: str = field(default="", repr=False)
     hook_continuation: bool = False
+    machine_followup: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -12670,6 +12671,7 @@ class ConsoleChatController:
             origin=origin,
             queue_entry_id=queue_entry_id,
             hook_continuation=acceptance.continuation_receipt is not None,
+            machine_followup=acceptance.machine_followup_receipt is not None,
             clean_draft=preparation.executed_draft,
             commit=commit,
             echoed_user_id=echoed_user.id,
@@ -13007,6 +13009,7 @@ class ConsoleChatController:
                 history is not None
                 and continuation.clean_draft.strip()
                 and not continuation.hook_continuation
+                and not continuation.machine_followup
             ):
                 await history.append(continuation.clean_draft)
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -13,6 +14,7 @@ if TYPE_CHECKING:
 
 
 REASON_COPY = {
+    "too_many_effective_rules": "This change would exceed 16 active rules for a Chat. Disable or exclude a rule, then try again.",
     "active_run": "Finish or stop the current run before learning a rule.",
     "no_eligible_response": "Choose a completed text answer before learning a rule.",
     "original_evidence_unavailable": "The original example is unavailable. Choose a completed replacement answer and Test again.",
@@ -161,10 +163,12 @@ async def open_profile_rules(screen: Any) -> None:
     """Canonical F9 entry, using the current profile's existing Console owner."""
     from tldw_chatbook.Widgets.Console.response_rules_modal import ResponseRulesModal
 
-    owner = getattr(screen.app_instance, "console_runtime", None)
-    rules = owner.ensure_response_rules() if owner is not None else None
+    from tldw_chatbook.Chat.console_runtime import ensure_console_runtime
+
+    owner = ensure_console_runtime(screen.app_instance)
+    rules = await asyncio.to_thread(owner.ensure_response_rules)
     if rules is None:
-        screen.notify("Open a Console Chat before managing response rules.")
+        screen.notify("Response rules require a local profile.")
         return
     await screen.app.push_screen(
         ResponseRulesModal(RuleScope("global", rules.profile_id), rules.store, rules)

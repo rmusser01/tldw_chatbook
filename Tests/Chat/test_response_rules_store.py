@@ -141,7 +141,7 @@ def test_source_deletion_removes_fixture_bodies_not_promoted_definition(rule_sto
             origin.conversation_id, origin.message_id, permanent=True, cursor=cursor
         )
     assert store.list_drafts(scope) == ()
-    assert store.get_validation("rule", 1) is None
+    assert store.get_validation("rule", 1) is not None
     assert store.get_revision("rule", 1) == before
     assert effective(store, GLOBAL)[0] == before
     with db.transaction() as cursor:

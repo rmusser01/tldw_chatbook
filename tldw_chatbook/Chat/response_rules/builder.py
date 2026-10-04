@@ -454,7 +454,8 @@ class ResponseRuleBuilder:
             )
             or any(
                 len(case.response_text.encode("utf-8")) > MAX_FIXTURE_BYTES
-                for case in cases.values()
+                for case, kind in zip(cases.values(), kinds)
+                if kind != CASE_TYPES[0]
             )
             or next(
                 (

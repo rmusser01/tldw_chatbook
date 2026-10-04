@@ -364,3 +364,10 @@ async def test_learning_deadline_stops_remaining_attempts():
         current=lambda: True,
     )
     assert result.reason == "learning_timeout" and len(transport.requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_recorded_answer_over_synthetic_limit_remains_testable():
+    result, transport, _ = await learn(inputs("Missing proof" + "x" * 8193))
+    assert result.reason == "tested" and result.validation is not None
+    assert len(transport.requests) == 1

@@ -12030,9 +12030,59 @@ class ConsoleChatStore:
             self._response_rule_task_roots[message_id] = user_message_id
 
     def response_rule_task_root(self, message_id: str) -> str | None:
-        """Return retained host task identity, never a generated instruction body."""
+        """Resolve live or inert durable host ancestry on the actual active branch."""
+
         with self._response_rule_evidence_lock:
-            return self._response_rule_task_roots.get(message_id)
+            root = self._response_rule_task_roots.get(message_id)
+        if root is not None:
+            return root
+        session_id = self._message_session_index[message_id]
+        session = self._session_or_raise(session_id)
+        if (
+            self.response_rule_store is None
+            or session.persisted_conversation_id is None
+        ):
+            return None
+        path = self.active_path_message_ids(session_id)
+        if message_id not in path:
+            return None
+        prefix = path[: path.index(message_id) + 1]
+        nodes = {node_id: self._message_or_raise(node_id) for node_id in prefix}
+        persisted = {
+            m.persisted_message_id: m.id
+            for m in nodes.values()
+            if m.persisted_message_id
+        }
+        current = message_id
+        visited = set()
+        while current not in visited:
+            visited.add(current)
+            message = nodes[current]
+            parent = (
+                self.response_rule_store.repository.historical_machine_parent(
+                    session.persisted_conversation_id, message.persisted_message_id
+                )
+                if message.persisted_message_id
+                else None
+            )
+            if parent is None:
+                return next(
+                    (
+                        node_id
+                        for node_id in reversed(prefix[: prefix.index(current)])
+                        if nodes[node_id].role is ConsoleMessageRole.USER
+                    ),
+                    None,
+                )
+            parent_native = persisted.get(parent)
+            if (
+                parent_native is None
+                or prefix.index(parent_native) >= prefix.index(current)
+                or nodes[parent_native].role is not ConsoleMessageRole.ASSISTANT
+            ):
+                raise ValueError("rule_source_task_unavailable")
+            current = parent_native
+        raise ValueError("rule_source_task_unavailable")
 
     def record_response_rule_tool_result(self, message_id: str, call_id: str, *, state: str, outcome: str, tool_name: str) -> None:
         """Retain body-free facts from the real definitive tool callback."""
@@ -13963,6 +14013,13 @@ class ConsoleChatStore:
             self._project_sync_v2_message_deletes(tombstones)
         for node_id in subtree_ids:
             self._invalidate_generation_attempt(node_id)
+        if (
+            message.persisted_message_id is None
+            and self.response_rule_store is not None
+        ):
+            self.response_rule_store.remove_temporary_sources(
+                session_id, set(subtree_ids)
+            )
         children_map = self._children_by_parent.get(session_id, {})
         # Detach the deleted node from its parent's ordered child list.
         siblings = children_map.get(parent_native_id)
