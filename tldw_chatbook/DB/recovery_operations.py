@@ -1241,8 +1241,7 @@ class _SubscriptionsAdapter(_SQLiteDeclaration):
                     "SELECT sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY type,name"
                 )
             )
-            expected_stamp = 76 if actual == _SUBSCRIPTIONS_V76_SCHEMA else 75
-            if stamp != (expected_stamp,):
+            if stamp not in _subscriptions_chachanotes_stamps(actual):
                 return ("unsupported_schema_version",)
         return ()
 
@@ -1361,7 +1360,46 @@ _SUBSCRIPTIONS_V76_REPLACEMENTS = {
 _SUBSCRIPTIONS_V76_SCHEMA = tuple(
     _SUBSCRIPTIONS_V76_REPLACEMENTS.get(sql, sql) for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
 )
-_SUBSCRIPTIONS_SCHEMA += ((2, _SUBSCRIPTIONS_V76_SCHEMA),)
+# Qualified shared-file constructor catalogs; these are not primary-owner policies.
+from .recovery_core_schema import (
+    _CHAT_DICTIONARIES_INITIAL_TRIGGER,
+    _CHAT_DICTIONARIES_UPDATED_TRIGGER,
+)
+
+_SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS = (
+    _SUBSCRIPTIONS_V76_SCHEMA,
+    tuple(
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER
+        if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER
+        else sql
+        for sql in _SUBSCRIPTIONS_V76_SCHEMA
+    ),
+)
+_SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS = (
+    _SUBSCRIPTIONS_SCHEMA[1][1],
+    tuple(
+        _CHAT_DICTIONARIES_UPDATED_TRIGGER
+        if sql == _CHAT_DICTIONARIES_INITIAL_TRIGGER
+        else sql
+        for sql in _SUBSCRIPTIONS_SCHEMA[1][1]
+    ),
+)
+_SUBSCRIPTIONS_SCHEMA += tuple(
+    (2, schema)
+    for schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS
+    + _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS[1:]
+)
+
+
+def _subscriptions_chachanotes_stamps(schema):
+    """Return embedded stamps for a matched complete Subscription catalog."""
+    if schema in _SUBSCRIPTIONS_NATIVE_RECEIPT_SCHEMAS:
+        return ((76,), (77,))
+    if schema in _SUBSCRIPTIONS_SHIPPED_CHACHANOTES_SCHEMAS:
+        return ((75,), (76,))
+    return ()
+
+
 _AGENT_RUNS_V22_FRESH_CHAIN = "CREATE TABLE automatic_work_chains (\n    id TEXT PRIMARY KEY,\n    conversation_id TEXT NOT NULL,\n    root_submission_id TEXT NOT NULL UNIQUE,\n    limits_json TEXT NOT NULL,\n    status TEXT NOT NULL DEFAULT 'active'\n        CHECK (status IN ('active', 'paused', 'review_required')),\n    pause_reason TEXT,\n    created_at REAL NOT NULL,\n    started_at REAL,\n    deadline_at REAL,\n    clock_owner_id TEXT,\n    started_monotonic REAL,\n    last_observed_at REAL NOT NULL,\n    allowance_root_chain_id TEXT REFERENCES automatic_work_chains(id)\n)"
 _AGENT_RUNS_SCHEMA += (
     (

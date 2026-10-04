@@ -296,6 +296,15 @@ class _Restrictions:
                 )
                 if allowed:
                     return sqlite3.SQLITE_OK
+            if (
+                self.migration_owner == "db.chachanotes.primary"
+                and action == sqlite3.SQLITE_UPDATE
+                and first == "db_schema_version"
+                and second == "version"
+                and database == "main"
+                and source is None
+            ):
+                return sqlite3.SQLITE_OK
             if self.migration_owner == "db.prompts.primary":
                 allowed = (
                     action == sqlite3.SQLITE_CREATE_TABLE
@@ -418,6 +427,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     )
     from tldw_chatbook.DB.recovery_core_schema import (
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        CHACHANOTES_V76_SHIPPED_SCHEMAS,
         CORE_SCHEMAS,
     )
 
@@ -433,6 +443,7 @@ def _canvas_schema_access(connection, schema, restrictions=None):
     frozen = (
         installed,
         CHACHANOTES_DICTIONARY_UPDATE_SCHEMA,
+        *CHACHANOTES_V76_SHIPPED_SCHEMAS,
         *(sql for _, sql in _SUBSCRIPTIONS_SCHEMA),
     )
     if schema not in frozen:
@@ -597,17 +608,17 @@ def _check(connection, owner, policy, restrictions):
         if owner.owner_id == "db.subscriptions" and any(
             row[1] == "db_schema_version" for row in actual
         ):
-            from tldw_chatbook.DB.recovery_operations import _SUBSCRIPTIONS_V76_SCHEMA
-
-            expected_stamp = (
-                76
-                if tuple(row[3] for row in actual if row[3] is not None)
-                == _SUBSCRIPTIONS_V76_SCHEMA
-                else 75
+            from tldw_chatbook.DB.recovery_operations import (
+                _subscriptions_chachanotes_stamps,
             )
-            if connection.execute(
-                "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
-            ).fetchone() != (expected_stamp,):
+
+            expected_stamps = _subscriptions_chachanotes_stamps(actual_sql)
+            if (
+                connection.execute(
+                    "SELECT version FROM db_schema_version WHERE schema_name='rag_char_chat_schema'"
+                ).fetchone()
+                not in expected_stamps
+            ):
                 return ("unsupported_schema_version",), None
         checker = getattr(owner, "_validate_connection", None)
         if checker is not None:
@@ -644,6 +655,19 @@ def _validate_candidate(
             if issues:
                 return (issues, None)
             if migrate and version != max(policy.versions):
+                if installed.owner_id == "db.chachanotes.primary":
+                    from tldw_chatbook.DB.recovery_core_schema import (
+                        CHACHANOTES_V76_NATIVE_SCHEMAS,
+                    )
+
+                    actual_sql = tuple(
+                        row[3] for row in _catalog(connection) if row[3] is not None
+                    )
+                    if (
+                        version != 76
+                        or actual_sql not in CHACHANOTES_V76_NATIVE_SCHEMAS
+                    ):
+                        return (("unsupported_schema_migration",), None)
                 restrictions.migrating = True
                 restrictions.migration_owner = installed.owner_id
                 try:

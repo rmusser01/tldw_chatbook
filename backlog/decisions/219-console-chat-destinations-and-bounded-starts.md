@@ -109,3 +109,32 @@ application implementation follows the subsequent implementation plan.
 ## Current-dev compatibility clarification (2026-10-03)
 
 Preserve current-dev optional provider/model/preset routing on prepared new_chat: resolve from fresh destination generation defaults, retain ADR-147 override enablement/allowlist/final-provider guards and enabled routed preset parameters, capture/disclose before approval, persist the exact resolved snapshot, and retain prepared source/destination/runtime currentness. Never fill routing from source-session settings; chat creation ignores subagent default routing. The conditional schema continues to offer these arguments under its existing gates; the five base arguments above remain unchanged. Preset routing overrides provider/model and configured generation parameters only; it does not copy source persona, prompt, bindings, or grants. Explicit instructions and destination assistant identity follow the creation rules above. This preserves the existing [ADR-147 routing contract](147-agent-provider-routing.md) within the new preparation and approval boundary.
+
+
+## Native receipt schema compatibility (2026-10-04)
+
+The shipped ChaChaNotes v75→v76 notes FTS repair keeps its number and executed
+SQL file. The unpublished native receipt migration moves to v76→v77, under
+[ADR-158](158-agent-runs-migration-order-after-worktree-qualification.md) and
+[ADR-208](208-migration-sql-files-are-the-executed-source.md). Retain the exact
+qualified v75 catalogs, shipped v76 catalogs, and earlier native v76 catalogs,
+including the known dictionary trigger variant. Fresh v77 catalogs are captured
+from actual constructors; schema text is never normalized to admit an archive.
+
+Runtime upgrades execute the v77 SQL file for ordinary v76. Earlier native v76
+is recognized only by its complete qualified catalog and stamp; it advances the
+stamp without rebuilding checkpoints or losing machine receipt IDs. Unknown or
+hybrid native catalogs fail closed. Embedded Subscription catalogs retain their
+exact outer v2 and inner ChaChaNotes version pairs.
+
+Under [ADR-126](126-complete-local-backup-and-recovery.md), staged restore retains the previously
+supported native v76 archive path. After exact full catalog, version and integrity
+validation, one installed metadata-only statement advances v76 to v77. Its
+restricted authorizer permits only `UPDATE` of `main.db_schema_version.version`,
+with no trigger source, while the installed `db.chachanotes.primary` migration
+is active. Other columns, tables, owners, databases and nonmigration contexts
+remain denied. No DDL, domain write or unrestricted connection is introduced.
+Final exact v77 catalog, stamp and integrity validation must succeed before
+commit; failure or cancellation rolls back the disposable candidate. Ordinary
+v75 and shipped v76 remain validation/export compatible but do not gain staged
+DDL migration support. Their runtime constructor upgrades remain supported.

@@ -127,15 +127,21 @@ def test_schema_policy_matches_installed_store(core_store):
     assert policy.versions == (
         (owner._CURRENT_SCHEMA_VERSION, 4)
         if name == "prompts"
-        else (owner._CURRENT_SCHEMA_VERSION, 75)
+        else (owner._CURRENT_SCHEMA_VERSION, 76, 75)
         if name == "chachanotes"
         else (owner._CURRENT_SCHEMA_VERSION,)
     )
     assert policy.schema_sql[0] == (owner._CURRENT_SCHEMA_VERSION, actual)
     assert len(policy.schema_sql) == (
-        4 if name == "chachanotes" else 2 if name == "prompts" else 1
+        8 if name == "chachanotes" else 2 if name == "prompts" else 1
     )
-    if name != "prompts":
+    if name == "chachanotes":
+        from tldw_chatbook.DB.recovery_core_schema import (
+            CHACHANOTES_NATIVE_V76_TO_V77_SQL,
+        )
+
+        assert policy.migration_steps == ((76, 77, CHACHANOTES_NATIVE_V76_TO_V77_SQL),)
+    elif name != "prompts":
         assert policy.migration_steps == ()
 
 
@@ -703,7 +709,9 @@ def test_discovery_custom_paths_and_explicit_core_dependencies(tmp_path):
         assert item.path == Path(config["database"][adapter.setting_name])
         assert item.logical_id == "profile:selected:" + adapter.owner_id
         assert item.status == (
-            "unavailable" if adapter.owner_id == "db.chachanotes.primary" else "included"
+            "unavailable"
+            if adapter.owner_id == "db.chachanotes.primary"
+            else "included"
         )
         assert "profile:selected:config" in item.dependencies
         assert not classify_entries((item,)).complete
